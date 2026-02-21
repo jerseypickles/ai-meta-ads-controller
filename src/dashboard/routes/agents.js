@@ -538,17 +538,21 @@ router.get('/impact', async (req, res) => {
     const limit = parseInt(req.query.limit) || 50;
     const actions = await getExecutedActionsWithImpact(limit);
 
-    // Calcular deltas para cada acción (3d como principal, 24h como preview)
+    // Calcular deltas — prefer 7d metrics over 3d (higher attribution accuracy)
     const withDeltas = actions.map(a => {
       const before = a.metrics_at_execution || {};
+      const after7d = a.metrics_after_7d || {};
       const after3d = a.metrics_after_3d || {};
       const after1d = a.metrics_after_1d || {};
+      // Use 7d data if available, fallback to 3d
+      const afterBest = (a.impact_7d_measured && after7d.roas_7d > 0) ? after7d : after3d;
+      const afterWindow = (a.impact_7d_measured && after7d.roas_7d > 0) ? '7d' : '3d';
 
       const deltaRoas = before.roas_7d > 0
-        ? ((after3d.roas_7d - before.roas_7d) / before.roas_7d) * 100
+        ? ((afterBest.roas_7d - before.roas_7d) / before.roas_7d) * 100
         : 0;
       const deltaCpa = before.cpa_7d > 0
-        ? ((after3d.cpa_7d - before.cpa_7d) / before.cpa_7d) * 100
+        ? ((afterBest.cpa_7d - before.cpa_7d) / before.cpa_7d) * 100
         : 0;
 
       // Deltas 24h
@@ -563,7 +567,7 @@ router.get('/impact', async (req, res) => {
       if (deltaRoas > 5) result = 'improved';
       else if (deltaRoas < -5) result = 'worsened';
 
-      return {
+      const entry = {
         ...a,
         agent_type: resolveAgentType(a),
         delta_roas_pct: deltaRoas,
@@ -571,8 +575,20 @@ router.get('/impact', async (req, res) => {
         delta_roas_1d_pct: deltaRoas1d,
         delta_cpa_1d_pct: deltaCpa1d,
         has_1d_data: a.impact_1d_measured === true,
+        has_7d_data: a.impact_7d_measured === true,
+        after_window: afterWindow,
+        metrics_after_best: afterBest,
         result
       };
+
+      // For create_ad: include ad-level metrics
+      if (a.action === 'create_ad' && a.new_entity_id) {
+        entry.is_create_ad = true;
+        entry.ad_metrics = a.ad_metrics_after_7d || a.ad_metrics_after_3d || null;
+        entry.ad_metrics_1d = a.ad_metrics_after_1d || null;
+      }
+
+      return entry;
     });
 
     // También incluir acciones pendientes de medición (< 3 días)
@@ -598,7 +614,7 @@ router.get('/impact', async (req, res) => {
         ? ((after1d.cpa_7d - before.cpa_7d) / before.cpa_7d) * 100
         : null;
 
-      return {
+      const entry = {
         ...a,
         agent_type: resolveAgentType(a),
         hours_elapsed: Math.floor(hoursElapsed),
@@ -609,6 +625,13 @@ router.get('/impact', async (req, res) => {
         has_1d_data: a.impact_1d_measured === true,
         result: 'measuring'
       };
+
+      if (a.action === 'create_ad' && a.new_entity_id) {
+        entry.is_create_ad = true;
+        entry.ad_metrics_1d = a.ad_metrics_after_1d || null;
+      }
+
+      return entry;
     });
 
     res.json({

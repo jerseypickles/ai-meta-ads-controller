@@ -103,7 +103,9 @@ const ActionCard = ({ action, isLast }) => {
 
   const before = action.metrics_at_execution || {};
   const after1d = action.metrics_after_1d || {};
-  const after = action.metrics_after_3d || {};
+  // Prefer 7d metrics (best) over 3d when backend provides them
+  const after = action.metrics_after_best || action.metrics_after_3d || {};
+  const afterWindow = action.after_window || '3d';
 
   const date = action.executed_at
     ? new Date(action.executed_at).toLocaleDateString('es-CL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
@@ -216,8 +218,16 @@ const ActionCard = ({ action, isLast }) => {
             </div>
           )}
           {action.action === 'create_ad' && (
-            <div style={{ fontSize: '12px', color: '#06b6d4', fontWeight: '600' }}>
-              Nuevo ad creado
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{
+                padding: '2px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: '700',
+                backgroundColor: '#06b6d420', color: '#06b6d4'
+              }}>
+                CREATIVO
+              </span>
+              <span style={{ fontSize: '12px', color: '#06b6d4', fontWeight: '600' }}>
+                Nuevo ad creado
+              </span>
             </div>
           )}
         </div>
@@ -282,7 +292,8 @@ const ActionCard = ({ action, isLast }) => {
           {/* 3d final */}
           <div>
             <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>
-              {isMeasuring ? 'Final (3 dias)' : '3 dias'}
+              {isMeasuring ? 'Final (3 dias)' : (afterWindow === '7d' ? '7 dias' : '3 dias')}
+              {action.has_7d_data && <span style={{ color: '#10b981', marginLeft: '4px', fontSize: '8px' }}>✓</span>}
             </div>
             {isMeasuring ? (
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '80px', color: '#6b7280', fontSize: '11px' }}>
@@ -308,6 +319,56 @@ const ActionCard = ({ action, isLast }) => {
             )}
           </div>
         </div>
+
+        {/* Ad-level metrics for create_ad actions */}
+        {action.is_create_ad && (action.ad_metrics || action.ad_metrics_1d) && (
+          <div style={{
+            padding: '10px 12px', backgroundColor: '#06b6d410', borderRadius: '8px',
+            marginBottom: '12px', border: '1px solid #06b6d420'
+          }}>
+            <div style={{ fontSize: '10px', color: '#06b6d4', fontWeight: '700', textTransform: 'uppercase', marginBottom: '8px' }}>
+              Rendimiento del Ad Nuevo
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
+              {(() => {
+                const am = action.ad_metrics || action.ad_metrics_1d || {};
+                return (
+                  <>
+                    <div>
+                      <div style={{ fontSize: '9px', color: '#6b7280' }}>Spend</div>
+                      <div style={{ fontSize: '13px', fontWeight: '600', color: '#e5e7eb' }}>
+                        {am.spend_7d != null ? formatCurrency(am.spend_7d) : (am.spend_3d != null ? formatCurrency(am.spend_3d) : '--')}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '9px', color: '#6b7280' }}>ROAS</div>
+                      <div style={{ fontSize: '13px', fontWeight: '600', color: am.roas_7d >= 1 ? '#6ee7b7' : (am.roas_7d > 0 ? '#fca5a5' : '#9ca3af') }}>
+                        {am.roas_7d != null ? `${am.roas_7d.toFixed(2)}x` : (am.roas_3d != null ? `${am.roas_3d.toFixed(2)}x` : '--')}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '9px', color: '#6b7280' }}>CTR</div>
+                      <div style={{ fontSize: '13px', fontWeight: '600', color: '#e5e7eb' }}>
+                        {am.ctr_7d != null ? `${am.ctr_7d.toFixed(2)}%` : (am.ctr_3d != null ? `${am.ctr_3d.toFixed(2)}%` : '--')}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '9px', color: '#6b7280' }}>Compras</div>
+                      <div style={{ fontSize: '13px', fontWeight: '600', color: '#e5e7eb' }}>
+                        {am.purchases_7d != null ? am.purchases_7d : '--'}
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+            {action.ad_metrics?.status && (
+              <div style={{ marginTop: '6px', fontSize: '10px', color: '#6b7280' }}>
+                Status: <span style={{ color: action.ad_metrics.status === 'ACTIVE' ? '#6ee7b7' : '#fca5a5' }}>{action.ad_metrics.status}</span>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Result badge */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

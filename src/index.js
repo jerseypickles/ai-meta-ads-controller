@@ -137,6 +137,32 @@ async function jobMeasureImpact() {
       ctr: entitySnapshot.metrics?.last_7d?.ctr || 0
     });
 
+    // Helper: for create_ad actions, also capture the new ad's own metrics
+    const extractAdMetrics = (action, sMap) => {
+      if (action.action !== 'create_ad' || !action.new_entity_id) return null;
+      const adSnap = sMap.get(`ad:${action.new_entity_id}`);
+      if (!adSnap) return null;
+      const m7 = adSnap.metrics?.last_7d || {};
+      const m3 = adSnap.metrics?.last_3d || {};
+      return {
+        ad_id: action.new_entity_id,
+        ad_name: adSnap.entity_name || '',
+        status: adSnap.status || 'UNKNOWN',
+        spend_7d: m7.spend || 0,
+        impressions_7d: m7.impressions || 0,
+        clicks_7d: m7.clicks || 0,
+        ctr_7d: m7.ctr || 0,
+        roas_7d: m7.roas || 0,
+        cpa_7d: m7.cpa || 0,
+        purchases_7d: m7.purchases || 0,
+        purchase_value_7d: m7.purchase_value || 0,
+        frequency_7d: m7.frequency || 0,
+        spend_3d: m3.spend || 0,
+        roas_3d: m3.roas || 0,
+        ctr_3d: m3.ctr || 0
+      };
+    };
+
     // Checkpoint 1: Medición a las 24 horas
     const pending1d = await getPending1dImpactMeasurement();
     let measured1d = 0;
@@ -146,11 +172,16 @@ async function jobMeasureImpact() {
         || snapshotMap.get(`adset:${action.entity_id}`);
       if (!entitySnapshot) continue;
 
-      await ActionLog.findByIdAndUpdate(action._id, {
+      const updates = {
         metrics_after_1d: extractMetrics(entitySnapshot),
         impact_1d_measured: true,
         impact_1d_measured_at: new Date()
-      });
+      };
+      // Capture ad-level metrics for create_ad
+      const adMetrics = extractAdMetrics(action, snapshotMap);
+      if (adMetrics) updates.ad_metrics_after_1d = adMetrics;
+
+      await ActionLog.findByIdAndUpdate(action._id, updates);
       measured1d++;
     }
 
@@ -163,11 +194,15 @@ async function jobMeasureImpact() {
         || snapshotMap.get(`adset:${action.entity_id}`);
       if (!entitySnapshot) continue;
 
-      await ActionLog.findByIdAndUpdate(action._id, {
+      const updates = {
         metrics_after_3d: extractMetrics(entitySnapshot),
         impact_measured: true,
         impact_measured_at: new Date()
-      });
+      };
+      const adMetrics = extractAdMetrics(action, snapshotMap);
+      if (adMetrics) updates.ad_metrics_after_3d = adMetrics;
+
+      await ActionLog.findByIdAndUpdate(action._id, updates);
       measured3d++;
     }
 
@@ -180,11 +215,15 @@ async function jobMeasureImpact() {
         || snapshotMap.get(`adset:${action.entity_id}`);
       if (!entitySnapshot) continue;
 
-      await ActionLog.findByIdAndUpdate(action._id, {
+      const updates = {
         metrics_after_7d: extractMetrics(entitySnapshot),
         impact_7d_measured: true,
         impact_7d_measured_at: new Date()
-      });
+      };
+      const adMetrics = extractAdMetrics(action, snapshotMap);
+      if (adMetrics) updates.ad_metrics_after_7d = adMetrics;
+
+      await ActionLog.findByIdAndUpdate(action._id, updates);
       measured7d++;
     }
 
