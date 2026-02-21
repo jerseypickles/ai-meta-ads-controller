@@ -9,7 +9,7 @@ const logger = require('../../utils/logger');
 const fs = require('fs');
 const path = require('path');
 
-const GENERATED_DIR = path.join(__dirname, '../../../uploads/generated');
+const GENERATED_DIR = path.join(config.system.uploadsDir, 'generated');
 
 const JUDGE_SYSTEM_PROMPT = `You are an elite Meta Ads creative strategist with deep expertise in performance marketing, specifically ecommerce ads on Facebook and Instagram. You have analyzed thousands of ad creatives and their performance data.
 

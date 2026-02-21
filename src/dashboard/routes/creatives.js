@@ -769,7 +769,7 @@ router.post('/generate/images', async (req, res) => {
  * Servir imagen generada para preview en frontend.
  */
 router.get('/generate/preview/:filename', (req, res) => {
-  const GENERATED_DIR = path.join(__dirname, '../../../uploads/generated');
+  const GENERATED_DIR = path.join(config.system.uploadsDir, 'generated');
   const filePath = path.join(GENERATED_DIR, req.params.filename);
 
   if (!fs.existsSync(filePath)) {
@@ -796,14 +796,14 @@ router.post('/generate/accept', async (req, res) => {
       return res.status(400).json({ error: 'Se requiere filename' });
     }
 
-    const GENERATED_DIR = path.join(__dirname, '../../../uploads/generated');
+    const GENERATED_DIR = path.join(config.system.uploadsDir, 'generated');
     const sourcePath = path.join(GENERATED_DIR, filename);
     if (!fs.existsSync(sourcePath)) {
       return res.status(404).json({ error: 'Imagen generada no encontrada' });
     }
 
     // Move to creatives upload dir
-    const UPLOAD_DIR = path.join(__dirname, '../../../uploads/creatives');
+    const UPLOAD_DIR = path.join(config.system.uploadsDir, 'creatives');
     if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
     const newFilename = `gen-openai-${Date.now()}.png`;
