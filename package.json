@@ -1,0 +1,42 @@
+{
+  "name": "ai-meta-ads-controller",
+  "version": "1.0.0",
+  "description": "AI-powered Meta Ads optimization controller for Jersey Pickles",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon --legacy-watch --watch src --ext js,json --ignore node_modules --ignore src/dashboard/frontend/node_modules --ignore src/dashboard/frontend/dist src/index.js",
+    "dashboard": "node src/dashboard/server.js",
+    "build": "cd src/dashboard/frontend && npm install && npm run build",
+    "test": "jest --coverage",
+    "test:watch": "jest --watch",
+    "test:connection": "node scripts/test-connection.js",
+    "backfill": "node scripts/backfill-metrics.js",
+    "seed": "node scripts/seed-config.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@google/genai": "^1.41.0",
+    "axios": "^1.6.0",
+    "bottleneck": "^2.19.5",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.0",
+    "express": "^4.18.0",
+    "form-data": "^4.0.5",
+    "jsonwebtoken": "^9.0.0",
+    "moment-timezone": "^0.5.45",
+    "mongoose": "^8.0.0",
+    "multer": "^2.0.2",
+    "node-cron": "^3.0.3",
+    "openai": "^6.22.0",
+    "sharp": "^0.34.5",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "nodemon": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

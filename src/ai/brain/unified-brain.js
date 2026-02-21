@@ -1,0 +1,911 @@
+const Anthropic = require('@anthropic-ai/sdk');
+const config = require('../../../config');
+const safetyGuards = require('../../../config/safety-guards');
+const unifiedPolicyConfig = require('../../../config/unified-policy');
+const deepResearchPriors = require('../../../config/deep-research-priors');
+const { getLatestSnapshots, getAccountOverview, getRecentActions, getActiveDirectives } = require('../../db/queries');
+const { CooldownManager } = require('../../safety/cooldown-manager');
+const { buildFeatureSet } = require('../unified/feature-builder');
+const AdaptiveScorer = require('../unified/adaptive-scorer');
+const PolicyLearner = require('../unified/policy-learner');
+const ImpactContextBuilder = require('./impact-context-builder');
+const { getSystemPrompt, buildUserPrompt } = require('./brain-prompts');
+const AgentReport = require('../../db/models/AgentReport');
+const ActionLog = require('../../db/models/ActionLog');
+const CreativeAsset = require('../../db/models/CreativeAsset');
+const AICreation = require('../../db/models/AICreation');
+const StrategicDirective = require('../../db/models/StrategicDirective');
+const logger = require('../../utils/logger');
+
+const VALID_ACTIONS = [
+  'scale_up', 'scale_down', 'pause', 'reactivate', 'no_action',
+  'duplicate_adset', 'create_ad', 'update_bid_strategy',
+  'update_ad_status', 'move_budget', 'update_ad_creative'
+];
+const VALID_CONFIDENCE = ['high', 'medium', 'low'];
+const VALID_PRIORITY = ['critical', 'high', 'medium', 'low'];
+
+class UnifiedBrain {
+  constructor() {
+    this.anthropic = new Anthropic({ apiKey: config.claude.apiKey });
+    this.buildFeatureSet = buildFeatureSet;
+    this.scorer = new AdaptiveScorer({
+      config: unifiedPolicyConfig,
+      knowledge: deepResearchPriors
+    });
+    this.learner = new PolicyLearner();
+    this.impactBuilder = new ImpactContextBuilder();
+  }
+
+  /**
+   * Ejecuta un ciclo completo del cerebro IA.
+   * @returns {Object} { report, autoExecuted, elapsed }
+   */
+  async runCycle() {
+    const startTime = Date.now();
+    const cycleId = `brain_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    logger.info(`═══ Iniciando ciclo del Cerebro IA [${cycleId}] ═══`);
+
+    try {
+      // 1. Expirar recomendaciones pendientes de ciclos anteriores
+      await this._expirePendingRecommendations();
+
+      // 2. Consumir feedback de aprendizaje (actualizar bandit)
+      const learningResult = await this.learner.consumeImpactFeedback();
+
+      // 3. Cargar todos los datos en paralelo
+      const sharedData = await this._loadSharedData(cycleId);
+      if (!sharedData) {
+        logger.warn('[BRAIN] Sin datos disponibles — no hay snapshots');
+        return { cycleId, elapsed: '0s', recommendations: 0, autoExecuted: 0, abortReason: 'No hay snapshots disponibles. Ejecutar recoleccion de datos primero.' };
+      }
+
+      // 4. Construir contexto de impacto
+      const impactContext = await this.impactBuilder.build();
+
+      // 5. Construir resumen del learner para Claude
+      const learnerState = await this.learner.loadState();
+      const learnerSummary = this._buildLearnerSummary(learnerState, learningResult);
+
+      // 6. Llamar a Claude con todo el contexto
+      const systemPrompt = getSystemPrompt();
+      const userPrompt = buildUserPrompt({
+        accountOverview: sharedData.accountOverview,
+        adSetSnapshots: sharedData.adSetSnapshots,
+        adSnapshots: sharedData.adSnapshots,
+        campaignSnapshots: sharedData.campaignSnapshots,
+        recentActions: sharedData.recentActions,
+        activeCooldowns: sharedData.activeCooldowns,
+        impactContext,
+        creativeAssets: sharedData.creativeAssets,
+        aiCreations: sharedData.aiCreations,
+        strategicDirectives: sharedData.strategicDirectives,
+        learnerSummary
+      });
+
+      logger.info(`[BRAIN] Prompt enviado a Claude: ${userPrompt.length} chars`);
+      const response = await this._callClaude(systemPrompt, userPrompt);
+      if (!response) {
+        logger.warn('[BRAIN] Sin respuesta de Claude');
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        return { cycleId, elapsed: `${elapsed}s`, recommendations: 0, autoExecuted: 0, abortReason: 'Claude no respondio (posible error de API o rate limit).' };
+      }
+
+      logger.info(`[BRAIN] Respuesta de Claude recibida: ${response.text.length} chars, tokens: ${response.usage?.input_tokens}/${response.usage?.output_tokens}, stop: ${response.stopReason}`);
+      if (response.stopReason === 'max_tokens') {
+        logger.warn('[BRAIN] Respuesta truncada por max_tokens — intentando recuperar JSON parcial');
+      }
+
+      // 7. Parsear y validar recomendaciones
+      const parsed = this._parseResponse(response.text);
+      if (!parsed) {
+        logger.warn('[BRAIN] No se pudo parsear respuesta');
+        logger.warn(`[BRAIN] Respuesta raw (primeros 800 chars): ${response.text.substring(0, 800)}`);
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        return { cycleId, elapsed: `${elapsed}s`, recommendations: 0, autoExecuted: 0, abortReason: 'No se pudo parsear la respuesta JSON de Claude.' };
+      }
+
+      logger.info(`[BRAIN] Parseado OK: ${(parsed.recommendations || []).length} recomendaciones raw, status: ${parsed.status}`);
+
+      // 8. Validar recomendaciones + enriquecer con scorer
+      const rawRecsCount = (parsed.recommendations || []).length;
+      const validRecs = (parsed.recommendations || [])
+        .map(r => this._validateRecommendation(r, sharedData, impactContext))
+        .filter(Boolean);
+
+      logger.info(`[BRAIN] Validacion: ${rawRecsCount} raw -> ${validRecs.length} validas (${rawRecsCount - validRecs.length} descartadas)`);
+
+      // Filtrar por cooldown
+      const cooldownEntityIds = new Set((sharedData.activeCooldowns || []).map(c => c.entity_id));
+      const pendingEntityIds = impactContext.pendingEntities || new Set();
+
+      const filteredRecs = validRecs.filter(r => {
+        if (cooldownEntityIds.has(r.entity_id)) {
+          logger.info(`[BRAIN] Filtrada por cooldown: ${r.entity_name}`);
+          return false;
+        }
+        if (pendingEntityIds.has(r.entity_id)) {
+          logger.info(`[BRAIN] Filtrada por medicion pendiente: ${r.entity_name}`);
+          return false;
+        }
+        return true;
+      });
+
+      logger.info(`[BRAIN] Post-filtro: ${filteredRecs.length} (${validRecs.length - filteredRecs.length} filtradas por cooldown/medicion)`);
+
+      // 9. Aplicar adaptive scorer a cada recomendacion
+      const features = this.buildFeatureSet({
+        adSetSnapshots: sharedData.adSetSnapshots,
+        adSnapshots: sharedData.adSnapshots,
+        accountOverview: sharedData.accountOverview,
+        recentActions: sharedData.recentActions,
+        activeCooldowns: sharedData.activeCooldowns
+      });
+      const accountContext = this.scorer.buildAccountContext(sharedData.accountOverview, features);
+
+      const scoredRecs = filteredRecs.map(rec => {
+        const feature = features.find(f => f.entity_id === rec.entity_id);
+        if (!feature) return rec;
+
+        const bucketContext = {
+          hour: new Date().getHours(),
+          seasonal_event: this.learner._isSeasonalDate(new Date()),
+          account_roas_7d: accountContext?.accountRoas7d || 0
+        };
+        const bucket = this.learner.bucketFromMetrics(rec.metrics || {}, bucketContext);
+        const learningSignal = this.learner.getActionBias(learnerState, bucket, rec.action);
+
+        const scored = this.scorer.scoreCandidate({
+          feature,
+          candidate: {
+            action: rec.action,
+            baseScore: this._baseScoreFromConfidence(rec.confidence),
+            baseRisk: deepResearchPriors.action_priors?.[rec.action]?.baseline_risk || 0.35,
+            baseImpactPct: deepResearchPriors.action_priors?.[rec.action]?.baseline_impact_pct || 5,
+            hypothesis: rec.reasoning
+          },
+          learningSignal,
+          accountContext
+        });
+
+        return {
+          ...rec,
+          policy_score: scored.policyScore,
+          confidence_score: scored.confidenceScore,
+          expected_impact_pct: scored.expectedImpactPct,
+          risk_score: scored.riskScore,
+          uncertainty_score: scored.uncertaintyScore,
+          measurement_window_hours: scored.measurementWindowHours,
+          hypothesis: scored.hypothesis,
+          evidence: scored.evidence,
+          policy_bucket: bucket,
+          // Override confidence/priority with scorer's calculation
+          confidence: scored.confidence,
+          priority: scored.priority
+        };
+      });
+
+      // 10. Aplicar directivas estrategicas
+      const withDirectives = this._applyStrategicDirectives(scoredRecs, sharedData.strategicDirectives);
+
+      // 11. Ordenar por score y limitar
+      const finalRecs = withDirectives
+        .sort((a, b) => (b.policy_score || 0) - (a.policy_score || 0))
+        .slice(0, unifiedPolicyConfig.max_recommendations_per_cycle || 12);
+
+      // 12. Separar: recomendaciones normales vs directivas para AI Manager
+      // Construir set de IDs gestionados por AI Manager (adsets + sus ads hijos)
+      const aiManagedAdSetIds = new Set(
+        sharedData.adSetSnapshots.filter(s => s._ai_managed).map(s => s.entity_id)
+      );
+      const humanRecs = [];
+      const aiManagerRecs = [];
+      for (const rec of finalRecs) {
+        // Caso 1: la recomendacion es sobre un adset gestionado
+        if (aiManagedAdSetIds.has(rec.entity_id)) {
+          aiManagerRecs.push(rec);
+          continue;
+        }
+        // Caso 2: la recomendacion es sobre un ad dentro de un adset gestionado
+        if (rec.entity_type === 'ad') {
+          const adSnap = sharedData.adSnapshots.find(s => s.entity_id === rec.entity_id);
+          if (adSnap && aiManagedAdSetIds.has(adSnap.parent_id)) {
+            aiManagerRecs.push(rec);
+            continue;
+          }
+        }
+        humanRecs.push(rec);
+      }
+
+      // 12a. Convertir recomendaciones de ad sets AI-managed en directivas estrategicas
+      const directivesCreated = await this._createDirectivesForAIManager(aiManagerRecs, cycleId);
+
+      // 12b. Enriquecer recomendaciones normales con historial de impacto
+      const enrichedRecs = this._enrichWithPastImpact(humanRecs, impactContext.processedActions || []);
+
+      // 13. Guardar reporte (solo recomendaciones para aprobacion humana)
+      const report = await AgentReport.create({
+        agent_type: 'brain',
+        cycle_id: cycleId,
+        summary: parsed.summary || 'Sin resumen',
+        status: ['healthy', 'warning', 'critical'].includes(parsed.status) ? parsed.status : 'healthy',
+        recommendations: enrichedRecs,
+        alerts: (parsed.alerts || []).map(a => this._validateAlert(a)).filter(Boolean),
+        prompt_tokens: response.usage?.input_tokens || 0,
+        completion_tokens: response.usage?.output_tokens || 0
+      });
+
+      // 14. Auto-ejecutar segun modo de autonomia
+      const autoExecuted = await this._autoExecuteRecommendations(report);
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      logger.info(`═══ Cerebro IA completado en ${elapsed}s — ${report.recommendations.length} recomendaciones, ${autoExecuted} auto-ejecutadas, ${directivesCreated} directivas para AI Manager ═══`);
+
+      return {
+        cycleId,
+        elapsed: `${elapsed}s`,
+        recommendations: report.recommendations.length,
+        report,
+        autoExecuted,
+        impactSummary: impactContext.summary
+      };
+
+    } catch (error) {
+      logger.error(`[BRAIN] Error en ciclo [${cycleId}]: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // ===== PRIVATE METHODS =====
+
+  async _loadSharedData(cycleId) {
+    const cooldownManager = new CooldownManager();
+    const [snapshots, accountOverview, recentActions, activeCooldowns, creativeAssets, aiCreations, strategicDirectives] = await Promise.all([
+      getLatestSnapshots(),
+      getAccountOverview(),
+      getRecentActions(3),
+      cooldownManager.getActiveCooldowns(),
+      CreativeAsset.find({ status: 'active' }).sort({ created_at: -1 }).lean().catch(() => []),
+      AICreation.find({}).sort({ created_at: -1 }).limit(30).lean().catch(() => []),
+      getActiveDirectives().catch(() => [])
+    ]);
+
+    if (snapshots.length === 0) return null;
+
+    // Identificar ad sets gestionados por AI Manager (Brain los analiza pero no ejecuta directamente)
+    const managedByAI = await AICreation.find({
+      creation_type: 'create_adset',
+      managed_by_ai: true,
+      lifecycle_phase: { $nin: ['dead'] }
+    }).select('meta_entity_id').lean().catch(() => []);
+    const managedIds = new Set(managedByAI.map(m => m.meta_entity_id));
+
+    const adSetSnapshots = snapshots.filter(s => s.entity_type === 'adset');
+    const adSnapshots = snapshots.filter(s => s.entity_type === 'ad');
+    const campaignSnapshots = snapshots.filter(s => s.entity_type === 'campaign');
+
+    // Marcar cada ad set con su origen para que el Brain genere directivas en vez de acciones directas
+    for (const snap of adSetSnapshots) {
+      snap._ai_managed = managedIds.has(snap.entity_id);
+    }
+
+    if (managedIds.size > 0) {
+      const managedCount = adSetSnapshots.filter(s => s._ai_managed).length;
+      logger.info(`[BRAIN] ${managedCount} ad sets gestionados por AI Manager (supervisión jerárquica activa)`);
+    }
+    logger.info(`[BRAIN] Datos cargados: ${adSetSnapshots.length} ad sets, ${adSnapshots.length} ads, ${campaignSnapshots.length} campanas, ${activeCooldowns.length} cooldowns`);
+
+    return {
+      cycleId,
+      snapshots,
+      adSetSnapshots,
+      adSnapshots,
+      campaignSnapshots,
+      accountOverview,
+      recentActions,
+      activeCooldowns,
+      creativeAssets,
+      aiCreations,
+      strategicDirectives
+    };
+  }
+
+  _buildLearnerSummary(state, learningResult) {
+    if (!state || !state.buckets || Object.keys(state.buckets).length === 0) {
+      return 'Sin datos de aprendizaje aun. Sistema en fase inicial.';
+    }
+
+    const lines = [];
+    lines.push(`Total muestras de aprendizaje: ${state.total_samples || 0}`);
+
+    if (learningResult.processed > 0) {
+      lines.push(`Ultimo ciclo: ${learningResult.processed} acciones procesadas, reward medio: ${learningResult.averageReward.toFixed(3)}`);
+    }
+
+    // Resumir top buckets con mas datos
+    const bucketEntries = Object.entries(state.buckets)
+      .map(([bucket, actions]) => {
+        const total = Object.values(actions).reduce((s, a) => s + (a.count || 0), 0);
+        return { bucket, actions, total };
+      })
+      .filter(b => b.total >= 3)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5);
+
+    if (bucketEntries.length > 0) {
+      lines.push('Patrones detectados por contexto:');
+      for (const { bucket, actions } of bucketEntries) {
+        const actionSummary = Object.entries(actions)
+          .filter(([, s]) => s.count >= 2)
+          .map(([action, s]) => {
+            const mean = s.alpha / (s.alpha + s.beta);
+            return `${action}: ${(mean * 100).toFixed(0)}% exito (${s.count} muestras)`;
+          })
+          .join(', ');
+        if (actionSummary) {
+          lines.push(`  [${bucket}]: ${actionSummary}`);
+        }
+      }
+    }
+
+    return lines.join('\n');
+  }
+
+  async _callClaude(systemPrompt, userPrompt) {
+    try {
+      const message = await this.anthropic.messages.create({
+        model: config.claude.model,
+        max_tokens: 16384,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }]
+      });
+      return { text: message.content[0].text, usage: message.usage, stopReason: message.stop_reason };
+    } catch (error) {
+      if (error.status === 429) {
+        logger.warn('[BRAIN] Rate limit, esperando 15s...');
+        await new Promise(r => setTimeout(r, 15000));
+        try {
+          const retry = await this.anthropic.messages.create({
+            model: config.claude.model,
+            max_tokens: 16384,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: userPrompt }]
+          });
+          return { text: retry.content[0].text, usage: retry.usage, stopReason: retry.stop_reason };
+        } catch (retryErr) {
+          logger.error(`[BRAIN] Retry fallido: ${retryErr.message}`);
+          return null;
+        }
+      }
+      logger.error(`[BRAIN] Error Claude: ${error.message || error.status}`);
+      return null;
+    }
+  }
+
+  _parseResponse(rawText) {
+    try {
+      let cleaned = rawText.trim();
+      if (cleaned.startsWith('```')) {
+        cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+      }
+      if (!cleaned.startsWith('{')) {
+        const jsonStart = cleaned.indexOf('{');
+        const jsonEnd = cleaned.lastIndexOf('}');
+        if (jsonStart !== -1 && jsonEnd !== -1) {
+          cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+        }
+      }
+      const parsed = JSON.parse(cleaned);
+      if (!parsed || typeof parsed !== 'object') return null;
+      return parsed;
+    } catch (error) {
+      logger.warn(`[BRAIN] Error parseando JSON: ${error.message}`);
+      // Intentar recuperar JSON truncado (truncado por max_tokens)
+      const recovered = this._recoverTruncatedJSON(rawText);
+      if (recovered) {
+        logger.info(`[BRAIN] JSON truncado recuperado OK: ${(recovered.recommendations || []).length} recomendaciones`);
+        return recovered;
+      }
+      logger.error(`[BRAIN] Raw (first 500 chars): ${rawText.substring(0, 500)}`);
+      return null;
+    }
+  }
+
+  /**
+   * Intenta recuperar un JSON truncado cerrando brackets/arrays abiertos.
+   * Busca la ultima recomendacion completa y cierra la estructura.
+   */
+  _recoverTruncatedJSON(rawText) {
+    try {
+      let cleaned = rawText.trim();
+      if (cleaned.startsWith('```')) {
+        cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+      }
+      const jsonStart = cleaned.indexOf('{');
+      if (jsonStart === -1) return null;
+      cleaned = cleaned.substring(jsonStart);
+
+      // Buscar el ultimo objeto de recomendacion completo (termina con })
+      // La estructura es: { "summary":..., "recommendations": [ {...}, {...}, ... ], "alerts": [...] }
+      // Si se trunco en medio de recommendations, cortamos ahi
+
+      // Encontrar la posicion del array de recommendations
+      const recsStart = cleaned.indexOf('"recommendations"');
+      if (recsStart === -1) return null;
+
+      const arrayStart = cleaned.indexOf('[', recsStart);
+      if (arrayStart === -1) return null;
+
+      // Encontrar todos los objetos {} completos dentro del array
+      let depth = 0;
+      let lastCompleteObjEnd = -1;
+      let inString = false;
+      let escape = false;
+
+      for (let i = arrayStart + 1; i < cleaned.length; i++) {
+        const ch = cleaned[i];
+
+        if (escape) { escape = false; continue; }
+        if (ch === '\\') { escape = true; continue; }
+        if (ch === '"' && !escape) { inString = !inString; continue; }
+        if (inString) continue;
+
+        if (ch === '{') depth++;
+        if (ch === '}') {
+          depth--;
+          if (depth === 0) {
+            lastCompleteObjEnd = i;
+          }
+        }
+        // Si encontramos el cierre del array de recommendations
+        if (ch === ']' && depth === 0) {
+          // El array ya estaba cerrado, no es truncado en recommendations
+          break;
+        }
+      }
+
+      if (lastCompleteObjEnd === -1) return null;
+
+      // Reconstruir: tomar hasta la ultima recomendacion completa, cerrar arrays y objetos
+      const truncated = cleaned.substring(0, lastCompleteObjEnd + 1);
+      const recoveredJSON = truncated + '], "alerts": [] }';
+
+      const parsed = JSON.parse(recoveredJSON);
+      if (!parsed || typeof parsed !== 'object') return null;
+      return parsed;
+    } catch (err) {
+      logger.warn(`[BRAIN] Recovery tambien fallo: ${err.message}`);
+      return null;
+    }
+  }
+
+  _validateRecommendation(rec, sharedData, impactContext) {
+    if (!rec || typeof rec !== 'object') return null;
+    if (!VALID_ACTIONS.includes(rec.action)) return null;
+    if (!rec.entity_id) return null;
+    if (rec.action === 'no_action') return null;
+
+    // Hard block: no changes to AI-created entities in learning phase
+    const aiCreations = sharedData.aiCreations || [];
+    const protectedEntity = aiCreations.find(c =>
+      c.meta_entity_id === String(rec.entity_id) &&
+      ['created', 'activating', 'learning'].includes(c.lifecycle_phase)
+    );
+    if (protectedEntity) {
+      logger.info(`[BRAIN] Bloqueada: ${rec.action} en ${rec.entity_name || rec.entity_id} — en ${protectedEntity.lifecycle_phase}`);
+      return null;
+    }
+
+    // Hard block: no repetir misma accion en entidad que tuvo resultado negativo recientemente
+    // Usa delta_roas_pct < 0 (cualquier caida) en vez de solo 'worsened' (< -5%)
+    if (impactContext.processedActions && ['scale_up', 'scale_down', 'pause', 'reactivate'].includes(rec.action)) {
+      const recentNegative = impactContext.processedActions.find(a =>
+        a.entity_id === String(rec.entity_id) &&
+        a.action === rec.action &&
+        a.delta_roas_pct < 0 &&
+        a.executed_at && (Date.now() - new Date(a.executed_at).getTime()) < 7 * 24 * 60 * 60 * 1000
+      );
+      if (recentNegative) {
+        logger.info(`[BRAIN] Bloqueada: ${rec.action} en ${rec.entity_name || rec.entity_id} — misma accion tuvo resultado negativo hace ${Math.round((Date.now() - new Date(recentNegative.executed_at).getTime()) / (1000 * 60 * 60 * 24))}d (ROAS ${recentNegative.delta_roas_pct > 0 ? '+' : ''}${recentNegative.delta_roas_pct}%)`);
+        return null;
+      }
+    }
+
+    // Buscar la entidad en los datos para obtener metricas reales
+    const adSet = sharedData.adSetSnapshots?.find(s => s.entity_id === rec.entity_id);
+    const ad = sharedData.adSnapshots?.find(s => s.entity_id === rec.entity_id);
+    const entity = adSet || ad;
+
+    const clean = {
+      action: rec.action,
+      entity_type: rec.entity_type || 'adset',
+      entity_id: String(rec.entity_id),
+      entity_name: String(rec.entity_name || entity?.entity_name || 'Sin nombre'),
+      current_value: parseFloat(rec.current_value) || (entity?.daily_budget || 0),
+      recommended_value: parseFloat(rec.recommended_value) || 0,
+      change_percent: 0,
+      reasoning: String(rec.reasoning || 'Sin razon'),
+      expected_impact: String(rec.expected_impact || ''),
+      confidence: VALID_CONFIDENCE.includes(rec.confidence) ? rec.confidence : 'medium',
+      priority: VALID_PRIORITY.includes(rec.priority) ? rec.priority : 'medium',
+      metrics: {
+        roas_7d: entity?.metrics?.last_7d?.roas || parseFloat(rec.metrics?.roas_7d) || 0,
+        roas_3d: entity?.metrics?.last_3d?.roas || parseFloat(rec.metrics?.roas_3d) || 0,
+        cpa_7d: entity?.metrics?.last_7d?.cpa || parseFloat(rec.metrics?.cpa_7d) || 0,
+        spend_today: entity?.metrics?.today?.spend || parseFloat(rec.metrics?.spend_today) || 0,
+        frequency: entity?.metrics?.last_7d?.frequency || parseFloat(rec.metrics?.frequency) || 0,
+        ctr: entity?.metrics?.last_7d?.ctr || parseFloat(rec.metrics?.ctr) || 0
+      },
+      target_entity_id: rec.target_entity_id || null,
+      target_entity_name: rec.target_entity_name || null,
+      creative_asset_id: rec.creative_asset_id || null,
+      bid_strategy: rec.bid_strategy || null,
+      duplicate_name: rec.duplicate_name || null,
+      duplicate_strategy: rec.duplicate_strategy || null,
+      ad_name: rec.ad_name || null,
+      ad_headline: rec.ad_headline || null,
+      ad_primary_text: rec.ad_primary_text || null,
+      creative_rationale: rec.creative_rationale || null,
+      ads_to_pause: Array.isArray(rec.ads_to_pause) ? rec.ads_to_pause.filter(id => typeof id === 'string' && id.length > 0) : [],
+      status: 'pending'
+    };
+
+    // Calcular change_percent
+    if (['scale_up', 'scale_down'].includes(clean.action) && clean.current_value > 0) {
+      clean.change_percent = ((clean.recommended_value - clean.current_value) / clean.current_value) * 100;
+    }
+
+    return clean;
+  }
+
+  _validateAlert(alert) {
+    if (!alert || typeof alert !== 'object') return null;
+    return {
+      type_name: String(alert.type || alert.type_name || 'unknown'),
+      message: String(alert.message || 'Sin mensaje'),
+      severity: ['critical', 'warning', 'info'].includes(alert.severity) ? alert.severity : 'info'
+    };
+  }
+
+  _baseScoreFromConfidence(confidence) {
+    if (confidence === 'high') return 0.78;
+    if (confidence === 'medium') return 0.62;
+    return 0.48;
+  }
+
+  _applyStrategicDirectives(recs, directives) {
+    if (!directives || directives.length === 0) return recs;
+
+    return recs.map(rec => {
+      const matching = directives.filter(d =>
+        d.entity_id === rec.entity_id ||
+        (d.target_action && d.target_action === rec.action)
+      );
+
+      let scoreModifier = 0;
+      for (const d of matching) {
+        if (d.directive_type === 'protect') {
+          logger.info(`[BRAIN] Directive PROTECT: skip ${rec.entity_name}`);
+          return null;
+        }
+        if (d.directive_type === 'override' && d.target_action === rec.action) {
+          rec.policy_score = Math.max(rec.policy_score || 0, 0.90);
+          rec.reasoning = `[DIRECTIVE OVERRIDE] ${rec.reasoning}`;
+        }
+        if (d.directive_type === 'boost') {
+          scoreModifier += (d.score_modifier || 0.15);
+        }
+        if (d.directive_type === 'suppress') {
+          scoreModifier -= (d.score_modifier || 0.15);
+        }
+      }
+
+      if (scoreModifier !== 0) {
+        rec.policy_score = Math.max(0, Math.min(1, (rec.policy_score || 0) + scoreModifier));
+      }
+
+      return rec;
+    }).filter(Boolean);
+  }
+
+  _enrichWithPastImpact(recs, processedActions) {
+    if (!processedActions || processedActions.length === 0) return recs;
+
+    return recs.map(rec => {
+      // Buscar acciones pasadas en la misma entidad
+      const entityHistory = processedActions.filter(a => a.entity_id === rec.entity_id).slice(0, 3);
+
+      // Buscar acciones pasadas del mismo tipo de accion
+      const actionHistory = processedActions.filter(a => a.action === rec.action).slice(0, 3);
+
+      const pastImpact = [];
+
+      for (const h of entityHistory) {
+        const daysAgo = Math.round((Date.now() - new Date(h.executed_at).getTime()) / (1000 * 60 * 60 * 24));
+        pastImpact.push({
+          action: h.action,
+          result: h.result,
+          delta_roas_pct: h.delta_roas_pct,
+          days_ago: daysAgo,
+          source: 'entity'
+        });
+      }
+
+      // Agregar historial por tipo de accion si no hay suficiente historial de entidad
+      if (pastImpact.length < 3) {
+        for (const h of actionHistory) {
+          if (pastImpact.some(p => p.action === h.action && p.days_ago === Math.round((Date.now() - new Date(h.executed_at).getTime()) / (1000 * 60 * 60 * 24)))) continue;
+          const daysAgo = Math.round((Date.now() - new Date(h.executed_at).getTime()) / (1000 * 60 * 60 * 24));
+          pastImpact.push({
+            action: h.action,
+            result: h.result,
+            delta_roas_pct: h.delta_roas_pct,
+            days_ago: daysAgo,
+            source: 'action_type'
+          });
+          if (pastImpact.length >= 3) break;
+        }
+      }
+
+      rec.past_impact = pastImpact;
+      return rec;
+    });
+  }
+
+  /**
+   * Convierte recomendaciones del Brain para ad sets AI-managed en directivas estratégicas.
+   * El AI Manager lee estas directivas en su próximo ciclo y las incorpora en su decisión.
+   */
+  async _createDirectivesForAIManager(recs, cycleId) {
+    if (!recs || recs.length === 0) return 0;
+
+    let created = 0;
+    for (const rec of recs) {
+      try {
+        // Mapear acción del Brain a tipo de directiva
+        // Extended directive types for post-learning flow:
+        //   boost       → favor this action (scale, reactivate)
+        //   suppress    → disfavor (be conservative, don't scale)
+        //   protect     → don't touch this entity
+        //   override    → force this action
+        //   stabilize   → just exited learning, wait 3-7 days before acting
+        //   optimize_ads → clean up individual ads (pause bad ones, add fresh creatives)
+        //   rescue      → CTR is good but no conversions, try creative refresh before killing
+        let directiveType = 'boost';
+        let targetAction = 'any';
+
+        if (rec.action === 'pause') {
+          directiveType = 'suppress';
+          targetAction = 'scale_up';
+        } else if (rec.action === 'scale_down') {
+          directiveType = 'suppress';
+          targetAction = 'scale_up';
+        } else if (rec.action === 'scale_up') {
+          directiveType = 'boost';
+          targetAction = 'scale_up';
+        } else if (rec.action === 'reactivate') {
+          directiveType = 'boost';
+          targetAction = 'reactivate';
+        } else if (rec.action === 'optimize_ads' || rec.action === 'update_ad_status' || rec.action === 'create_ad') {
+          directiveType = 'optimize_ads';
+          targetAction = rec.action;
+        }
+
+        // Check for post-learning special cases
+        if (rec._post_learning_directive) {
+          directiveType = rec._post_learning_directive;
+          targetAction = rec._post_learning_target || targetAction;
+        }
+
+        // Score modifier basado en la confianza y policy_score del Brain
+        const scoreMod = rec.confidence === 'high' ? 0.3 : rec.confidence === 'medium' ? 0.2 : 0.1;
+
+        await StrategicDirective.create({
+          cycle_id: cycleId,
+          directive_type: directiveType,
+          entity_type: rec.entity_type || 'adset',
+          entity_id: rec.entity_id,
+          entity_name: rec.entity_name || '',
+          target_action: targetAction,
+          score_modifier: scoreMod,
+          reason: `[BRAIN→AI-MANAGER] ${rec.reasoning}`,
+          source_insight_type: 'brain_supervision',
+          confidence: rec.confidence || 'medium',
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000), // Expira en 24h
+          status: 'active'
+        });
+
+        created++;
+        logger.info(`[BRAIN] Directiva ${directiveType} creada para AI Manager: ${rec.action} en ${rec.entity_name} (${rec.entity_id})`);
+      } catch (err) {
+        logger.warn(`[BRAIN] Error creando directiva para ${rec.entity_id}: ${err.message}`);
+      }
+    }
+
+    if (created > 0) {
+      logger.info(`[BRAIN] ${created} directivas estratégicas creadas para AI Manager`);
+    }
+    return created;
+  }
+
+  async _expirePendingRecommendations() {
+    try {
+      const reports = await AgentReport.find({
+        agent_type: 'brain',
+        'recommendations.status': 'pending'
+      }).sort({ created_at: -1 });
+
+      let totalExpired = 0;
+      for (const report of reports) {
+        let modified = false;
+        for (const rec of report.recommendations) {
+          if (rec.status === 'pending' && rec.action !== 'no_action') {
+            rec.status = 'expired';
+            modified = true;
+            totalExpired++;
+          }
+        }
+        if (modified) await report.save();
+      }
+
+      if (totalExpired > 0) {
+        logger.info(`[BRAIN] Auto-expiradas ${totalExpired} recomendaciones pendientes`);
+      }
+    } catch (error) {
+      logger.warn(`[BRAIN] Error al expirar recomendaciones: ${error.message}`);
+    }
+  }
+
+  async _autoExecuteRecommendations(report) {
+    const autonomy = safetyGuards.autonomy || {};
+    const mode = autonomy.brain || autonomy.mode || 'manual';
+
+    if (mode === 'manual') return 0;
+
+    const maxChangePct = autonomy.max_auto_change_pct || 20;
+    let executed = 0;
+
+    const freshReport = await AgentReport.findOne({
+      agent_type: 'brain',
+      cycle_id: report.cycle_id
+    }).sort({ created_at: -1 });
+
+    if (!freshReport) return 0;
+
+    for (const rec of freshReport.recommendations) {
+      if (rec.status !== 'pending' || rec.action === 'no_action') continue;
+
+      let shouldExecute = false;
+
+      if (mode === 'auto') {
+        shouldExecute = true;
+      } else if (mode === 'semi_auto') {
+        const changePct = Math.abs(rec.change_percent || 0);
+        shouldExecute = rec.confidence === 'high' && changePct <= maxChangePct;
+
+        if (['pause', 'reactivate', 'update_ad_status'].includes(rec.action)) {
+          shouldExecute = rec.confidence === 'high';
+        }
+        if (['duplicate_adset', 'create_ad', 'update_ad_creative', 'move_budget', 'update_bid_strategy'].includes(rec.action)) {
+          shouldExecute = false;
+        }
+      }
+
+      if (!shouldExecute) continue;
+
+      try {
+        const cooldownManager = new CooldownManager();
+        const cooldownCheck = await cooldownManager.isOnCooldown(rec.entity_id);
+        if (cooldownCheck.onCooldown) {
+          logger.info(`[BRAIN][AUTO] Saltando ${rec.entity_name} — cooldown ${cooldownCheck.hoursLeft}h`);
+          continue;
+        }
+
+        const complexActions = ['duplicate_adset', 'create_ad', 'update_ad_creative', 'move_budget'];
+        if (complexActions.includes(rec.action)) continue;
+
+        const { getMetaClient } = require('../../meta/client');
+        const meta = getMetaClient();
+        let apiResponse;
+
+        switch (rec.action) {
+          case 'scale_up':
+          case 'scale_down':
+            apiResponse = await meta.updateBudget(rec.entity_id, rec.recommended_value);
+            break;
+          case 'pause':
+            apiResponse = await meta.updateStatus(rec.entity_id, 'PAUSED');
+            break;
+          case 'reactivate':
+            apiResponse = await meta.updateStatus(rec.entity_id, 'ACTIVE');
+            break;
+          case 'update_ad_status':
+            apiResponse = await meta.updateAdStatus(rec.entity_id, rec.recommended_value === 0 ? 'PAUSED' : 'ACTIVE');
+            break;
+          case 'update_bid_strategy':
+            apiResponse = await meta.updateBidStrategy(rec.entity_id, rec.bid_strategy, rec.recommended_value || null);
+            break;
+          default:
+            continue;
+        }
+
+        rec.status = 'executed';
+        rec.approved_by = `auto_${mode}`;
+        rec.approved_at = new Date();
+        rec.executed_at = new Date();
+        rec.execution_result = apiResponse;
+
+        // Capturar metricas al momento de ejecucion (FIX: buscar por tipo correcto)
+        let metricsAtExecution = {};
+        try {
+          const entityType = rec.entity_type || 'adset';
+          const lookupType = entityType === 'ad' ? 'adset' : entityType;
+          const snapshots = await getLatestSnapshots(lookupType);
+
+          // Para ads, buscar metricas del ad set padre
+          let entitySnapshot;
+          if (entityType === 'ad') {
+            const adSnaps = await getLatestSnapshots('ad');
+            const adSnap = adSnaps.find(s => s.entity_id === rec.entity_id);
+            const parentId = adSnap?.parent_id;
+            entitySnapshot = parentId
+              ? snapshots.find(s => s.entity_id === parentId)
+              : snapshots.find(s => s.entity_id === rec.entity_id);
+          } else {
+            entitySnapshot = snapshots.find(s => s.entity_id === rec.entity_id);
+          }
+
+          if (entitySnapshot) {
+            metricsAtExecution = {
+              roas_7d: entitySnapshot.metrics?.last_7d?.roas || 0,
+              roas_3d: entitySnapshot.metrics?.last_3d?.roas || 0,
+              cpa_7d: entitySnapshot.metrics?.last_7d?.cpa || 0,
+              spend_today: entitySnapshot.metrics?.today?.spend || 0,
+              spend_7d: entitySnapshot.metrics?.last_7d?.spend || 0,
+              daily_budget: entitySnapshot.daily_budget || 0,
+              purchases_7d: entitySnapshot.metrics?.last_7d?.purchases || 0,
+              purchase_value_7d: entitySnapshot.metrics?.last_7d?.purchase_value || 0,
+              frequency: entitySnapshot.metrics?.last_7d?.frequency || 0,
+              ctr: entitySnapshot.metrics?.last_7d?.ctr || 0
+            };
+          }
+        } catch (snapErr) {
+          logger.warn(`[BRAIN][AUTO] No se pudieron capturar metricas: ${snapErr.message}`);
+        }
+
+        await ActionLog.create({
+          decision_id: freshReport._id,
+          cycle_id: freshReport.cycle_id,
+          entity_type: rec.entity_type,
+          entity_id: rec.entity_id,
+          entity_name: rec.entity_name,
+          action: rec.action,
+          before_value: rec.current_value,
+          after_value: rec.recommended_value,
+          change_percent: rec.change_percent,
+          reasoning: `[BRAIN][AUTO_${mode.toUpperCase()}] ${rec.reasoning}`,
+          confidence: rec.confidence,
+          agent_type: 'brain',
+          success: true,
+          meta_api_response: apiResponse,
+          metrics_at_execution: metricsAtExecution
+        });
+
+        await cooldownManager.setCooldown(rec.entity_id, rec.entity_type, rec.action);
+
+        executed++;
+        logger.info(`[BRAIN][AUTO] Ejecutado: ${rec.action} en ${rec.entity_name}`);
+      } catch (execError) {
+        logger.error(`[BRAIN][AUTO] Error ejecutando ${rec.action} en ${rec.entity_name}: ${execError.message}`);
+      }
+    }
+
+    if (executed > 0) {
+      await freshReport.save();
+    }
+
+    return executed;
+  }
+}
+
+module.exports = UnifiedBrain;

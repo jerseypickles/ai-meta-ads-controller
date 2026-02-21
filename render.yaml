@@ -1,0 +1,56 @@
+services:
+  - type: web
+    name: ai-meta-ads-controller
+    runtime: node
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: node src/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: UPLOADS_DIR
+        value: /tmp/uploads
+      - key: META_APP_ID
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: META_ACCESS_TOKEN
+        sync: false
+      - key: META_AD_ACCOUNT_ID
+        sync: false
+      - key: META_API_VERSION
+        value: v21.0
+      - key: META_PAGE_ID
+        sync: false
+      - key: META_PIXEL_ID
+        sync: false
+      - key: META_DEFAULT_LINK_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CLAUDE_MODEL
+        value: claude-sonnet-4-5-20250929
+      - key: MONGODB_URI
+        sync: false
+      - key: DASHBOARD_PORT
+        value: "3500"
+      - key: DASHBOARD_SECRET
+        sync: false
+      - key: DASHBOARD_USER
+        sync: false
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: BFL_API_KEY
+        sync: false
+      - key: FREEPIK_API_KEY
+        sync: false
+      - key: BRAVE_SEARCH_API_KEY
+        sync: false
+      - key: SERP_API_KEY
+        sync: false
+      - key: TIMEZONE
+        value: America/New_York
+      - key: LOG_LEVEL
+        value: info

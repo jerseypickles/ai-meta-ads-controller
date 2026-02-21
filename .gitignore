@@ -1,0 +1,9 @@
+node_modules/
+.env
+logs/
+*.log
+coverage/
+.DS_Store
+uploads/
+src/dashboard/frontend/dist/
+src/dashboard/frontend/node_modules/
