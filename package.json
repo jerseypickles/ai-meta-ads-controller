@@ -7,7 +7,7 @@
     "start": "node src/index.js",
     "dev": "nodemon --legacy-watch --watch src --ext js,json --ignore node_modules --ignore src/dashboard/frontend/node_modules --ignore src/dashboard/frontend/dist src/index.js",
     "dashboard": "node src/dashboard/server.js",
-    "build": "cd src/dashboard/frontend && npm install && npm run build",
+    "build": "cd src/dashboard/frontend && npm install --include=dev && npx vite build",
     "test": "jest --coverage",
     "test:watch": "jest --watch",
     "test:connection": "node scripts/test-connection.js",
