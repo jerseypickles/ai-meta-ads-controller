@@ -434,7 +434,7 @@ const ProposalCard = ({ idx, proposal, isApproving, isApproved, isRejected, appr
   useEffect(() => {
     if (isApproved && approveResult?.ai_creation_id) {
       fetchLiveStatus();
-      const interval = setInterval(fetchLiveStatus, 120000); // refresh every 2 min
+      const interval = setInterval(fetchLiveStatus, 300000); // 5 min (reads from DB)
       return () => clearInterval(interval);
     }
   }, [isApproved, approveResult, fetchLiveStatus]);
@@ -931,7 +931,7 @@ const ManagerTab = () => {
 
   useEffect(() => {
     fetchStatus();
-    const interval = setInterval(() => fetchStatus(false), 120000);
+    const interval = setInterval(() => fetchStatus(false), 300000); // 5 min (reads from DB, no API calls)
     return () => clearInterval(interval);
   }, [fetchStatus]);
 

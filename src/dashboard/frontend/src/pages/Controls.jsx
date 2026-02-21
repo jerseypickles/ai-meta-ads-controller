@@ -41,8 +41,8 @@ const Controls = () => {
 
   useEffect(() => {
     loadControlsData();
-    // Auto-refresh cada 10 segundos
-    const interval = setInterval(loadControlsData, 10000);
+    // Auto-refresh cada 60 segundos
+    const interval = setInterval(loadControlsData, 60000);
     return () => clearInterval(interval);
   }, []);
 

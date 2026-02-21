@@ -159,7 +159,7 @@ const AgentsPage = () => {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 30000);
+    const interval = setInterval(fetchData, 120000); // 2 min (was 30s)
     return () => clearInterval(interval);
   }, [fetchData]);
 

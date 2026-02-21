@@ -16,6 +16,10 @@ class MetaClient {
     this.baseUrl = `https://graph.facebook.com/${this.apiVersion}`;
     this._tokenLoaded = false;
 
+    // In-memory cache for insights (TTL 5 min) to avoid redundant API calls
+    this._insightsCache = new Map();
+    this._insightsCacheTTL = 5 * 60 * 1000; // 5 minutes
+
     // Rate limiter: 200 llamadas/hora = ~3.3/min — usamos 3/min con margen
     this.limiter = new Bottleneck({
       reservoir: 200,
@@ -304,9 +308,25 @@ class MetaClient {
       insightParams.time_range = JSON.stringify({ since: today, until: today });
     }
 
+    // Check cache first
+    const cacheKey = `${objectId}:${JSON.stringify(insightParams)}`;
+    const cached = this._insightsCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < this._insightsCacheTTL) {
+      return cached.data;
+    }
+
     try {
       const data = await this.get(`/${objectId}/insights`, insightParams);
-      return data.data || [];
+      const result = data.data || [];
+      this._insightsCache.set(cacheKey, { data: result, ts: Date.now() });
+      // Prune old cache entries periodically
+      if (this._insightsCache.size > 500) {
+        const now = Date.now();
+        for (const [k, v] of this._insightsCache) {
+          if (now - v.ts > this._insightsCacheTTL) this._insightsCache.delete(k);
+        }
+      }
+      return result;
     } catch (error) {
       // Si no hay datos para el período, Meta devuelve un error o array vacío
       if (error.response?.status === 400) {

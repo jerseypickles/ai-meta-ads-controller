@@ -108,7 +108,7 @@ const Sidebar = ({ collapsed, onToggle }) => {
     };
 
     fetchControlsStatus();
-    const interval = setInterval(fetchControlsStatus, 30000);
+    const interval = setInterval(fetchControlsStatus, 120000); // 2 min (was 30s)
     return () => clearInterval(interval);
   }, []);
 

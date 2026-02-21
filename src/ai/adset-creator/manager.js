@@ -6,6 +6,7 @@ const CreativeAsset = require('../../db/models/CreativeAsset');
 const ActionLog = require('../../db/models/ActionLog');
 const { getMetaClient } = require('../../meta/client');
 const { getLatestSnapshots, getAdsForAdSet } = require('../../db/queries');
+const MetricSnapshot = require('../../db/models/MetricSnapshot');
 const StrategicDirective = require('../../db/models/StrategicDirective');
 
 const client = new Anthropic({ apiKey: config.claude.apiKey });
@@ -919,178 +920,138 @@ async function getManagerStatus() {
 }
 
 /**
- * Get enriched status with LIVE metrics from Meta API
- * Fetches real-time ad set metrics, individual ad performance, and campaign metrics
+ * Get enriched status with metrics from MongoDB snapshots (zero Meta API calls).
+ * Data is refreshed every 10 min by the DataCollector cron job.
  */
 async function getManagerStatusLive() {
-  logger.info('[AI-MANAGER-LIVE] Fetching live manager status...');
+  logger.info('[AI-MANAGER-LIVE] Fetching manager status from MongoDB snapshots...');
   const managed = await getManagerStatus();
   if (managed.length === 0) {
     logger.info('[AI-MANAGER-LIVE] No managed ad sets found');
     return { managed: [], campaign: null };
   }
 
-  logger.info(`[AI-MANAGER-LIVE] Found ${managed.length} managed ad sets, fetching Meta API data...`);
+  logger.info(`[AI-MANAGER-LIVE] Found ${managed.length} managed ad sets, reading from DB...`);
 
-  let meta;
-  try {
-    meta = getMetaClient();
-  } catch (e) {
-    logger.warn(`[AI-MANAGER-LIVE] Cannot get Meta client: ${e.message} — returning DB data only`);
-    return { managed, campaign: null };
-  }
-
-  const now = new Date();
-  const since7d = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-  const since3d = new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-  const today = now.toISOString().split('T')[0];
-
-  // Fetch campaign metrics (from first managed ad set's parent)
+  // Fetch campaign metrics from latest snapshot
   let campaignMetrics = null;
   const campaignId = managed[0]?.parent_entity_id;
   if (campaignId) {
-    try {
-      const campInsights = await meta.getInsights(campaignId, {
-        time_range: JSON.stringify({ since: since7d, until: today }),
-        fields: 'spend,impressions,inline_link_clicks,inline_link_click_ctr,actions,action_values,reach,frequency'
-      });
-      const ci = campInsights[0] || {};
-      const campPurchases = (ci.actions || []).find(a => a.action_type === 'purchase')?.value || 0;
-      const campPurchaseVal = (ci.action_values || []).find(a => a.action_type === 'purchase')?.value || 0;
-      const campSpend = parseFloat(ci.spend || 0);
+    const campSnap = await MetricSnapshot.findOne({ entity_type: 'campaign', entity_id: campaignId })
+      .sort({ snapshot_at: -1 }).lean();
+    if (campSnap) {
+      const m7 = campSnap.metrics?.last_7d || {};
       campaignMetrics = {
         campaign_id: campaignId,
-        campaign_name: managed[0]?.parent_entity_name || '',
-        spend: campSpend,
-        impressions: parseInt(ci.impressions || 0),
-        clicks: parseInt(ci.inline_link_clicks || 0),
-        ctr: parseFloat(ci.inline_link_click_ctr || 0),
-        reach: parseInt(ci.reach || 0),
-        frequency: parseFloat(ci.frequency || 0),
-        purchases: parseInt(campPurchases),
-        purchase_value: parseFloat(campPurchaseVal),
-        roas: campSpend > 0 ? Math.round(parseFloat(campPurchaseVal) / campSpend * 100) / 100 : 0
+        campaign_name: campSnap.entity_name || managed[0]?.parent_entity_name || '',
+        spend: m7.spend || 0,
+        impressions: m7.impressions || 0,
+        clicks: m7.clicks || 0,
+        ctr: m7.ctr || 0,
+        reach: m7.reach || 0,
+        frequency: m7.frequency || 0,
+        purchases: m7.purchases || 0,
+        purchase_value: m7.purchase_value || 0,
+        roas: m7.roas || 0,
+        snapshot_age_min: Math.round((Date.now() - new Date(campSnap.snapshot_at).getTime()) / 60000)
       };
-      logger.info(`[AI-MANAGER-LIVE] Campaign ${campaignId}: spend=$${campSpend}, ROAS=${campaignMetrics.roas}`);
-    } catch (e) {
-      logger.warn(`[AI-MANAGER-LIVE] No campaign insights for ${campaignId}: ${e.message}`);
+      logger.info(`[AI-MANAGER-LIVE] Campaign ${campaignId}: spend=$${campaignMetrics.spend}, ROAS=${campaignMetrics.roas}`);
     }
   }
 
-  // Helper to parse insights response into a metrics object
-  const parseInsights = (ins, full = false) => {
-    const purchases = (ins.actions || []).find(a => a.action_type === 'purchase')?.value || 0;
-    const purchaseVal = (ins.action_values || []).find(a => a.action_type === 'purchase')?.value || 0;
-    const spend = parseFloat(ins.spend || 0);
-    const base = {
-      spend,
-      impressions: parseInt(ins.impressions || 0),
-      clicks: parseInt(ins.inline_link_clicks || 0),
-      ctr: parseFloat(ins.inline_link_click_ctr || 0),
-      frequency: parseFloat(ins.frequency || 0),
-      purchases: parseInt(purchases),
-      purchase_value: parseFloat(purchaseVal),
-      roas: spend > 0 ? Math.round(parseFloat(purchaseVal) / spend * 100) / 100 : 0
-    };
-    if (full) {
-      base.cpm = parseFloat(ins.cpm || 0);
-      base.cpc = parseFloat(ins.cost_per_inline_link_click || 0);
-      base.reach = parseInt(ins.reach || 0);
-      base.cpa = spend > 0 && parseInt(purchases) > 0 ? Math.round(spend / parseInt(purchases) * 100) / 100 : 0;
-    }
-    return base;
-  };
-
-  // Enrich ALL ad sets in parallel to avoid sequential timeout
-  let liveSuccessCount = 0;
-  let liveFailCount = 0;
-
+  // Enrich ad sets from MongoDB snapshots — zero API calls
   const enriched = await Promise.all(managed.map(async (item) => {
     const adSetId = item.adset_id;
-    let liveMetrics = null;
-    let liveMetrics3d = null;
+
+    // Get latest adset snapshot
+    const adSetSnap = await MetricSnapshot.findOne({ entity_type: 'adset', entity_id: adSetId })
+      .sort({ snapshot_at: -1 }).lean();
+
+    const m7 = adSetSnap?.metrics?.last_7d || {};
+    const m3 = adSetSnap?.metrics?.last_3d || {};
+
+    const liveMetrics = adSetSnap ? {
+      spend: m7.spend || 0,
+      impressions: m7.impressions || 0,
+      clicks: m7.clicks || 0,
+      ctr: m7.ctr || 0,
+      cpm: m7.cpm || 0,
+      cpc: m7.cpc || 0,
+      reach: m7.reach || 0,
+      frequency: m7.frequency || 0,
+      purchases: m7.purchases || 0,
+      purchase_value: m7.purchase_value || 0,
+      roas: m7.roas || 0,
+      cpa: m7.cpa || 0
+    } : null;
+
+    const liveMetrics3d = adSetSnap ? {
+      spend: m3.spend || 0,
+      impressions: m3.impressions || 0,
+      clicks: m3.clicks || 0,
+      ctr: m3.ctr || 0,
+      frequency: m3.frequency || 0,
+      purchases: m3.purchases || 0,
+      purchase_value: m3.purchase_value || 0,
+      roas: m3.roas || 0
+    } : null;
+
+    // Get ads from MongoDB snapshots
+    const adSnapshots = await getAdsForAdSet(adSetId);
     let adsPerformance = [];
 
-    try {
-      // Fetch 7d, 3d, and ads list concurrently for each ad set
-      const [insights7d, insights3d, ads] = await Promise.all([
-        meta.getInsights(adSetId, {
-          time_range: JSON.stringify({ since: since7d, until: today }),
-          fields: 'spend,impressions,cpm,inline_link_clicks,inline_link_click_ctr,cost_per_inline_link_click,actions,action_values,cost_per_action_type,reach,frequency'
-        }).catch(() => []),
-        meta.getInsights(adSetId, {
-          time_range: JSON.stringify({ since: since3d, until: today }),
-          fields: 'spend,impressions,inline_link_clicks,inline_link_click_ctr,actions,action_values,frequency'
-        }).catch(() => []),
-        meta.getAds(adSetId).catch(() => [])
-      ]);
+    if (adSnapshots.length > 0) {
+      adsPerformance = await Promise.all(adSnapshots.map(async (adSnap) => {
+        const am7 = adSnap.metrics?.last_7d || {};
 
-      // Parse ad set 7d
-      if (insights7d.length > 0) {
-        liveMetrics = parseInsights(insights7d[0], true);
-        liveSuccessCount++;
-        logger.debug(`[AI-MANAGER-LIVE] Ad set ${adSetId} 7d: spend=$${liveMetrics.spend}, ROAS=${liveMetrics.roas}`);
-      } else {
-        liveFailCount++;
-      }
-
-      // Parse ad set 3d
-      if (insights3d.length > 0) {
-        liveMetrics3d = parseInsights(insights3d[0]);
-      }
-
-      // Fetch individual ad insights in parallel
-      if (ads.length > 0) {
-        const adResults = await Promise.all(
-          ads.map(async (ad) => {
-            const adIns = await meta.getInsights(ad.id, {
-              time_range: JSON.stringify({ since: since7d, until: today }),
-              fields: 'spend,impressions,inline_link_clicks,inline_link_click_ctr,actions,action_values,frequency'
-            }).catch(() => []);
-            const adMetrics = adIns.length > 0 ? parseInsights(adIns[0]) : null;
-
-            // Try to find matching creative asset
-            const matchedAssetId = item.selected_creative_ids?.[item.child_ad_ids?.indexOf(ad.id)] || null;
-            let assetInfo = null;
-            if (matchedAssetId) {
-              try {
-                const asset = await CreativeAsset.findById(matchedAssetId).lean();
-                if (asset) {
-                  assetInfo = {
-                    asset_id: asset._id.toString(),
-                    filename: asset.filename,
-                    style: asset.style,
-                    headline: asset.headline || asset.original_name
-                  };
-                }
-              } catch (e) { /* ok */ }
+        // Try to find matching creative asset
+        const adIndex = item.child_ad_ids?.indexOf(adSnap.entity_id);
+        const matchedAssetId = adIndex >= 0 ? item.selected_creative_ids?.[adIndex] : null;
+        let assetInfo = null;
+        if (matchedAssetId) {
+          try {
+            const asset = await CreativeAsset.findById(matchedAssetId).lean();
+            if (asset) {
+              assetInfo = {
+                asset_id: asset._id.toString(),
+                filename: asset.filename,
+                style: asset.style,
+                headline: asset.headline || asset.original_name
+              };
             }
+          } catch (e) { /* ok */ }
+        }
 
-            return {
-              ad_id: ad.id,
-              ad_name: ad.name,
-              status: ad.effective_status,
-              metrics: adMetrics,
-              asset: assetInfo
-            };
-          })
-        );
-        adsPerformance = adResults;
-      }
-    } catch (e) {
-      liveFailCount++;
-      logger.warn(`[AI-MANAGER-LIVE] Error enriching ad set ${adSetId}: ${e.message}`);
+        return {
+          ad_id: adSnap.entity_id,
+          ad_name: adSnap.entity_name,
+          status: adSnap.status,
+          metrics: {
+            spend: am7.spend || 0,
+            impressions: am7.impressions || 0,
+            clicks: am7.clicks || 0,
+            ctr: am7.ctr || 0,
+            frequency: am7.frequency || 0,
+            purchases: am7.purchases || 0,
+            purchase_value: am7.purchase_value || 0,
+            roas: am7.roas || 0
+          },
+          asset: assetInfo
+        };
+      }));
     }
 
     return {
       ...item,
       live_metrics_7d: liveMetrics,
       live_metrics_3d: liveMetrics3d,
-      ads_performance: adsPerformance
+      ads_performance: adsPerformance,
+      snapshot_age_min: adSetSnap ? Math.round((Date.now() - new Date(adSetSnap.snapshot_at).getTime()) / 60000) : null
     };
   }));
 
-  logger.info(`[AI-MANAGER-LIVE] Done. ${liveSuccessCount} ad sets with live data, ${liveFailCount} failed. Campaign: ${campaignMetrics ? 'OK' : 'N/A'}`);
+  const withData = enriched.filter(e => e.live_metrics_7d);
+  logger.info(`[AI-MANAGER-LIVE] Done. ${withData.length} ad sets with data (0 API calls). Campaign: ${campaignMetrics ? 'OK' : 'N/A'}`);
   return { managed: enriched, campaign: campaignMetrics };
 }
 
