@@ -5,8 +5,8 @@
 
 import axios from 'axios';
 
-// Configurar base URL desde variables de entorno o localhost:3500
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3500';
+// Configurar base URL: en producción usa URL relativa (mismo dominio), en dev usa localhost:3500
+const BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
 
 // Crear instancia de Axios
 const api = axios.create({
