@@ -104,27 +104,6 @@ Return ONLY valid JSON, nothing else.`
 }
 
 /**
- * POST /api/creatives/restore
- * Restaurar archivo de un creative existente (migración a Render).
- * Solo guarda el archivo en el path correcto, no crea nuevo document.
- */
-router.post('/restore', upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file || !req.body.target_filename) {
-      return res.status(400).json({ error: 'file y target_filename requeridos' });
-    }
-    const targetDir = path.join(config.system.uploadsDir, 'creatives');
-    if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
-    const targetPath = path.join(targetDir, req.body.target_filename);
-    fs.renameSync(req.file.path, targetPath);
-    res.json({ success: true, path: targetPath });
-  } catch (error) {
-    logger.error('Error en restore:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-/**
  * POST /api/creatives/upload
  * Subir un creative (imagen o video) con metadata.
  * Si es imagen, Claude Vision detecta el producto automáticamente en background.
