@@ -140,15 +140,21 @@ You may receive "brain_directives" — these come from the Brain, a strategic AI
 
 When brain_directives are present:
 - "boost" + "scale_up" → Brain sees this ad set has room to grow in the account context. Scale if metrics support it.
-- "suppress" + "scale_up" → Brain sees risk (e.g. account is over-concentrated, ROAS dropping globally). Be conservative.
-- "override" + "pause" → Brain has determined this ad set must be killed. This is MANDATORY — the system will kill it automatically before you even see this. If you receive this, confirm the kill in your assessment.
+- "suppress" + "scale_up" → Brain sees risk (e.g. account is over-concentrated, ROAS dropping globally). Be conservative. Do NOT scale up.
+- "suppress" + "pause" → Brain recommends pausing this ad set. This is a STRONG signal — you MUST act on it. But act INTELLIGENTLY:
+  * FIRST: Analyze each ad individually. If any ad has purchases and positive ROAS, that ad has value.
+  * If ALL ads are dead (0 purchases each, or very low CTR < 0.3%): kill_adset entirely.
+  * If SOME ads are performing but others are dead: pause the dead ads, keep the winners. Optionally add fresh creatives to replace the paused ones. Consider reducing budget if overall ROAS is weak.
+  * If ONE ad carries all the weight: pause the others, keep that one, add fresh creatives to test alongside it.
+  * The Brain sees global metrics but NOT individual ad performance — YOU have that data. Use it to make the right granular decision.
+  * NEVER ignore a "suppress + pause" directive. You must take at least one action (pause_ad, kill_adset, or scale_budget down).
 - "boost" + "reactivate" → Brain thinks this ad set should come back. Consider reactivating.
 - "stabilize" → Ad set just exited learning phase. DO NOT scale or kill for 3-7 days. Let Meta's algorithm stabilize. Only pause individual ads that are clearly dead ($20+ spend, 0 purchases, CTR < 0.3%).
 - "optimize_ads" → Clean up underperforming ads in this ad set (even if overall ROAS is good). Pause ads with 0 purchases + $20+ spend, or CTR < 0.5% + 1000+ impressions. Add fresh creatives to replace paused ones. This applies to ALL ad sets — winners benefit from cleaning up bad ads too.
 - "rescue" → This ad set has good engagement (CTR > 0.8%) but zero conversions. The audience is interested but not buying. Try different creative styles/angles before killing. Pause the weakest 2-3 ads and replace with fresh creatives from different styles than what's running.
 - Other combinations → Use the "reason" field to understand the Brain's intent.
 
-You MUST mention Brain directives in your assessment and explain how they influenced your decision.
+You MUST mention Brain directives in your assessment and explain how they influenced your decision. If a directive says "suppress + pause", you MUST take action — doing nothing is NOT acceptable.
 
 IMPORTANT:
 - Return ONLY valid JSON, no markdown fences
@@ -467,63 +473,6 @@ async function manageAdSet(creation) {
     }
   } catch (e) {
     logger.warn(`[AI-MANAGER] Error cargando directivas del Brain: ${e.message}`);
-  }
-
-  // ═══ OVERRIDE DIRECTIVES: execute mandatory actions BEFORE Claude call ═══
-  const overrideDirective = brainDirectives.find(d => d.type === 'override' && d.target_action === 'pause');
-  if (overrideDirective) {
-    logger.info(`[AI-MANAGER] OVERRIDE directive: killing ${adSetId} — ${overrideDirective.reason}`);
-    try {
-      await meta.updateStatus(adSetId, 'PAUSED');
-      creation.current_status = 'PAUSED';
-      creation.lifecycle_phase = 'dead';
-      creation.lifecycle_actions.push({
-        action: 'kill',
-        value: null,
-        reason: `[BRAIN OVERRIDE] ${overrideDirective.reason}`,
-        executed_at: new Date()
-      });
-      await creation.save();
-
-      const metricsAtExecution = {
-        roas_7d: Math.round(adSetRoas * 100) / 100,
-        roas_3d: Math.round(roas3d * 100) / 100,
-        cpa_7d: adSetSpend > 0 && adSetPurchases > 0 ? Math.round(adSetSpend / adSetPurchases * 100) / 100 : 0,
-        spend_7d: adSetSpend,
-        daily_budget: creation.current_budget || creation.initial_budget,
-        purchases_7d: adSetPurchases,
-        frequency: adSetFrequency,
-        ctr: m7d.ctr || 0
-      };
-
-      await ActionLog.create({
-        entity_type: 'adset',
-        entity_id: adSetId,
-        entity_name: creation.meta_entity_name,
-        campaign_id: creation.parent_entity_id || '',
-        campaign_name: creation.parent_entity_name || '',
-        action: 'pause',
-        before_value: 'ACTIVE',
-        after_value: 'KILLED',
-        reasoning: `[BRAIN OVERRIDE] ${overrideDirective.reason}`,
-        confidence: 'high',
-        agent_type: 'ai_manager',
-        success: true,
-        executed_at: new Date(),
-        metrics_at_execution: metricsAtExecution
-      });
-
-      // Mark directive as applied
-      await StrategicDirective.updateMany(
-        { entity_id: adSetId, directive_type: 'override', status: 'active' },
-        { $set: { status: 'applied' }, $inc: { applied_count: 1 } }
-      );
-
-      logger.info(`[AI-MANAGER] ${adSetId}: KILLED by Brain override — ${overrideDirective.reason}`);
-      return { actionsExecuted: 1, assessment: `[BRAIN OVERRIDE] Ad set killed: ${overrideDirective.reason}`, frequency_status: 'killed', performance_trend: 'declining', needs_new_creatives: false };
-    } catch (overrideErr) {
-      logger.error(`[AI-MANAGER] Error executing override for ${adSetId}: ${overrideErr.message}`);
-    }
   }
 
   // Build context for Claude
