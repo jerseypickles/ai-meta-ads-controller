@@ -452,7 +452,7 @@ router.get('/manager/control-panel', async (req, res) => {
 
     // --- Cycle timing ---
     // Brain: runs at :15 and :45 every hour
-    // AI Manager: runs at 0 */8 (0:00, 8:00, 16:00)
+    // AI Manager: runs at 0 */4 (0:00, 4:00, 8:00, 12:00, 16:00, 20:00)
     const lastBrainDecision = await Decision.findOne()
       .sort({ created_at: -1 })
       .select('created_at cycle_id analysis_summary total_actions approved_actions executed_actions')
@@ -478,9 +478,9 @@ router.get('/manager/control-panel', async (req, res) => {
       nextBrain.setMinutes(nextBrainMinute, 0, 0);
     }
 
-    // Calculate next AI Manager cycle (0, 8, 16)
+    // Calculate next AI Manager cycle (0, 4, 8, 12, 16, 20)
     const currentHour = now.getHours();
-    const managerHours = [0, 8, 16];
+    const managerHours = [0, 4, 8, 12, 16, 20];
     let nextManagerHour = managerHours.find(h => h > currentHour);
     const nextManager = new Date(now);
     if (nextManagerHour === undefined) {
@@ -562,7 +562,7 @@ router.get('/manager/control-panel', async (req, res) => {
         manager: {
           last_run: lastManagerRun?.last_check || lastManagerRun?.updated_at || null,
           next_run: nextManager.toISOString(),
-          schedule: 'Cada 8 horas (0:00, 8:00, 16:00)'
+          schedule: 'Cada 4 horas (0:00, 4:00, 8:00, 12:00, 16:00, 20:00)'
         }
       },
       directives: directivesByAdSet,

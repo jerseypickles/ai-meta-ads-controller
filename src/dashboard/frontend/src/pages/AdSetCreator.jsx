@@ -598,7 +598,7 @@ const ProposalCard = ({ idx, proposal, isApproving, isApproved, isRejected, appr
                 padding: '20px', textAlign: 'center', fontSize: '11px', color: '#4b5563',
                 backgroundColor: '#0d1117', borderRadius: '8px', border: '1px solid #1f2937'
               }}>
-                El Manager revisara este ad set automaticamente cada 8 horas. Durante learning phase no tomara acciones.
+                El Manager revisara este ad set automaticamente cada 4 horas. Durante learning phase no tomara acciones.
               </div>
             )}
 
@@ -1058,7 +1058,7 @@ const ManagerTab = () => {
               </div>
             </div>
             <div style={{ fontSize: '9px', color: '#4b5563' }}>
-              {cp?.cycles?.manager?.schedule || 'Cada 8 horas (0:00, 8:00, 16:00)'}
+              {cp?.cycles?.manager?.schedule || 'Cada 4 horas (0:00, 4:00, 8:00, 12:00, 16:00, 20:00)'}
             </div>
           </div>
         </div>

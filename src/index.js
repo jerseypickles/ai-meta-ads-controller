@@ -492,12 +492,12 @@ function initCronJobs() {
   });
   logger.info('  [*] Medición de impacto — cada 2 horas');
 
-  // Cada 8 horas: AI Manager autónomo (ad sets creados por Claude)
-  cron.schedule('0 */8 * * *', jobAIManager, {
+  // Cada 4 horas: AI Manager autónomo (ad sets creados por Claude)
+  cron.schedule('0 */4 * * *', jobAIManager, {
     timezone: TIMEZONE,
     name: 'ai-manager'
   });
-  logger.info('  [*] AI Manager autónomo — cada 8 horas (horas activas)');
+  logger.info('  [*] AI Manager autónomo — cada 4 horas (horas activas)');
 
   // Cada 6 horas: Sync de métricas de creativos (después de data collection)
   cron.schedule('30 */6 * * *', jobCreativeMetricsSync, {
