@@ -806,6 +806,15 @@ export const getManagerControlPanel = async () => {
 };
 
 // ============================================
+// AI OPS (Operations Dashboard)
+// ============================================
+
+export const getAIOpsStatus = async () => {
+  const response = await api.get('/api/ai-ops/status', { timeout: 60000 });
+  return response.data;
+};
+
+// ============================================
 // AI CREATIONS
 // ============================================
 

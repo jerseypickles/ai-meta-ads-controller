@@ -11,7 +11,8 @@ import {
   Menu,
   X,
   Palette,
-  Rocket
+  Rocket,
+  Activity
 } from 'lucide-react';
 import { getToken, getControlsStatus } from './api';
 import Login from './pages/Login';
@@ -24,6 +25,7 @@ import AgentsPage from './pages/Agents';
 import CreativeBank from './pages/CreativeBank';
 import AdSetCreator from './pages/AdSetCreator';
 import ImpactReport from './pages/ImpactReport';
+import AIOps from './pages/AIOps';
 
 // AuthContext
 const AuthContext = createContext();
@@ -116,6 +118,7 @@ const Sidebar = ({ collapsed, onToggle }) => {
     { path: '/', icon: LayoutDashboard, label: 'Resumen' },
     { path: '/adsets', icon: Layers, label: 'Ad Sets' },
     { path: '/agents', icon: Bot, label: 'Centro IA' },
+    { path: '/ai-ops', icon: Activity, label: 'AI Ops' },
     { path: '/creatives', icon: Palette, label: 'Banco Creativo' },
     { path: '/adset-creator', icon: Rocket, label: 'Crear Ad Set' },
     { path: '/impact', icon: BarChart3, label: 'Impacto' },
@@ -377,6 +380,16 @@ function App() {
               <ProtectedRoute>
                 <DashboardLayout>
                   <AdSetCreator />
+                </DashboardLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/ai-ops"
+            element={
+              <ProtectedRoute>
+                <DashboardLayout>
+                  <AIOps />
                 </DashboardLayout>
               </ProtectedRoute>
             }
