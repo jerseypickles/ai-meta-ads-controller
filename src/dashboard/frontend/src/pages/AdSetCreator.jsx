@@ -82,9 +82,7 @@ const ACTION_COLORS = {
 // =============================================
 
 const AdSetCreator = () => {
-  const [activeTab, setActiveTab] = useState('create');
-
-  // Create tab state (lifted here to persist)
+  // Create tab state
   const [loading, setLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null); // full result with diagnosis + proposals[]
   const [approvedResults, setApprovedResults] = useState({}); // { proposalIdx: result }
@@ -103,14 +101,8 @@ const AdSetCreator = () => {
         </p>
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: '2px', marginBottom: '20px', backgroundColor: '#0d1117', borderRadius: '10px', padding: '3px', border: '1px solid #1f2937' }}>
-        <TabButton active={activeTab === 'create'} onClick={() => setActiveTab('create')} icon={Sparkles} label="Crear Ad Set" />
-        <TabButton active={activeTab === 'manager'} onClick={() => setActiveTab('manager')} icon={Activity} label="AI Manager" />
-      </div>
-
-      {/* Use display:none instead of conditional render to persist state */}
-      <div style={{ display: activeTab === 'create' ? 'block' : 'none' }}>
+      {/* Content — single tab now, AI Manager moved to /ai-ops */}
+      <div>
         <CreateTab
           loading={loading}
           setLoading={setLoading}
@@ -121,9 +113,6 @@ const AdSetCreator = () => {
           approvingIdx={approvingIdx}
           setApprovingIdx={setApprovingIdx}
         />
-      </div>
-      <div style={{ display: activeTab === 'manager' ? 'block' : 'none' }}>
-        <ManagerTab />
       </div>
     </div>
   );

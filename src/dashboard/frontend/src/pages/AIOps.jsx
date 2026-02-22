@@ -322,7 +322,7 @@ const TimelineEvent = ({ event }) => {
           <span style={{ fontSize: '10px', fontWeight: '700', color: cfg.color, textTransform: 'uppercase' }}>{cfg.label}</span>
           <span style={{ fontSize: '12px', fontWeight: '600', color: '#e5e7eb' }}>{event.entity_name}</span>
           <span style={{ fontSize: '11px', color: '#9ca3af' }}>{event.action}</span>
-          {event.change && <span style={{ fontSize: '11px', color: event.change.startsWith('+') ? '#22c55e' : '#ef4444', fontWeight: '600' }}>{event.change}</span>}
+          {event.change && <span style={{ fontSize: '11px', color: String(event.change).startsWith('+') ? '#22c55e' : '#ef4444', fontWeight: '600' }}>{event.change}</span>}
           {event.urgency && event.urgency !== 'medium' && (
             <span style={{
               fontSize: '9px', fontWeight: '700', padding: '1px 5px', borderRadius: '3px',
@@ -394,9 +394,15 @@ export default function AIOps() {
     try {
       setError(null);
       const result = await getAIOpsStatus();
-      setData(result);
+      if (result && result.ai_manager) {
+        setData(result);
+      } else if (result && result.error) {
+        setError(result.error);
+      } else {
+        setData(result || {});
+      }
     } catch (err) {
-      setError(err.message);
+      setError(err?.response?.data?.error || err.message || 'Unknown error');
     } finally {
       setLoading(false);
     }
@@ -437,6 +443,23 @@ export default function AIOps() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: '#6b7280' }}>
         <RefreshCw size={20} style={{ animation: 'spin 1s linear infinite' }} />
         <span style={{ marginLeft: '10px' }}>Loading AI Operations...</span>
+      </div>
+    );
+  }
+
+  if (!data && error) {
+    return (
+      <div style={{ maxWidth: '1400px' }}>
+        <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#fff', margin: '0 0 16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <Activity size={22} color="#3b82f6" /> AI Operations
+        </h1>
+        <div style={{ padding: '20px', backgroundColor: '#7f1d1d', border: '1px solid #dc2626', borderRadius: '12px', color: '#fca5a5', fontSize: '14px' }}>
+          Error loading data: {error}
+          <button onClick={() => { setLoading(true); fetchData(); }} style={{
+            marginLeft: '16px', padding: '6px 12px', borderRadius: '6px', border: '1px solid #dc2626',
+            backgroundColor: '#991b1b', color: '#fca5a5', cursor: 'pointer', fontSize: '12px'
+          }}>Retry</button>
+        </div>
       </div>
     );
   }

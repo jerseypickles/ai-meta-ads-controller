@@ -290,8 +290,8 @@ router.get('/status', async (req, res) => {
         timestamp: s.created_at,
         entity_name: s.entity_name || s.entity_id || 'System',
         entity_id: s.entity_id || '',
-        action: s.event_type,
-        detail: s.reason || s.details || ''
+        action: s.event_type || 'unknown',
+        detail: s.description || (typeof s.details === 'string' ? s.details : '') || ''
       });
     }
 
