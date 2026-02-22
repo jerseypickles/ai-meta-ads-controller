@@ -23,14 +23,14 @@ SCROLL-STOPPING POWER (0-25 points):
 - Does this image make someone STOP scrolling in their feed?
 - Pattern interrupt: does it look different from typical feed content?
 - Visual contrast and composition that catches the eye
-- "Ugly ads" that look like organic content often outperform polished ones because they don't trigger "ad blindness"
+- Organic-style ads that look like real content often outperform polished ones because they don't trigger "ad blindness"
 
 TEXT OVERLAY EFFECTIVENESS (0-25 points):
 - Is the handwritten text readable, compelling, and well-placed?
 - Does it add personality and relatability?
 - Hook quality: does the text make you curious or create FOMO?
 - Text should NOT overlap or obscure the product
-- Messy/scribbled text > clean text for ugly-ad style (feels more authentic)
+- Messy/scribbled text > clean text for organic style (feels more authentic)
 - Arrows and doodles that draw attention to the product
 
 PRODUCT PRESERVATION (0-20 points):
@@ -43,7 +43,7 @@ SCENE AUTHENTICITY (0-15 points):
 - Does the environment feel real and lived-in?
 - Specific details that make the scene believable
 - Lighting that matches the environment naturally
-- For ugly-ad: does it actually look like someone's messy counter/desk/car?
+- For organic style: does it actually look like a real moment in someone's life?
 
 EMOTIONAL TRIGGER (0-15 points):
 - Relatability: "that's literally my kitchen/desk/car"
@@ -58,9 +58,9 @@ EMOTIONAL TRIGGER (0-15 points):
 - Product looks like a 3D render instead of a real photo → heavy penalty
 - Label text is garbled, blurry, or hallucinated → heavy penalty
 - Text overlays overlap the product label → medium penalty
-- Scene looks too clean/staged for ugly-ad style → medium penalty
+- Scene looks too clean/staged for organic style → medium penalty
 - Text is unreadable or too small → medium penalty
-- No text overlays when style requires them (ugly-ad, meme) → penalty
+- No text overlays when style requires them (organic, meme) → penalty
 - Product is warped, stretched, or reshaped → heavy penalty
 - Image looks like digital art instead of a photograph → heavy penalty
 

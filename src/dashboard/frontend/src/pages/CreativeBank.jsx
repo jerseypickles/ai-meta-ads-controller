@@ -44,14 +44,14 @@ import {
 // =============================================
 
 const STYLES = [
-  { value: 'ugly-ad', label: 'Ugly Ad', color: '#ef4444', desc: 'Organico, casero, TikTok' },
-  { value: 'polished', label: 'Polished', color: '#3b82f6', desc: 'Profesional, premium' },
-  { value: 'ugc', label: 'UGC', color: '#10b981', desc: 'User generated content' },
-  { value: 'meme', label: 'Meme', color: '#f59e0b', desc: 'Humor viral' },
-  { value: 'other', label: 'Otro', color: '#6b7280', desc: 'Sin clasificar' }
+  { value: 'organic', label: 'Organic', color: '#ef4444', desc: 'Casual, autentico, iPhone', icon: '📱' },
+  { value: 'polished', label: 'Polished', color: '#3b82f6', desc: 'Premium, editorial', icon: '✨' },
+  { value: 'ugc', label: 'UGC', color: '#10b981', desc: 'User generated content', icon: '🤳' },
+  { value: 'meme', label: 'Meme', color: '#f59e0b', desc: 'Humor viral', icon: '😂' },
+  { value: 'other', label: 'Otro', color: '#6b7280', desc: 'Sin clasificar', icon: '📁' }
 ];
 
-const STYLE_COLORS = { 'ugly-ad': '#ef4444', polished: '#3b82f6', ugc: '#10b981', meme: '#f59e0b', other: '#6b7280' };
+const STYLE_COLORS = { organic: '#ef4444', 'ugly-ad': '#ef4444', polished: '#3b82f6', ugc: '#10b981', meme: '#f59e0b', other: '#6b7280' };
 
 const TAGS_PRESETS = ['producto', 'lifestyle', 'promo', 'seasonal', 'best-seller', 'nuevo', 'hero', 'variante'];
 
@@ -95,7 +95,7 @@ const CreativeBank = () => {
   // AI Generation state
   const [showGenModal, setShowGenModal] = useState(false);
   const [genStep, setGenStep] = useState('product');
-  const [genConfig, setGenConfig] = useState({ style: 'ugly-ad', format: 'feed', instruction: '', productId: null, referenceIds: [] });
+  const [genConfig, setGenConfig] = useState({ style: 'organic', format: 'feed', instruction: '', productId: null, referenceIds: [] });
   const [genPromptResult, setGenPromptResult] = useState(null);
   const [genImageResults, setGenImageResults] = useState(null);
   const [genLoading, setGenLoading] = useState(false);
@@ -347,7 +347,7 @@ const CreativeBank = () => {
   const handleOpenGenModal = () => {
     setShowGenModal(true);
     setGenStep('product');
-    setGenConfig({ style: 'ugly-ad', format: 'feed', instruction: '', productId: null, referenceIds: [] });
+    setGenConfig({ style: 'organic', format: 'feed', instruction: '', productId: null, referenceIds: [] });
     setGenPromptResult(null);
     setGenImageResults(null);
     setGenAccepting(new Set());
@@ -1248,45 +1248,72 @@ const CreativeBank = () => {
       {/* ========= AI GENERATION MODAL ========= */}
       {showGenModal && (
         <ModalOverlay onClose={handleCloseGenModal}>
-          <div style={{ width: genStep === 'preview' ? '960px' : '560px', maxWidth: '95vw' }}>
-            <ModalHeader
-              icon={<Sparkles size={16} color="#c084fc" />}
-              title="Generar Creative con IA"
-              badge={genStep === 'product' ? '1/4' : genStep === 'references' ? '2/4' : genStep === 'config' ? '3/4' : genStep === 'prompt' ? '4/4' : genStep === 'generating' ? 'Generando...' : `${genImageResults?.success_count || 0}/${genImageResults?.total || 0} imagenes`}
-            />
+          <div style={{ width: genStep === 'preview' ? '1020px' : '600px', maxWidth: '95vw' }}>
+            {/* Step indicator bar */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0', marginBottom: '20px' }}>
+              {[
+                { key: 'product', num: 1, label: 'Producto' },
+                { key: 'references', num: 2, label: 'Referencias' },
+                { key: 'config', num: 3, label: 'Estilo' },
+                { key: 'prompt', num: 4, label: 'Prompts' }
+              ].map((s, idx) => {
+                const steps = ['product', 'references', 'config', 'prompt', 'generating', 'preview'];
+                const currentIdx = steps.indexOf(genStep);
+                const stepIdx = steps.indexOf(s.key);
+                const isActive = genStep === s.key;
+                const isDone = currentIdx > stepIdx;
+                const color = isActive ? '#c084fc' : isDone ? '#10b981' : '#374151';
+                return (
+                  <React.Fragment key={s.key}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <div style={{
+                        width: '26px', height: '26px', borderRadius: '50%',
+                        backgroundColor: isDone ? '#10b98130' : isActive ? '#c084fc20' : '#1f2937',
+                        border: `2px solid ${color}`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '11px', fontWeight: '800', color
+                      }}>
+                        {isDone ? <CheckCircle size={13} /> : s.num}
+                      </div>
+                      <span style={{ fontSize: '11px', fontWeight: '600', color, display: idx === 3 && genStep !== 'prompt' ? 'none' : undefined }}>{s.label}</span>
+                    </div>
+                    {idx < 3 && <div style={{ flex: 1, height: '2px', backgroundColor: isDone ? '#10b98140' : '#1f2937', margin: '0 6px' }} />}
+                  </React.Fragment>
+                );
+              })}
+            </div>
 
             {/* STEP 1: Select Product */}
             {genStep === 'product' && (
               <>
-                <div style={{ marginBottom: '10px' }}>
-                  <div style={{ fontSize: '12px', fontWeight: '700', color: '#c084fc', marginBottom: '4px' }}>
-                    Selecciona el producto base
+                <div style={{ marginBottom: '14px' }}>
+                  <div style={{ fontSize: '15px', fontWeight: '800', color: '#e5e7eb', marginBottom: '4px' }}>
+                    Selecciona el producto
                   </div>
-                  <div style={{ fontSize: '10px', color: '#4b5563' }}>
-                    Esta imagen real se pasa directamente a OpenAI. Solo se muestran productos base (reference).
+                  <div style={{ fontSize: '11px', color: '#6b7280' }}>
+                    La IA analizara este producto y generara escenas donde aparezca de forma natural.
                   </div>
                 </div>
                 {creatives.filter(a => a.media_type === 'image' && a.purpose === 'reference').length === 0 ? (
-                  <div style={{ padding: '30px', color: '#4b5563', textAlign: 'center', fontSize: '12px' }}>
+                  <div style={{ padding: '40px', color: '#6b7280', textAlign: 'center', fontSize: '12px', backgroundColor: '#0d1117', borderRadius: '12px', border: '1px solid #1f2937' }}>
                     No hay productos base en el banco. Sube una foto del producto con proposito "Producto Base" primero.
                   </div>
                 ) : (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: '8px', maxHeight: '350px', overflowY: 'auto', marginBottom: '12px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '10px', maxHeight: '380px', overflowY: 'auto', marginBottom: '14px' }}>
                     {creatives.filter(a => a.media_type === 'image' && a.purpose === 'reference').map(asset => (
                       <button key={asset._id} onClick={() => handleSelectProduct(asset._id)} style={{
-                        borderRadius: '8px', overflow: 'hidden', cursor: 'pointer', textAlign: 'left',
-                        border: '1px solid #1f2937', backgroundColor: '#0d1117', padding: 0
+                        borderRadius: '12px', overflow: 'hidden', cursor: 'pointer', textAlign: 'left',
+                        border: '1px solid #1f2937', backgroundColor: '#0d1117', padding: 0,
+                        transition: 'border-color 0.15s, transform 0.1s'
                       }}>
-                        <div style={{ height: '90px', backgroundColor: '#0a0a0a', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                        <div style={{ height: '110px', backgroundColor: '#0a0a0a', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                           <img src={getCreativePreviewUrl(asset.filename)} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'cover' }} />
                         </div>
-                        <div style={{ padding: '5px 7px' }}>
-                          <div style={{ fontSize: '10px', fontWeight: '600', color: '#e5e7eb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <div style={{ padding: '8px 10px' }}>
+                          <div style={{ fontSize: '11px', fontWeight: '700', color: '#e5e7eb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {asset.product_name || asset.headline || asset.original_name}
                           </div>
-                          <div style={{ fontSize: '8px', color: '#4b5563' }}>
-                            {asset.style || 'other'}
-                          </div>
+                          {asset.flavor && <div style={{ fontSize: '9px', color: '#6b7280', marginTop: '2px' }}>{asset.flavor}</div>}
                         </div>
                       </button>
                     ))}
@@ -1306,38 +1333,39 @@ const CreativeBank = () => {
                   onBack={() => setGenStep('product')}
                 />
 
-                <div style={{ marginBottom: '10px' }}>
-                  <div style={{ fontSize: '12px', fontWeight: '700', color: '#f59e0b', marginBottom: '4px' }}>
-                    Selecciona referencias de estilo (opcional)
+                <div style={{ marginBottom: '12px' }}>
+                  <div style={{ fontSize: '13px', fontWeight: '700', color: '#e5e7eb', marginBottom: '4px' }}>
+                    Referencias de estilo <span style={{ fontSize: '10px', color: '#6b7280', fontWeight: '400' }}>(opcional)</span>
                   </div>
-                  <div style={{ fontSize: '10px', color: '#4b5563' }}>
-                    Estas imagenes guian la direccion creativa de Claude. Selecciona assets que representen el estilo/mood que quieres.
+                  <div style={{ fontSize: '10px', color: '#6b7280' }}>
+                    Selecciona imagenes que representen el mood o direccion creativa que buscas.
                   </div>
                 </div>
 
                 {creatives.filter(a => a.media_type === 'image' && a._id !== genConfig.productId).length > 0 ? (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: '6px', maxHeight: '250px', overflowY: 'auto', marginBottom: '12px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: '8px', maxHeight: '260px', overflowY: 'auto', marginBottom: '12px' }}>
                     {creatives.filter(a => a.media_type === 'image' && a._id !== genConfig.productId).map(asset => {
                       const selected = genConfig.referenceIds.includes(asset._id);
                       return (
                         <button key={asset._id} onClick={() => toggleReference(asset._id)} style={{
-                          borderRadius: '8px', overflow: 'hidden', cursor: 'pointer', textAlign: 'left',
-                          border: `2px solid ${selected ? '#f59e0b' : '#1f2937'}`,
-                          backgroundColor: selected ? '#f59e0b10' : '#0d1117', padding: 0, position: 'relative'
+                          borderRadius: '10px', overflow: 'hidden', cursor: 'pointer', textAlign: 'left',
+                          border: `2px solid ${selected ? '#c084fc' : '#1f2937'}`,
+                          backgroundColor: selected ? '#c084fc08' : '#0d1117', padding: 0, position: 'relative',
+                          transition: 'border-color 0.15s'
                         }}>
                           {selected && (
                             <div style={{
-                              position: 'absolute', top: '4px', right: '4px', zIndex: 1,
-                              width: '18px', height: '18px', borderRadius: '50%', backgroundColor: '#f59e0b',
+                              position: 'absolute', top: '5px', right: '5px', zIndex: 1,
+                              width: '20px', height: '20px', borderRadius: '50%', backgroundColor: '#c084fc',
                               display: 'flex', alignItems: 'center', justifyContent: 'center'
                             }}>
                               <CheckCircle size={12} color="#000" />
                             </div>
                           )}
-                          <div style={{ height: '70px', backgroundColor: '#0a0a0a', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                          <div style={{ height: '80px', backgroundColor: '#0a0a0a', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                             <img src={getCreativePreviewUrl(asset.filename)} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'cover' }} />
                           </div>
-                          <div style={{ padding: '3px 5px' }}>
+                          <div style={{ padding: '4px 6px' }}>
                             <div style={{ fontSize: '9px', fontWeight: '600', color: '#e5e7eb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {asset.headline || asset.original_name}
                             </div>
@@ -1347,13 +1375,13 @@ const CreativeBank = () => {
                     })}
                   </div>
                 ) : (
-                  <div style={{ padding: '20px', color: '#4b5563', textAlign: 'center', fontSize: '11px', marginBottom: '12px' }}>
+                  <div style={{ padding: '24px', color: '#6b7280', textAlign: 'center', fontSize: '11px', marginBottom: '12px', backgroundColor: '#0d1117', borderRadius: '10px' }}>
                     No hay otras imagenes para usar como referencia.
                   </div>
                 )}
 
                 {genConfig.referenceIds.length > 0 && (
-                  <div style={{ fontSize: '10px', color: '#f59e0b', marginBottom: '10px' }}>
+                  <div style={{ fontSize: '11px', color: '#c084fc', marginBottom: '10px', fontWeight: '600' }}>
                     {genConfig.referenceIds.length} referencia(s) seleccionada(s)
                   </div>
                 )}
@@ -1376,55 +1404,69 @@ const CreativeBank = () => {
                   referenceCount={genConfig.referenceIds.length}
                 />
 
-                {/* Style */}
-                <FormField label="Estilo">
-                  <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
-                    {STYLES.filter(s => s.value !== 'other').map(s => (
-                      <button key={s.value} onClick={() => setGenConfig(c => ({ ...c, style: s.value }))} style={{
-                        padding: '8px 14px', borderRadius: '8px', cursor: 'pointer', textAlign: 'left',
-                        border: `1px solid ${genConfig.style === s.value ? s.color + '60' : '#1f2937'}`,
-                        backgroundColor: genConfig.style === s.value ? s.color + '15' : '#0d1117'
-                      }}>
-                        <div style={{ fontSize: '12px', fontWeight: '700', color: genConfig.style === s.value ? s.color : '#9ca3af' }}>{s.label}</div>
-                        <div style={{ fontSize: '9px', color: '#4b5563' }}>{s.desc}</div>
-                      </button>
-                    ))}
+                {/* Style selection */}
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ fontSize: '11px', fontWeight: '600', color: '#9ca3af', marginBottom: '8px' }}>Estilo creativo</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
+                    {STYLES.filter(s => s.value !== 'other').map(s => {
+                      const isSelected = genConfig.style === s.value;
+                      return (
+                        <button key={s.value} onClick={() => setGenConfig(c => ({ ...c, style: s.value }))} style={{
+                          padding: '12px 10px', borderRadius: '12px', cursor: 'pointer', textAlign: 'center',
+                          border: `2px solid ${isSelected ? s.color : '#1f2937'}`,
+                          backgroundColor: isSelected ? s.color + '12' : '#0d1117',
+                          transition: 'all 0.15s'
+                        }}>
+                          <div style={{ fontSize: '18px', marginBottom: '4px' }}>{s.icon}</div>
+                          <div style={{ fontSize: '12px', fontWeight: '800', color: isSelected ? s.color : '#9ca3af' }}>{s.label}</div>
+                          <div style={{ fontSize: '9px', color: '#6b7280', marginTop: '2px' }}>{s.desc}</div>
+                        </button>
+                      );
+                    })}
                   </div>
-                </FormField>
+                </div>
 
-                {/* Format info — both formats generated automatically */}
+                {/* Format info */}
                 <div style={{
-                  padding: '10px 12px', borderRadius: '8px', backgroundColor: '#581c8715',
-                  border: '1px solid #581c8730', marginBottom: '12px'
+                  padding: '12px 14px', borderRadius: '10px', backgroundColor: '#0d1117',
+                  border: '1px solid #1f2937', marginBottom: '14px',
+                  display: 'flex', alignItems: 'center', gap: '10px'
                 }}>
-                  <div style={{ fontSize: '11px', fontWeight: '700', color: '#c084fc', marginBottom: '3px' }}>
-                    Dual Format: 1:1 + 9:16
-                  </div>
-                  <div style={{ fontSize: '10px', color: '#9ca3af' }}>
-                    Cada escena se genera en ambos formatos (Feed 1:1 + Stories 9:16). 3 escenas = 6 imagenes.
+                  <Layers size={16} color="#c084fc" />
+                  <div>
+                    <div style={{ fontSize: '11px', fontWeight: '700', color: '#e5e7eb' }}>
+                      Dual Format: Feed 1:1 + Stories 9:16
+                    </div>
+                    <div style={{ fontSize: '10px', color: '#6b7280' }}>
+                      3 escenas x 2 formatos = 6 imagenes. La IA crea escenas relevantes al producto.
+                    </div>
                   </div>
                 </div>
 
                 {/* Instruction */}
-                <FormField label="Instruccion creativa (opcional)">
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ fontSize: '11px', fontWeight: '600', color: '#9ca3af', marginBottom: '6px' }}>
+                    Instruccion creativa <span style={{ color: '#4b5563', fontWeight: '400' }}>(opcional)</span>
+                  </div>
                   <textarea
                     value={genConfig.instruction}
                     onChange={(e) => setGenConfig(c => ({ ...c, instruction: e.target.value }))}
-                    placeholder="Ej: Escena en un picnic con amigos, tono veraniego, texto 'summer vibes only'"
-                    style={{ ...inputStyle, minHeight: '60px', resize: 'vertical' }}
+                    placeholder="Ej: Escena con nachos y amigos, tono de game day, que se vea el producto siendo usado..."
+                    style={{ ...inputStyle, minHeight: '70px', resize: 'vertical', borderRadius: '10px', fontSize: '12px', lineHeight: '1.5' }}
                   />
-                </FormField>
+                </div>
 
                 <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                   <button onClick={() => setGenStep('references')} style={btnSecondary}>Volver</button>
                   <button onClick={handleGeneratePrompt} disabled={genLoading} style={{
                     ...btnPurple,
+                    padding: '10px 20px',
                     backgroundColor: genLoading ? '#374151' : '#581c87',
                     color: genLoading ? '#6b7280' : '#c084fc',
                     cursor: genLoading ? 'not-allowed' : 'pointer'
                   }}>
-                    {genLoading ? <Loader size={12} className="spin" /> : <Brain size={12} />}
-                    {genLoading ? 'Claude pensando...' : 'Generar Prompt'}
+                    {genLoading ? <Loader size={14} className="spin" /> : <Brain size={14} />}
+                    {genLoading ? 'Claude pensando...' : 'Generar Escenas'}
                   </button>
                 </div>
               </>
@@ -1433,47 +1475,54 @@ const CreativeBank = () => {
             {/* STEP 4: Review Prompts */}
             {genStep === 'prompt' && genPromptResult && (
               <>
-                <div style={{ marginBottom: '12px' }}>
-                  <label style={{ fontSize: '11px', fontWeight: '600', color: '#c084fc', display: 'block', marginBottom: '4px' }}>
-                    {genPromptResult.prompts?.length || 0} prompts generados por Claude ({genPromptResult.generation_time_s}s)
-                  </label>
-                  <div style={{
-                    padding: '10px', borderRadius: '8px', backgroundColor: '#0d1117', border: '1px solid #1f2937',
-                    fontSize: '11px', color: '#e5e7eb', lineHeight: '1.5', maxHeight: '200px', overflowY: 'auto',
-                    display: 'flex', flexDirection: 'column', gap: '8px'
-                  }}>
+                <div style={{ marginBottom: '14px' }}>
+                  <div style={{ fontSize: '13px', fontWeight: '700', color: '#e5e7eb', marginBottom: '4px' }}>
+                    {genPromptResult.prompts?.length || 0} escenas generadas <span style={{ fontSize: '10px', color: '#6b7280', fontWeight: '400' }}>({genPromptResult.generation_time_s}s)</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {(genPromptResult.prompts || []).map((p, i) => (
-                      <div key={i} style={{ padding: '6px 8px', borderRadius: '6px', backgroundColor: '#161b22', border: '1px solid #21262d' }}>
-                        <div style={{ fontSize: '10px', fontWeight: '700', color: '#c084fc', marginBottom: '3px' }}>
-                          {i + 1}. {p.scene_label}
+                      <div key={i} style={{
+                        padding: '10px 14px', borderRadius: '10px', backgroundColor: '#0d1117',
+                        border: '1px solid #1f2937'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                          <div style={{
+                            width: '22px', height: '22px', borderRadius: '6px', backgroundColor: '#c084fc15',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: '11px', fontWeight: '800', color: '#c084fc'
+                          }}>{i + 1}</div>
+                          <span style={{ fontSize: '12px', fontWeight: '700', color: '#e5e7eb' }}>{p.scene_label}</span>
                         </div>
-                        <div style={{ fontSize: '10px', color: '#9ca3af', lineHeight: '1.4' }}>
-                          {p.prompt.substring(0, 150)}...
+                        <div style={{ fontSize: '11px', color: '#9ca3af', lineHeight: '1.5', paddingLeft: '30px' }}>
+                          {p.prompt.substring(0, 200)}...
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                <div style={{ marginBottom: '12px' }}>
-                  <label style={{ fontSize: '11px', fontWeight: '600', color: '#6b7280', display: 'block', marginBottom: '4px' }}>
-                    Razonamiento
-                  </label>
-                  <div style={{ fontSize: '11px', color: '#9ca3af', lineHeight: '1.4' }}>
-                    {genPromptResult.style_rationale}
+                {genPromptResult.style_rationale && (
+                  <div style={{
+                    padding: '10px 14px', borderRadius: '10px', backgroundColor: '#0d1117',
+                    border: '1px solid #1f2937', marginBottom: '14px'
+                  }}>
+                    <div style={{ fontSize: '10px', fontWeight: '600', color: '#6b7280', marginBottom: '4px' }}>Razonamiento</div>
+                    <div style={{ fontSize: '11px', color: '#9ca3af', lineHeight: '1.5' }}>
+                      {genPromptResult.style_rationale}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {(genPromptResult.suggested_headline || genPromptResult.suggested_body) && (
-                  <div style={{ marginBottom: '12px', padding: '8px 10px', borderRadius: '8px', backgroundColor: '#0d1117' }}>
+                  <div style={{ marginBottom: '14px', padding: '10px 14px', borderRadius: '10px', backgroundColor: '#0d1117', border: '1px solid #1f2937' }}>
                     {genPromptResult.suggested_headline && (
-                      <div style={{ fontSize: '12px', color: '#e5e7eb', fontWeight: '600', marginBottom: '2px' }}>
-                        Headline: {genPromptResult.suggested_headline}
+                      <div style={{ fontSize: '12px', color: '#e5e7eb', fontWeight: '700', marginBottom: '3px' }}>
+                        {genPromptResult.suggested_headline}
                       </div>
                     )}
                     {genPromptResult.suggested_body && (
                       <div style={{ fontSize: '11px', color: '#9ca3af' }}>
-                        Body: {genPromptResult.suggested_body}
+                        {genPromptResult.suggested_body}
                       </div>
                     )}
                   </div>
@@ -1481,9 +1530,9 @@ const CreativeBank = () => {
 
                 <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                   <button onClick={() => setGenStep('config')} style={btnSecondary}>Volver</button>
-                  <button onClick={handleGenerateImages} disabled={genLoading} style={btnPurple}>
-                    <Zap size={12} />
-                    Generar {(genPromptResult.prompts?.length || 3) * 2} Imagenes ({genPromptResult.prompts?.length || 3} escenas x 2 formatos)
+                  <button onClick={handleGenerateImages} disabled={genLoading} style={{ ...btnPurple, padding: '10px 20px' }}>
+                    <Zap size={14} />
+                    Generar {(genPromptResult.prompts?.length || 3) * 2} Imagenes
                   </button>
                 </div>
               </>
@@ -1491,13 +1540,30 @@ const CreativeBank = () => {
 
             {/* STEP: Generating... */}
             {genStep === 'generating' && (
-              <div style={{ padding: '50px', textAlign: 'center' }}>
-                <Loader size={32} className="spin" color="#c084fc" style={{ marginBottom: '14px' }} />
-                <div style={{ fontSize: '14px', fontWeight: '700', color: '#c084fc', marginBottom: '6px' }}>
-                  Generando {(genPromptResult?.prompts?.length || 3) * 2} imagenes con OpenAI...
+              <div style={{ padding: '60px 30px', textAlign: 'center' }}>
+                <div style={{
+                  width: '56px', height: '56px', borderRadius: '50%', backgroundColor: '#c084fc15',
+                  border: '2px solid #c084fc30', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  margin: '0 auto 18px'
+                }}>
+                  <Loader size={24} className="spin" color="#c084fc" />
                 </div>
-                <div style={{ fontSize: '12px', color: '#6b7280' }}>
-                  {genPromptResult?.prompts?.length || 3} escenas x 2 formatos (1:1 + 9:16). ~2-5 minutos.
+                <div style={{ fontSize: '16px', fontWeight: '800', color: '#e5e7eb', marginBottom: '6px' }}>
+                  Generando imagenes...
+                </div>
+                <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '16px' }}>
+                  {genPromptResult?.prompts?.length || 3} escenas x 2 formatos = {(genPromptResult?.prompts?.length || 3) * 2} imagenes
+                </div>
+                <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                  {(genPromptResult?.prompts || []).map((p, i) => (
+                    <span key={i} style={{
+                      padding: '4px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: '600',
+                      backgroundColor: '#c084fc10', color: '#c084fc', border: '1px solid #c084fc20'
+                    }}>{p.scene_label}</span>
+                  ))}
+                </div>
+                <div style={{ fontSize: '10px', color: '#4b5563', marginTop: '16px' }}>
+                  Esto toma ~2-5 minutos. OpenAI genera cada imagen individualmente.
                 </div>
               </div>
             )}
@@ -1520,39 +1586,39 @@ const CreativeBank = () => {
 
               return (
                 <>
-                  {/* Header with product thumbnail */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                  {/* Header */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
                     <div style={{
-                      width: '50px', height: '50px', borderRadius: '8px', overflow: 'hidden',
-                      border: '1px solid #1f2937', backgroundColor: '#0a0a0a', flexShrink: 0
+                      width: '44px', height: '44px', borderRadius: '10px', overflow: 'hidden',
+                      border: '2px solid #1f2937', backgroundColor: '#0a0a0a', flexShrink: 0
                     }}>
                       {product && <img src={getCreativePreviewUrl(product.filename)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
                     </div>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: '12px', fontWeight: '700', color: '#e5e7eb' }}>
+                      <div style={{ fontSize: '14px', fontWeight: '800', color: '#e5e7eb' }}>
                         {genImageResults.success_count}/{genImageResults.total} imagenes generadas
                       </div>
-                      <div style={{ fontSize: '10px', color: '#6b7280' }}>
-                        {genJudging ? 'Claude analizando calidad...' : genJudgeResult ? `Jurado IA: rankeadas por CTR (${genJudgeResult.judge_time_s}s)` : 'Selecciona las que quieras guardar al banco'}
+                      <div style={{ fontSize: '11px', color: '#6b7280' }}>
+                        {genJudging ? 'Claude analizando calidad...' : genJudgeResult ? `Rankeadas por CTR predicho (${genJudgeResult.judge_time_s}s)` : 'Selecciona las que quieras guardar al banco'}
                       </div>
                     </div>
-                    {genJudging && <Loader size={16} className="spin" color="#c084fc" />}
+                    {genJudging && <Loader size={18} className="spin" color="#c084fc" />}
                   </div>
 
                   {/* Judge overall notes */}
                   {genJudgeResult?.overall_notes && (
                     <div style={{
-                      padding: '8px 12px', borderRadius: '8px', backgroundColor: '#581c8715', border: '1px solid #581c8730',
-                      fontSize: '11px', color: '#c4b5fd', lineHeight: '1.4', marginBottom: '12px'
+                      padding: '10px 14px', borderRadius: '10px', backgroundColor: '#0d1117', border: '1px solid #1f2937',
+                      fontSize: '11px', color: '#c4b5fd', lineHeight: '1.5', marginBottom: '14px'
                     }}>
-                      <span style={{ fontWeight: '700', color: '#c084fc' }}>Veredicto IA: </span>
+                      <span style={{ fontWeight: '700', color: '#c084fc' }}>Veredicto: </span>
                       {genJudgeResult.overall_notes}
                     </div>
                   )}
 
-                  {/* 6-image grid (3x2: each row = same scene in feed + stories) */}
+                  {/* Image grid */}
                   <div style={{
-                    display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '14px'
+                    display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '16px'
                   }}>
                     {images.map((img, i) => {
                       const hasError = !!img.error;
@@ -1560,23 +1626,24 @@ const CreativeBank = () => {
                       const isAccepted = genAccepted.has(img.filename);
                       const ranking = rankMap[i];
                       const hasMedal = ranking && ranking.rank <= 3;
-                      const borderColor = hasError ? '#7f1d1d' : hasMedal ? medalColors[ranking.rank] + '60' : '#1f2937';
+                      const borderColor = hasError ? '#7f1d1d' : isAccepted ? '#10b98140' : hasMedal ? medalColors[ranking.rank] + '40' : '#1f2937';
 
                       return (
                         <div key={i} style={{
-                          borderRadius: '10px', overflow: 'hidden',
-                          border: `1px solid ${borderColor}`,
-                          backgroundColor: '#0d1117', position: 'relative'
+                          borderRadius: '12px', overflow: 'hidden',
+                          border: `2px solid ${borderColor}`,
+                          backgroundColor: '#0d1117', position: 'relative',
+                          transition: 'border-color 0.15s'
                         }}>
                           {/* Medal badge */}
                           {hasMedal && (
                             <div style={{
-                              position: 'absolute', top: '6px', left: '6px', zIndex: 2,
-                              width: '24px', height: '24px', borderRadius: '50%',
+                              position: 'absolute', top: '8px', left: '8px', zIndex: 2,
+                              width: '28px', height: '28px', borderRadius: '50%',
                               backgroundColor: medalColors[ranking.rank],
                               display: 'flex', alignItems: 'center', justifyContent: 'center',
-                              fontSize: '9px', fontWeight: '800', color: '#000',
-                              boxShadow: '0 2px 6px rgba(0,0,0,0.4)'
+                              fontSize: '10px', fontWeight: '900', color: '#000',
+                              boxShadow: '0 2px 8px rgba(0,0,0,0.4)'
                             }}>
                               {medalLabels[ranking.rank]}
                             </div>
@@ -1585,51 +1652,51 @@ const CreativeBank = () => {
                           {/* Score badge */}
                           {ranking && (
                             <div style={{
-                              position: 'absolute', top: '6px', right: '6px', zIndex: 2,
-                              padding: '2px 6px', borderRadius: '6px',
-                              backgroundColor: ctrColors[ranking.predicted_ctr] + '20',
-                              border: `1px solid ${ctrColors[ranking.predicted_ctr]}40`,
-                              fontSize: '10px', fontWeight: '800', color: ctrColors[ranking.predicted_ctr]
+                              position: 'absolute', top: '8px', right: '8px', zIndex: 2,
+                              padding: '3px 8px', borderRadius: '8px',
+                              backgroundColor: '#000000aa',
+                              backdropFilter: 'blur(4px)',
+                              fontSize: '12px', fontWeight: '900', color: ctrColors[ranking.predicted_ctr]
                             }}>
                               {ranking.score}
                             </div>
                           )}
 
-                          {/* Scene label header */}
+                          {/* Scene label + format */}
                           <div style={{
-                            padding: '5px 8px',
+                            padding: '8px 10px',
                             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                             backgroundColor: '#161b22', borderBottom: '1px solid #21262d'
                           }}>
+                            <span style={{ fontSize: '11px', fontWeight: '700', color: '#e5e7eb' }}>
+                              {img.scene_label || `Escena ${i + 1}`}
+                            </span>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                              <span style={{ fontSize: '10px', fontWeight: '700', color: '#c084fc' }}>
-                                {img.scene_label || `Escena ${i + 1}`}
-                              </span>
                               {img.ad_format && (
                                 <span style={{
-                                  padding: '1px 5px', borderRadius: '3px', fontSize: '8px', fontWeight: '700',
+                                  padding: '2px 7px', borderRadius: '4px', fontSize: '9px', fontWeight: '700',
                                   backgroundColor: img.ad_format === 'feed' ? '#3b82f615' : '#f59e0b15',
                                   color: img.ad_format === 'feed' ? '#3b82f6' : '#f59e0b'
                                 }}>
                                   {img.ad_format === 'feed' ? '1:1' : '9:16'}
                                 </span>
                               )}
+                              {!hasError && img.generation_time_s && (
+                                <span style={{ fontSize: '9px', color: '#4b5563' }}>{img.generation_time_s}s</span>
+                              )}
                             </div>
-                            {!hasError && img.generation_time_s && (
-                              <span style={{ fontSize: '9px', color: '#6b7280' }}>{img.generation_time_s}s</span>
-                            )}
                           </div>
 
-                          {/* Image or error */}
+                          {/* Image */}
                           <div style={{
-                            height: img.ad_format === 'stories' ? '200px' : '170px',
+                            height: img.ad_format === 'stories' ? '220px' : '190px',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                             backgroundColor: '#0a0a0a'
                           }}>
                             {hasError ? (
-                              <div style={{ padding: '14px', textAlign: 'center' }}>
-                                <XCircle size={20} color="#ef4444" style={{ marginBottom: '4px' }} />
-                                <div style={{ fontSize: '9px', color: '#ef4444', lineHeight: '1.3' }}>{img.error}</div>
+                              <div style={{ padding: '16px', textAlign: 'center' }}>
+                                <XCircle size={22} color="#ef4444" style={{ marginBottom: '6px' }} />
+                                <div style={{ fontSize: '10px', color: '#ef4444', lineHeight: '1.3' }}>{img.error}</div>
                               </div>
                             ) : (
                               <img
@@ -1644,18 +1711,17 @@ const CreativeBank = () => {
                           {/* Judge verdict */}
                           {ranking && (
                             <div style={{
-                              padding: '5px 8px', backgroundColor: '#0d1117', borderTop: '1px solid #21262d',
-                              fontSize: '9px', color: '#9ca3af', lineHeight: '1.3'
+                              padding: '6px 10px', backgroundColor: '#0d1117', borderTop: '1px solid #21262d',
+                              fontSize: '10px', color: '#9ca3af', lineHeight: '1.4'
                             }}>
-                              <div style={{ marginBottom: '3px' }}>
+                              <div style={{ marginBottom: '4px' }}>
                                 <span style={{ color: ctrColors[ranking.predicted_ctr], fontWeight: '700' }}>
                                   CTR {ranking.predicted_ctr.toUpperCase()}
                                 </span>
-                                <span style={{ color: '#4b5563' }}> | </span>
+                                <span style={{ color: '#4b5563' }}> — </span>
                                 <span>{ranking.verdict}</span>
                               </div>
-                              {/* Score breakdown mini bar */}
-                              <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
+                              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                                 {[
                                   { label: 'Scroll', val: ranking.scroll_stop, max: 25 },
                                   { label: 'Texto', val: ranking.text_quality, max: 25 },
@@ -1664,7 +1730,7 @@ const CreativeBank = () => {
                                   { label: 'Emocion', val: ranking.emotional_trigger, max: 15 }
                                 ].map(s => (
                                   <span key={s.label} style={{
-                                    padding: '1px 4px', borderRadius: '3px', fontSize: '8px', fontWeight: '600',
+                                    padding: '2px 5px', borderRadius: '4px', fontSize: '9px', fontWeight: '600',
                                     backgroundColor: (s.val / s.max) > 0.7 ? '#10b98115' : (s.val / s.max) > 0.5 ? '#f59e0b15' : '#ef444415',
                                     color: (s.val / s.max) > 0.7 ? '#10b981' : (s.val / s.max) > 0.5 ? '#f59e0b' : '#ef4444'
                                   }}>
@@ -1677,27 +1743,28 @@ const CreativeBank = () => {
 
                           {/* Accept button */}
                           {!hasError && (
-                            <div style={{ padding: '6px', textAlign: 'center', borderTop: '1px solid #21262d' }}>
+                            <div style={{ padding: '8px', textAlign: 'center', borderTop: '1px solid #21262d' }}>
                               {isAccepted ? (
                                 <div style={{
-                                  padding: '5px 10px', borderRadius: '6px',
-                                  backgroundColor: '#065f4620', color: '#10b981',
-                                  fontSize: '10px', fontWeight: '700',
-                                  display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center'
+                                  padding: '7px 12px', borderRadius: '8px',
+                                  backgroundColor: '#10b98115', color: '#10b981',
+                                  fontSize: '11px', fontWeight: '700',
+                                  display: 'flex', alignItems: 'center', gap: '5px', justifyContent: 'center'
                                 }}>
-                                  <CheckCircle size={10} /> Guardado en banco
+                                  <CheckCircle size={12} /> Guardado
                                 </div>
                               ) : (
                                 <button onClick={() => handleAcceptGenerated(img)} disabled={isAccepting} style={{
-                                  padding: '5px 10px', borderRadius: '6px', border: 'none',
+                                  padding: '7px 12px', borderRadius: '8px', border: 'none',
                                   backgroundColor: isAccepting ? '#374151' : '#581c87',
                                   color: isAccepting ? '#6b7280' : '#c084fc',
-                                  fontSize: '10px', fontWeight: '700',
+                                  fontSize: '11px', fontWeight: '700',
                                   cursor: isAccepting ? 'not-allowed' : 'pointer',
-                                  display: 'inline-flex', alignItems: 'center', gap: '4px', width: '100%', justifyContent: 'center'
+                                  display: 'inline-flex', alignItems: 'center', gap: '5px', width: '100%', justifyContent: 'center',
+                                  transition: 'background-color 0.15s'
                                 }}>
-                                  {isAccepting ? <Loader size={10} className="spin" /> : <CheckCircle size={10} />}
-                                  {isAccepting ? 'Guardando...' : 'Aceptar'}
+                                  {isAccepting ? <Loader size={12} className="spin" /> : <CheckCircle size={12} />}
+                                  {isAccepting ? 'Guardando...' : 'Aceptar al banco'}
                                 </button>
                               )}
                             </div>
