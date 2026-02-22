@@ -587,22 +587,12 @@ router.get('/impact', async (req, res) => {
     const limit = parseInt(req.query.limit) || 50;
     const actions = await getExecutedActionsWithImpact(limit);
 
-    // Calcular deltas — prefer 7d metrics over 3d (higher attribution accuracy)
+    // Calcular deltas para cada checkpoint: 1d, 3d, 7d
     const withDeltas = actions.map(a => {
       const before = a.metrics_at_execution || {};
       const after7d = a.metrics_after_7d || {};
       const after3d = a.metrics_after_3d || {};
       const after1d = a.metrics_after_1d || {};
-      // Use 7d data if available, fallback to 3d
-      const afterBest = (a.impact_7d_measured && after7d.roas_7d > 0) ? after7d : after3d;
-      const afterWindow = (a.impact_7d_measured && after7d.roas_7d > 0) ? '7d' : '3d';
-
-      const deltaRoas = before.roas_7d > 0
-        ? ((afterBest.roas_7d - before.roas_7d) / before.roas_7d) * 100
-        : 0;
-      const deltaCpa = before.cpa_7d > 0
-        ? ((afterBest.cpa_7d - before.cpa_7d) / before.cpa_7d) * 100
-        : 0;
 
       // Deltas 24h
       const deltaRoas1d = before.roas_7d > 0
@@ -612,20 +602,50 @@ router.get('/impact', async (req, res) => {
         ? ((after1d.cpa_7d - before.cpa_7d) / before.cpa_7d) * 100
         : 0;
 
+      // Deltas 3d
+      const deltaRoas3d = before.roas_7d > 0
+        ? ((after3d.roas_7d - before.roas_7d) / before.roas_7d) * 100
+        : 0;
+      const deltaCpa3d = before.cpa_7d > 0
+        ? ((after3d.cpa_7d - before.cpa_7d) / before.cpa_7d) * 100
+        : 0;
+
+      // Deltas 7d
+      const deltaRoas7d = before.roas_7d > 0
+        ? ((after7d.roas_7d - before.roas_7d) / before.roas_7d) * 100
+        : 0;
+      const deltaCpa7d = before.cpa_7d > 0
+        ? ((after7d.cpa_7d - before.cpa_7d) / before.cpa_7d) * 100
+        : 0;
+
+      // Best available for final result: prefer 7d, fallback 3d
+      const afterBest = (a.impact_7d_measured && after7d.roas_7d > 0) ? after7d : after3d;
+      const deltaRoasBest = (a.impact_7d_measured && after7d.roas_7d > 0) ? deltaRoas7d : deltaRoas3d;
+
       let result = 'neutral';
-      if (deltaRoas > 5) result = 'improved';
-      else if (deltaRoas < -5) result = 'worsened';
+      if (deltaRoasBest > 5) result = 'improved';
+      else if (deltaRoasBest < -5) result = 'worsened';
 
       const entry = {
         ...a,
         agent_type: resolveAgentType(a),
-        delta_roas_pct: deltaRoas,
-        delta_cpa_pct: deltaCpa,
+        // Per-checkpoint deltas
         delta_roas_1d_pct: deltaRoas1d,
         delta_cpa_1d_pct: deltaCpa1d,
+        delta_roas_3d_pct: deltaRoas3d,
+        delta_cpa_3d_pct: deltaCpa3d,
+        delta_roas_7d_pct: deltaRoas7d,
+        delta_cpa_7d_pct: deltaCpa7d,
+        // Legacy (best available) — still used for overall result
+        delta_roas_pct: deltaRoasBest,
+        delta_cpa_pct: (a.impact_7d_measured && after7d.roas_7d > 0) ? deltaCpa7d : deltaCpa3d,
+        // Data availability flags
         has_1d_data: a.impact_1d_measured === true,
+        has_3d_data: a.impact_measured === true,
         has_7d_data: a.impact_7d_measured === true,
-        after_window: afterWindow,
+        // Raw metrics per checkpoint
+        metrics_after_3d: after3d,
+        metrics_after_7d: after7d,
         metrics_after_best: afterBest,
         result
       };
@@ -680,10 +700,14 @@ router.get('/impact', async (req, res) => {
         agent_type: resolveAgentType(a),
         hours_elapsed: Math.floor(hoursElapsed),
         days_elapsed: Math.floor(daysElapsed * 10) / 10,
-        days_remaining: Math.max(0, Math.ceil(3 - daysElapsed)),
+        days_remaining_3d: Math.max(0, Math.ceil(3 - daysElapsed)),
+        days_remaining_7d: Math.max(0, Math.ceil(7 - daysElapsed)),
+        days_remaining: Math.max(0, Math.ceil(7 - daysElapsed)),
         delta_roas_1d_pct: deltaRoas1d,
         delta_cpa_1d_pct: deltaCpa1d,
         has_1d_data: a.impact_1d_measured === true,
+        has_3d_data: a.impact_measured === true,
+        has_7d_data: false,
         result: 'measuring'
       };
 

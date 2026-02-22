@@ -103,9 +103,8 @@ const ActionCard = ({ action, isLast }) => {
 
   const before = action.metrics_at_execution || {};
   const after1d = action.metrics_after_1d || {};
-  // Prefer 7d metrics (best) over 3d when backend provides them
-  const after = action.metrics_after_best || action.metrics_after_3d || {};
-  const afterWindow = action.after_window || '3d';
+  const after3d = action.metrics_after_3d || {};
+  const after7d = action.metrics_after_7d || {};
 
   const date = action.executed_at
     ? new Date(action.executed_at).toLocaleDateString('es-CL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
@@ -258,7 +257,7 @@ const ActionCard = ({ action, isLast }) => {
             </div>
 
             <div style={{
-              display: 'grid', gridTemplateColumns: '1fr auto 1fr auto 1fr', gap: '8px',
+              display: 'grid', gridTemplateColumns: '1fr auto 1fr auto 1fr auto 1fr', gap: '6px',
               backgroundColor: '#13151d', borderRadius: '8px', padding: '12px'
             }}>
               {/* Inicio (nuevo ad = 0) */}
@@ -275,7 +274,7 @@ const ActionCard = ({ action, isLast }) => {
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center' }}>
-                <ArrowRight size={16} color="#2a2d3a" />
+                <ArrowRight size={14} color="#2a2d3a" />
               </div>
 
               {/* 24h checkpoint */}
@@ -296,47 +295,64 @@ const ActionCard = ({ action, isLast }) => {
                 })() : (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '80px', color: '#6b7280', fontSize: '11px' }}>
                     <Clock size={12} style={{ marginRight: '4px' }} />
-                    {action.hours_elapsed != null ? `${action.hours_elapsed}h elapsed` : 'Pendiente'}
+                    {action.hours_elapsed != null ? `${action.hours_elapsed}h` : 'Pendiente'}
                   </div>
                 )}
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center' }}>
-                <ArrowRight size={16} color="#2a2d3a" />
+                <ArrowRight size={14} color="#2a2d3a" />
               </div>
 
-              {/* 3d/7d final */}
+              {/* 3d checkpoint */}
               <div>
-                <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>
-                  {action.ad_metrics_7d ? '7 dias' : (isMeasuring ? 'Final (3 dias)' : '3 dias')}
-                  {action.ad_metrics_7d && <span style={{ color: '#10b981', marginLeft: '4px', fontSize: '8px' }}>complete</span>}
+                <div style={{ fontSize: '10px', color: '#f59e0b', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>
+                  3 dias
                 </div>
-                {(() => {
-                  const amFinal = action.ad_metrics_7d || action.ad_metrics_3d || null;
-                  if (!amFinal && isMeasuring) {
-                    return (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '80px', color: '#6b7280', fontSize: '11px' }}>
-                        <Clock size={12} style={{ marginRight: '4px' }} />
-                        {action.days_remaining || 0}d restantes
-                      </div>
-                    );
-                  }
-                  if (!amFinal) {
-                    return (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '80px', color: '#6b7280', fontSize: '11px' }}>
-                        Sin datos
-                      </div>
-                    );
-                  }
+                {action.ad_metrics_3d ? (() => {
+                  const am = action.ad_metrics_3d;
                   return (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <MetricLine label="ROAS" value={amFinal.roas_7d != null ? `${amFinal.roas_7d.toFixed(2)}x` : '--'} />
-                      <MetricLine label="Spend" value={amFinal.spend_7d != null ? formatCurrency(amFinal.spend_7d) : '--'} />
-                      <MetricLine label="CTR" value={amFinal.ctr_7d != null ? `${amFinal.ctr_7d.toFixed(2)}%` : '--'} />
-                      <MetricLine label="Compras" value={amFinal.purchases_7d != null ? String(amFinal.purchases_7d) : '--'} />
+                      <MetricLine label="ROAS" value={am.roas_7d != null ? `${am.roas_7d.toFixed(2)}x` : (am.roas_3d != null ? `${am.roas_3d.toFixed(2)}x` : '--')} />
+                      <MetricLine label="Spend" value={am.spend_7d != null ? formatCurrency(am.spend_7d) : (am.spend_3d != null ? formatCurrency(am.spend_3d) : '--')} />
+                      <MetricLine label="CTR" value={am.ctr_7d != null ? `${am.ctr_7d.toFixed(2)}%` : (am.ctr_3d != null ? `${am.ctr_3d.toFixed(2)}%` : '--')} />
+                      <MetricLine label="Compras" value={am.purchases_7d != null ? String(am.purchases_7d) : '--'} />
                     </div>
                   );
-                })()}
+                })() : (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '80px', color: '#6b7280', fontSize: '11px' }}>
+                    <Clock size={12} style={{ marginRight: '4px' }} />
+                    {action.days_remaining_3d != null ? `${action.days_remaining_3d}d` : 'Pendiente'}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <ArrowRight size={14} color="#2a2d3a" />
+              </div>
+
+              {/* 7d checkpoint */}
+              <div>
+                <div style={{ fontSize: '10px', color: '#10b981', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>
+                  7 dias
+                  {action.ad_metrics_7d && <span style={{ marginLeft: '4px', fontSize: '8px' }}>final</span>}
+                </div>
+                {action.ad_metrics_7d ? (() => {
+                  const am = action.ad_metrics_7d;
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <MetricLine label="ROAS" value={am.roas_7d != null ? `${am.roas_7d.toFixed(2)}x` : '--'} />
+                      <MetricLine label="Spend" value={am.spend_7d != null ? formatCurrency(am.spend_7d) : '--'} />
+                      <MetricLine label="CTR" value={am.ctr_7d != null ? `${am.ctr_7d.toFixed(2)}%` : '--'} />
+                      <MetricLine label="Compras" value={am.purchases_7d != null ? String(am.purchases_7d) : '--'} />
+                    </div>
+                  );
+                })() : (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '80px', color: '#6b7280', fontSize: '11px' }}>
+                    <Clock size={12} style={{ marginRight: '4px' }} />
+                    {action.days_remaining_7d != null ? `${action.days_remaining_7d}d` : 'Pendiente'}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -348,9 +364,9 @@ const ActionCard = ({ action, isLast }) => {
             )}
           </div>
         ) : (
-          /* === STANDARD ACTIONS: Before / 24h / 3d parent metrics grid === */
+          /* === STANDARD ACTIONS: Before / 24h / 3d / 7d metrics grid === */
           <div style={{
-            display: 'grid', gridTemplateColumns: '1fr auto 1fr auto 1fr', gap: '8px',
+            display: 'grid', gridTemplateColumns: '1fr auto 1fr auto 1fr auto 1fr', gap: '6px',
             padding: '12px', backgroundColor: '#13151d', borderRadius: '8px', marginBottom: '12px'
           }}>
             {/* Before (Al ejecutar) */}
@@ -359,16 +375,15 @@ const ActionCard = ({ action, isLast }) => {
                 Al ejecutar
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <MetricLine label="ROAS 7d" value={before.roas_7d ? `${before.roas_7d.toFixed(2)}x` : '--'} />
-                <MetricLine label="CPA 7d" value={before.cpa_7d ? formatCurrency(before.cpa_7d) : '--'} />
+                <MetricLine label="ROAS" value={before.roas_7d ? `${before.roas_7d.toFixed(2)}x` : '--'} />
+                <MetricLine label="CPA" value={before.cpa_7d ? formatCurrency(before.cpa_7d) : '--'} />
                 <MetricLine label="Budget" value={before.daily_budget ? formatCurrency(before.daily_budget) : '--'} />
                 <MetricLine label="CTR" value={before.ctr ? `${before.ctr.toFixed(2)}%` : '--'} />
               </div>
             </div>
 
-            {/* Arrow 1 */}
             <div style={{ display: 'flex', alignItems: 'center' }}>
-              <ArrowRight size={16} color="#2a2d3a" />
+              <ArrowRight size={14} color="#2a2d3a" />
             </div>
 
             {/* 24h checkpoint */}
@@ -378,59 +393,64 @@ const ActionCard = ({ action, isLast }) => {
               </div>
               {action.has_1d_data ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <MetricLine
-                    label="ROAS 7d"
-                    value={after1d.roas_7d ? `${after1d.roas_7d.toFixed(2)}x` : '--'}
-                    delta={action.delta_roas_1d_pct}
-                  />
-                  <MetricLine
-                    label="CPA 7d"
-                    value={after1d.cpa_7d ? formatCurrency(after1d.cpa_7d) : '--'}
-                    delta={action.delta_cpa_1d_pct}
-                    invertDelta
-                  />
+                  <MetricLine label="ROAS" value={after1d.roas_7d ? `${after1d.roas_7d.toFixed(2)}x` : '--'} delta={action.delta_roas_1d_pct} />
+                  <MetricLine label="CPA" value={after1d.cpa_7d ? formatCurrency(after1d.cpa_7d) : '--'} delta={action.delta_cpa_1d_pct} invertDelta />
                   <MetricLine label="Budget" value={after1d.daily_budget ? formatCurrency(after1d.daily_budget) : '--'} />
                   <MetricLine label="CTR" value={after1d.ctr ? `${after1d.ctr.toFixed(2)}%` : '--'} />
                 </div>
               ) : (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '80px', color: '#6b7280', fontSize: '11px' }}>
                   <Clock size={12} style={{ marginRight: '4px' }} />
-                  {action.hours_elapsed != null ? `${action.hours_elapsed}h elapsed` : 'Pendiente'}
+                  {action.hours_elapsed != null ? `${action.hours_elapsed}h` : 'Pendiente'}
                 </div>
               )}
             </div>
 
-            {/* Arrow 2 */}
             <div style={{ display: 'flex', alignItems: 'center' }}>
-              <ArrowRight size={16} color="#2a2d3a" />
+              <ArrowRight size={14} color="#2a2d3a" />
             </div>
 
-            {/* 3d final */}
+            {/* 3d checkpoint */}
             <div>
-              <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>
-                {isMeasuring ? 'Final (3 dias)' : (afterWindow === '7d' ? '7 dias' : '3 dias')}
-                {action.has_7d_data && <span style={{ color: '#10b981', marginLeft: '4px', fontSize: '8px' }}>complete</span>}
+              <div style={{ fontSize: '10px', color: '#f59e0b', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>
+                3 dias
               </div>
-              {isMeasuring ? (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '80px', color: '#6b7280', fontSize: '11px' }}>
-                  <Clock size={12} style={{ marginRight: '4px' }} />
-                  {action.days_remaining || 0}d restantes
+              {action.has_3d_data ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <MetricLine label="ROAS" value={after3d.roas_7d ? `${after3d.roas_7d.toFixed(2)}x` : '--'} delta={action.delta_roas_3d_pct} />
+                  <MetricLine label="CPA" value={after3d.cpa_7d ? formatCurrency(after3d.cpa_7d) : '--'} delta={action.delta_cpa_3d_pct} invertDelta />
+                  <MetricLine label="Budget" value={after3d.daily_budget ? formatCurrency(after3d.daily_budget) : '--'} />
+                  <MetricLine label="CTR" value={after3d.ctr ? `${after3d.ctr.toFixed(2)}%` : '--'} />
                 </div>
               ) : (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '80px', color: '#6b7280', fontSize: '11px' }}>
+                  <Clock size={12} style={{ marginRight: '4px' }} />
+                  {action.days_remaining_3d != null ? `${action.days_remaining_3d}d` : 'Pendiente'}
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              <ArrowRight size={14} color="#2a2d3a" />
+            </div>
+
+            {/* 7d checkpoint */}
+            <div>
+              <div style={{ fontSize: '10px', color: '#10b981', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>
+                7 dias
+                {action.has_7d_data && <span style={{ marginLeft: '4px', fontSize: '8px' }}>final</span>}
+              </div>
+              {action.has_7d_data ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <MetricLine
-                    label="ROAS 7d"
-                    value={after.roas_7d ? `${after.roas_7d.toFixed(2)}x` : '--'}
-                    delta={action.delta_roas_pct}
-                  />
-                  <MetricLine
-                    label="CPA 7d"
-                    value={after.cpa_7d ? formatCurrency(after.cpa_7d) : '--'}
-                    delta={action.delta_cpa_pct}
-                    invertDelta
-                  />
-                  <MetricLine label="Budget" value={after.daily_budget ? formatCurrency(after.daily_budget) : '--'} />
-                  <MetricLine label="CTR" value={after.ctr ? `${after.ctr.toFixed(2)}%` : '--'} />
+                  <MetricLine label="ROAS" value={after7d.roas_7d ? `${after7d.roas_7d.toFixed(2)}x` : '--'} delta={action.delta_roas_7d_pct} />
+                  <MetricLine label="CPA" value={after7d.cpa_7d ? formatCurrency(after7d.cpa_7d) : '--'} delta={action.delta_cpa_7d_pct} invertDelta />
+                  <MetricLine label="Budget" value={after7d.daily_budget ? formatCurrency(after7d.daily_budget) : '--'} />
+                  <MetricLine label="CTR" value={after7d.ctr ? `${after7d.ctr.toFixed(2)}%` : '--'} />
+                </div>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '80px', color: '#6b7280', fontSize: '11px' }}>
+                  <Clock size={12} style={{ marginRight: '4px' }} />
+                  {action.days_remaining_7d != null ? `${action.days_remaining_7d}d` : 'Pendiente'}
                 </div>
               )}
             </div>
@@ -466,18 +486,26 @@ const ActionCard = ({ action, isLast }) => {
               <>
                 {action.has_1d_data && action.delta_roas_1d_pct != null && (
                   <span style={{
-                    fontSize: '11px', fontWeight: '600',
+                    fontSize: '10px', fontWeight: '600',
                     color: action.delta_roas_1d_pct > 5 ? '#a78bfa' : (action.delta_roas_1d_pct < -5 ? '#fca5a5' : '#9ca3af')
                   }}>
                     24h: {action.delta_roas_1d_pct > 0 ? '+' : ''}{action.delta_roas_1d_pct.toFixed(1)}%
                   </span>
                 )}
-                {!isMeasuring && action.delta_roas_pct != null && (
+                {action.has_3d_data && action.delta_roas_3d_pct != null && (
+                  <span style={{
+                    fontSize: '11px', fontWeight: '600',
+                    color: action.delta_roas_3d_pct > 5 ? '#f59e0b' : (action.delta_roas_3d_pct < -5 ? '#fca5a5' : '#9ca3af')
+                  }}>
+                    3d: {action.delta_roas_3d_pct > 0 ? '+' : ''}{action.delta_roas_3d_pct.toFixed(1)}%
+                  </span>
+                )}
+                {action.has_7d_data && action.delta_roas_7d_pct != null && (
                   <span style={{
                     fontSize: '13px', fontWeight: '700',
-                    color: action.delta_roas_pct > 5 ? '#6ee7b7' : (action.delta_roas_pct < -5 ? '#fca5a5' : '#9ca3af')
+                    color: action.delta_roas_7d_pct > 5 ? '#6ee7b7' : (action.delta_roas_7d_pct < -5 ? '#fca5a5' : '#9ca3af')
                   }}>
-                    3d: {action.delta_roas_pct > 0 ? '+' : ''}{action.delta_roas_pct.toFixed(1)}%
+                    7d: {action.delta_roas_7d_pct > 0 ? '+' : ''}{action.delta_roas_7d_pct.toFixed(1)}%
                   </span>
                 )}
               </>
@@ -730,7 +758,7 @@ const ImpactReport = () => {
           Reporte de Impacto
         </h1>
         <p style={{ color: '#9ca3af', fontSize: '13px', margin: '4px 0 0' }}>
-          Resultados de las acciones ejecutadas por el Cerebro IA. Cada accion se mide 3 dias despues. Este feedback alimenta las decisiones futuras.
+          Resultados de las acciones ejecutadas por el Cerebro IA. Cada accion se mide a las 24h, 3 dias y 7 dias. Este feedback alimenta las decisiones futuras.
         </p>
       </div>
 
