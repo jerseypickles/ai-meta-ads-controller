@@ -49,11 +49,12 @@ You must respect how Meta's algorithm works:
 - If this ad set is 50%+ of total account spend, be more conservative
 - Don't over-concentrate budget — diversification reduces risk
 
-### When to Kill
-- ROAS < 0.8 after 7+ days with $50+ spend: strong kill signal
-- ROAS < 1.0 after 10+ days: kill unless there's a clear improving trend (3d better than 7d)
-- 0 purchases after $40+ spend: kill
-- High frequency (>3.5) + declining ROAS + no fresh creatives available: kill
+### When an Ad Set is Failing
+- NEVER kill/pause the ad set itself — only manage individual ads and budget
+- ROAS < 0.8 after 7+ days with $50+ spend: pause ALL ads and scale budget to minimum ($10)
+- ROAS < 1.0 after 10+ days: pause worst ads, scale budget down 50%, unless 3d trend is improving
+- 0 purchases after $40+ spend: pause ALL ads and scale budget to minimum
+- High frequency (>3.5) + declining ROAS: pause fatigued ads, add fresh creatives if available
 
 ## FREQUENCY & FATIGUE RULES
 - Frequency > 2.5 means audience fatigue — they're seeing the same ads too much
@@ -120,10 +121,6 @@ When adding a new ad (add_ad), you write the headline and body (primary text). T
       "cta": "SHOP_NOW",
       "reason": "..."
     },
-    {
-      "type": "kill_adset",
-      "reason": "..."
-    }
   ],
   "assessment": "In Spanish — overall assessment including frequency/fatigue analysis, algorithm status, and scaling rationale",
   "frequency_status": "ok|moderate|high|critical",
@@ -140,7 +137,7 @@ If no actions needed: { "actions": [], "assessment": "...", "frequency_status": 
 ## FEEDBACK LOOP — LEARN FROM YOUR PAST DECISIONS
 You will receive an "action_history" array with your previous decisions on this ad set and their MEASURED outcomes.
 Each entry has:
-- action: what you did (scale_budget, pause_ad, add_ad, kill_adset)
+- action: what you did (scale_budget, pause_ad, add_ad)
 - days_ago: when you did it
 - result: "improved" (ROAS went up >5%), "worsened" (ROAS went down >5%), or "neutral"
 - delta_roas_pct: exact % change in ROAS after your action
@@ -163,13 +160,14 @@ You may receive "brain_directives" — these come from the Brain, a strategic AI
 When brain_directives are present:
 - "boost" + "scale_up" → Brain sees this ad set has room to grow in the account context. Scale if metrics support it.
 - "suppress" + "scale_up" → Brain sees risk (e.g. account is over-concentrated, ROAS dropping globally). Be conservative. Do NOT scale up.
-- "suppress" + "pause" → Brain recommends pausing this ad set. This is a STRONG signal — you MUST act on it. But act INTELLIGENTLY:
+- "suppress" + "pause" → Brain recommends shutting down this ad set. This is a STRONG signal — you MUST act on it. But act INTELLIGENTLY at the AD level (NEVER pause/kill the ad set itself):
   * FIRST: Analyze each ad individually. If any ad has purchases and positive ROAS, that ad has value.
-  * If ALL ads are dead (0 purchases each, or very low CTR < 0.3%): kill_adset entirely.
-  * If SOME ads are performing but others are dead: pause the dead ads, keep the winners. Optionally add fresh creatives to replace the paused ones. Consider reducing budget if overall ROAS is weak.
+  * If ALL ads are dead (0 purchases each, or very low CTR < 0.3%): pause ALL ads and scale budget to minimum ($10).
+  * If SOME ads are performing but others are dead: pause the dead ads, keep the winners. Optionally add fresh creatives to replace the paused ones. Scale budget down if overall ROAS is weak.
   * If ONE ad carries all the weight: pause the others, keep that one, add fresh creatives to test alongside it.
   * The Brain sees global metrics but NOT individual ad performance — YOU have that data. Use it to make the right granular decision.
-  * NEVER ignore a "suppress + pause" directive. You must take at least one action (pause_ad, kill_adset, or scale_budget down).
+  * NEVER ignore a "suppress + pause" directive. You must take at least one action (pause_ad or scale_budget down).
+  * NEVER use kill_adset — always manage at the individual ad + budget level.
 - "boost" + "reactivate" → Brain thinks this ad set should come back. Consider reactivating.
 - "stabilize" → Ad set just exited learning phase. DO NOT scale or kill for 3-7 days. Let Meta's algorithm stabilize. Only pause individual ads that are clearly dead ($20+ spend, 0 purchases, CTR < 0.3%).
 - "optimize_ads" → Clean up underperforming ads in this ad set (even if overall ROAS is good). Pause ads with 0 purchases + $20+ spend, or CTR < 0.5% + 1000+ impressions. Add fresh creatives to replace paused ones. This applies to ALL ad sets — winners benefit from cleaning up bad ads too.
@@ -847,36 +845,8 @@ async function manageAdSet(creation) {
         }
 
         case 'kill_adset': {
-          await meta.updateStatus(adSetId, 'PAUSED');
-          creation.current_status = 'PAUSED';
-          creation.lifecycle_phase = 'dead';
-          creation.lifecycle_actions.push({
-            action: 'kill',
-            value: null,
-            reason: action.reason,
-            executed_at: new Date()
-          });
-
-          // Save to ActionLog
-          await ActionLog.create({
-            entity_type: 'adset',
-            entity_id: adSetId,
-            entity_name: creation.meta_entity_name,
-            campaign_id: creation.parent_entity_id || '',
-            campaign_name: creation.parent_entity_name || '',
-            action: 'pause',
-            before_value: 'ACTIVE',
-            after_value: 'KILLED',
-            reasoning: action.reason,
-            confidence: 'high',
-            agent_type: 'ai_manager',
-            success: true,
-            executed_at: new Date(),
-            metrics_at_execution: metricsAtExecution
-          });
-
-          logger.info(`[AI-MANAGER] ${adSetId}: KILLED — ${action.reason}`);
-          actionsExecuted++;
+          // BLOQUEADO: nunca apagar ad sets completos — solo gestionar ads individuales + budget
+          logger.warn(`[AI-MANAGER] ${adSetId}: BLOCKED kill_adset — solo se permiten acciones a nivel de ads y budget. Razón original: ${action.reason}`);
           break;
         }
       }
@@ -903,15 +873,28 @@ async function manageAdSet(creation) {
     const daysActive = daysSinceCreation;
 
     if ((allAdsDead || (mostAdsDead && suppressPauseDirectives.length >= 10)) && daysActive >= 5 && adSetSpend >= 40) {
-      // Todos los ads muertos + suficiente tiempo/gasto → kill
+      // Todos los ads muertos + suficiente tiempo/gasto → pausar TODOS los ads + budget mínimo (nunca el ad set)
       try {
-        await meta.updateStatus(adSetId, 'PAUSED');
-        creation.current_status = 'PAUSED';
-        creation.lifecycle_phase = 'dead';
+        const minBudget = require('../../../config/safety-guards').min_adset_budget || 10;
+        // Pause all active ads
+        for (const ad of activeAds) {
+          try {
+            await meta.updateAdStatus(ad.ad_id, 'PAUSED');
+          } catch (adErr) {
+            logger.error(`[AI-MANAGER][ENFORCE] Error pausing ad ${ad.ad_id}: ${adErr.message}`);
+          }
+        }
+        // Scale budget to minimum
+        const oldBudget = creation.current_budget || creation.initial_budget;
+        if (oldBudget > minBudget) {
+          await meta.updateBudget(adSetId, minBudget);
+          creation.current_budget = minBudget;
+        }
+
         creation.lifecycle_actions.push({
-          action: 'kill',
-          value: null,
-          reason: `[ENFORCED] ${suppressPauseDirectives.length} directivas suppress+pause del Brain ignoradas por Claude. Todos los ads sin rendimiento. Kill forzado.`,
+          action: 'kill_forced',
+          value: minBudget,
+          reason: `[ENFORCED] ${suppressPauseDirectives.length} directivas suppress+pause del Brain ignoradas por Claude. ${activeAds.length} ads pausados + budget → $${minBudget}.`,
           executed_at: new Date()
         });
 
@@ -921,10 +904,11 @@ async function manageAdSet(creation) {
           entity_name: creation.meta_entity_name,
           campaign_id: creation.parent_entity_id || '',
           campaign_name: creation.parent_entity_name || '',
-          action: 'pause',
-          before_value: 'ACTIVE',
-          after_value: 'KILLED',
-          reasoning: `[ENFORCED] ${suppressPauseDirectives.length} directivas suppress+pause ignoradas. ROAS ${adSetRoas.toFixed(2)}x, ${adSetPurchases} compras en ${daysActive.toFixed(0)}d, $${adSetSpend.toFixed(0)} gastado.`,
+          action: 'scale_budget',
+          before_value: oldBudget,
+          after_value: minBudget,
+          change_percent: Math.round(((minBudget - oldBudget) / oldBudget) * 100),
+          reasoning: `[ENFORCED] ${suppressPauseDirectives.length} directivas suppress+pause ignoradas. ${activeAds.length} ads paused + budget to $${minBudget}. ROAS ${adSetRoas.toFixed(2)}x, ${adSetPurchases} compras en ${daysActive.toFixed(0)}d, $${adSetSpend.toFixed(0)} gastado.`,
           confidence: 'high',
           agent_type: 'ai_manager',
           success: true,
@@ -932,8 +916,8 @@ async function manageAdSet(creation) {
           metrics_at_execution: metricsAtExecution
         });
 
-        actionsExecuted++;
-        logger.error(`[AI-MANAGER][ENFORCE] KILL FORZADO: ${creation.meta_entity_name} — ${suppressPauseDirectives.length} directivas ignoradas, todos los ads muertos`);
+        actionsExecuted += activeAds.length + 1;
+        logger.error(`[AI-MANAGER][ENFORCE] KILL FORZADO (ad-level): ${creation.meta_entity_name} — ${activeAds.length} ads paused, budget → $${minBudget}`);
       } catch (killErr) {
         logger.error(`[AI-MANAGER][ENFORCE] Error en kill forzado de ${adSetId}: ${killErr.message}`);
       }
@@ -1121,36 +1105,60 @@ async function _hardcodedDecisionTree({
 
 async function _forceKill(creation, adSetId, meta, metricsAtExecution, reason) {
   try {
-    await meta.updateStatus(adSetId, 'PAUSED');
+    const minBudget = require('../../../config/safety-guards').min_adset_budget || 10;
+    let actionCount = 0;
+
+    // 1. Pause ALL active ads in this ad set (never pause the ad set itself)
+    const adsData = await getAdsForAdSet(adSetId);
+    const activeAds = adsData.filter(a => a.status === 'ACTIVE');
+    for (const ad of activeAds) {
+      try {
+        await meta.updateAdStatus(ad.ad_id, 'PAUSED');
+        logger.info(`[AI-MANAGER][DECISION-TREE] Paused ad ${ad.ad_id} — ${reason}`);
+        actionCount++;
+      } catch (adErr) {
+        logger.error(`[AI-MANAGER][DECISION-TREE] Error pausing ad ${ad.ad_id}: ${adErr.message}`);
+      }
+    }
+
+    // 2. Scale budget to minimum
+    const oldBudget = creation.current_budget || creation.initial_budget;
+    if (oldBudget > minBudget) {
+      await meta.updateBudget(adSetId, minBudget);
+      actionCount++;
+    }
+
+    // 3. Update AICreation record (not dead — just neutered)
     await AICreation.findByIdAndUpdate(creation._id, {
-      lifecycle_phase: 'dead',
-      lifecycle_phase_changed_at: new Date(),
-      current_status: 'PAUSED',
+      current_budget: minBudget,
       updated_at: new Date(),
       $push: {
         lifecycle_actions: {
           action: 'kill_forced',
-          reason: `[DECISION-TREE] ${reason}`,
+          value: minBudget,
+          reason: `[DECISION-TREE] All ${activeAds.length} ads paused + budget → $${minBudget}. ${reason}`,
           executed_at: new Date()
         }
       }
     });
+
     await ActionLog.create({
       entity_type: 'adset',
       entity_id: adSetId,
       entity_name: creation.meta_entity_name,
-      action: 'pause',
-      before_value: creation.current_budget || creation.initial_budget,
-      after_value: 0,
-      change_percent: -100,
-      reasoning: `[DECISION-TREE KILL] ${reason}`,
+      action: 'scale_budget',
+      before_value: oldBudget,
+      after_value: minBudget,
+      change_percent: Math.round(((minBudget - oldBudget) / oldBudget) * 100),
+      reasoning: `[DECISION-TREE KILL] ${activeAds.length} ads paused + budget to $${minBudget}. ${reason}`,
       confidence: 'high',
       agent_type: 'ai_manager',
       success: true,
       metrics_at_execution: metricsAtExecution
     });
-    logger.error(`[AI-MANAGER][DECISION-TREE] KILL FORCED: ${creation.meta_entity_name} — ${reason}`);
-    return { forced: true, action: 'kill', reason, actionsExecuted: 1 };
+
+    logger.error(`[AI-MANAGER][DECISION-TREE] KILL FORCED (ad-level): ${creation.meta_entity_name} — ${activeAds.length} ads paused, budget $${oldBudget} → $${minBudget} — ${reason}`);
+    return { forced: true, action: 'kill_ads_and_minimize', reason, actionsExecuted: actionCount };
   } catch (err) {
     logger.error(`[AI-MANAGER][DECISION-TREE] Error forcing kill on ${adSetId}: ${err.message}`);
     return null;

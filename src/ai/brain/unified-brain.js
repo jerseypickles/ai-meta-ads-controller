@@ -1075,7 +1075,7 @@ class UnifiedBrain {
 
     switch (category) {
       case 'no_conversions':
-        actions.push({ action: 'kill_adset', detail: 'Zero purchases — kill the ad set' });
+        actions.push({ action: 'pause_all_ads', detail: 'Zero purchases — pause all ads and minimize budget' });
         actions.push({ action: 'pause_worst_ads', detail: 'Pause all ads with 0 purchases first' });
         break;
       case 'low_roas':
@@ -1094,7 +1094,7 @@ class UnifiedBrain {
         actions.push({ action: 'add_fresh_creative', detail: 'Fresh creative may re-engage audience' });
         break;
       case 'budget_waste':
-        actions.push({ action: 'kill_adset', detail: 'High spend with poor return — kill' });
+        actions.push({ action: 'pause_all_ads', detail: 'High spend with poor return — pause all ads and minimize budget' });
         break;
       case 'strong_performer':
         actions.push({ action: 'scale_up', detail: 'Increase budget 15-20%' });

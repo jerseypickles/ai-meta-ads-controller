@@ -47,7 +47,9 @@ module.exports = {
     // Cooldown entre detecciones sobre la misma entidad (horas)
     cooldown_hours: 6,
     // Auto-pausar entidades anómalas (si false, solo alerta)
-    auto_pause: true
+    // DESHABILITADO: el AI Manager maneja ad sets IA, y los manuales los maneja el humano.
+    // El anomaly detector solo registra el evento como alerta.
+    auto_pause: false
   },
 
   // Modo de autonomía global del Cerebro IA: 'manual' | 'semi_auto' | 'auto'
