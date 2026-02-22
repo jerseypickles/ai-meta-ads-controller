@@ -17,6 +17,10 @@ const DEFAULT_AUTONOMY = {
   max_auto_change_pct: 20
 };
 
+// In-memory store for background agent execution jobs
+const agentExecJobs = new Map();
+const AGENT_EXEC_JOB_TTL = 10 * 60 * 1000; // 10 minutes
+
 // GET /api/agents/latest — Ultimo reporte del Cerebro IA + historial de impacto por entidad
 router.get('/latest', async (req, res) => {
   try {
@@ -228,7 +232,7 @@ router.post('/reject/:reportId/:recId', async (req, res) => {
   }
 });
 
-// POST /api/agents/execute/:reportId/:recId — Ejecutar recomendacion aprobada
+// POST /api/agents/execute/:reportId/:recId — Ejecutar recomendacion aprobada (background)
 router.post('/execute/:reportId/:recId', async (req, res) => {
   try {
     const { reportId, recId } = req.params;
@@ -268,6 +272,15 @@ router.post('/execute/:reportId/:recId', async (req, res) => {
       return res.status(400).json({ error: `Guard rail: ${guardCheck.reason}` });
     }
 
+    // Launch Meta API execution in background
+    const jobId = `agent_exec_${reportId}_${recId}_${Date.now()}`;
+    agentExecJobs.set(jobId, { status: 'running', startedAt: Date.now(), result: null, error: null });
+
+    // Respond immediately after validation passes
+    res.json({ success: true, async: true, job_id: jobId, message: 'Ejecución iniciada en background' });
+
+    // Background execution
+    (async () => {
     const effectiveValue = guardCheck.adjustedValue || rec.recommended_value;
 
     const meta = getMetaClient();
@@ -302,12 +315,12 @@ router.post('/execute/:reportId/:recId', async (req, res) => {
         const selectedCreativeId = req.body.creative_asset_id || rec.creative_asset_id;
         const asset = await CreativeAsset.findById(selectedCreativeId);
         if (!asset) {
-          return res.status(400).json({ error: 'Creative asset no encontrado' });
+          throw new Error('Creative asset no encontrado');
         }
 
         // Validate required fields for Meta API
         if (!asset.link_url) {
-          return res.status(400).json({ error: 'El creativo no tiene link de producto. Edita el creativo en el banco y agrega el link_url antes de usarlo en un ad.' });
+          throw new Error('El creativo no tiene link de producto. Edita el creativo en el banco y agrega el link_url antes de usarlo en un ad.');
         }
 
         // Upload to Meta if needed
@@ -392,7 +405,7 @@ router.post('/execute/:reportId/:recId', async (req, res) => {
         const targetSnap = snapshots.find(s => s.entity_id === rec.target_entity_id);
 
         if (!sourceSnap || !targetSnap) {
-          return res.status(400).json({ error: 'No se encontraron snapshots para source/target' });
+          throw new Error('No se encontraron snapshots para source/target');
         }
 
         const moveAmount = rec.recommended_value;
@@ -409,7 +422,7 @@ router.post('/execute/:reportId/:recId', async (req, res) => {
         break;
       }
       default:
-        return res.status(400).json({ error: `Accion no ejecutable: ${rec.action}` });
+        throw new Error(`Accion no ejecutable: ${rec.action}`);
     }
 
     rec.status = 'executed';
@@ -525,11 +538,47 @@ router.post('/execute/:reportId/:recId', async (req, res) => {
     await cooldownManagerPost.setCooldown(rec.entity_id, rec.entity_type, rec.action);
 
     logger.info(`Recomendacion ejecutada: ${rec.action} en ${rec.entity_name} (agente: ${report.agent_type})`);
-    res.json({ success: true, recommendation: rec, api_response: apiResponse, guard_rail: guardCheck });
+    agentExecJobs.set(jobId, {
+      status: 'completed',
+      startedAt: agentExecJobs.get(jobId)?.startedAt,
+      result: { success: true, recommendation: rec, api_response: apiResponse, guard_rail: guardCheck },
+      error: null
+    });
+    })().catch(error => {
+      logger.error('Error ejecutando recomendacion:', error);
+      agentExecJobs.set(jobId, {
+        status: 'failed',
+        startedAt: agentExecJobs.get(jobId)?.startedAt,
+        result: null,
+        error: error.message
+      });
+    }).finally(() => {
+      setTimeout(() => agentExecJobs.delete(jobId), AGENT_EXEC_JOB_TTL);
+    });
   } catch (error) {
     logger.error('Error ejecutando recomendacion:', error);
     res.status(500).json({ error: error.message });
   }
+});
+
+// GET /api/agents/execute-status/:jobId — Poll status of background agent execution
+router.get('/execute-status/:jobId', async (req, res) => {
+  const job = agentExecJobs.get(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ error: 'Job no encontrado o expirado' });
+  }
+
+  const elapsed = Math.round((Date.now() - job.startedAt) / 1000);
+
+  if (job.status === 'running') {
+    return res.json({ status: 'running', elapsed_seconds: elapsed });
+  }
+
+  if (job.status === 'completed') {
+    return res.json({ status: 'completed', elapsed_seconds: elapsed, result: job.result });
+  }
+
+  return res.json({ status: 'failed', elapsed_seconds: elapsed, error: job.error });
 });
 
 // GET /api/agents/impact — Acciones ejecutadas con métricas before/after (24h + 3d)

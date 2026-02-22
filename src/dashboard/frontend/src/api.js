@@ -285,14 +285,48 @@ export const rejectDecisionRecommendation = async (decisionId, itemId) => {
 };
 
 /**
- * Ejecutar recomendación aprobada de una decisión
+ * Helper: poll a status endpoint until completed or failed.
+ * @param {string} url - Status endpoint to poll
+ * @param {number} intervalMs - Polling interval (default 2s)
+ * @param {number} maxWaitMs - Max wait time (default 5 min)
+ * @returns {Promise<Object>} Final result
+ */
+const pollForCompletion = async (url, intervalMs = 2000, maxWaitMs = 300000) => {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    const response = await api.get(url);
+    const data = response.data;
+
+    if (data.status === 'completed') {
+      return { success: true, ...data };
+    }
+    if (data.status === 'failed') {
+      throw new Error(data.error || 'Ejecución falló');
+    }
+    // Still running — wait and retry
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+  throw new Error('Timeout: la operación tardó demasiado');
+};
+
+/**
+ * Ejecutar recomendación aprobada de una decisión (background + polling)
  * @param {string} decisionId
  * @param {string} itemId
  * @returns {Promise<Object>}
  */
 export const executeDecisionRecommendation = async (decisionId, itemId) => {
-  const response = await api.post(`/api/decisions/${decisionId}/items/${itemId}/execute`, {}, { timeout: 120000 });
-  return response.data;
+  // Launch background execution
+  const response = await api.post(`/api/decisions/${decisionId}/items/${itemId}/execute`, {}, { timeout: 30000 });
+  const data = response.data;
+
+  // If async execution, poll for result
+  if (data.async && data.job_id) {
+    return pollForCompletion(`/api/decisions/execute-status/${data.job_id}`);
+  }
+
+  // Fallback: direct response (shouldn't happen, but safe)
+  return data;
 };
 
 /**
@@ -580,8 +614,16 @@ export const rejectRecommendation = async (reportId, recId) => {
 };
 
 export const executeRecommendation = async (reportId, recId, body = {}) => {
-  const response = await api.post(`/api/agents/execute/${reportId}/${recId}`, body, { timeout: 120000 });
-  return response.data;
+  // Launch background execution
+  const response = await api.post(`/api/agents/execute/${reportId}/${recId}`, body, { timeout: 30000 });
+  const data = response.data;
+
+  // If async execution, poll for result
+  if (data.async && data.job_id) {
+    return pollForCompletion(`/api/agents/execute-status/${data.job_id}`);
+  }
+
+  return data;
 };
 
 export const runAgents = async () => {
@@ -721,8 +763,16 @@ export const strategizeAdSet = async () => {
 };
 
 export const approveAdSet = async (data) => {
-  const response = await api.post('/api/adset-creator/approve', data, { timeout: 300000 });
-  return response.data;
+  // Launch background execution
+  const response = await api.post('/api/adset-creator/approve', data, { timeout: 30000 });
+  const resData = response.data;
+
+  // If async execution, poll for result
+  if (resData.async && resData.job_id) {
+    return pollForCompletion(`/api/adset-creator/approve-status/${resData.job_id}`, 3000, 600000);
+  }
+
+  return resData;
 };
 
 export const rejectAdSet = async () => {
@@ -779,8 +829,29 @@ export const getStrategicLatest = async () => {
 };
 
 export const runStrategicCycle = async () => {
-  const response = await api.post('/api/strategic/run', {}, { timeout: 300000 });
-  return response.data;
+  // Launch cycle (returns immediately since backend runs in background)
+  const response = await api.post('/api/strategic/run-cycle', {}, { timeout: 30000 });
+  const data = response.data;
+
+  if (!data.success) return data;
+
+  // Poll run-status until completed
+  const start = Date.now();
+  const maxWait = 300000; // 5 min max
+  while (Date.now() - start < maxWait) {
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    const statusRes = await api.get('/api/strategic/run-status');
+    const status = statusRes.data;
+
+    if (status.status === 'completed') {
+      return { success: true, ...status.result };
+    }
+    if (status.status === 'idle' && !status.result) {
+      // Might have missed it — check latest
+      return { success: true, status: 'completed' };
+    }
+  }
+  throw new Error('Timeout: el ciclo estratégico tardó demasiado');
 };
 
 export const getStrategicRunStatus = async () => {

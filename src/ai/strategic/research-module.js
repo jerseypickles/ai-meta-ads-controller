@@ -3,7 +3,7 @@ const config = require('../../../config');
 const ResearchCache = require('../../db/models/ResearchCache');
 const logger = require('../../utils/logger');
 
-const SEARCH_TIMEOUT = 10000;
+const SEARCH_TIMEOUT = 30000; // 30s — APIs externas pueden ser lentas
 const CACHE_TTL_HOURS = 24;
 const MAX_RESULTS_PER_QUERY = 5;
 
@@ -163,25 +163,46 @@ class ResearchModule {
     return [];
   }
 
+  async _searchWithRetry(fn, label, maxRetries = 2) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        const isTimeout = error.code === 'ECONNABORTED' || error.message?.includes('timeout');
+        const isRetryable = isTimeout || (error.response?.status >= 500);
+        if (isRetryable && attempt < maxRetries) {
+          const delay = attempt * 3000;
+          logger.warn(`[RESEARCH] ${label} intento ${attempt}/${maxRetries} falló (${error.message}), reintentando en ${delay / 1000}s...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        throw error;
+      }
+    }
+    return [];
+  }
+
   async _searchBrave(query) {
     try {
-      const response = await axios.get('https://api.search.brave.com/res/v1/web/search', {
-        params: { q: query, count: MAX_RESULTS_PER_QUERY },
-        headers: {
-          'Accept': 'application/json',
-          'Accept-Encoding': 'gzip',
-          'X-Subscription-Token': this.braveApiKey
-        },
-        timeout: SEARCH_TIMEOUT
-      });
+      return await this._searchWithRetry(async () => {
+        const response = await axios.get('https://api.search.brave.com/res/v1/web/search', {
+          params: { q: query, count: MAX_RESULTS_PER_QUERY },
+          headers: {
+            'Accept': 'application/json',
+            'Accept-Encoding': 'gzip',
+            'X-Subscription-Token': this.braveApiKey
+          },
+          timeout: SEARCH_TIMEOUT
+        });
 
-      const results = (response.data.web?.results || []).map(r => ({
-        title: r.title || '',
-        url: r.url || '',
-        snippet: r.description || ''
-      }));
+        const results = (response.data.web?.results || []).map(r => ({
+          title: r.title || '',
+          url: r.url || '',
+          snippet: r.description || ''
+        }));
 
-      return results.slice(0, MAX_RESULTS_PER_QUERY);
+        return results.slice(0, MAX_RESULTS_PER_QUERY);
+      }, 'Brave Search');
     } catch (error) {
       logger.warn(`[RESEARCH] Brave Search error: ${error.message}`);
       return [];
@@ -190,23 +211,25 @@ class ResearchModule {
 
   async _searchSerp(query) {
     try {
-      const response = await axios.get('https://serpapi.com/search', {
-        params: {
-          q: query,
-          api_key: this.serpApiKey,
-          engine: 'google',
-          num: MAX_RESULTS_PER_QUERY
-        },
-        timeout: SEARCH_TIMEOUT
-      });
+      return await this._searchWithRetry(async () => {
+        const response = await axios.get('https://serpapi.com/search', {
+          params: {
+            q: query,
+            api_key: this.serpApiKey,
+            engine: 'google',
+            num: MAX_RESULTS_PER_QUERY
+          },
+          timeout: SEARCH_TIMEOUT
+        });
 
-      const results = (response.data.organic_results || []).map(r => ({
-        title: r.title || '',
-        url: r.link || '',
-        snippet: r.snippet || ''
-      }));
+        const results = (response.data.organic_results || []).map(r => ({
+          title: r.title || '',
+          url: r.link || '',
+          snippet: r.snippet || ''
+        }));
 
-      return results.slice(0, MAX_RESULTS_PER_QUERY);
+        return results.slice(0, MAX_RESULTS_PER_QUERY);
+      }, 'SerpAPI');
     } catch (error) {
       logger.warn(`[RESEARCH] SerpAPI error: ${error.message}`);
       return [];
