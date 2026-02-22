@@ -7,13 +7,13 @@ services:
     startCommand: node src/index.js
     disk:
       name: uploads
-      mountPath: /var/data/uploads
+      mountPath: /data/uploads
       sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
       - key: UPLOADS_DIR
-        value: /var/data/uploads
+        value: /data/uploads
       - key: META_APP_ID
         sync: false
       - key: META_APP_SECRET
