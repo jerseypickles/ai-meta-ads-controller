@@ -57,7 +57,8 @@ class AdaptiveScorer {
       entityModifiers,
       dataQuality,
       roasVolatility,
-      freqGap
+      freqGap,
+      learningSignal
     });
 
     const uncertaintyScore = this._estimateUncertainty({
@@ -141,7 +142,13 @@ class AdaptiveScorer {
       : 0;
     const concentration = clamp(toNumber(derived.top_creative_share_7d), 0, 1);
 
-    let impact = toNumber(candidate.baseImpactPct, toNumber(actionPrior.baseline_impact_pct, 5));
+    // Blend static prior with learned impact when we have confidence.
+    // learnedImpact maps mean [0..1] to an impact range of [-5..+20] pct.
+    const lConf = clamp(toNumber(learningSignal?.confidence), 0, 1);
+    const staticImpact = toNumber(candidate.baseImpactPct, toNumber(actionPrior.baseline_impact_pct, 5));
+    const learnedImpact = (toNumber(learningSignal?.mean, 0.5) - 0.2) * 25; // 0→-5, 0.5→+7.5, 1→+20
+    let impact = staticImpact * (1 - lConf * 0.6) + learnedImpact * (lConf * 0.6);
+
     if (candidate.action === 'scale_up') {
       impact += (roasSignal * 8);
       impact += (trendSignal * 4);
@@ -162,7 +169,9 @@ class AdaptiveScorer {
       impact += (toNumber(accountContext.deliveryPressure) * 2);
     }
 
-    impact += (toNumber(learningSignal?.mean, 0.5) - 0.5) * 6;
+    // Contextual learning adjustment — scaled by confidence so early samples
+    // contribute less and well-trained buckets can shift impact significantly.
+    impact += (toNumber(learningSignal?.mean, 0.5) - 0.5) * (6 + lConf * 10);
     impact *= toNumber(entityModifiers.growth_multiplier || entityModifiers.efficiency_multiplier, 1);
     return clamp(impact, -20, 35);
   }
@@ -175,11 +184,19 @@ class AdaptiveScorer {
     entityModifiers,
     dataQuality,
     roasVolatility,
-    freqGap
+    freqGap,
+    learningSignal
   }) {
     const metrics = feature.metrics || {};
     const derived = feature.derived || {};
-    let risk = toNumber(candidate.baseRisk, toNumber(actionPrior.baseline_risk, 0.35));
+
+    // Blend static risk prior with learned failure rate.
+    // learnedFailureRate = 1 - mean (mean is success probability from bandit).
+    const lConf = clamp(toNumber(learningSignal?.confidence), 0, 1);
+    const staticRisk = toNumber(candidate.baseRisk, toNumber(actionPrior.baseline_risk, 0.35));
+    const learnedFailureRate = 1 - toNumber(learningSignal?.mean, 0.5);
+    let risk = staticRisk * (1 - lConf * 0.5) + learnedFailureRate * (lConf * 0.5);
+
     risk += toNumber(entityModifiers.risk_offset, 0);
     risk += roasVolatility * 0.30;
     risk += (1 - dataQuality) * 0.28;

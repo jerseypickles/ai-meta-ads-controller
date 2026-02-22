@@ -17,7 +17,7 @@ module.exports = {
     quality_weight: 0.12,
     risk_penalty_weight: 0.22,
     uncertainty_penalty_weight: 0.18,
-    learning_bias_weight: 1.0
+    learning_bias_weight: 2.0
   },
 
   // Ensure the policy does not collapse into budget-only recommendations.

@@ -156,16 +156,18 @@ class PolicyLearner {
     const mean = alpha / (alpha + beta);
     const count = toNumber(stats.count);
 
+    const confidence = clamp(count / 25, 0, 1);
+
     const totalBucketSamples = Object.values(bucketState)
       .reduce((sum, item) => sum + toNumber(item.count), 0);
     const exploration = Math.sqrt((2 * Math.log(totalBucketSamples + 2)) / (count + 1));
 
-    // mean is [0..1]. Convert to a small score delta centered at 0.
-    const exploit = (mean - 0.5) * 0.3;
+    // mean is [0..1]. Convert to a score delta centered at 0.
+    // Scale exploit by confidence so mature buckets have stronger voice.
+    const exploit = (mean - 0.5) * (0.3 + confidence * 0.25);
     const explore = Math.min(0.08, exploration * 0.02);
-    const bias = clamp(exploit + explore, -0.2, 0.2);
+    const bias = clamp(exploit + explore, -0.35, 0.35);
 
-    const confidence = clamp(count / 25, 0, 1);
     return { bias, mean, confidence };
   }
 
@@ -246,6 +248,17 @@ class PolicyLearner {
 
     // Penalize uncertain decisions so the learner converges to robust policies.
     rawReward -= toNumber(action.uncertainty_score, 0) * 0.08;
+
+    // Magnitude-aware reward: scale the signal by how large the change was.
+    // Small changes (≤10%) get a modest multiplier (1.0x).
+    // Medium changes (10-25%) get moderate amplification (up to 1.25x).
+    // Large changes (25-50%) amplify more (up to 1.5x) — riskier bets
+    // carry stronger reward/penalty so the learner differentiates boldness.
+    const absMagnitude = Math.abs(toNumber(action.change_percent, 0));
+    if (absMagnitude > 0 && ['scale_up', 'scale_down', 'move_budget'].includes(action.action)) {
+      const magnitudeMultiplier = 1 + clamp((absMagnitude - 10) / 80, 0, 0.5);
+      rawReward *= magnitudeMultiplier;
+    }
 
     return clamp(
       rawReward,
