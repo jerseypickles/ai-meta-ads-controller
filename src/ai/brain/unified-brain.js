@@ -675,8 +675,8 @@ class UnifiedBrain {
         let targetAction = 'any';
 
         if (rec.action === 'pause') {
-          directiveType = 'suppress';
-          targetAction = 'scale_up';
+          directiveType = 'override';
+          targetAction = 'pause';
         } else if (rec.action === 'scale_down') {
           directiveType = 'suppress';
           targetAction = 'scale_up';
