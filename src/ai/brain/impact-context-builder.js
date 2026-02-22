@@ -64,13 +64,17 @@ class ImpactContextBuilder {
   }
 
   async _loadPendingActions() {
-    const threeDaysAgo = new Date();
-    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+    // Extend window to 7 days — actions still within attribution window should not be disturbed
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
     return ActionLog.find({
       success: true,
-      impact_measured: { $ne: true },
-      executed_at: { $gte: threeDaysAgo }
+      $or: [
+        { impact_measured: { $ne: true } },           // Not yet measured at 3d
+        { impact_7d_measured: { $ne: true } }          // Not yet measured at 7d
+      ],
+      executed_at: { $gte: sevenDaysAgo }
     })
       .sort({ executed_at: -1 })
       .lean();
@@ -79,7 +83,10 @@ class ImpactContextBuilder {
   _processActions(actions) {
     return actions.map(a => {
       const before = a.metrics_at_execution || {};
-      const after = a.metrics_after_3d || a.metrics_after_1d || {};
+      // Prefer 7d attribution (~95% accuracy) over 3d (~85-90%) for learning
+      const after = (a.impact_7d_measured && a.metrics_after_7d?.roas_7d > 0)
+        ? a.metrics_after_7d
+        : (a.metrics_after_3d || a.metrics_after_1d || {});
 
       const roasBefore = before.roas_7d || 0;
       const roasAfter = after.roas_7d || 0;
@@ -97,6 +104,8 @@ class ImpactContextBuilder {
       if (delta_roas_pct > 5) result = 'improved';
       else if (delta_roas_pct < -5) result = 'worsened';
 
+      const checkpoint = (a.impact_7d_measured && a.metrics_after_7d?.roas_7d > 0) ? '7d' : '3d';
+
       return {
         action: a.action,
         entity_id: a.entity_id,
@@ -112,6 +121,7 @@ class ImpactContextBuilder {
         delta_roas_pct,
         delta_cpa_pct,
         result,
+        checkpoint,
         agent_type: a.agent_type,
         creative_asset_id: a.creative_asset_id || null
       };
@@ -203,7 +213,7 @@ class ImpactContextBuilder {
         ? ` $${a.before_value} -> $${a.after_value}` : '';
       const statusChange = a.action === 'update_ad_status'
         ? ` (${a.after_value === 0 ? 'PAUSADO' : 'ACTIVADO'})` : '';
-      return `- ${a.entity_name}: ${a.action}${budgetStr}${statusChange} (hace ${daysAgo}d) | resultado: ${a.result} | ROAS: ${a.roas_before.toFixed(2)}x -> ${a.roas_after.toFixed(2)}x (${a.delta_roas_pct > 0 ? '+' : ''}${a.delta_roas_pct}%) | CPA: $${a.cpa_before.toFixed(2)} -> $${a.cpa_after.toFixed(2)} (${a.delta_cpa_pct > 0 ? '+' : ''}${a.delta_cpa_pct}%)`;
+      return `- ${a.entity_name}: ${a.action}${budgetStr}${statusChange} (hace ${daysAgo}d, medido a ${a.checkpoint || '3d'}) | resultado: ${a.result} | ROAS: ${a.roas_before.toFixed(2)}x -> ${a.roas_after.toFixed(2)}x (${a.delta_roas_pct > 0 ? '+' : ''}${a.delta_roas_pct}%) | CPA: $${a.cpa_before.toFixed(2)} -> $${a.cpa_after.toFixed(2)} (${a.delta_cpa_pct > 0 ? '+' : ''}${a.delta_cpa_pct}%)`;
     }).join('\n');
 
     return `\n\nFEEDBACK DE IMPACTO — RESULTADOS DE TUS ACCIONES PASADAS:
@@ -227,7 +237,10 @@ INSTRUCCIONES DE APRENDIZAJE:
 
     const lines = pending.map(a => {
       const hoursElapsed = Math.round((Date.now() - new Date(a.executed_at).getTime()) / (1000 * 60 * 60));
-      const hoursLeft = Math.max(0, 72 - hoursElapsed);
+      const daysElapsed = (hoursElapsed / 24).toFixed(1);
+      const hoursLeftFor7d = Math.max(0, 168 - hoursElapsed); // 7 days = 168 hours
+      const has3d = a.impact_measured === true;
+      const checkpoint = has3d ? `3d medido, esperando 7d (${hoursLeftFor7d}h)` : `midiendo (${Math.max(0, 72 - hoursElapsed)}h para 3d)`;
       const after1d = a.metrics_after_1d || {};
       let partial = '';
       if (after1d.roas_7d > 0) {
@@ -237,7 +250,7 @@ INSTRUCCIONES DE APRENDIZAJE:
           : 'N/A';
         partial = ` | parcial 24h: ROAS ${after1d.roas_7d.toFixed(2)}x (${delta1d}%)`;
       }
-      return `- ${a.entity_name} (${a.entity_id}): ${a.action} hace ${hoursElapsed}h, midiendo (${hoursLeft}h restantes)${partial}`;
+      return `- ${a.entity_name} (${a.entity_id}): ${a.action} hace ${daysElapsed}d, ${checkpoint}${partial}`;
     }).join('\n');
 
     const entityIds = [...pendingEntities];

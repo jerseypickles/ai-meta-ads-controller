@@ -967,29 +967,35 @@ router.get('/readiness', async (req, res) => {
       : Math.min(0.2, recentWinRate); // Cap low if not enough recent data
 
     // ═══ 6. NO HARM CHECK: Recent catastrophic losses ═══
-    const recentLosses = await ActionLog.countDocuments({
-      success: true, impact_measured: true,
-      executed_at: { $gte: sevenDaysAgo },
-      action: { $in: ['scale_up', 'scale_down', 'move_budget'] }
-    });
-    // Check if any caused >20% ROAS drop
+    // IMPORTANT: Only count losses with FULL 7d attribution data.
+    // 3d data is premature — Meta's attribution window is 7 days,
+    // so a -25% at 3d could recover to -10% at 7d (not catastrophic).
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
     let catastrophicLosses = 0;
     const recentBudgetActions = await ActionLog.find({
-      success: true, impact_measured: true,
-      executed_at: { $gte: sevenDaysAgo },
+      success: true,
+      impact_7d_measured: true, // MUST have 7d data — no premature judgments
+      executed_at: { $gte: fourteenDaysAgo },
       action: { $in: ['scale_up', 'scale_down', 'move_budget'] }
-    }).select('metrics_at_execution metrics_after_3d metrics_after_7d').lean();
+    }).select('metrics_at_execution metrics_after_7d executed_at').lean();
 
     for (const a of recentBudgetActions) {
       const before = a.metrics_at_execution || {};
-      const after = (a.metrics_after_7d?.roas_7d > 0 ? a.metrics_after_7d : a.metrics_after_3d) || {};
-      if (before.roas_7d > 0) {
+      const after = a.metrics_after_7d || {};
+      if (before.roas_7d > 0 && after.roas_7d > 0) {
         const delta = ((after.roas_7d - before.roas_7d) / before.roas_7d) * 100;
-        if (delta < -20) catastrophicLosses++;
+        // Threshold -30% (was -20%) — more tolerance for normal Meta volatility
+        if (delta < -30) {
+          // Time decay: recent losses weigh more, older ones fade
+          const daysAgo = (Date.now() - new Date(a.executed_at).getTime()) / (1000 * 60 * 60 * 24);
+          const weight = daysAgo <= 7 ? 1.0 : 0.5; // Last 7d = full weight, 7-14d = half
+          catastrophicLosses += weight;
+        }
       }
     }
-    // Any catastrophic loss in last 7 days = heavy penalty
-    const safetyScore = catastrophicLosses > 0 ? Math.max(0, 1 - (catastrophicLosses * 0.5)) : 1;
+    catastrophicLosses = Math.round(catastrophicLosses * 10) / 10; // Clean decimals
+    // Graduated penalty instead of binary kill switch
+    const safetyScore = catastrophicLosses > 0 ? Math.max(0, 1 - (catastrophicLosses * 0.35)) : 1;
 
     // ═══ FINAL READINESS INDEX (0-100) ═══
     // Weighted with strict thresholds
@@ -1017,9 +1023,10 @@ router.get('/readiness', async (req, res) => {
     } else if (winRate < 0.40) {
       readinessIndex = Math.min(readinessIndex, 35);
       hardBlock = 'Win rate menor a 40% — el Brain aun no es confiable';
-    } else if (catastrophicLosses > 0) {
-      readinessIndex = Math.min(readinessIndex, 40);
-      hardBlock = `${catastrophicLosses} perdida(s) catastrofica(s) en ultimos 7 dias`;
+    } else if (catastrophicLosses >= 2) {
+      // Only hard-block with 2+ confirmed catastrophic losses (7d verified)
+      readinessIndex = Math.min(readinessIndex, 55);
+      hardBlock = `${catastrophicLosses} perdida(s) catastrofica(s) confirmadas (>30% ROAS drop a 7 dias)`;
     }
 
     // Maturity level

@@ -233,14 +233,17 @@ async function getPending7dImpactMeasurement() {
 }
 
 async function getPendingLearningActions(limit = 200) {
-  return ActionLog.find({
+  const learnableActions = [
+    'scale_up', 'scale_down', 'pause', 'reactivate',
+    'duplicate_adset', 'create_ad', 'update_bid_strategy',
+    'update_ad_status', 'move_budget', 'update_ad_creative'
+  ];
+
+  // Phase 1: Actions with 3d data that haven't been learned at all
+  const newLearning = await ActionLog.find({
     success: true,
     impact_measured: true,
-    action: { $in: [
-      'scale_up', 'scale_down', 'pause', 'reactivate',
-      'duplicate_adset', 'create_ad', 'update_bid_strategy',
-      'update_ad_status', 'move_budget', 'update_ad_creative'
-    ]},
+    action: { $in: learnableActions },
     $or: [
       { learned_at: null },
       { learned_at: { $exists: false } }
@@ -249,6 +252,27 @@ async function getPendingLearningActions(limit = 200) {
     .sort({ impact_measured_at: 1, executed_at: 1 })
     .limit(limit)
     .lean();
+
+  // Phase 2: Actions with 7d data that were learned with 3d data — re-learn with better signal
+  const remainingLimit = Math.max(0, limit - newLearning.length);
+  let relearn = [];
+  if (remainingLimit > 0) {
+    relearn = await ActionLog.find({
+      success: true,
+      impact_7d_measured: true,
+      learned_7d_at: { $exists: false }, // Not yet re-learned with 7d
+      learned_at: { $exists: true, $ne: null }, // Was learned with 3d
+      action: { $in: learnableActions }
+    })
+      .sort({ impact_7d_measured_at: 1 })
+      .limit(remainingLimit)
+      .lean();
+
+    // Mark these as re-learn so the learner knows
+    relearn = relearn.map(a => ({ ...a, _is_7d_relearn: true }));
+  }
+
+  return [...newLearning, ...relearn];
 }
 
 // ═══ SAFETY EVENTS ═══

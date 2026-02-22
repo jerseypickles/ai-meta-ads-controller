@@ -41,19 +41,40 @@ class PolicyLearner {
         account_roas_7d: toNumber((action.metrics_at_execution || {}).roas_7d)
       };
       const bucket = this.bucketFromMetrics(action.metrics_at_execution || {}, context);
-      this._updateBucketStats(state, bucket, action.action, reward);
-      updates.push({
-        updateOne: {
-          filter: { _id: action._id },
-          update: {
-            $set: {
-              learned_at: now,
-              learned_reward: reward,
-              learned_bucket: bucket
+
+      if (action._is_7d_relearn) {
+        // Re-learning: undo old 3d reward, apply new 7d reward (correction signal)
+        const oldReward = toNumber(action.learned_reward, 0);
+        this._updateBucketStats(state, bucket, action.action, reward - oldReward);
+        updates.push({
+          updateOne: {
+            filter: { _id: action._id },
+            update: {
+              $set: {
+                learned_7d_at: now,
+                learned_7d_reward: reward,
+                learned_reward: reward, // Update to 7d-based reward
+                learned_bucket: bucket
+              }
             }
           }
-        }
-      });
+        });
+      } else {
+        // First-time learning with 3d data
+        this._updateBucketStats(state, bucket, action.action, reward);
+        updates.push({
+          updateOne: {
+            filter: { _id: action._id },
+            update: {
+              $set: {
+                learned_at: now,
+                learned_reward: reward,
+                learned_bucket: bucket
+              }
+            }
+          }
+        });
+      }
 
       rewardTotal += reward;
       processed += 1;

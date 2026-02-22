@@ -864,7 +864,7 @@ const ImpactReport = () => {
                     {key === 'win_rate' && `${item.overall}% global, ${item.budget}% budget (${item.wins}W / ${item.losses}L)`}
                     {key === 'learner_maturity' && `${item.buckets} buckets, ${item.total_samples} samples, reward ${item.avg_reward}`}
                     {key === 'consistency' && `${item.recent_win_rate}% win rate ultimos 7d (${item.recent_total} acciones)`}
-                    {key === 'safety' && (item.catastrophic_losses > 0 ? `${item.catastrophic_losses} perdida(s) catastrofica(s) recientes` : 'Sin perdidas catastroficas recientes')}
+                    {key === 'safety' && (item.catastrophic_losses > 0 ? `${item.catastrophic_losses} perdida(s) confirmada(s) a 7d (>30% ROAS drop)` : 'Sin perdidas catastroficas confirmadas')}
                   </div>
                 </div>
               );
