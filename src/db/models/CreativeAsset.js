@@ -10,7 +10,7 @@ const creativeAssetSchema = new mongoose.Schema({
   // Propósito: ad-ready = se usa en ads, reference = contexto de estilo para IA
   purpose: { type: String, enum: ['ad-ready', 'reference'], default: 'ad-ready' },
   // Estilo visual del creative
-  style: { type: String, enum: ['ugly-ad', 'polished', 'ugc', 'meme', 'other'], default: 'other' },
+  style: { type: String, enum: ['ugly-ad', 'organic', 'polished', 'ugc', 'meme', 'other'], default: 'other' },
 
   // AI generation tracking
   generated_by: { type: String, enum: ['manual', 'openai', 'flux', 'seedream', 'gemini', 'grok'], default: 'manual' },
