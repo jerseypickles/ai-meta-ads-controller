@@ -12,7 +12,9 @@ const safetyEventSchema = new mongoose.Schema({
       'daily_change_limit_hit',
       'budget_capped',
       'operating_hours_deferred',
-      'manual_override'
+      'manual_override',
+      'anomaly_detected',
+      'creative_rotation_forced'
     ],
     required: true,
     index: true

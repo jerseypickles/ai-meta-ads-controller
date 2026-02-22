@@ -185,8 +185,15 @@ class UnifiedBrain {
         };
       });
 
+      // 9b. Inyectar rotación de creativos forzada para ad sets con fatiga alta
+      const rotationRecs = this._injectCreativeRotationRecs(features, sharedData, cooldownEntityIds, pendingEntityIds);
+      if (rotationRecs.length > 0) {
+        logger.info(`[BRAIN] Rotación creativa forzada: ${rotationRecs.length} recomendaciones inyectadas`);
+      }
+      const allScoredRecs = [...scoredRecs, ...rotationRecs];
+
       // 10. Aplicar directivas estrategicas
-      const withDirectives = this._applyStrategicDirectives(scoredRecs, sharedData.strategicDirectives);
+      const withDirectives = this._applyStrategicDirectives(allScoredRecs, sharedData.strategicDirectives);
 
       // 11. Ordenar por score y limitar
       const finalRecs = withDirectives
@@ -571,6 +578,130 @@ class UnifiedBrain {
     if (confidence === 'high') return 0.78;
     if (confidence === 'medium') return 0.62;
     return 0.48;
+  }
+
+  /**
+   * Detecta ad sets con fatiga creativa alta y fuerza recomendaciones de rotacion.
+   * Se inyecta ANTES del ranking para que tenga prioridad sobre las recomendaciones de Claude.
+   * Condiciones: creative_fatigue_score > 0.6, frequency_7d > 3.0, status ACTIVE.
+   */
+  _injectCreativeRotationRecs(features, sharedData, cooldownEntityIds, pendingEntityIds) {
+    const injected = [];
+    const creativeIntelCfg = unifiedPolicyConfig.creative_intelligence || {};
+    const fatigueThreshold = 0.6;
+    const frequencyThreshold = creativeIntelCfg.severe_fatigue_frequency || 3.8;
+
+    // Solo ad sets activos con fatiga alta
+    const fatiguedAdSets = features.filter(f =>
+      f.entity_type === 'adset' &&
+      f.status === 'ACTIVE' &&
+      (f.derived?.creative_fatigue_score || 0) >= fatigueThreshold &&
+      (f.metrics?.frequency_7d || 0) >= frequencyThreshold &&
+      !cooldownEntityIds.has(f.entity_id) &&
+      !pendingEntityIds.has(f.entity_id)
+    );
+
+    if (fatiguedAdSets.length === 0) return [];
+
+    // Para cada ad set fatigado, buscar el peor ad para pausar
+    const adSnapshots = sharedData.adSnapshots || [];
+
+    for (const adset of fatiguedAdSets) {
+      // Verificar que Claude no haya ya propuesto un create_ad para este ad set
+      // (no duplicar recomendaciones)
+      const entityId = adset.entity_id;
+
+      // Buscar ads activos de este ad set
+      const activeAds = adSnapshots.filter(ad =>
+        ad.parent_id === entityId &&
+        ad.status === 'ACTIVE'
+      );
+
+      // Solo actuar si hay al menos 1 ad activo
+      if (activeAds.length === 0) continue;
+
+      // Encontrar el peor ad (menor ROAS 7d) para recomendar pausa
+      const sortedAds = activeAds
+        .map(ad => ({
+          entity_id: ad.entity_id,
+          entity_name: ad.entity_name,
+          roas_7d: ad.metrics?.last_7d?.roas || 0,
+          ctr_7d: ad.metrics?.last_7d?.ctr || 0,
+          spend_7d: ad.metrics?.last_7d?.spend || 0
+        }))
+        .sort((a, b) => a.roas_7d - b.roas_7d);
+
+      const worstAd = sortedAds[0];
+      const fatigueScore = adset.derived?.creative_fatigue_score || 0;
+      const frequency = adset.metrics?.frequency_7d || 0;
+
+      // Inyectar create_ad con score alto
+      injected.push({
+        action: 'create_ad',
+        entity_type: 'adset',
+        entity_id: entityId,
+        entity_name: adset.entity_name,
+        current_value: adset.current_budget,
+        recommended_value: 0,
+        change_percent: 0,
+        reasoning: `[ROTACIÓN FORZADA] Fatiga creativa ${fatigueScore.toFixed(2)} (umbral 0.6), frecuencia ${frequency.toFixed(1)}. Necesita creativo fresco para evitar saturación de audiencia.`,
+        expected_impact: `Reducir fatiga de ${fatigueScore.toFixed(2)} a <0.4 con creativo nuevo`,
+        confidence: 'high',
+        priority: 'high',
+        policy_score: 0.88,
+        confidence_score: 0.75,
+        risk_score: 0.15,
+        uncertainty_score: 0.20,
+        expected_impact_pct: 8,
+        measurement_window_hours: 72,
+        hypothesis: `La fatiga creativa (${fatigueScore.toFixed(2)}) y frecuencia alta (${frequency.toFixed(1)}) indican que la audiencia está saturada. Un creativo fresco debería mejorar CTR y ROAS.`,
+        evidence: [
+          `Fatiga creativa: ${fatigueScore.toFixed(2)} (umbral 0.6)`,
+          `Frecuencia 7d: ${frequency.toFixed(1)} (umbral ${frequencyThreshold})`,
+          `Ads activos: ${activeAds.length}, peor ROAS: ${worstAd.roas_7d.toFixed(2)}x`
+        ],
+        metrics: adset.metrics || {},
+        ads_to_pause: [],
+        status: 'pending',
+        _injected_by: 'creative_rotation_trigger'
+      });
+
+      // Si hay más de 1 ad y el peor tiene ROAS muy bajo, recomendar pausarlo
+      if (activeAds.length > 1 && worstAd.roas_7d < (adset.metrics?.roas_7d || 0) * 0.5) {
+        injected.push({
+          action: 'update_ad_status',
+          entity_type: 'ad',
+          entity_id: worstAd.entity_id,
+          entity_name: worstAd.entity_name,
+          current_value: 1,
+          recommended_value: 0,
+          change_percent: 0,
+          reasoning: `[ROTACIÓN FORZADA] Ad con peor ROAS (${worstAd.roas_7d.toFixed(2)}x) en ad set fatigado. Pausar para liberar presupuesto al creativo nuevo.`,
+          expected_impact: `Liberar $${worstAd.spend_7d.toFixed(0)}/sem de gasto ineficiente`,
+          confidence: 'high',
+          priority: 'high',
+          policy_score: 0.85,
+          confidence_score: 0.72,
+          risk_score: 0.18,
+          uncertainty_score: 0.22,
+          expected_impact_pct: 6,
+          measurement_window_hours: 72,
+          hypothesis: `Pausar el ad con peor rendimiento (ROAS ${worstAd.roas_7d.toFixed(2)}x vs promedio ${(adset.metrics?.roas_7d || 0).toFixed(2)}x) libera presupuesto para creativos más efectivos.`,
+          evidence: [
+            `ROAS del ad: ${worstAd.roas_7d.toFixed(2)}x vs ad set: ${(adset.metrics?.roas_7d || 0).toFixed(2)}x`,
+            `Gasto 7d del ad: $${worstAd.spend_7d.toFixed(2)}`,
+            `CTR 7d: ${worstAd.ctr_7d.toFixed(2)}%`
+          ],
+          metrics: {},
+          status: 'pending',
+          _injected_by: 'creative_rotation_trigger'
+        });
+      }
+
+      logger.info(`[BRAIN][ROTACIÓN] Ad set ${adset.entity_name} (fatiga=${fatigueScore.toFixed(2)}, freq=${frequency.toFixed(1)}) — create_ad forzado${activeAds.length > 1 && worstAd.roas_7d < (adset.metrics?.roas_7d || 0) * 0.5 ? ` + pausa ${worstAd.entity_name}` : ''}`);
+    }
+
+    return injected;
   }
 
   _applyStrategicDirectives(recs, directives) {

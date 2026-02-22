@@ -35,6 +35,21 @@ module.exports = {
     confirm_trend_windows: 2           // Confirmar tendencia en al menos 2 ventanas de tiempo
   },
 
+  // Detección de anomalías por entidad — corre cada 10 minutos
+  anomaly_detection: {
+    enabled: true,
+    // Umbral de caída de ROAS: si ROAS actual < ROAS 7d * (1 - threshold), anomalía
+    roas_drop_threshold: 0.50,         // Caída >50% vs promedio 7d
+    // Umbral de spike de gasto: gasto hoy > presupuesto diario * multiplier
+    spend_spike_multiplier: 2.5,       // Gasto >2.5x del presupuesto diario
+    // Mínimo de gasto para considerar una entidad (evitar falsos positivos con $2)
+    min_spend_for_anomaly: 15,
+    // Cooldown entre detecciones sobre la misma entidad (horas)
+    cooldown_hours: 6,
+    // Auto-pausar entidades anómalas (si false, solo alerta)
+    auto_pause: true
+  },
+
   // Modo de autonomía global del Cerebro IA: 'manual' | 'semi_auto' | 'auto'
   // manual     = requiere aprobación + ejecución humana
   // semi_auto  = auto-ejecuta si confidence=high Y cambio <= max_auto_change_pct

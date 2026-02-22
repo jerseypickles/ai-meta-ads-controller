@@ -6,6 +6,7 @@ const safetyGuards = require('../config/safety-guards');
 const db = require('./db/connection');
 const DataCollector = require('./meta/data-collector');
 const KillSwitch = require('./safety/kill-switch');
+const AnomalyDetector = require('./safety/anomaly-detector');
 const { CooldownManager } = require('./safety/cooldown-manager');
 const UnifiedBrain = require('./ai/brain/unified-brain');
 const { cleanupOldSnapshots, isAIEnabled, getPendingImpactMeasurement, getPending1dImpactMeasurement, getPending7dImpactMeasurement, getLatestSnapshots } = require('./db/queries');
@@ -108,6 +109,26 @@ async function jobKillSwitchMonitor() {
     }
   } catch (error) {
     logger.error('[CRON] Error en monitor de kill switch:', error);
+  }
+}
+
+/**
+ * Job: Detección de anomalías por entidad — cada 10 minutos.
+ * Busca caídas bruscas de ROAS, spikes de gasto, y CPA explosivo
+ * en entidades individuales. Pausa selectiva (no toda la cuenta).
+ */
+async function jobAnomalyDetection() {
+  if (!isActiveHours()) return;
+
+  try {
+    const detector = new AnomalyDetector();
+    const result = await detector.monitor();
+
+    if (result.anomalies > 0) {
+      logger.warn(`[CRON] Anomalías detectadas: ${result.anomalies}, pausadas: ${result.paused}`);
+    }
+  } catch (error) {
+    logger.error('[CRON] Error en detección de anomalías:', error);
   }
 }
 
@@ -463,6 +484,13 @@ function initCronJobs() {
     name: 'kill-switch-monitor'
   });
   logger.info('  [*] Kill switch monitor — cada 15 min');
+
+  // Cada 10 minutos: Detección de anomalías por entidad
+  cron.schedule('*/10 * * * *', jobAnomalyDetection, {
+    timezone: TIMEZONE,
+    name: 'anomaly-detection'
+  });
+  logger.info('  [*] Detección de anomalías — cada 10 min (horas activas)');
 
   // Cada 10 minutos: Recolección de datos (horas activas)
   cron.schedule('*/10 * * * *', jobDataCollection, {
