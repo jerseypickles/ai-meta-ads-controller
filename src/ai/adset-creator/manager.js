@@ -849,6 +849,98 @@ async function manageAdSet(creation) {
     }
   }
 
+  // ═══ DIRECTIVE ENFORCEMENT: si Claude ignoró suppress+pause, forzar acción ═══
+  // El Brain puede enviar múltiples directivas suppress+pause. Si Claude no tomó acción
+  // (0 acciones ejecutadas o no hay kill/pause/scale_down), forzamos la decisión.
+  const suppressPauseDirectives = brainDirectives.filter(d =>
+    d.type === 'suppress' && d.target_action === 'pause'
+  );
+
+  if (suppressPauseDirectives.length >= 3 && actionsExecuted === 0) {
+    // Claude ignoró directivas SUPPRESS+pause repetidas — forzar acción
+    logger.warn(`[AI-MANAGER][ENFORCE] Claude ignoró ${suppressPauseDirectives.length} directivas suppress+pause para ${creation.meta_entity_name}. Forzando acción.`);
+
+    const activeAds = adsData.filter(a => a.status === 'ACTIVE');
+    const deadAdsCount = activeAds.filter(a => a.purchases === 0 || a.roas < 0.5).length;
+    const allAdsDead = activeAds.length > 0 && deadAdsCount === activeAds.length;
+    const mostAdsDead = activeAds.length > 0 && deadAdsCount >= activeAds.length * 0.6;
+    const daysActive = daysSinceCreation;
+
+    if ((allAdsDead || (mostAdsDead && suppressPauseDirectives.length >= 10)) && daysActive >= 5 && adSetSpend >= 40) {
+      // Todos los ads muertos + suficiente tiempo/gasto → kill
+      try {
+        await meta.updateStatus(adSetId, 'PAUSED');
+        creation.current_status = 'PAUSED';
+        creation.lifecycle_phase = 'dead';
+        creation.lifecycle_actions.push({
+          action: 'kill',
+          value: null,
+          reason: `[ENFORCED] ${suppressPauseDirectives.length} directivas suppress+pause del Brain ignoradas por Claude. Todos los ads sin rendimiento. Kill forzado.`,
+          executed_at: new Date()
+        });
+
+        await ActionLog.create({
+          entity_type: 'adset',
+          entity_id: adSetId,
+          entity_name: creation.meta_entity_name,
+          campaign_id: creation.parent_entity_id || '',
+          campaign_name: creation.parent_entity_name || '',
+          action: 'pause',
+          before_value: 'ACTIVE',
+          after_value: 'KILLED',
+          reasoning: `[ENFORCED] ${suppressPauseDirectives.length} directivas suppress+pause ignoradas. ROAS ${adSetRoas.toFixed(2)}x, ${adSetPurchases} compras en ${daysActive.toFixed(0)}d, $${adSetSpend.toFixed(0)} gastado.`,
+          confidence: 'high',
+          agent_type: 'ai_manager',
+          success: true,
+          executed_at: new Date(),
+          metrics_at_execution: metricsAtExecution
+        });
+
+        actionsExecuted++;
+        logger.error(`[AI-MANAGER][ENFORCE] KILL FORZADO: ${creation.meta_entity_name} — ${suppressPauseDirectives.length} directivas ignoradas, todos los ads muertos`);
+      } catch (killErr) {
+        logger.error(`[AI-MANAGER][ENFORCE] Error en kill forzado de ${adSetId}: ${killErr.message}`);
+      }
+    } else if ((adSetRoas < 2.0 || suppressPauseDirectives.length >= 10) && daysActive >= 4) {
+      // ROAS bajo o directivas masivas → scale down agresivo (50%)
+      const currentBudget = creation.current_budget || creation.initial_budget;
+      const newBudget = Math.max(10, Math.round(currentBudget * 0.5));
+      try {
+        await meta.updateBudget(adSetId, newBudget);
+        creation.current_budget = newBudget;
+        creation.lifecycle_actions.push({
+          action: 'scale_budget',
+          value: newBudget,
+          reason: `[ENFORCED] ${suppressPauseDirectives.length} directivas suppress+pause del Brain ignoradas. Scale down forzado $${currentBudget}→$${newBudget}.`,
+          executed_at: new Date()
+        });
+
+        await ActionLog.create({
+          entity_type: 'adset',
+          entity_id: adSetId,
+          entity_name: creation.meta_entity_name,
+          campaign_id: creation.parent_entity_id || '',
+          campaign_name: creation.parent_entity_name || '',
+          action: 'scale_down',
+          before_value: currentBudget,
+          after_value: newBudget,
+          change_percent: Math.round((newBudget - currentBudget) / currentBudget * 100),
+          reasoning: `[ENFORCED] ${suppressPauseDirectives.length} directivas suppress+pause ignoradas. ROAS ${adSetRoas.toFixed(2)}x bajo. Scale down forzado.`,
+          confidence: 'high',
+          agent_type: 'ai_manager',
+          success: true,
+          executed_at: new Date(),
+          metrics_at_execution: metricsAtExecution
+        });
+
+        actionsExecuted++;
+        logger.warn(`[AI-MANAGER][ENFORCE] SCALE DOWN FORZADO: ${creation.meta_entity_name} $${currentBudget}→$${newBudget} — ${suppressPauseDirectives.length} directivas ignoradas`);
+      } catch (scaleErr) {
+        logger.error(`[AI-MANAGER][ENFORCE] Error en scale down forzado de ${adSetId}: ${scaleErr.message}`);
+      }
+    }
+  }
+
   // ═══ REMOVED: duplicate lifecycle phase update ═══
   // Phase transitions are now handled ONLY by the Lifecycle Manager to avoid conflicts.
   // The AI Manager focuses on tactical actions (pause ads, scale budget, add creatives).
