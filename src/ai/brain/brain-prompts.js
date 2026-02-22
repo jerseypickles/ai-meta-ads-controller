@@ -146,7 +146,8 @@ function buildUserPrompt({
   creativeAssets,
   aiCreations,
   strategicDirectives,
-  learnerSummary
+  learnerSummary,
+  aiManagerFeedback
 }) {
   const now = moment().tz(TIMEZONE);
   const hourET = now.hours();
@@ -344,6 +345,25 @@ Ad sets activos: ${accountOverview.active_adsets || 0} | Pausados: ${accountOver
     prompt += `\n═══ DIRECTIVAS ESTRATEGICAS ACTIVAS ═══\n`;
     for (const d of strategicDirectives) {
       prompt += `- ${d.directive_type.toUpperCase()}: ${d.entity_name || d.entity_id} — ${d.target_action} | ${d.reason}\n`;
+    }
+  }
+
+  // === AI MANAGER FEEDBACK (bidireccional) ===
+  if (aiManagerFeedback && aiManagerFeedback.summary) {
+    prompt += `\n═══ AI MANAGER FEEDBACK (ultimas 24h) ═══\n`;
+    prompt += `${aiManagerFeedback.summary}\n`;
+    const compliance = aiManagerFeedback.compliance || {};
+    if (compliance.compliance_rate < 50 && compliance.total_directive_entities >= 2) {
+      prompt += `\n⚠ ALERTA: AI Manager esta IGNORANDO tus directivas (${compliance.compliance_rate}% compliance). Considera:\n`;
+      prompt += `  - Emitir directivas con urgency=critical para entidades ignoradas\n`;
+      prompt += `  - Si un ad set tiene directivas ignoradas por >48h, emitir directive_type=override\n`;
+    }
+    if (aiManagerFeedback.ignored_entities && aiManagerFeedback.ignored_entities.length > 0) {
+      prompt += `\nEntidades con directivas IGNORADAS por AI Manager:\n`;
+      for (const e of aiManagerFeedback.ignored_entities) {
+        prompt += `  - ${e.entity_name}: ${e.directive_count} directivas (${e.directive_types.join(', ')}) ignoradas por ${e.oldest_hours}h\n`;
+      }
+      prompt += `ACCION: Re-emitir directivas para estas entidades con urgencia elevada.\n`;
     }
   }
 

@@ -487,7 +487,14 @@ async function manageAdSet(creation) {
       target_entity_name: d.entity_name,
       reason: d.reason,
       confidence: d.confidence,
-      score_modifier: d.score_modifier
+      score_modifier: d.score_modifier,
+      // Enriched fields
+      reason_category: d.reason_category || 'other',
+      urgency: d.urgency_level || 'medium',
+      supporting_metrics: d.supporting_metrics || {},
+      suggested_actions: d.suggested_actions || [],
+      consecutive_count: d.consecutive_count || 1,
+      hours_since_created: Math.round((Date.now() - new Date(d.created_at).getTime()) / (60 * 60 * 1000))
     }));
 
     if (brainDirectives.length > 0) {
@@ -605,6 +612,35 @@ async function manageAdSet(creation) {
     // "boost" means the Brain wants you to favor that action. "suppress" means the Brain sees a risk.
     brain_directives: brainDirectives.length > 0 ? brainDirectives : null
   };
+
+  // ═══ HARDCODED DECISION TREE: Pre-Claude rules that bypass AI judgment ═══
+  // These are non-negotiable conditions where the system MUST act regardless of Claude's opinion.
+  const preDecision = await _hardcodedDecisionTree({
+    creation, adSetId, adSetRoas, adSetSpend, adSetPurchases, adSetFrequency,
+    daysSinceCreation, adsData, brainDirectives, roas3d,
+    currentBudget: creation.current_budget || creation.initial_budget,
+    meta, metricsAtExecution: {
+      roas_7d: Math.round(adSetRoas * 100) / 100,
+      roas_3d: Math.round(roas3d * 100) / 100,
+      cpa_7d: adSetSpend > 0 && adSetPurchases > 0 ? Math.round(adSetSpend / adSetPurchases * 100) / 100 : 0,
+      spend_7d: adSetSpend,
+      daily_budget: creation.current_budget || creation.initial_budget,
+      purchases_7d: adSetPurchases,
+      frequency: adSetFrequency,
+      ctr: m7d.ctr || 0
+    }
+  });
+
+  if (preDecision && preDecision.forced) {
+    logger.info(`[AI-MANAGER][DECISION-TREE] Forced action on ${creation.meta_entity_name}: ${preDecision.action} — ${preDecision.reason}`);
+    return {
+      actionsExecuted: preDecision.actionsExecuted || 1,
+      assessment: `[HARDCODED] ${preDecision.reason}`,
+      frequency_status: adSetFrequency > 4 ? 'critical' : adSetFrequency > 3 ? 'high' : 'ok',
+      performance_trend: preDecision.action === 'kill' ? 'declining' : 'mixed',
+      needs_new_creatives: false
+    };
+  }
 
   // Ask Claude what to do
   let userMessage = `Manage this ad set. Pay special attention to frequency fatigue and whether creatives need refreshing.`;
@@ -1007,6 +1043,155 @@ async function manageAdSet(creation) {
     performance_trend: decision.performance_trend || 'unknown',
     needs_new_creatives: decision.needs_new_creatives || false
   };
+}
+
+/**
+ * HARDCODED DECISION TREE
+ * Non-negotiable rules that bypass Claude's judgment entirely.
+ * These fire BEFORE Claude sees the data. If a condition matches,
+ * the action is taken immediately and Claude is never called.
+ *
+ * Rules (in priority order):
+ * 1. KILL: 7+ days, $50+ spent, 0 purchases → dead weight, kill immediately
+ * 2. KILL: 5+ days, $40+ spent, ROAS < 0.5x → hemorrhaging money
+ * 3. KILL: 10+ days, ROAS < roas_minimum consistently, 5+ Brain suppress directives
+ * 4. FORCE SCALE DOWN: 4+ days, ROAS < 1.0x, $30+ spent → cut losses 50%
+ * 5. FORCE SCALE DOWN: frequency > 4.0 (critical), ROAS < roas_target → audience saturated
+ */
+async function _hardcodedDecisionTree({
+  creation, adSetId, adSetRoas, adSetSpend, adSetPurchases, adSetFrequency,
+  daysSinceCreation, adsData, brainDirectives, roas3d,
+  currentBudget, meta, metricsAtExecution
+}) {
+  const kpi = require('../../config/kpi-targets');
+
+  const activeAds = adsData.filter(a => a.status === 'ACTIVE');
+  const adsWithPurchases = activeAds.filter(a => (a.purchases || 0) > 0);
+  const suppressDirectives = brainDirectives.filter(d => d.type === 'suppress');
+  const criticalDirectives = brainDirectives.filter(d => d.urgency === 'critical');
+
+  // ─── RULE 1: Zero purchases, enough time and spend → KILL ───
+  if (daysSinceCreation >= 7 && adSetSpend >= 50 && adSetPurchases === 0) {
+    return await _forceKill(creation, adSetId, meta, metricsAtExecution,
+      `RULE 1: ${daysSinceCreation.toFixed(0)}d activo, $${adSetSpend.toFixed(0)} gastado, 0 compras — dead weight`);
+  }
+
+  // ─── RULE 2: Hemorrhaging money (very low ROAS with significant spend) → KILL ───
+  if (daysSinceCreation >= 5 && adSetSpend >= 40 && adSetRoas < 0.5 && adSetRoas > 0) {
+    return await _forceKill(creation, adSetId, meta, metricsAtExecution,
+      `RULE 2: ROAS ${adSetRoas.toFixed(2)}x < 0.5x con $${adSetSpend.toFixed(0)} gastado — hemorrhaging`);
+  }
+
+  // ─── RULE 3: Long-running underperformer + Brain agrees → KILL ───
+  if (daysSinceCreation >= 10 && adSetRoas < kpi.roas_minimum && suppressDirectives.length >= 5) {
+    return await _forceKill(creation, adSetId, meta, metricsAtExecution,
+      `RULE 3: ${daysSinceCreation.toFixed(0)}d, ROAS ${adSetRoas.toFixed(2)}x < ${kpi.roas_minimum}x, ${suppressDirectives.length} suppress directives`);
+  }
+
+  // ─── RULE 4: Below 1.0x ROAS with enough data → FORCE 50% SCALE DOWN ───
+  if (daysSinceCreation >= 4 && adSetSpend >= 30 && adSetRoas < 1.0 && adSetRoas > 0 && adSetPurchases > 0) {
+    // Only if not already at minimum budget
+    const minBudget = require('../../config/safety-guards').min_adset_budget || 10;
+    if (currentBudget > minBudget) {
+      const newBudget = Math.max(Math.round(currentBudget * 0.5 * 100) / 100, minBudget);
+      return await _forceScaleDown(creation, adSetId, meta, metricsAtExecution, currentBudget, newBudget,
+        `RULE 4: ROAS ${adSetRoas.toFixed(2)}x < 1.0x con $${adSetSpend.toFixed(0)} gastado — forzando 50% corte`);
+    }
+  }
+
+  // ─── RULE 5: Critical frequency + below target → FORCE SCALE DOWN ───
+  if (adSetFrequency >= kpi.frequency_critical && adSetRoas < kpi.roas_target && daysSinceCreation >= 3) {
+    const minBudget = require('../../config/safety-guards').min_adset_budget || 10;
+    if (currentBudget > minBudget) {
+      const newBudget = Math.max(Math.round(currentBudget * 0.6 * 100) / 100, minBudget);
+      return await _forceScaleDown(creation, adSetId, meta, metricsAtExecution, currentBudget, newBudget,
+        `RULE 5: Frequency ${adSetFrequency.toFixed(1)} >= ${kpi.frequency_critical} + ROAS ${adSetRoas.toFixed(2)}x < target — audience saturated`);
+    }
+  }
+
+  // ─── RULE 6: Brain says CRITICAL urgency + ROAS below minimum → KILL ───
+  if (criticalDirectives.length >= 2 && adSetRoas < kpi.roas_minimum && adSetSpend >= 20) {
+    return await _forceKill(creation, adSetId, meta, metricsAtExecution,
+      `RULE 6: ${criticalDirectives.length} critical directives + ROAS ${adSetRoas.toFixed(2)}x < ${kpi.roas_minimum}x`);
+  }
+
+  // No hardcoded rule triggered — let Claude decide
+  return null;
+}
+
+async function _forceKill(creation, adSetId, meta, metricsAtExecution, reason) {
+  try {
+    await meta.updateStatus(adSetId, 'PAUSED');
+    await AICreation.findByIdAndUpdate(creation._id, {
+      lifecycle_phase: 'dead',
+      lifecycle_phase_changed_at: new Date(),
+      current_status: 'PAUSED',
+      updated_at: new Date(),
+      $push: {
+        lifecycle_actions: {
+          action: 'kill_forced',
+          reason: `[DECISION-TREE] ${reason}`,
+          executed_at: new Date()
+        }
+      }
+    });
+    await ActionLog.create({
+      entity_type: 'adset',
+      entity_id: adSetId,
+      entity_name: creation.meta_entity_name,
+      action: 'pause',
+      before_value: creation.current_budget || creation.initial_budget,
+      after_value: 0,
+      change_percent: -100,
+      reasoning: `[DECISION-TREE KILL] ${reason}`,
+      confidence: 'high',
+      agent_type: 'ai_manager',
+      success: true,
+      metrics_at_execution: metricsAtExecution
+    });
+    logger.error(`[AI-MANAGER][DECISION-TREE] KILL FORCED: ${creation.meta_entity_name} — ${reason}`);
+    return { forced: true, action: 'kill', reason, actionsExecuted: 1 };
+  } catch (err) {
+    logger.error(`[AI-MANAGER][DECISION-TREE] Error forcing kill on ${adSetId}: ${err.message}`);
+    return null;
+  }
+}
+
+async function _forceScaleDown(creation, adSetId, meta, metricsAtExecution, oldBudget, newBudget, reason) {
+  try {
+    await meta.updateBudget(adSetId, newBudget);
+    await AICreation.findByIdAndUpdate(creation._id, {
+      current_budget: newBudget,
+      updated_at: new Date(),
+      $push: {
+        lifecycle_actions: {
+          action: 'scale_down_forced',
+          value: newBudget,
+          reason: `[DECISION-TREE] ${reason}`,
+          executed_at: new Date()
+        }
+      }
+    });
+    await ActionLog.create({
+      entity_type: 'adset',
+      entity_id: adSetId,
+      entity_name: creation.meta_entity_name,
+      action: 'scale_budget',
+      before_value: oldBudget,
+      after_value: newBudget,
+      change_percent: Math.round(((newBudget - oldBudget) / oldBudget) * 100),
+      reasoning: `[DECISION-TREE SCALE DOWN] ${reason}`,
+      confidence: 'high',
+      agent_type: 'ai_manager',
+      success: true,
+      metrics_at_execution: metricsAtExecution
+    });
+    logger.warn(`[AI-MANAGER][DECISION-TREE] SCALE DOWN FORCED: ${creation.meta_entity_name} $${oldBudget} → $${newBudget} — ${reason}`);
+    return { forced: true, action: 'scale_down', reason, actionsExecuted: 1 };
+  } catch (err) {
+    logger.error(`[AI-MANAGER][DECISION-TREE] Error forcing scale down on ${adSetId}: ${err.message}`);
+    return null;
+  }
 }
 
 /**

@@ -80,7 +80,8 @@ class UnifiedBrain {
         creativeAssets: sharedData.creativeAssets,
         aiCreations: sharedData.aiCreations,
         strategicDirectives: sharedData.strategicDirectives,
-        learnerSummary
+        learnerSummary,
+        aiManagerFeedback: sharedData.aiManagerFeedback
       });
 
       logger.info(`[BRAIN] Prompt enviado a Claude: ${userPrompt.length} chars`);
@@ -300,6 +301,15 @@ class UnifiedBrain {
       const managedCount = adSetSnapshots.filter(s => s._ai_managed).length;
       logger.info(`[BRAIN] ${managedCount} ad sets gestionados por AI Manager (supervisión jerárquica activa)`);
     }
+
+    // ═══ BIDIRECTIONAL FEEDBACK: Load AI Manager's recent actions + directive compliance ═══
+    let aiManagerFeedback = null;
+    try {
+      aiManagerFeedback = await this._loadAIManagerFeedback(managedIds);
+    } catch (e) {
+      logger.warn(`[BRAIN] Error cargando feedback del AI Manager: ${e.message}`);
+    }
+
     logger.info(`[BRAIN] Datos cargados: ${adSetSnapshots.length} ad sets, ${adSnapshots.length} ads, ${campaignSnapshots.length} campanas, ${activeCooldowns.length} cooldowns`);
 
     return {
@@ -313,7 +323,104 @@ class UnifiedBrain {
       activeCooldowns,
       creativeAssets,
       aiCreations,
-      strategicDirectives
+      strategicDirectives,
+      aiManagerFeedback
+    };
+  }
+
+  /**
+   * Load AI Manager's recent actions and directive compliance for Brain awareness.
+   * Returns: { actions: [...], compliance: { total_directives, acted_on, ignored, compliance_rate }, summary: "..." }
+   */
+  async _loadAIManagerFeedback(managedIds) {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000); // Last 24h
+
+    // 1. Get AI Manager actions in last 24h
+    const aiManagerActions = await ActionLog.find({
+      agent_type: 'ai_manager',
+      created_at: { $gte: since }
+    }).sort({ created_at: -1 }).limit(50).lean();
+
+    // 2. Get directives created in last 72h for compliance tracking
+    const recentDirectives = await StrategicDirective.find({
+      source_insight_type: 'brain_supervision',
+      created_at: { $gte: new Date(Date.now() - 72 * 60 * 60 * 1000) }
+    }).lean();
+
+    // 3. Calculate compliance: how many directives were acted upon?
+    const directivesByEntity = new Map();
+    for (const d of recentDirectives) {
+      const key = d.entity_id;
+      if (!directivesByEntity.has(key)) directivesByEntity.set(key, []);
+      directivesByEntity.get(key).push(d);
+    }
+
+    let totalDirectiveEntities = directivesByEntity.size;
+    let actedOn = 0;
+    let ignored = 0;
+
+    for (const [entityId, directives] of directivesByEntity) {
+      // Check if AI Manager took any action on this entity
+      const hasAction = aiManagerActions.some(a =>
+        a.entity_id === entityId || a.entity_name === directives[0]?.entity_name
+      );
+      // Also check if directive was marked as applied
+      const hasApplied = directives.some(d => d.status === 'applied' || d.applied_count > 0);
+
+      if (hasAction || hasApplied) {
+        actedOn++;
+      } else {
+        ignored++;
+      }
+    }
+
+    const complianceRate = totalDirectiveEntities > 0
+      ? Math.round((actedOn / totalDirectiveEntities) * 100)
+      : 100;
+
+    // 4. Build summary for Brain's context
+    const actionSummary = aiManagerActions.slice(0, 10).map(a => {
+      const ago = Math.round((Date.now() - new Date(a.created_at).getTime()) / (60 * 60 * 1000));
+      return `  - [${ago}h ago] ${a.action} on ${a.entity_name || a.entity_id}: ${a.reasoning?.substring(0, 120) || 'N/A'}`;
+    });
+
+    const ignoredEntities = [];
+    for (const [entityId, directives] of directivesByEntity) {
+      const hasAction = aiManagerActions.some(a => a.entity_id === entityId);
+      const hasApplied = directives.some(d => d.status === 'applied' || d.applied_count > 0);
+      if (!hasAction && !hasApplied) {
+        ignoredEntities.push({
+          entity_id: entityId,
+          entity_name: directives[0]?.entity_name || entityId,
+          directive_count: directives.length,
+          directive_types: [...new Set(directives.map(d => `${d.directive_type}/${d.target_action}`))],
+          oldest_hours: Math.round((Date.now() - new Date(directives[directives.length - 1]?.created_at || Date.now()).getTime()) / (60 * 60 * 1000))
+        });
+      }
+    }
+
+    const summary = [
+      `AI Manager Feedback (last 24h):`,
+      `  Actions executed: ${aiManagerActions.length}`,
+      `  Directive compliance: ${complianceRate}% (${actedOn}/${totalDirectiveEntities} entities acted on)`,
+      aiManagerActions.length > 0 ? `  Recent actions:\n${actionSummary.join('\n')}` : '  No recent actions.',
+      ignoredEntities.length > 0 ? `  IGNORED directives (${ignoredEntities.length} entities):\n${ignoredEntities.map(e => `    - ${e.entity_name}: ${e.directive_count} directives (${e.directive_types.join(', ')}) — ignored for ${e.oldest_hours}h`).join('\n')}` : ''
+    ].filter(Boolean).join('\n');
+
+    if (complianceRate < 50 && totalDirectiveEntities >= 2) {
+      logger.warn(`[BRAIN] AI Manager compliance bajo: ${complianceRate}% — ${ignored} entidades con directivas ignoradas`);
+    }
+
+    return {
+      actions: aiManagerActions,
+      compliance: {
+        total_directive_entities: totalDirectiveEntities,
+        acted_on: actedOn,
+        ignored,
+        compliance_rate: complianceRate
+      },
+      ignored_entities: ignoredEntities,
+      summary
     };
   }
 
@@ -831,6 +938,25 @@ class UnifiedBrain {
         // Score modifier basado en la confianza y policy_score del Brain
         const scoreMod = rec.confidence === 'high' ? 0.3 : rec.confidence === 'medium' ? 0.2 : 0.1;
 
+        // ═══ ENRICHED DIRECTIVE: classify reason, extract metrics, set urgency ═══
+        const reasonCategory = this._classifyReasonCategory(rec);
+        const urgencyLevel = this._classifyUrgency(rec, reasonCategory);
+        const supportingMetrics = this._extractSupportingMetrics(rec);
+        const suggestedActions = this._buildSuggestedActions(rec, reasonCategory);
+
+        // Count consecutive directives for same entity+type (escalation signal)
+        let consecutiveCount = 1;
+        try {
+          const recentSame = await StrategicDirective.countDocuments({
+            entity_id: rec.entity_id,
+            directive_type: directiveType,
+            target_action: targetAction,
+            source_insight_type: 'brain_supervision',
+            created_at: { $gte: new Date(Date.now() - 72 * 60 * 60 * 1000) }
+          });
+          consecutiveCount = recentSame + 1;
+        } catch (_) { /* ignore count errors */ }
+
         await StrategicDirective.create({
           cycle_id: cycleId,
           directive_type: directiveType,
@@ -842,7 +968,12 @@ class UnifiedBrain {
           reason: `[BRAIN→AI-MANAGER] ${rec.reasoning}`,
           source_insight_type: 'brain_supervision',
           confidence: rec.confidence || 'medium',
-          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000), // Expira en 24h
+          reason_category: reasonCategory,
+          urgency_level: urgencyLevel,
+          supporting_metrics: supportingMetrics,
+          suggested_actions: suggestedActions,
+          consecutive_count: consecutiveCount,
+          expires_at: new Date(Date.now() + 72 * 60 * 60 * 1000), // 72h (was 24h) — gives AI Manager multiple cycles to act
           status: 'active'
         });
 
@@ -857,6 +988,127 @@ class UnifiedBrain {
       logger.info(`[BRAIN] ${created} directivas estratégicas creadas para AI Manager`);
     }
     return created;
+  }
+
+  /**
+   * Classify the reason category for a recommendation.
+   */
+  _classifyReasonCategory(rec) {
+    const reasoning = (rec.reasoning || '').toLowerCase();
+    const metrics = rec.metrics || {};
+    const roas = metrics.roas_7d || metrics.last_7d?.roas || 0;
+    const purchases = metrics.purchases_7d || metrics.last_7d?.purchases || 0;
+    const frequency = metrics.frequency_7d || metrics.last_7d?.frequency || 0;
+    const cpa = metrics.cpa_7d || metrics.last_7d?.cpa || 0;
+
+    // Priority order: most specific first
+    if (purchases === 0 && (rec.action === 'pause' || rec.action === 'scale_down')) return 'no_conversions';
+    if (reasoning.includes('fatiga') || reasoning.includes('fatigue') || reasoning.includes('frecuencia') || reasoning.includes('frequency') || reasoning.includes('rotaci')) return 'creative_fatigue';
+    if (reasoning.includes('saturaci') || reasoning.includes('saturation') || frequency > 3.5) return 'audience_saturation';
+    if (reasoning.includes('cpa') || reasoning.includes('cost per') || cpa > 0) {
+      if (rec.action === 'pause' || rec.action === 'scale_down') return 'high_cpa';
+    }
+    if (reasoning.includes('roas') && (rec.action === 'pause' || rec.action === 'scale_down')) return 'low_roas';
+    if (reasoning.includes('gasto') || reasoning.includes('spend') || reasoning.includes('waste')) return 'budget_waste';
+    if (rec.action === 'scale_up' || rec.action === 'reactivate') {
+      if (reasoning.includes('recuper') || reasoning.includes('recover') || reasoning.includes('mejora')) return 'recovery_signal';
+      return 'strong_performer';
+    }
+    if (reasoning.includes('learning') || reasoning.includes('aprendizaje')) return 'learning_phase';
+    if (roas > 0 && roas < 1.5 && rec.action === 'pause') return 'low_roas';
+
+    return 'other';
+  }
+
+  /**
+   * Determine urgency based on category and metrics.
+   */
+  _classifyUrgency(rec, category) {
+    const metrics = rec.metrics || {};
+    const roas = metrics.roas_7d || metrics.last_7d?.roas || 0;
+    const spend = metrics.spend_7d || metrics.last_7d?.spend || 0;
+
+    // Critical: burning money with no results
+    if (category === 'no_conversions' && spend > 30) return 'critical';
+    if (category === 'low_roas' && roas < 0.5 && spend > 20) return 'critical';
+    if (category === 'budget_waste' && spend > 50) return 'critical';
+
+    // High: clear underperformance
+    if (category === 'low_roas' && roas < 1.0) return 'high';
+    if (category === 'high_cpa') return 'high';
+    if (category === 'no_conversions') return 'high';
+    if (rec.confidence === 'high' && (rec.action === 'pause' || rec.action === 'scale_down')) return 'high';
+
+    // Low: positive signals
+    if (category === 'strong_performer' || category === 'recovery_signal') return 'low';
+    if (category === 'learning_phase') return 'low';
+
+    return 'medium';
+  }
+
+  /**
+   * Extract key metrics from the recommendation to include in the directive.
+   */
+  _extractSupportingMetrics(rec) {
+    const m = rec.metrics || {};
+    const m7d = m.last_7d || m;
+    const mToday = m.today || {};
+    return {
+      roas_7d: m7d.roas_7d || m7d.roas || 0,
+      roas_3d: m.last_3d?.roas || m.roas_3d || 0,
+      cpa_7d: m7d.cpa_7d || m7d.cpa || 0,
+      spend_7d: m7d.spend_7d || m7d.spend || 0,
+      spend_today: mToday.spend || 0,
+      frequency_7d: m7d.frequency_7d || m7d.frequency || 0,
+      ctr_7d: m7d.ctr_7d || m7d.ctr || 0,
+      purchases_7d: m7d.purchases_7d || m7d.purchases || 0,
+      daily_budget: m.daily_budget || rec.current_value || 0,
+      fatigue_score: m.fatigue_score || 0
+    };
+  }
+
+  /**
+   * Build concrete suggested actions based on reason category.
+   */
+  _buildSuggestedActions(rec, category) {
+    const actions = [];
+
+    switch (category) {
+      case 'no_conversions':
+        actions.push({ action: 'kill_adset', detail: 'Zero purchases — kill the ad set' });
+        actions.push({ action: 'pause_worst_ads', detail: 'Pause all ads with 0 purchases first' });
+        break;
+      case 'low_roas':
+        actions.push({ action: 'scale_down', detail: 'Cut budget 30-50% to limit losses' });
+        actions.push({ action: 'pause_worst_ads', detail: 'Pause ads with ROAS below ad set average' });
+        break;
+      case 'high_cpa':
+        actions.push({ action: 'scale_down', detail: 'Reduce budget to lower CPA pressure' });
+        break;
+      case 'creative_fatigue':
+        actions.push({ action: 'add_fresh_creative', detail: 'Add new ad from creative bank' });
+        actions.push({ action: 'pause_worst_ads', detail: 'Pause fatigued ads with declining CTR' });
+        break;
+      case 'audience_saturation':
+        actions.push({ action: 'scale_down', detail: 'Reduce budget to lower frequency' });
+        actions.push({ action: 'add_fresh_creative', detail: 'Fresh creative may re-engage audience' });
+        break;
+      case 'budget_waste':
+        actions.push({ action: 'kill_adset', detail: 'High spend with poor return — kill' });
+        break;
+      case 'strong_performer':
+        actions.push({ action: 'scale_up', detail: 'Increase budget 15-20%' });
+        break;
+      case 'recovery_signal':
+        actions.push({ action: 'scale_up', detail: 'Metrics improving — cautious scale up 10-15%' });
+        break;
+      default:
+        if (rec.action === 'pause') actions.push({ action: 'pause', detail: rec.reasoning?.substring(0, 100) || '' });
+        if (rec.action === 'scale_down') actions.push({ action: 'scale_down', detail: 'Reduce budget' });
+        if (rec.action === 'scale_up') actions.push({ action: 'scale_up', detail: 'Increase budget' });
+    }
+
+    return actions;
   }
 
   async _expirePendingRecommendations() {
