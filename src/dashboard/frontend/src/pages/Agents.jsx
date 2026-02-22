@@ -285,8 +285,8 @@ const AgentsPage = () => {
   };
 
   // Load creative bank for create_ad selector (only unused ad-ready assets)
-  const loadCreatives = async () => {
-    if (creativeAssets.length > 0) return; // Already loaded
+  const loadCreatives = async (forceRefresh = false) => {
+    if (!forceRefresh && creativeAssets.length > 0) return;
     setLoadingCreatives(true);
     try {
       const res = await getCreativeAssets('active');
@@ -751,6 +751,20 @@ const AgentsPage = () => {
                                       <div style={{ fontSize: '11px', fontWeight: '700', color: '#ec4899', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                         <Image size={12} />
                                         Creativos disponibles (sin usar)
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); loadCreatives(true); }}
+                                          disabled={loadingCreatives}
+                                          style={{
+                                            background: 'none', border: '1px solid #ec489930', borderRadius: '4px',
+                                            padding: '2px 6px', cursor: loadingCreatives ? 'not-allowed' : 'pointer',
+                                            display: 'flex', alignItems: 'center', gap: '3px',
+                                            fontSize: '9px', fontWeight: '600', color: '#ec4899', marginLeft: '4px'
+                                          }}
+                                          title="Recargar creativos (si acabas de generar nuevos)"
+                                        >
+                                          <RefreshCw size={9} className={loadingCreatives ? 'spin' : ''} />
+                                          Actualizar
+                                        </button>
                                       </div>
                                       {loadingCreatives ? (
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#6b7280', fontSize: '11px', padding: '10px 0' }}>
