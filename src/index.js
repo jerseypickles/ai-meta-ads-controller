@@ -593,7 +593,7 @@ async function main() {
     logger.info(`  Claude: ${config.claude.model}`);
     logger.info('  Cerebro IA: unificado (scaling + performance + creative + pacing) (cada 30min)');
     logger.info('  Lifecycle Manager: activate, learning, evaluate, scale/kill (cada 30min)');
-    logger.info('  AI Manager: gestión autónoma de ad sets creados por Claude (cada 8h)');
+    logger.info('  AI Manager: gestión autónoma de ad sets creados por Claude (cada 2h)');
     logger.info('  Acciones: scale_up/down, pause, duplicate, create_ad, move_budget, bid_strategy');
     logger.info(`  Autonomia: mode=${safetyGuards.autonomy.mode || 'manual'}`);
     logger.info('  Deep research: integrado en el cerebro (Brave/SERP API)');

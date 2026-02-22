@@ -57,7 +57,7 @@ const strategicDirectiveSchema = new mongoose.Schema({
   }],
   consecutive_count: { type: Number, default: 1 }, // How many consecutive cycles Brain has issued same directive for this entity
   // ═══ END ENRICHED FIELDS ═══
-  expires_at: { type: Date, required: true, index: true },
+  expires_at: { type: Date, required: true },
   status: {
     type: String,
     enum: ['active', 'applied', 'expired', 'overridden'],

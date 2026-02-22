@@ -1063,7 +1063,7 @@ async function _hardcodedDecisionTree({
   daysSinceCreation, adsData, brainDirectives, roas3d,
   currentBudget, meta, metricsAtExecution
 }) {
-  const kpi = require('../../config/kpi-targets');
+  const kpi = require('../../../config/kpi-targets');
 
   const activeAds = adsData.filter(a => a.status === 'ACTIVE');
   const adsWithPurchases = activeAds.filter(a => (a.purchases || 0) > 0);
@@ -1091,7 +1091,7 @@ async function _hardcodedDecisionTree({
   // ─── RULE 4: Below 1.0x ROAS with enough data → FORCE 50% SCALE DOWN ───
   if (daysSinceCreation >= 4 && adSetSpend >= 30 && adSetRoas < 1.0 && adSetRoas > 0 && adSetPurchases > 0) {
     // Only if not already at minimum budget
-    const minBudget = require('../../config/safety-guards').min_adset_budget || 10;
+    const minBudget = require('../../../config/safety-guards').min_adset_budget || 10;
     if (currentBudget > minBudget) {
       const newBudget = Math.max(Math.round(currentBudget * 0.5 * 100) / 100, minBudget);
       return await _forceScaleDown(creation, adSetId, meta, metricsAtExecution, currentBudget, newBudget,
@@ -1101,7 +1101,7 @@ async function _hardcodedDecisionTree({
 
   // ─── RULE 5: Critical frequency + below target → FORCE SCALE DOWN ───
   if (adSetFrequency >= kpi.frequency_critical && adSetRoas < kpi.roas_target && daysSinceCreation >= 3) {
-    const minBudget = require('../../config/safety-guards').min_adset_budget || 10;
+    const minBudget = require('../../../config/safety-guards').min_adset_budget || 10;
     if (currentBudget > minBudget) {
       const newBudget = Math.max(Math.round(currentBudget * 0.6 * 100) / 100, minBudget);
       return await _forceScaleDown(creation, adSetId, meta, metricsAtExecution, currentBudget, newBudget,
