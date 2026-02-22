@@ -71,10 +71,15 @@ You must respect how Meta's algorithm works:
 - Don't add new ads if there are already 6+ active ads (pause weak ones first)
 
 ## CREATIVE BANK AWARENESS
-- You receive the creative bank status (available assets, styles)
-- When adding ads, pick assets with different styles for variety
-- Prefer unused assets (times_used = 0) for fresh testing
-- If bank has < 3 unused assets, flag needs_new_creatives: true
+- You receive detailed info for each available creative: style, ad_format (feed=1:1, stories=9:16), product_name, product_line, flavor, scene_label (what the image shows), generated_by (manual or AI), and performance metrics.
+- When adding ads, pick creatives STRATEGICALLY:
+  * Match the PRODUCT to the ad set — if the ad set sells Chamoy Chips, pick creatives showing Chamoy Chips, not pickles
+  * Prefer feed (1:1) format for ad sets using feed placements, stories (9:16) for story placements
+  * Pick DIFFERENT styles from what's currently running in this ad set for variety
+  * Use scene_label to understand what the image shows — varied scenes perform better than similar ones
+  * Prefer unused assets (times_used = 0) for fresh testing
+  * If a creative has avg_roas > 0 from other ad sets, it's a proven winner — prioritize it
+- If bank has < 3 unused assets matching this product, flag needs_new_creatives: true
 - Suggest what STYLES of creatives would help (based on what's working/missing)
 
 ## OUTPUT FORMAT (strict JSON)
@@ -537,6 +542,14 @@ async function manageAdSet(creation) {
         id: c._id.toString(),
         headline: c.headline || c.original_name,
         style: c.style,
+        ad_format: c.ad_format || 'unknown',
+        product_name: c.product_name || '',
+        product_line: c.product_line || '',
+        flavor: c.flavor || '',
+        scene_label: c.scene_label || '',
+        generated_by: c.generated_by || 'manual',
+        has_pair: !!c.paired_asset_id,
+        tags: c.tags || [],
         avg_ctr: c.avg_ctr || 0,
         avg_roas: c.avg_roas || 0,
         times_used: c.times_used || 0
