@@ -630,11 +630,23 @@ router.get('/impact', async (req, res) => {
         result
       };
 
-      // For create_ad: include ad-level metrics
+      // For create_ad: use the NEW AD's own metrics instead of parent adset delta
       if (a.action === 'create_ad' && a.new_entity_id) {
         entry.is_create_ad = true;
-        entry.ad_metrics = a.ad_metrics_after_7d || a.ad_metrics_after_3d || null;
         entry.ad_metrics_1d = a.ad_metrics_after_1d || null;
+        entry.ad_metrics_3d = a.ad_metrics_after_3d || null;
+        entry.ad_metrics_7d = a.ad_metrics_after_7d || null;
+        // Best available ad metrics
+        entry.ad_metrics = a.ad_metrics_after_7d || a.ad_metrics_after_3d || a.ad_metrics_after_1d || null;
+
+        // Override result: evaluate by the new ad's own ROAS, not parent delta
+        const adBest = entry.ad_metrics;
+        if (adBest) {
+          const adRoas = adBest.roas_7d || adBest.roas_3d || 0;
+          if (adRoas >= 1) entry.result = 'improved';
+          else if (adRoas > 0 && adRoas < 0.5) entry.result = 'worsened';
+          else entry.result = 'neutral';
+        }
       }
 
       return entry;
@@ -678,6 +690,9 @@ router.get('/impact', async (req, res) => {
       if (a.action === 'create_ad' && a.new_entity_id) {
         entry.is_create_ad = true;
         entry.ad_metrics_1d = a.ad_metrics_after_1d || null;
+        entry.ad_metrics_3d = null;
+        entry.ad_metrics_7d = null;
+        entry.ad_metrics = a.ad_metrics_after_1d || null;
       }
 
       return entry;

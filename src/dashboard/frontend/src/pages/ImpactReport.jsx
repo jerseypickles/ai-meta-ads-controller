@@ -232,141 +232,208 @@ const ActionCard = ({ action, isLast }) => {
           )}
         </div>
 
-        {/* Before / 24h / 3d metrics grid */}
-        <div style={{
-          display: 'grid', gridTemplateColumns: '1fr auto 1fr auto 1fr', gap: '8px',
-          padding: '12px', backgroundColor: '#13151d', borderRadius: '8px', marginBottom: '12px'
-        }}>
-          {/* Before (Al ejecutar) */}
-          <div>
-            <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>
-              Al ejecutar
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <MetricLine label="ROAS 7d" value={before.roas_7d ? `${before.roas_7d.toFixed(2)}x` : '--'} />
-              <MetricLine label="CPA 7d" value={before.cpa_7d ? formatCurrency(before.cpa_7d) : '--'} />
-              <MetricLine label="Budget" value={before.daily_budget ? formatCurrency(before.daily_budget) : '--'} />
-              <MetricLine label="CTR" value={before.ctr ? `${before.ctr.toFixed(2)}%` : '--'} />
-            </div>
-          </div>
-
-          {/* Arrow 1 */}
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-            <ArrowRight size={16} color="#2a2d3a" />
-          </div>
-
-          {/* 24h checkpoint */}
-          <div>
-            <div style={{ fontSize: '10px', color: '#a78bfa', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>
-              24 horas
-            </div>
-            {action.has_1d_data ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <MetricLine
-                  label="ROAS 7d"
-                  value={after1d.roas_7d ? `${after1d.roas_7d.toFixed(2)}x` : '--'}
-                  delta={action.delta_roas_1d_pct}
-                />
-                <MetricLine
-                  label="CPA 7d"
-                  value={after1d.cpa_7d ? formatCurrency(after1d.cpa_7d) : '--'}
-                  delta={action.delta_cpa_1d_pct}
-                  invertDelta
-                />
-                <MetricLine label="Budget" value={after1d.daily_budget ? formatCurrency(after1d.daily_budget) : '--'} />
-                <MetricLine label="CTR" value={after1d.ctr ? `${after1d.ctr.toFixed(2)}%` : '--'} />
-              </div>
-            ) : (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '80px', color: '#6b7280', fontSize: '11px' }}>
-                <Clock size={12} style={{ marginRight: '4px' }} />
-                {action.hours_elapsed != null ? `${action.hours_elapsed}h elapsed` : 'Pendiente'}
-              </div>
-            )}
-          </div>
-
-          {/* Arrow 2 */}
-          <div style={{ display: 'flex', alignItems: 'center' }}>
-            <ArrowRight size={16} color="#2a2d3a" />
-          </div>
-
-          {/* 3d final */}
-          <div>
-            <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>
-              {isMeasuring ? 'Final (3 dias)' : (afterWindow === '7d' ? '7 dias' : '3 dias')}
-              {action.has_7d_data && <span style={{ color: '#10b981', marginLeft: '4px', fontSize: '8px' }}>✓</span>}
-            </div>
-            {isMeasuring ? (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '80px', color: '#6b7280', fontSize: '11px' }}>
-                <Clock size={12} style={{ marginRight: '4px' }} />
-                {action.days_remaining || 0}d restantes
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <MetricLine
-                  label="ROAS 7d"
-                  value={after.roas_7d ? `${after.roas_7d.toFixed(2)}x` : '--'}
-                  delta={action.delta_roas_pct}
-                />
-                <MetricLine
-                  label="CPA 7d"
-                  value={after.cpa_7d ? formatCurrency(after.cpa_7d) : '--'}
-                  delta={action.delta_cpa_pct}
-                  invertDelta
-                />
-                <MetricLine label="Budget" value={after.daily_budget ? formatCurrency(after.daily_budget) : '--'} />
-                <MetricLine label="CTR" value={after.ctr ? `${after.ctr.toFixed(2)}%` : '--'} />
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Ad-level metrics for create_ad actions */}
-        {action.is_create_ad && (action.ad_metrics || action.ad_metrics_1d) && (
+        {/* Metrics grid — different layout for create_ad vs other actions */}
+        {action.is_create_ad ? (
+          /* === CREATE_AD: Show the new ad's own metrics progression === */
           <div style={{
-            padding: '10px 12px', backgroundColor: '#06b6d410', borderRadius: '8px',
+            padding: '12px', backgroundColor: '#06b6d408', borderRadius: '8px',
             marginBottom: '12px', border: '1px solid #06b6d420'
           }}>
-            <div style={{ fontSize: '10px', color: '#06b6d4', fontWeight: '700', textTransform: 'uppercase', marginBottom: '8px' }}>
+            <div style={{
+              fontSize: '10px', color: '#06b6d4', fontWeight: '700', textTransform: 'uppercase',
+              marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px'
+            }}>
+              <PlusCircle size={12} />
               Rendimiento del Ad Nuevo
+              {action.ad_metrics?.status && (
+                <span style={{
+                  padding: '1px 6px', borderRadius: '4px', fontSize: '9px', fontWeight: '700',
+                  backgroundColor: action.ad_metrics.status === 'ACTIVE' ? '#065f4630' : '#7f1d1d30',
+                  color: action.ad_metrics.status === 'ACTIVE' ? '#6ee7b7' : '#fca5a5',
+                  marginLeft: 'auto'
+                }}>
+                  {action.ad_metrics.status}
+                </span>
+              )}
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
-              {(() => {
-                const am = action.ad_metrics || action.ad_metrics_1d || {};
-                return (
-                  <>
-                    <div>
-                      <div style={{ fontSize: '9px', color: '#6b7280' }}>Spend</div>
-                      <div style={{ fontSize: '13px', fontWeight: '600', color: '#e5e7eb' }}>
-                        {am.spend_7d != null ? formatCurrency(am.spend_7d) : (am.spend_3d != null ? formatCurrency(am.spend_3d) : '--')}
-                      </div>
+
+            <div style={{
+              display: 'grid', gridTemplateColumns: '1fr auto 1fr auto 1fr', gap: '8px',
+              backgroundColor: '#13151d', borderRadius: '8px', padding: '12px'
+            }}>
+              {/* Inicio (nuevo ad = 0) */}
+              <div>
+                <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>
+                  Al crear
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <MetricLine label="ROAS" value="0.00x" />
+                  <MetricLine label="Spend" value="$0.00" />
+                  <MetricLine label="CTR" value="0.00%" />
+                  <MetricLine label="Compras" value="0" />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <ArrowRight size={16} color="#2a2d3a" />
+              </div>
+
+              {/* 24h checkpoint */}
+              <div>
+                <div style={{ fontSize: '10px', color: '#a78bfa', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>
+                  24 horas
+                </div>
+                {action.ad_metrics_1d ? (() => {
+                  const am = action.ad_metrics_1d;
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <MetricLine label="ROAS" value={am.roas_7d != null ? `${am.roas_7d.toFixed(2)}x` : '--'} />
+                      <MetricLine label="Spend" value={am.spend_7d != null ? formatCurrency(am.spend_7d) : '--'} />
+                      <MetricLine label="CTR" value={am.ctr_7d != null ? `${am.ctr_7d.toFixed(2)}%` : '--'} />
+                      <MetricLine label="Compras" value={am.purchases_7d != null ? String(am.purchases_7d) : '--'} />
                     </div>
-                    <div>
-                      <div style={{ fontSize: '9px', color: '#6b7280' }}>ROAS</div>
-                      <div style={{ fontSize: '13px', fontWeight: '600', color: am.roas_7d >= 1 ? '#6ee7b7' : (am.roas_7d > 0 ? '#fca5a5' : '#9ca3af') }}>
-                        {am.roas_7d != null ? `${am.roas_7d.toFixed(2)}x` : (am.roas_3d != null ? `${am.roas_3d.toFixed(2)}x` : '--')}
+                  );
+                })() : (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '80px', color: '#6b7280', fontSize: '11px' }}>
+                    <Clock size={12} style={{ marginRight: '4px' }} />
+                    {action.hours_elapsed != null ? `${action.hours_elapsed}h elapsed` : 'Pendiente'}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <ArrowRight size={16} color="#2a2d3a" />
+              </div>
+
+              {/* 3d/7d final */}
+              <div>
+                <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>
+                  {action.ad_metrics_7d ? '7 dias' : (isMeasuring ? 'Final (3 dias)' : '3 dias')}
+                  {action.ad_metrics_7d && <span style={{ color: '#10b981', marginLeft: '4px', fontSize: '8px' }}>complete</span>}
+                </div>
+                {(() => {
+                  const amFinal = action.ad_metrics_7d || action.ad_metrics_3d || null;
+                  if (!amFinal && isMeasuring) {
+                    return (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '80px', color: '#6b7280', fontSize: '11px' }}>
+                        <Clock size={12} style={{ marginRight: '4px' }} />
+                        {action.days_remaining || 0}d restantes
                       </div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '9px', color: '#6b7280' }}>CTR</div>
-                      <div style={{ fontSize: '13px', fontWeight: '600', color: '#e5e7eb' }}>
-                        {am.ctr_7d != null ? `${am.ctr_7d.toFixed(2)}%` : (am.ctr_3d != null ? `${am.ctr_3d.toFixed(2)}%` : '--')}
+                    );
+                  }
+                  if (!amFinal) {
+                    return (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '80px', color: '#6b7280', fontSize: '11px' }}>
+                        Sin datos
                       </div>
+                    );
+                  }
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                      <MetricLine label="ROAS" value={amFinal.roas_7d != null ? `${amFinal.roas_7d.toFixed(2)}x` : '--'} />
+                      <MetricLine label="Spend" value={amFinal.spend_7d != null ? formatCurrency(amFinal.spend_7d) : '--'} />
+                      <MetricLine label="CTR" value={amFinal.ctr_7d != null ? `${amFinal.ctr_7d.toFixed(2)}%` : '--'} />
+                      <MetricLine label="Compras" value={amFinal.purchases_7d != null ? String(amFinal.purchases_7d) : '--'} />
                     </div>
-                    <div>
-                      <div style={{ fontSize: '9px', color: '#6b7280' }}>Compras</div>
-                      <div style={{ fontSize: '13px', fontWeight: '600', color: '#e5e7eb' }}>
-                        {am.purchases_7d != null ? am.purchases_7d : '--'}
-                      </div>
-                    </div>
-                  </>
-                );
-              })()}
+                  );
+                })()}
+              </div>
             </div>
-            {action.ad_metrics?.status && (
-              <div style={{ marginTop: '6px', fontSize: '10px', color: '#6b7280' }}>
-                Status: <span style={{ color: action.ad_metrics.status === 'ACTIVE' ? '#6ee7b7' : '#fca5a5' }}>{action.ad_metrics.status}</span>
+
+            {/* Ad name if available */}
+            {action.ad_metrics?.ad_name && (
+              <div style={{ marginTop: '8px', fontSize: '10px', color: '#6b7280' }}>
+                Ad: <span style={{ color: '#9ca3af' }}>{action.ad_metrics.ad_name}</span>
               </div>
             )}
+          </div>
+        ) : (
+          /* === STANDARD ACTIONS: Before / 24h / 3d parent metrics grid === */
+          <div style={{
+            display: 'grid', gridTemplateColumns: '1fr auto 1fr auto 1fr', gap: '8px',
+            padding: '12px', backgroundColor: '#13151d', borderRadius: '8px', marginBottom: '12px'
+          }}>
+            {/* Before (Al ejecutar) */}
+            <div>
+              <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>
+                Al ejecutar
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <MetricLine label="ROAS 7d" value={before.roas_7d ? `${before.roas_7d.toFixed(2)}x` : '--'} />
+                <MetricLine label="CPA 7d" value={before.cpa_7d ? formatCurrency(before.cpa_7d) : '--'} />
+                <MetricLine label="Budget" value={before.daily_budget ? formatCurrency(before.daily_budget) : '--'} />
+                <MetricLine label="CTR" value={before.ctr ? `${before.ctr.toFixed(2)}%` : '--'} />
+              </div>
+            </div>
+
+            {/* Arrow 1 */}
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              <ArrowRight size={16} color="#2a2d3a" />
+            </div>
+
+            {/* 24h checkpoint */}
+            <div>
+              <div style={{ fontSize: '10px', color: '#a78bfa', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>
+                24 horas
+              </div>
+              {action.has_1d_data ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <MetricLine
+                    label="ROAS 7d"
+                    value={after1d.roas_7d ? `${after1d.roas_7d.toFixed(2)}x` : '--'}
+                    delta={action.delta_roas_1d_pct}
+                  />
+                  <MetricLine
+                    label="CPA 7d"
+                    value={after1d.cpa_7d ? formatCurrency(after1d.cpa_7d) : '--'}
+                    delta={action.delta_cpa_1d_pct}
+                    invertDelta
+                  />
+                  <MetricLine label="Budget" value={after1d.daily_budget ? formatCurrency(after1d.daily_budget) : '--'} />
+                  <MetricLine label="CTR" value={after1d.ctr ? `${after1d.ctr.toFixed(2)}%` : '--'} />
+                </div>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '80px', color: '#6b7280', fontSize: '11px' }}>
+                  <Clock size={12} style={{ marginRight: '4px' }} />
+                  {action.hours_elapsed != null ? `${action.hours_elapsed}h elapsed` : 'Pendiente'}
+                </div>
+              )}
+            </div>
+
+            {/* Arrow 2 */}
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              <ArrowRight size={16} color="#2a2d3a" />
+            </div>
+
+            {/* 3d final */}
+            <div>
+              <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600', textTransform: 'uppercase', marginBottom: '8px' }}>
+                {isMeasuring ? 'Final (3 dias)' : (afterWindow === '7d' ? '7 dias' : '3 dias')}
+                {action.has_7d_data && <span style={{ color: '#10b981', marginLeft: '4px', fontSize: '8px' }}>complete</span>}
+              </div>
+              {isMeasuring ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '80px', color: '#6b7280', fontSize: '11px' }}>
+                  <Clock size={12} style={{ marginRight: '4px' }} />
+                  {action.days_remaining || 0}d restantes
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <MetricLine
+                    label="ROAS 7d"
+                    value={after.roas_7d ? `${after.roas_7d.toFixed(2)}x` : '--'}
+                    delta={action.delta_roas_pct}
+                  />
+                  <MetricLine
+                    label="CPA 7d"
+                    value={after.cpa_7d ? formatCurrency(after.cpa_7d) : '--'}
+                    delta={action.delta_cpa_pct}
+                    invertDelta
+                  />
+                  <MetricLine label="Budget" value={after.daily_budget ? formatCurrency(after.daily_budget) : '--'} />
+                  <MetricLine label="CTR" value={after.ctr ? `${after.ctr.toFixed(2)}%` : '--'} />
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -379,21 +446,41 @@ const ActionCard = ({ action, isLast }) => {
             {resultLabel}
           </span>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-            {action.has_1d_data && action.delta_roas_1d_pct != null && (
-              <span style={{
-                fontSize: '11px', fontWeight: '600',
-                color: action.delta_roas_1d_pct > 5 ? '#a78bfa' : (action.delta_roas_1d_pct < -5 ? '#fca5a5' : '#9ca3af')
-              }}>
-                24h: {action.delta_roas_1d_pct > 0 ? '+' : ''}{action.delta_roas_1d_pct.toFixed(1)}%
-              </span>
-            )}
-            {!isMeasuring && action.delta_roas_pct != null && (
-              <span style={{
-                fontSize: '13px', fontWeight: '700',
-                color: action.delta_roas_pct > 5 ? '#6ee7b7' : (action.delta_roas_pct < -5 ? '#fca5a5' : '#9ca3af')
-              }}>
-                3d: {action.delta_roas_pct > 0 ? '+' : ''}{action.delta_roas_pct.toFixed(1)}%
-              </span>
+            {action.is_create_ad ? (
+              /* For create_ad: show the new ad's ROAS instead of parent delta */
+              (() => {
+                const adBest = action.ad_metrics || action.ad_metrics_1d;
+                if (!adBest) return null;
+                const adRoas = adBest.roas_7d ?? adBest.roas_3d ?? null;
+                if (adRoas == null) return null;
+                return (
+                  <span style={{
+                    fontSize: '13px', fontWeight: '700',
+                    color: adRoas >= 1 ? '#6ee7b7' : (adRoas > 0 ? '#fca5a5' : '#9ca3af')
+                  }}>
+                    ROAS: {adRoas.toFixed(2)}x
+                  </span>
+                );
+              })()
+            ) : (
+              <>
+                {action.has_1d_data && action.delta_roas_1d_pct != null && (
+                  <span style={{
+                    fontSize: '11px', fontWeight: '600',
+                    color: action.delta_roas_1d_pct > 5 ? '#a78bfa' : (action.delta_roas_1d_pct < -5 ? '#fca5a5' : '#9ca3af')
+                  }}>
+                    24h: {action.delta_roas_1d_pct > 0 ? '+' : ''}{action.delta_roas_1d_pct.toFixed(1)}%
+                  </span>
+                )}
+                {!isMeasuring && action.delta_roas_pct != null && (
+                  <span style={{
+                    fontSize: '13px', fontWeight: '700',
+                    color: action.delta_roas_pct > 5 ? '#6ee7b7' : (action.delta_roas_pct < -5 ? '#fca5a5' : '#9ca3af')
+                  }}>
+                    3d: {action.delta_roas_pct > 0 ? '+' : ''}{action.delta_roas_pct.toFixed(1)}%
+                  </span>
+                )}
+              </>
             )}
           </div>
         </div>
