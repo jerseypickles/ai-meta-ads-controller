@@ -5,11 +5,15 @@ services:
     plan: starter
     buildCommand: npm install && npm run build
     startCommand: node src/index.js
+    disk:
+      name: uploads
+      mountPath: /var/data/uploads
+      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
       - key: UPLOADS_DIR
-        value: /tmp/uploads
+        value: /var/data/uploads
       - key: META_APP_ID
         sync: false
       - key: META_APP_SECRET
