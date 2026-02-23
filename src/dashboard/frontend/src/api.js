@@ -975,6 +975,18 @@ export const getClipStatusBatch = async (requestIds) => {
   return response.data;
 };
 
+// Stitch completed clips into ONE commercial video
+export const stitchClips = async (clipUrls) => {
+  const response = await api.post('/api/video/stitch', { clipUrls });
+  return response.data;
+};
+
+// Poll stitch job status
+export const getStitchStatus = async (jobId) => {
+  const response = await api.get(`/api/video/stitch-status/${jobId}`);
+  return response.data;
+};
+
 // ============================================
 // EXPORT DEFAULT
 // ============================================

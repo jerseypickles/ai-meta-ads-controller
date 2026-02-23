@@ -8,7 +8,8 @@ import {
   getVideoMotions, uploadProductPhoto, getVideoShots,
   deleteVideoShot, generateShots, getShotJobStatus,
   analyzeScene, judgeShots, regenerateShot,
-  generateClipsBatch, getClipStatus, getClipStatusBatch
+  generateClipsBatch, getClipStatus, getClipStatusBatch,
+  stitchClips, getStitchStatus
 } from '../api';
 
 const BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
@@ -306,10 +307,15 @@ export default function VideoGenerator() {
   const [clips, setClips] = useState([]);
   const [generatingClips, setGeneratingClips] = useState(false);
 
+  // Step 6: Final commercial video (stitched)
+  const [stitchJobId, setStitchJobId] = useState(null);
+  const [stitchStatus, setStitchStatus] = useState(null);
+
   const [error, setError] = useState(null);
   const fileInputRef = useRef(null);
   const shotPollRef = useRef(null);
   const clipPollRef = useRef(null);
+  const stitchPollRef = useRef(null);
 
   // Load motions + existing shots on mount
   useEffect(() => {
@@ -318,6 +324,7 @@ export default function VideoGenerator() {
     return () => {
       if (shotPollRef.current) clearInterval(shotPollRef.current);
       if (clipPollRef.current) clearInterval(clipPollRef.current);
+      if (stitchPollRef.current) clearInterval(stitchPollRef.current);
     };
   }, []);
 
@@ -339,6 +346,14 @@ export default function VideoGenerator() {
       clipPollRef.current = null;
     }
   }, [clips]);
+
+  // Poll stitch job
+  useEffect(() => {
+    if (stitchJobId && stitchStatus?.status === 'running') {
+      stitchPollRef.current = setInterval(pollStitchJob, 5000);
+      return () => { clearInterval(stitchPollRef.current); stitchPollRef.current = null; };
+    }
+  }, [stitchJobId, stitchStatus?.status]);
 
   const loadMotions = async () => {
     try {
@@ -571,6 +586,44 @@ export default function VideoGenerator() {
     } catch (err) { console.error('Refresh error:', err); }
   };
 
+  // ═══ Step 6: Stitch clips into ONE commercial ═══
+  const handleStitchClips = async () => {
+    const completedClipUrls = clips
+      .filter(c => c.status === 'completed' && c.videoUrl)
+      .map(c => c.videoUrl);
+
+    if (completedClipUrls.length < 2) {
+      setError('Se necesitan al menos 2 clips completados para crear el video comercial');
+      return;
+    }
+
+    setError(null);
+    setStitchStatus(null);
+    try {
+      const data = await stitchClips(completedClipUrls);
+      setStitchJobId(data.jobId);
+      setStitchStatus({ status: 'running', totalClips: data.totalClips, downloaded: 0 });
+    } catch (err) {
+      setError(`Error iniciando ensamblaje: ${err.response?.data?.error || err.message}`);
+    }
+  };
+
+  const pollStitchJob = async () => {
+    if (!stitchJobId) return;
+    try {
+      const data = await getStitchStatus(stitchJobId);
+      setStitchStatus(data);
+      if (data.status === 'done' || data.status === 'failed') {
+        if (stitchPollRef.current) { clearInterval(stitchPollRef.current); stitchPollRef.current = null; }
+        if (data.status === 'failed' && data.error) {
+          setError(`Error en ensamblaje: ${data.error}`);
+        }
+      }
+    } catch (err) {
+      console.error('Poll stitch error:', err);
+    }
+  };
+
   const toggleShot = (filename) => {
     setSelectedShots(prev => {
       const next = new Set(prev);
@@ -595,6 +648,7 @@ export default function VideoGenerator() {
   const completedClips = clips.filter(c => c.status === 'completed');
   const pendingClips = clips.filter(c => c.status === 'queued' || c.status === 'processing');
   const isGeneratingShots = shotJobStatus?.status === 'running';
+  const isStitching = stitchStatus?.status === 'running';
 
   // Determine current step
   let step = 1;
@@ -603,6 +657,7 @@ export default function VideoGenerator() {
   if (shots.length > 0 && !isGeneratingShots) step = 3;
   if (storyboard.length > 0) step = 4;
   if (clips.length > 0) step = 5;
+  if (stitchStatus?.status === 'done') step = 6;
 
   const sceneInfo = directorPlan ? {
     label: directorPlan.sceneLabel,
@@ -619,7 +674,7 @@ export default function VideoGenerator() {
           Video AI — Director Creativo
         </h1>
         <p style={{ color: '#6b7280', fontSize: '13px' }}>
-          Foto → Claude Director → Tomas (OpenAI) → Jurado (Claude) → Storyboard → Videos (Kling 2.6)
+          Foto → Director → 12 Beats Narrativos → Jurado → Storyboard → Clips (Kling 2.6) → Video Comercial Final
         </p>
       </div>
 
@@ -629,11 +684,13 @@ export default function VideoGenerator() {
         <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
         <StepIndicator number={2} title="Director" subtitle="Claude IA" active={step === 2} done={!!directorPlan} />
         <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
-        <StepIndicator number={3} title="Tomas" subtitle={`${numShots} shots + jurado`} active={step === 3} done={shots.length > 0 && !isGeneratingShots && shotScores} />
+        <StepIndicator number={3} title="Beats" subtitle={`${numShots} narrativos`} active={step === 3} done={shots.length > 0 && !isGeneratingShots && shotScores} />
         <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
-        <StepIndicator number={4} title="Storyboard" subtitle="Prompts" active={step === 4} done={storyboard.length > 0} />
+        <StepIndicator number={4} title="Storyboard" subtitle="Secuencia" active={step === 4} done={storyboard.length > 0} />
         <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
-        <StepIndicator number={5} title="Videos" subtitle="Kling 2.6" active={step === 5} done={completedClips.length > 0} />
+        <StepIndicator number={5} title="Clips" subtitle="Kling 2.6" active={step === 5} done={completedClips.length > 0} />
+        <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
+        <StepIndicator number={6} title="Comercial" subtitle="Video Final" active={step === 6} done={stitchStatus?.status === 'done'} />
       </div>
 
       {/* ═══ ERROR BANNER ═══ */}
@@ -757,6 +814,22 @@ export default function VideoGenerator() {
             </p>
           </div>
 
+          {/* Narrative summary */}
+          {directorPlan.narrativeSummary && (
+            <div style={{
+              backgroundColor: '#0d0f14', border: '1px solid #2a2d3a', borderRadius: '10px',
+              padding: '12px 16px', marginBottom: '16px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+                <Film size={14} color="#93c5fd" />
+                <span style={{ color: '#93c5fd', fontSize: '12px', fontWeight: '600' }}>Narrativa del Comercial</span>
+              </div>
+              <p style={{ color: '#9ca3af', fontSize: '12px', lineHeight: '1.5', margin: 0 }}>
+                {directorPlan.narrativeSummary}
+              </p>
+            </div>
+          )}
+
           {/* Shot count + generate */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
             <div>
@@ -806,7 +879,7 @@ export default function VideoGenerator() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
             <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Image size={18} color="#f59e0b" />
-              Paso 3 — Tomas ({shots.length})
+              Paso 3 — Beats Narrativos ({shots.length})
               {isGeneratingShots && <Loader size={14} className="spin" color="#f59e0b" />}
             </h2>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -980,8 +1053,8 @@ export default function VideoGenerator() {
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
             }}>
             {generatingClips
-              ? <><Loader size={18} className="spin" /> Enviando {storyboard.length} clips a Kling 2.6...</>
-              : <><Play size={18} /> Generar {storyboard.length} Video{storyboard.length !== 1 ? 's' : ''} con Kling 2.6</>
+              ? <><Loader size={18} className="spin" /> Enviando {storyboard.length} segmentos a Kling 2.6...</>
+              : <><Play size={18} /> Generar {storyboard.length} Segmentos del Comercial (Kling 2.6)</>
             }
           </button>
         </div>
@@ -991,29 +1064,120 @@ export default function VideoGenerator() {
       {clips.length > 0 && (
         <div style={{
           backgroundColor: '#111318', border: '1px solid #1f2937', borderRadius: '14px',
-          padding: '24px'
+          padding: '24px', marginBottom: '20px'
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
             <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Film size={18} color="#22c55e" />
-              Paso 5 — Videos ({completedClips.length}/{clips.length})
+              Paso 5 — Segmentos del Comercial ({completedClips.length}/{clips.length})
             </h2>
-            {pendingClips.length > 0 && (
-              <button onClick={refreshPendingClips}
-                style={{
-                  backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px',
-                  padding: '8px 14px', color: '#93c5fd', fontSize: '12px', fontWeight: '500',
-                  cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
-                }}>
-                <RefreshCw size={14} /> {pendingClips.length} en proceso
-              </button>
-            )}
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {pendingClips.length > 0 && (
+                <button onClick={refreshPendingClips}
+                  style={{
+                    backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px',
+                    padding: '8px 14px', color: '#93c5fd', fontSize: '12px', fontWeight: '500',
+                    cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
+                  }}>
+                  <RefreshCw size={14} /> {pendingClips.length} en proceso
+                </button>
+              )}
+              {completedClips.length >= 2 && pendingClips.length === 0 && (
+                <button onClick={handleStitchClips} disabled={isStitching}
+                  style={{
+                    padding: '8px 18px',
+                    backgroundColor: isStitching ? '#374151' : '#22c55e',
+                    border: 'none', borderRadius: '8px', color: '#fff', fontSize: '13px', fontWeight: '700',
+                    cursor: isStitching ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
+                  }}>
+                  {isStitching
+                    ? <><Loader size={14} className="spin" /> Ensamblando...</>
+                    : <><Play size={14} /> Crear Video Comercial ({completedClips.length} clips)</>
+                  }
+                </button>
+              )}
+            </div>
           </div>
+
+          {completedClips.length > 0 && pendingClips.length === 0 && (
+            <div style={{
+              backgroundColor: '#0d0f14', border: '1px solid #2a2d3a', borderRadius: '10px',
+              padding: '10px 14px', marginBottom: '14px', fontSize: '12px', color: '#9ca3af',
+              display: 'flex', alignItems: 'center', gap: '8px'
+            }}>
+              <Film size={14} color="#22c55e" />
+              Estos {completedClips.length} segmentos se ensamblan en UN solo video comercial de ~{completedClips.length * duration}s
+            </div>
+          )}
+
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '14px' }}>
             {clips.map((clip, i) => (
               <ClipCard key={clip.requestId || i} clip={clip} onRefresh={refreshSingleClip} />
             ))}
           </div>
+        </div>
+      )}
+
+      {/* ═══ STEP 6: FINAL COMMERCIAL VIDEO ═══ */}
+      {(stitchStatus?.status === 'running' || stitchStatus?.status === 'done') && (
+        <div style={{
+          backgroundColor: '#111318', border: stitchStatus.status === 'done' ? '2px solid #22c55e' : '1px solid #1f2937',
+          borderRadius: '14px', padding: '24px'
+        }}>
+          <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Video size={18} color="#22c55e" />
+            Paso 6 — Video Comercial Final
+          </h2>
+
+          {stitchStatus.status === 'running' && (
+            <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+              <Loader size={32} color="#22c55e" className="spin" style={{ margin: '0 auto 12px', display: 'block' }} />
+              <p style={{ color: '#9ca3af', fontSize: '14px', marginBottom: '6px' }}>
+                Ensamblando video comercial...
+              </p>
+              <p style={{ color: '#6b7280', fontSize: '12px' }}>
+                Descargando {stitchStatus.downloaded || 0}/{stitchStatus.totalClips || '?'} clips y concatenando
+              </p>
+            </div>
+          )}
+
+          {stitchStatus.status === 'done' && stitchStatus.outputUrl && (
+            <div>
+              <video
+                src={`${BASE_URL}${stitchStatus.outputUrl}`}
+                controls
+                style={{
+                  width: '100%', maxWidth: '540px', borderRadius: '12px',
+                  border: '2px solid #22c55e', margin: '0 auto', display: 'block'
+                }}
+              />
+              <div style={{ textAlign: 'center', marginTop: '12px', display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                <a href={`${BASE_URL}${stitchStatus.outputUrl}`} download
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '6px',
+                    backgroundColor: '#22c55e', color: '#fff', padding: '10px 20px',
+                    borderRadius: '8px', textDecoration: 'none', fontWeight: '600', fontSize: '13px'
+                  }}>
+                  <Download size={16} /> Descargar Video Comercial
+                </a>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ color: '#6b7280', fontSize: '12px' }}>
+                    {completedClips.length} segmentos x {duration}s = ~{completedClips.length * duration}s total
+                  </span>
+                </div>
+              </div>
+              {directorPlan && (
+                <div style={{
+                  marginTop: '16px', backgroundColor: '#0d0f14', border: '1px solid #2a2d3a',
+                  borderRadius: '10px', padding: '12px 16px', textAlign: 'center'
+                }}>
+                  <span style={{ color: '#c4b5fd', fontSize: '12px', fontWeight: '600' }}>
+                    {directorPlan.brand} {directorPlan.productName} — {sceneInfo?.label}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

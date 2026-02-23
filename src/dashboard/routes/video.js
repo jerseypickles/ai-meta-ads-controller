@@ -14,11 +14,12 @@ const fs = require('fs');
 const config = require('../../../config');
 const logger = require('../../utils/logger');
 const {
-  AVAILABLE_SCENES, SHOT_TYPES, CAMERA_MOTIONS,
+  AVAILABLE_SCENES, SHOT_TYPES, NARRATIVE_BEATS, CAMERA_MOTIONS,
   analyzeProductAndRecommendScene,
   startShotGenerationJob, getShotJobStatus,
   judgeShots, regenerateSingleShot,
-  submitVideoJob, checkVideoStatus, submitVideoBatch
+  submitVideoJob, checkVideoStatus, submitVideoBatch,
+  startStitchJob, getStitchJobStatus
 } = require('../../video/video-pipeline');
 
 // ============ UPLOAD CONFIG ============
@@ -56,6 +57,12 @@ router.get('/scenes', (req, res) => {
 
 router.get('/shot-types', (req, res) => {
   res.json({ shotTypes: SHOT_TYPES, count: SHOT_TYPES.length });
+});
+
+// ============ GET /api/video/narrative-beats ============
+
+router.get('/narrative-beats', (req, res) => {
+  res.json({ beats: NARRATIVE_BEATS, count: NARRATIVE_BEATS.length });
 });
 
 // ============ GET /api/video/motions ============
@@ -326,6 +333,44 @@ router.post('/clip-status-batch', async (req, res) => {
     res.json({ jobs: results });
   } catch (err) {
     logger.error('[VIDEO] Batch status error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============ POST /api/video/stitch ============
+// Concatenate completed video clips into ONE commercial video
+
+router.post('/stitch', (req, res) => {
+  try {
+    const { clipUrls } = req.body;
+
+    if (!clipUrls || !Array.isArray(clipUrls) || clipUrls.length < 2) {
+      return res.status(400).json({ error: 'clipUrls array with at least 2 URLs is required' });
+    }
+    if (clipUrls.length > 20) {
+      return res.status(400).json({ error: 'Maximum 20 clips per stitch' });
+    }
+
+    logger.info(`[VIDEO] Starting stitch job: ${clipUrls.length} clips`);
+    const result = startStitchJob(clipUrls);
+    res.json(result);
+  } catch (err) {
+    logger.error('[VIDEO] Stitch error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============ GET /api/video/stitch-status/:jobId ============
+
+router.get('/stitch-status/:jobId', (req, res) => {
+  try {
+    const status = getStitchJobStatus(req.params.jobId);
+    if (!status) {
+      return res.status(404).json({ error: 'Stitch job not found' });
+    }
+    res.json(status);
+  } catch (err) {
+    logger.error('[VIDEO] Stitch status error:', err);
     res.status(500).json({ error: err.message });
   }
 });

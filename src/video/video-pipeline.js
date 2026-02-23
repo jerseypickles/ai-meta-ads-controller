@@ -1,13 +1,14 @@
 /**
- * Video Pipeline — "Director Creativo" Mode
+ * Video Pipeline — "Director Creativo" Mode v5
  *
  * Workflow:
  *   1. Upload 1 product photo
- *   2. Claude Vision analyzes product → recommends best commercial scene → designs 12 cinematic shots
- *   3. OpenAI gpt-image-1.5 generates 12 shots within the SAME scene (async, polled)
+ *   2. Claude Vision analyzes product → recommends best commercial scene → designs 12 NARRATIVE BEATS (story arc)
+ *   3. OpenAI gpt-image-1.5 generates 12 shots as a sequential narrative (async, polled)
  *   4. Claude Vision judges each shot quality (1-10 score + feedback)
  *   5. User reviews storyboard with scores, can regenerate low-scoring shots
  *   6. Kling 2.6 converts each approved shot to a 5s video clip
+ *   7. FFmpeg stitches all clips into ONE complete commercial video
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
@@ -19,8 +20,11 @@ const logger = require('../utils/logger');
 const fs = require('fs');
 const path = require('path');
 
+const { execFile } = require('child_process');
+
 const SHOTS_DIR = path.join(config.system.uploadsDir, 'video-shots');
 const VIDEOS_DIR = path.join(config.system.uploadsDir, 'video-clips');
+const FINALS_DIR = path.join(config.system.uploadsDir, 'video-finals');
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -48,21 +52,25 @@ const AVAILABLE_SCENES = [
   { key: 'nature-green', label: 'Naturaleza Verde', description: 'Mossy natural stone, fresh green leaves and herbs, dappled forest sunlight, farm-to-table' },
 ];
 
-// ═══ 12 CINEMATIC SHOT TYPES (used within the chosen scene) ═══
-const SHOT_TYPES = [
-  { key: 'hero-center', label: 'Hero Central', composition: 'Product perfectly centered, straight-on eye-level shot, balanced symmetrical framing, full product visible' },
-  { key: 'close-up-label', label: 'Close-up Label', composition: 'Tight close-up on the product label/branding, filling 70% of the frame, sharp focus on text and logo' },
-  { key: 'three-quarter', label: 'Tres Cuartos', composition: 'Product at a slight three-quarter angle view, showing depth and dimension of the packaging' },
-  { key: 'overhead-top', label: 'Cenital', composition: 'Top-down overhead bird\'s eye view looking straight down at the product from above' },
-  { key: 'low-angle', label: 'Angulo Bajo', composition: 'Low angle looking up at the product, making it appear grand and prominent, hero perspective' },
-  { key: 'wide-context', label: 'Contexto Amplio', composition: 'Wide shot showing the product smaller in frame with the full scene/environment visible around it' },
-  { key: 'macro-detail', label: 'Macro Detalle', composition: 'Extreme close-up on a distinctive detail — texture, seal, cap, ingredient highlight, or unique packaging feature' },
-  { key: 'rule-thirds-left', label: 'Tercios Izquierda', composition: 'Product positioned on the left third of frame, negative space on right, artistic editorial composition' },
-  { key: 'rule-thirds-right', label: 'Tercios Derecha', composition: 'Product positioned on the right third of frame, negative space on left, dynamic commercial composition' },
-  { key: 'tilted-dynamic', label: 'Dinamico Inclinado', composition: 'Slightly tilted/dutch angle for energy and dynamism, product still clearly visible, action feel' },
-  { key: 'depth-bokeh', label: 'Profundidad Bokeh', composition: 'Product sharp in foreground with heavy bokeh blurring the background scene, cinematic depth of field' },
-  { key: 'group-props', label: 'Con Elementos', composition: 'Product surrounded by complementary props and contextual elements that enhance the scene storytelling' },
+// ═══ 12 NARRATIVE BEATS — Sequential story arc for ONE commercial ═══
+// These are ordered to tell a coherent story from opening to closing
+const NARRATIVE_BEATS = [
+  { key: 'beat-01-scene-establish', label: '1. Escena', order: 1, narrative: 'Opening wide shot establishing the scene/environment. No product visible yet — just the beautiful setting that creates mood and context. The audience sees WHERE the story takes place.' },
+  { key: 'beat-02-product-reveal', label: '2. Revelacion', order: 2, narrative: 'The product enters the scene or is revealed for the first time. Dramatic entrance — perhaps placed by a hand, or camera discovers it. Full product visible, centered, eye-level hero shot.' },
+  { key: 'beat-03-hero-closeup', label: '3. Hero Close', order: 3, narrative: 'Tight close-up on the product label and branding. Fill 70% of frame. This is the "money shot" for brand recognition — sharp focus on name, logo, key text.' },
+  { key: 'beat-04-detail-texture', label: '4. Detalle', order: 4, narrative: 'Extreme macro close-up on a distinctive product detail — the seal, cap, texture of the packaging, an ingredient visible through glass, condensation droplets on the surface.' },
+  { key: 'beat-05-context-lifestyle', label: '5. Contexto', order: 5, narrative: 'Wide three-quarter shot showing the product IN its natural context. Props, utensils, complementary foods around it. Lifestyle moment — someone WOULD use this product here.' },
+  { key: 'beat-06-product-open', label: '6. Abriendo', order: 6, narrative: 'The product is being OPENED or has just been opened. Show the contents — the inside, the real food/product revealed. If a jar: lid off, contents visible from above. If a bag: torn open, contents spilling slightly.' },
+  { key: 'beat-07-contents-glory', label: '7. Contenido', order: 7, narrative: 'Glory shot of the CONTENTS themselves — the actual food/product outside its packaging. Dripping, glistening, textured, appetizing. Close-up of the real product being served, poured, or displayed.' },
+  { key: 'beat-08-action-use', label: '8. Accion', order: 8, narrative: 'Action/interaction shot — the product being USED. A fork lifting food, liquid being poured, hands grabbing, product being applied. Dynamic movement, human interaction with the product.' },
+  { key: 'beat-09-ingredient-splash', label: '9. Ingredientes', order: 9, narrative: 'Key ingredients floating or arranged artistically around the product. Fresh herbs, spices, vegetables, elements that compose this product — suggesting quality and freshness.' },
+  { key: 'beat-10-mood-artistic', label: '10. Artistico', order: 10, narrative: 'Artistic/cinematic beauty shot — dramatic lighting, bokeh, tilted angle, or creative composition. This is the "Instagram-worthy" frame. Product visible but the mood and aesthetics take center stage.' },
+  { key: 'beat-11-group-arrangement', label: '11. Composicion', order: 11, narrative: 'Full arrangement shot — product with all props, ingredients, and scene elements beautifully composed. Like a magazine cover or catalog hero image. Everything comes together.' },
+  { key: 'beat-12-closing-hero', label: '12. Cierre', order: 12, narrative: 'Final closing hero shot — product centered, clean, powerful. This is the last frame the viewer sees. Brand clearly visible, call-to-action composition. Clean background, maximum impact.' },
 ];
+
+// Keep backward compat alias
+const SHOT_TYPES = NARRATIVE_BEATS;
 
 // ═══ CAMERA MOTIONS for Kling ═══
 const CAMERA_MOTIONS = [
@@ -95,8 +103,8 @@ async function analyzeProductAndRecommendScene(productImagePath, productDescript
     `${i + 1}. ${s.key} — "${s.label}": ${s.description}`
   ).join('\n');
 
-  const shotTypesText = SHOT_TYPES.map((s, i) =>
-    `${i + 1}. ${s.key} — "${s.label}": ${s.composition}`
+  const beatsText = NARRATIVE_BEATS.map((b) =>
+    `${b.order}. ${b.key} — "${b.label}": ${b.narrative}`
   ).join('\n');
 
   const content = [
@@ -106,7 +114,7 @@ async function analyzeProductAndRecommendScene(productImagePath, productDescript
     },
     {
       type: 'text',
-      text: `You are an expert commercial video director. Analyze this product photograph and act as creative director for a cohesive product commercial video.
+      text: `You are an expert commercial video director. You are creating a 60-second product commercial video with 12 sequential shots that tell a COMPLETE STORY from opening to closing.
 
 User's product description: "${productDescription}"
 
@@ -125,23 +133,38 @@ From the available scenes below, pick the ONE scene that would create the most c
 Available scenes:
 ${scenesListText}
 
-STEP 3 — Design 12 cinematic shots within that scene:
-For each of the 12 shot types below, write a specific OpenAI image generation prompt that places this product in the chosen scene with that specific camera composition. Each prompt MUST:
+STEP 3 — Design 12 NARRATIVE BEATS (sequential story):
+This is NOT 12 independent shots. This is a 12-beat STORY ARC that flows like a real commercial:
+- Beat 1-2: OPENING — establish the world, then reveal the product
+- Beat 3-5: DEVELOPMENT — show the product in detail, brand, and lifestyle context
+- Beat 6-8: CLIMAX — product opened, contents shown, action/interaction (the exciting part!)
+- Beat 9-11: RESOLUTION — ingredients, beauty shots, full composition
+- Beat 12: CLOSING — final hero frame, brand impact
+
+For EACH of the 12 narrative beats below, write a specific OpenAI image generation prompt. Each prompt MUST:
 - Start with "Edit this product photograph. Change ONLY the background and surroundings."
 - Describe the chosen scene context specifically for this product
-- Include the specific camera composition/framing for that shot type
-- Be 2-3 sentences, detailed enough for high-quality generation
-- All 12 shots must share the SAME visual world (same scene, same lighting mood, same color palette)
+- Include the specific narrative moment and composition for that beat
+- Maintain VISUAL CONTINUITY — same scene, same lighting, same color palette, same props throughout all 12
+- For beats 6-8 (action shots): describe the product being opened, contents visible, food being served/used, hands interacting — even though the original photo shows a sealed product, describe the SCENE as if the product is open/in-use
+- Be 2-3 sentences, detailed and specific
 
-The 12 shot types are:
-${shotTypesText}
+IMPORTANT for action beats (6, 7, 8):
+- Beat 6: Show the product AS IF it's being opened — lid off, contents beginning to be revealed
+- Beat 7: Show the actual CONTENTS of the product — the food itself, outside the packaging, glistening, appetizing
+- Beat 8: Show HUMAN INTERACTION — hands, utensils, the product being served, poured, grabbed
+
+The 12 narrative beats are:
+${beatsText}
 
 STEP 4 — Design 12 video prompts for Kling 2.6:
-For each shot, also write a cinematic 5-second video motion prompt describing:
-- Camera movement specific to this shot type
-- Product-specific environmental interactions (condensation, splash, steam, crumbs, etc.)
-- Atmosphere and mood continuity
+For each beat, write a 5-second video motion prompt that:
+- Describes camera movement APPROPRIATE to this narrative moment (slow reveal for opening, dynamic for action, steady for closing)
+- Includes product-specific environmental motion (condensation forming, steam rising, liquid dripping, crumbs falling, ice crackling, etc.)
+- Creates FLOW between beats — each video clip should feel like it connects to the next
 - Keep in English, 1-2 sentences each
+
+The 12 clips will be concatenated into ONE 60-second commercial, so design the camera movements to create natural transitions between beats.
 
 Return ONLY valid JSON:
 {
@@ -152,22 +175,23 @@ Return ONLY valid JSON:
   "chosenScene": "scene-key",
   "sceneLabel": "Scene Label",
   "sceneReason": "2-3 sentence explanation of why this scene is ideal for this product",
+  "narrativeSummary": "One paragraph describing the commercial story arc from opening to closing",
   "shots": {
-    "hero-center": {
+    "beat-01-scene-establish": {
       "imagePrompt": "Edit this product photograph. Change ONLY the background and surroundings. ...",
-      "videoPrompt": "Slow cinematic dolly in toward..."
+      "videoPrompt": "Slow cinematic establishing shot..."
     },
-    "close-up-label": { "imagePrompt": "...", "videoPrompt": "..." },
-    "three-quarter": { "imagePrompt": "...", "videoPrompt": "..." },
-    "overhead-top": { "imagePrompt": "...", "videoPrompt": "..." },
-    "low-angle": { "imagePrompt": "...", "videoPrompt": "..." },
-    "wide-context": { "imagePrompt": "...", "videoPrompt": "..." },
-    "macro-detail": { "imagePrompt": "...", "videoPrompt": "..." },
-    "rule-thirds-left": { "imagePrompt": "...", "videoPrompt": "..." },
-    "rule-thirds-right": { "imagePrompt": "...", "videoPrompt": "..." },
-    "tilted-dynamic": { "imagePrompt": "...", "videoPrompt": "..." },
-    "depth-bokeh": { "imagePrompt": "...", "videoPrompt": "..." },
-    "group-props": { "imagePrompt": "...", "videoPrompt": "..." }
+    "beat-02-product-reveal": { "imagePrompt": "...", "videoPrompt": "..." },
+    "beat-03-hero-closeup": { "imagePrompt": "...", "videoPrompt": "..." },
+    "beat-04-detail-texture": { "imagePrompt": "...", "videoPrompt": "..." },
+    "beat-05-context-lifestyle": { "imagePrompt": "...", "videoPrompt": "..." },
+    "beat-06-product-open": { "imagePrompt": "...", "videoPrompt": "..." },
+    "beat-07-contents-glory": { "imagePrompt": "...", "videoPrompt": "..." },
+    "beat-08-action-use": { "imagePrompt": "...", "videoPrompt": "..." },
+    "beat-09-ingredient-splash": { "imagePrompt": "...", "videoPrompt": "..." },
+    "beat-10-mood-artistic": { "imagePrompt": "...", "videoPrompt": "..." },
+    "beat-11-group-arrangement": { "imagePrompt": "...", "videoPrompt": "..." },
+    "beat-12-closing-hero": { "imagePrompt": "...", "videoPrompt": "..." }
   }
 }`
     }
@@ -595,9 +619,119 @@ async function submitVideoBatch(shots, options = {}) {
   return results;
 }
 
+// ═══ STEP 7: Stitch clips into ONE commercial video via FFmpeg ═══
+
+const stitchJobs = new Map();
+
+function startStitchJob(clipUrls) {
+  const jobId = `stitch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const job = {
+    jobId,
+    status: 'running',
+    totalClips: clipUrls.length,
+    downloaded: 0,
+    error: null,
+    outputUrl: null,
+    startedAt: new Date().toISOString()
+  };
+  stitchJobs.set(jobId, job);
+
+  _stitchBackground(jobId, clipUrls).catch(err => {
+    logger.error(`[VIDEO-PIPE] Stitch job ${jobId} crashed: ${err.message}`);
+    const j = stitchJobs.get(jobId);
+    if (j) { j.status = 'failed'; j.error = err.message; }
+  });
+
+  return { jobId, status: 'running', totalClips: clipUrls.length };
+}
+
+function getStitchJobStatus(jobId) {
+  const job = stitchJobs.get(jobId);
+  if (!job) return null;
+  return { ...job };
+}
+
+async function _stitchBackground(jobId, clipUrls) {
+  ensureDir(FINALS_DIR);
+  const job = stitchJobs.get(jobId);
+  const tmpDir = path.join(FINALS_DIR, `tmp-${jobId}`);
+  ensureDir(tmpDir);
+
+  // Step A: Download all clip videos
+  const localFiles = [];
+  for (let i = 0; i < clipUrls.length; i++) {
+    const url = clipUrls[i];
+    const localPath = path.join(tmpDir, `clip-${String(i).padStart(2, '0')}.mp4`);
+    try {
+      logger.info(`[VIDEO-PIPE] Stitch ${jobId}: Downloading clip ${i + 1}/${clipUrls.length}`);
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status} downloading ${url}`);
+      const buffer = Buffer.from(await res.arrayBuffer());
+      fs.writeFileSync(localPath, buffer);
+      localFiles.push(localPath);
+      job.downloaded++;
+    } catch (err) {
+      logger.error(`[VIDEO-PIPE] Stitch ${jobId}: Failed to download clip ${i}: ${err.message}`);
+      throw new Error(`Failed to download clip ${i + 1}: ${err.message}`);
+    }
+  }
+
+  // Step B: Create FFmpeg concat list file
+  const concatListPath = path.join(tmpDir, 'concat.txt');
+  const concatContent = localFiles.map(f => `file '${f}'`).join('\n');
+  fs.writeFileSync(concatListPath, concatContent);
+
+  // Step C: Find ffmpeg binary — try system, then ffmpeg-static
+  let ffmpegPath = 'ffmpeg';
+  try {
+    const ffmpegStatic = require('ffmpeg-static');
+    if (ffmpegStatic) ffmpegPath = ffmpegStatic;
+  } catch (_) {
+    // ffmpeg-static not installed, use system ffmpeg
+  }
+
+  // Step D: Concatenate with FFmpeg
+  const outputFilename = `commercial-${Date.now()}.mp4`;
+  const outputPath = path.join(FINALS_DIR, outputFilename);
+
+  await new Promise((resolve, reject) => {
+    const args = [
+      '-f', 'concat', '-safe', '0',
+      '-i', concatListPath,
+      '-c', 'copy',
+      '-movflags', '+faststart',
+      outputPath
+    ];
+
+    logger.info(`[VIDEO-PIPE] Stitch ${jobId}: Running FFmpeg concat...`);
+    execFile(ffmpegPath, args, { timeout: 120000 }, (err, stdout, stderr) => {
+      if (err) {
+        logger.error(`[VIDEO-PIPE] FFmpeg error: ${stderr || err.message}`);
+        reject(new Error(`FFmpeg failed: ${stderr || err.message}`));
+      } else {
+        resolve();
+      }
+    });
+  });
+
+  // Step E: Cleanup temp files
+  try {
+    for (const f of localFiles) fs.unlinkSync(f);
+    fs.unlinkSync(concatListPath);
+    fs.rmdirSync(tmpDir);
+  } catch (_) { /* ignore cleanup errors */ }
+
+  job.status = 'done';
+  job.outputUrl = `/uploads/video-finals/${outputFilename}`;
+  job.outputFilename = outputFilename;
+  job.finishedAt = new Date().toISOString();
+  logger.info(`[VIDEO-PIPE] Stitch ${jobId} completed: ${outputFilename}`);
+}
+
 module.exports = {
   AVAILABLE_SCENES,
   SHOT_TYPES,
+  NARRATIVE_BEATS,
   CAMERA_MOTIONS,
   analyzeProductAndRecommendScene,
   startShotGenerationJob,
@@ -606,5 +740,7 @@ module.exports = {
   regenerateSingleShot,
   submitVideoJob,
   checkVideoStatus,
-  submitVideoBatch
+  submitVideoBatch,
+  startStitchJob,
+  getStitchJobStatus
 };
