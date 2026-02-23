@@ -1,7 +1,8 @@
 /**
  * Video Generation Routes
  *
- * Pipeline: Upload product photo → OpenAI generates angle shots → Kling 2.6 creates videos
+ * Pipeline: Upload product photo → OpenAI generates angle shots (async) →
+ *           Claude analyzes product → Storyboard with smart prompts → Kling 2.6 creates videos
  */
 
 const express = require('express');
@@ -13,7 +14,9 @@ const config = require('../../../config');
 const logger = require('../../utils/logger');
 const {
   PRODUCT_ANGLES, CAMERA_MOTIONS,
-  generateAngleShots, submitVideoJob, checkVideoStatus, submitVideoBatch
+  startShotGenerationJob, getShotJobStatus,
+  analyzeProductAndGeneratePrompts,
+  submitVideoJob, checkVideoStatus, submitVideoBatch
 } = require('../../video/video-pipeline');
 
 // ============ UPLOAD CONFIG ============
@@ -42,21 +45,18 @@ const upload = multer({
 });
 
 // ============ GET /api/video/angles ============
-// List available product angles
 
 router.get('/angles', (req, res) => {
   res.json({ angles: PRODUCT_ANGLES, count: PRODUCT_ANGLES.length });
 });
 
 // ============ GET /api/video/motions ============
-// List available camera motions for video
 
 router.get('/motions', (req, res) => {
   res.json({ motions: CAMERA_MOTIONS, count: CAMERA_MOTIONS.length });
 });
 
 // ============ POST /api/video/upload-product ============
-// Upload the source product photo
 
 router.post('/upload-product', upload.single('photo'), (req, res) => {
   try {
@@ -76,7 +76,6 @@ router.post('/upload-product', upload.single('photo'), (req, res) => {
 });
 
 // ============ GET /api/video/shots ============
-// List generated angle shots
 
 router.get('/shots', (req, res) => {
   try {
@@ -88,7 +87,13 @@ router.get('/shots', (req, res) => {
       .map(f => {
         const stats = fs.statSync(path.join(shotsDir, f));
         const angle = f.match(/shot-([a-z-]+)-/)?.[1] || 'unknown';
-        return { filename: f, angle, url: `/uploads/video-shots/${f}`, size: stats.size, created: stats.mtime };
+        const angleDef = PRODUCT_ANGLES.find(a => a.key === angle);
+        return {
+          filename: f, angle,
+          label: angleDef?.label || angle,
+          url: `/uploads/video-shots/${f}`,
+          size: stats.size, created: stats.mtime
+        };
       })
       .sort((a, b) => new Date(b.created) - new Date(a.created));
 
@@ -100,9 +105,9 @@ router.get('/shots', (req, res) => {
 });
 
 // ============ POST /api/video/generate-shots ============
-// Step 1: Generate 12 angle shots from the product photo using OpenAI
+// ASYNC: returns jobId immediately, generates in background
 
-router.post('/generate-shots', async (req, res) => {
+router.post('/generate-shots', (req, res) => {
   try {
     const { productImagePath, productDescription, numShots } = req.body;
 
@@ -110,7 +115,7 @@ router.post('/generate-shots', async (req, res) => {
       return res.status(400).json({ error: 'productImagePath is required' });
     }
 
-    // Resolve path — could be absolute or relative /uploads/ path
+    // Resolve path
     let fullPath = productImagePath;
     if (productImagePath.startsWith('/uploads/')) {
       fullPath = path.join(config.system.uploadsDir, productImagePath.replace('/uploads/', ''));
@@ -120,26 +125,59 @@ router.post('/generate-shots', async (req, res) => {
       return res.status(400).json({ error: 'Product image file not found' });
     }
 
-    logger.info(`[VIDEO] Generating ${numShots || 12} angle shots from: ${fullPath}`);
+    logger.info(`[VIDEO] Starting async shot generation from: ${fullPath}`);
 
-    const shots = await generateAngleShots(fullPath, {
+    const result = startShotGenerationJob(fullPath, {
       productDescription: productDescription || 'packaged food product',
       numShots: numShots || 12
     });
 
-    const completed = shots.filter(s => s.status === 'completed').length;
-    const failed = shots.filter(s => s.status === 'failed').length;
-
-    logger.info(`[VIDEO] Shots generated: ${completed} ok, ${failed} failed`);
-    res.json({ shots, completed, failed });
+    // Returns immediately with jobId
+    res.json(result);
   } catch (err) {
     logger.error('[VIDEO] Generate shots error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
+// ============ GET /api/video/shots-job/:jobId ============
+// Poll status of async shot generation job
+
+router.get('/shots-job/:jobId', (req, res) => {
+  try {
+    const status = getShotJobStatus(req.params.jobId);
+    if (!status) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+    res.json(status);
+  } catch (err) {
+    logger.error('[VIDEO] Job status error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============ POST /api/video/analyze-product ============
+// Claude Vision: analyze product shots and generate smart Kling prompts
+
+router.post('/analyze-product', async (req, res) => {
+  try {
+    const { shots, productDescription } = req.body;
+
+    if (!shots || !Array.isArray(shots) || shots.length === 0) {
+      return res.status(400).json({ error: 'shots array is required' });
+    }
+
+    logger.info(`[VIDEO] Analyzing product with Claude Vision (${shots.length} shots)`);
+    const analysis = await analyzeProductAndGeneratePrompts(shots, productDescription || '');
+
+    res.json(analysis);
+  } catch (err) {
+    logger.error('[VIDEO] Analyze product error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ============ POST /api/video/generate-clip ============
-// Step 2a: Generate ONE video clip from a shot image
 
 router.post('/generate-clip', async (req, res) => {
   try {
@@ -158,7 +196,6 @@ router.post('/generate-clip', async (req, res) => {
 });
 
 // ============ POST /api/video/generate-clips-batch ============
-// Step 2b: Generate video clips from multiple shots
 
 router.post('/generate-clips-batch', async (req, res) => {
   try {
@@ -185,7 +222,6 @@ router.post('/generate-clips-batch', async (req, res) => {
 });
 
 // ============ GET /api/video/clip-status/:requestId ============
-// Check status of a video clip job
 
 router.get('/clip-status/:requestId', async (req, res) => {
   try {
@@ -198,7 +234,6 @@ router.get('/clip-status/:requestId', async (req, res) => {
 });
 
 // ============ POST /api/video/clip-status-batch ============
-// Check status of multiple clip jobs
 
 router.post('/clip-status-batch', async (req, res) => {
   try {
@@ -225,7 +260,6 @@ router.post('/clip-status-batch', async (req, res) => {
 });
 
 // ============ DELETE /api/video/shots/:filename ============
-// Delete a shot
 
 router.delete('/shots/:filename', (req, res) => {
   try {

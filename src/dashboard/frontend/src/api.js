@@ -920,8 +920,21 @@ export const deleteVideoShot = async (filename) => {
   return response.data;
 };
 
+// Start async shot generation (returns jobId immediately)
 export const generateAngleShots = async (data) => {
-  const response = await api.post('/api/video/generate-shots', data, { timeout: 600000 });
+  const response = await api.post('/api/video/generate-shots', data);
+  return response.data;
+};
+
+// Poll shot generation job status
+export const getShotJobStatus = async (jobId) => {
+  const response = await api.get(`/api/video/shots-job/${jobId}`);
+  return response.data;
+};
+
+// Claude Vision: analyze product and generate smart prompts
+export const analyzeProduct = async (data) => {
+  const response = await api.post('/api/video/analyze-product', data, { timeout: 120000 });
   return response.data;
 };
 
