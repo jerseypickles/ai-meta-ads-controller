@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Activity, Brain, Bot, Clock, AlertTriangle, CheckCircle, XCircle,
   TrendingUp, TrendingDown, DollarSign, Eye, Zap, RefreshCw,
   ChevronDown, ChevronRight, Image, Pause, Play, Target, Skull,
-  ArrowDown, Shield, Timer
+  ArrowDown, Shield, Timer, Power, Filter
 } from 'lucide-react';
 import { getAIOpsStatus, runAIManager, runAgents } from '../api';
 
@@ -35,6 +35,20 @@ const PHASE_COLORS = {
   learning: '#3b82f6', evaluating: '#f59e0b', scaling: '#10b981',
   stable: '#22c55e', killing: '#ef4444', dead: '#6b7280', activating: '#8b5cf6'
 };
+
+const STATUS_CONFIG = {
+  ACTIVE: { label: 'ACTIVE', color: '#22c55e', bg: '#14532d', icon: Play },
+  PAUSED: { label: 'PAUSED', color: '#ef4444', bg: '#7f1d1d', icon: Pause },
+  DELETED: { label: 'DELETED', color: '#6b7280', bg: '#374151', icon: XCircle },
+  ARCHIVED: { label: 'ARCHIVED', color: '#6b7280', bg: '#374151', icon: XCircle }
+};
+
+const FILTER_OPTIONS = [
+  { value: 'all', label: 'All' },
+  { value: 'active', label: 'Active' },
+  { value: 'paused', label: 'Paused / Off' },
+  { value: 'dead', label: 'Dead / Killing' }
+];
 
 // ═══ STAT BADGE ═══
 const StatBadge = ({ icon: Icon, iconColor, label, value, subValue, subColor }) => (
@@ -106,12 +120,46 @@ const AdSetCard = ({ adset }) => {
   const hasDirectives = (adset.directives || []).length > 0;
   const criticalDirectives = (adset.directives || []).filter(d => d.urgency === 'critical');
 
+  const isActive = adset.status === 'ACTIVE';
+  const isDead = phase === 'dead' || phase === 'killing';
+  const isPaused = !isActive;
+  const statusCfg = STATUS_CONFIG[adset.status] || STATUS_CONFIG.PAUSED;
+  const isStale = adset.snapshot_age_min != null && adset.snapshot_age_min > 120;
+
+  // Card border and glow based on status
+  const cardBorder = isDead ? '#6b728044' : isPaused ? '#ef444466' : criticalDirectives.length > 0 ? '#dc2626' : '#2a2d3a';
+  const cardGlow = isDead ? 'none' : isPaused ? '0 0 8px rgba(239,68,68,0.1)' : criticalDirectives.length > 0 ? '0 0 12px rgba(220,38,38,0.15)' : 'none';
+
   return (
     <div style={{
-      backgroundColor: '#12141d', border: `1px solid ${criticalDirectives.length > 0 ? '#dc2626' : '#2a2d3a'}`,
+      backgroundColor: isDead ? '#0a0b10' : isPaused ? '#12141d' : '#12141d',
+      border: `1px solid ${cardBorder}`,
       borderRadius: '12px', overflow: 'hidden',
-      boxShadow: criticalDirectives.length > 0 ? '0 0 12px rgba(220,38,38,0.15)' : 'none'
+      boxShadow: cardGlow,
+      opacity: isDead ? 0.55 : isPaused ? 0.85 : 1
     }}>
+      {/* PAUSED / OFF Banner — prominent visual indicator */}
+      {isPaused && (
+        <div style={{
+          padding: '6px 16px', display: 'flex', alignItems: 'center', gap: '8px',
+          backgroundColor: isDead ? '#1f2937' : '#7f1d1d',
+          borderBottom: `1px solid ${isDead ? '#374151' : '#dc262666'}`
+        }}>
+          <Power size={13} color={isDead ? '#6b7280' : '#fca5a5'} />
+          <span style={{
+            fontSize: '11px', fontWeight: '700', color: isDead ? '#9ca3af' : '#fca5a5',
+            textTransform: 'uppercase', letterSpacing: '0.08em'
+          }}>
+            {isDead ? 'DEAD — Ad Set eliminado o agotado' : `AD SET ${statusCfg.label} — No esta corriendo en Meta`}
+          </span>
+          {adset.verdict && (
+            <span style={{ fontSize: '10px', color: '#6b7280', marginLeft: 'auto' }}>
+              Verdict: {adset.verdict}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Header */}
       <div
         onClick={() => setExpanded(!expanded)}
@@ -129,14 +177,38 @@ const AdSetCard = ({ adset }) => {
           textTransform: 'uppercase', letterSpacing: '0.05em'
         }}>{phase}</span>
 
-        {/* Status */}
-        {adset.status === 'ACTIVE'
-          ? <Play size={13} color="#22c55e" fill="#22c55e" />
-          : <Pause size={13} color="#ef4444" />
-        }
+        {/* Status badge — clear ACTIVE/PAUSED indicator */}
+        <span style={{
+          fontSize: '10px', fontWeight: '700', padding: '2px 8px', borderRadius: '4px',
+          backgroundColor: statusCfg.bg, color: statusCfg.color,
+          border: `1px solid ${statusCfg.color}66`,
+          textTransform: 'uppercase', letterSpacing: '0.05em',
+          display: 'flex', alignItems: 'center', gap: '4px'
+        }}>
+          {isActive
+            ? <Play size={9} color="#22c55e" fill="#22c55e" />
+            : <Pause size={9} color="#ef4444" />
+          }
+          {statusCfg.label}
+        </span>
+
+        {/* Stale data warning */}
+        {isStale && (
+          <span title={`Data is ${timeAgo(adset.snapshot_age_min)} old`} style={{
+            fontSize: '9px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px',
+            backgroundColor: '#78350f', color: '#fde68a', border: '1px solid #f59e0b44',
+            display: 'flex', alignItems: 'center', gap: '3px'
+          }}>
+            <AlertTriangle size={9} /> STALE
+          </span>
+        )}
 
         {/* Name */}
-        <span style={{ fontSize: '14px', fontWeight: '600', color: '#e5e7eb', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span style={{
+          fontSize: '14px', fontWeight: '600', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          color: isDead ? '#6b7280' : isPaused ? '#9ca3af' : '#e5e7eb',
+          textDecoration: isDead ? 'line-through' : 'none'
+        }}>
           {adset.adset_name}
         </span>
 
@@ -169,6 +241,35 @@ const AdSetCard = ({ adset }) => {
       {/* Expanded content */}
       {expanded && (
         <div style={{ padding: '0 16px 16px' }}>
+          {/* Stale data warning */}
+          {isStale && (
+            <div style={{
+              padding: '8px 12px', backgroundColor: '#78350f22', border: '1px solid #f59e0b33',
+              borderRadius: '6px', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px',
+              fontSize: '12px', color: '#fde68a'
+            }}>
+              <AlertTriangle size={14} color="#f59e0b" />
+              Datos desactualizados — ultima actualizacion hace {timeAgo(adset.snapshot_age_min)}. Las metricas pueden no reflejar el estado real.
+            </div>
+          )}
+
+          {/* Last action / breathing indicator */}
+          {(adset.recent_actions || []).length > 0 && (() => {
+            const lastAction = adset.recent_actions[0];
+            const hoursAgo = lastAction.hours_ago || 0;
+            const isBreathing = hoursAgo < 24;
+            return isBreathing ? (
+              <div style={{
+                padding: '8px 12px', backgroundColor: '#1e3a5f22', border: '1px solid #3b82f633',
+                borderRadius: '6px', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px',
+                fontSize: '12px', color: '#93c5fd'
+              }}>
+                <Timer size={14} color="#3b82f6" />
+                Respirando — ultima accion hace {hoursAgo}h ({lastAction.action}). Proximo cambio permitido en ~{Math.max(1, 24 - hoursAgo)}h.
+              </div>
+            ) : null;
+          })()}
+
           {/* Info row */}
           <div style={{
             display: 'flex', gap: '20px', padding: '12px 0', fontSize: '12px', color: '#9ca3af',
@@ -183,6 +284,7 @@ const AdSetCard = ({ adset }) => {
             <span>CTR: <b style={{ color: '#e5e7eb' }}>{fmt(m7.ctr, 2)}%</b></span>
             <span>3d ROAS: <b style={{ color: '#e5e7eb' }}>{fmt(adset.metrics_3d?.roas)}x</b></span>
             <span>Today: <b style={{ color: '#e5e7eb' }}>{fmtCurrency(adset.metrics_today?.spend)} / {fmt(adset.metrics_today?.roas)}x</b></span>
+            <span>Meta Status: <b style={{ color: isActive ? '#22c55e' : '#ef4444' }}>{adset.status || 'UNKNOWN'}</b></span>
             {adset.last_manager_check && (
               <span>Last check: <b style={{ color: '#e5e7eb' }}>{timeAgo(Math.round((Date.now() - new Date(adset.last_manager_check)) / 60000))}</b></span>
             )}
@@ -389,6 +491,7 @@ export default function AIOps() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [running, setRunning] = useState(null); // 'manager' | 'brain' | null
+  const [statusFilter, setStatusFilter] = useState('all');
 
   const fetchData = useCallback(async () => {
     try {
@@ -471,6 +574,38 @@ export default function AIOps() {
   const adSets = data?.adsets || [];
   const timeline = data?.timeline || [];
   const dtEvents = data?.decision_tree_events || [];
+
+  // Status counts for stat badge
+  const statusCounts = useMemo(() => {
+    const counts = { active: 0, paused: 0, dead: 0, total: adSets.length };
+    for (const as of adSets) {
+      if (as.phase === 'dead' || as.phase === 'killing') counts.dead++;
+      else if (as.status === 'ACTIVE') counts.active++;
+      else counts.paused++;
+    }
+    return counts;
+  }, [adSets]);
+
+  // Filtered and sorted ad sets: active first, then paused, then dead
+  const filteredAdSets = useMemo(() => {
+    let filtered = adSets;
+    if (statusFilter === 'active') {
+      filtered = adSets.filter(as => as.status === 'ACTIVE' && as.phase !== 'dead' && as.phase !== 'killing');
+    } else if (statusFilter === 'paused') {
+      filtered = adSets.filter(as => as.status !== 'ACTIVE' && as.phase !== 'dead' && as.phase !== 'killing');
+    } else if (statusFilter === 'dead') {
+      filtered = adSets.filter(as => as.phase === 'dead' || as.phase === 'killing');
+    }
+    // Sort: active first, then paused, then dead/killing
+    return [...filtered].sort((a, b) => {
+      const order = (as) => {
+        if (as.phase === 'dead' || as.phase === 'killing') return 2;
+        if (as.status !== 'ACTIVE') return 1;
+        return 0;
+      };
+      return order(a) - order(b);
+    });
+  }, [adSets, statusFilter]);
 
   return (
     <div style={{ maxWidth: '1400px' }}>
@@ -557,9 +692,9 @@ export default function AIOps() {
         />
         <StatBadge
           icon={Eye} iconColor="#22c55e" label="Ad Sets"
-          value={mgr.managed_count || 0}
-          subValue={`${dtEvents.length} forced (7d)`}
-          subColor={dtEvents.length > 0 ? '#ef4444' : '#9ca3af'}
+          value={`${statusCounts.active} ON / ${statusCounts.paused + statusCounts.dead} OFF`}
+          subValue={`${statusCounts.total} total — ${statusCounts.dead} dead — ${dtEvents.length} forced (7d)`}
+          subColor={statusCounts.paused > 0 || statusCounts.dead > 0 ? '#f59e0b' : '#9ca3af'}
         />
       </div>
 
@@ -568,17 +703,42 @@ export default function AIOps() {
 
       {/* Ad Sets detail */}
       <div style={{ marginBottom: '20px' }}>
-        <h2 style={{ fontSize: '15px', fontWeight: '700', color: '#e5e7eb', margin: '0 0 12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Bot size={16} color="#ec4899" /> Managed Ad Sets
-          <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: '400' }}>
-            — click to expand and see ads/creatives/directives
-          </span>
-        </h2>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+          <h2 style={{ fontSize: '15px', fontWeight: '700', color: '#e5e7eb', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Bot size={16} color="#ec4899" /> Managed Ad Sets
+            <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: '400' }}>
+              — click to expand
+            </span>
+          </h2>
+
+          {/* Status filter */}
+          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+            <Filter size={13} color="#6b7280" />
+            {FILTER_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => setStatusFilter(opt.value)}
+                style={{
+                  padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '600',
+                  cursor: 'pointer', border: '1px solid',
+                  backgroundColor: statusFilter === opt.value ? '#1e3a5f' : '#12141d',
+                  borderColor: statusFilter === opt.value ? '#3b82f6' : '#2a2d3a',
+                  color: statusFilter === opt.value ? '#93c5fd' : '#6b7280'
+                }}
+              >
+                {opt.label}
+                {opt.value === 'active' && ` (${statusCounts.active})`}
+                {opt.value === 'paused' && ` (${statusCounts.paused})`}
+                {opt.value === 'dead' && ` (${statusCounts.dead})`}
+              </button>
+            ))}
+          </div>
+        </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {adSets.map((as, i) => <AdSetCard key={as.adset_id || i} adset={as} />)}
-          {adSets.length === 0 && (
+          {filteredAdSets.map((as, i) => <AdSetCard key={as.adset_id || i} adset={as} />)}
+          {filteredAdSets.length === 0 && (
             <div style={{ padding: '40px', textAlign: 'center', color: '#4b5563', fontSize: '14px', backgroundColor: '#12141d', borderRadius: '12px' }}>
-              No managed ad sets
+              {statusFilter === 'all' ? 'No managed ad sets' : `No ad sets with filter "${statusFilter}"`}
             </div>
           )}
         </div>
