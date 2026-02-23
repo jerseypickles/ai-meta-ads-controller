@@ -1,8 +1,9 @@
 /**
- * Video Generation Routes
+ * Video Generation Routes — "Director Creativo" Mode
  *
- * Pipeline: Upload product photo → OpenAI generates angle shots (async) →
- *           Claude analyzes product → Storyboard with smart prompts → Kling 2.6 creates videos
+ * Pipeline: Upload photo → Claude recommends scene + designs shots →
+ *           OpenAI generates shots (async) → Claude judges quality →
+ *           User reviews storyboard → Kling 2.6 creates videos
  */
 
 const express = require('express');
@@ -13,9 +14,10 @@ const fs = require('fs');
 const config = require('../../../config');
 const logger = require('../../utils/logger');
 const {
-  PRODUCT_SCENES, CAMERA_MOTIONS,
+  AVAILABLE_SCENES, SHOT_TYPES, CAMERA_MOTIONS,
+  analyzeProductAndRecommendScene,
   startShotGenerationJob, getShotJobStatus,
-  analyzeProductAndGeneratePrompts,
+  judgeShots, regenerateSingleShot,
   submitVideoJob, checkVideoStatus, submitVideoBatch
 } = require('../../video/video-pipeline');
 
@@ -44,10 +46,16 @@ const upload = multer({
   limits: { fileSize: 20 * 1024 * 1024 }
 });
 
-// ============ GET /api/video/angles ============
+// ============ GET /api/video/scenes ============
 
-router.get('/angles', (req, res) => {
-  res.json({ angles: PRODUCT_SCENES, count: PRODUCT_SCENES.length });
+router.get('/scenes', (req, res) => {
+  res.json({ scenes: AVAILABLE_SCENES, count: AVAILABLE_SCENES.length });
+});
+
+// ============ GET /api/video/shot-types ============
+
+router.get('/shot-types', (req, res) => {
+  res.json({ shotTypes: SHOT_TYPES, count: SHOT_TYPES.length });
 });
 
 // ============ GET /api/video/motions ============
@@ -75,6 +83,36 @@ router.post('/upload-product', upload.single('photo'), (req, res) => {
   }
 });
 
+// ============ POST /api/video/analyze-scene ============
+// Claude "Director Creativo": analyze product + recommend scene + design 12 shots
+
+router.post('/analyze-scene', async (req, res) => {
+  try {
+    const { productImagePath, productDescription } = req.body;
+
+    if (!productImagePath) {
+      return res.status(400).json({ error: 'productImagePath is required' });
+    }
+
+    let fullPath = productImagePath;
+    if (productImagePath.startsWith('/uploads/')) {
+      fullPath = path.join(config.system.uploadsDir, productImagePath.replace('/uploads/', ''));
+    }
+
+    if (!fs.existsSync(fullPath)) {
+      return res.status(400).json({ error: 'Product image file not found' });
+    }
+
+    logger.info(`[VIDEO] Claude Director analyzing product: ${fullPath}`);
+    const analysis = await analyzeProductAndRecommendScene(fullPath, productDescription || 'product');
+
+    res.json(analysis);
+  } catch (err) {
+    logger.error('[VIDEO] Analyze scene error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ============ GET /api/video/shots ============
 
 router.get('/shots', (req, res) => {
@@ -86,11 +124,11 @@ router.get('/shots', (req, res) => {
       .filter(f => /\.(png|jpg|jpeg|webp)$/i.test(f))
       .map(f => {
         const stats = fs.statSync(path.join(shotsDir, f));
-        const angle = f.match(/shot-([a-z-]+)-/)?.[1] || 'unknown';
-        const angleDef = PRODUCT_SCENES.find(a => a.key === angle);
+        const shotKey = f.match(/shot-([a-z-]+)-/)?.[1] || 'unknown';
+        const shotType = SHOT_TYPES.find(s => s.key === shotKey);
         return {
-          filename: f, angle,
-          label: angleDef?.label || angle,
+          filename: f, angle: shotKey,
+          label: shotType?.label || shotKey,
           url: `/uploads/video-shots/${f}`,
           size: stats.size, created: stats.mtime
         };
@@ -109,13 +147,12 @@ router.get('/shots', (req, res) => {
 
 router.post('/generate-shots', (req, res) => {
   try {
-    const { productImagePath, productDescription, numShots } = req.body;
+    const { productImagePath, productDescription, numShots, directorPlan } = req.body;
 
     if (!productImagePath) {
       return res.status(400).json({ error: 'productImagePath is required' });
     }
 
-    // Resolve path
     let fullPath = productImagePath;
     if (productImagePath.startsWith('/uploads/')) {
       fullPath = path.join(config.system.uploadsDir, productImagePath.replace('/uploads/', ''));
@@ -129,10 +166,10 @@ router.post('/generate-shots', (req, res) => {
 
     const result = startShotGenerationJob(fullPath, {
       productDescription: productDescription || 'packaged food product',
-      numShots: numShots || 12
+      numShots: numShots || 12,
+      directorPlan: directorPlan || null
     });
 
-    // Returns immediately with jobId
     res.json(result);
   } catch (err) {
     logger.error('[VIDEO] Generate shots error:', err);
@@ -141,7 +178,6 @@ router.post('/generate-shots', (req, res) => {
 });
 
 // ============ GET /api/video/shots-job/:jobId ============
-// Poll status of async shot generation job
 
 router.get('/shots-job/:jobId', (req, res) => {
   try {
@@ -156,23 +192,58 @@ router.get('/shots-job/:jobId', (req, res) => {
   }
 });
 
-// ============ POST /api/video/analyze-product ============
-// Claude Vision: analyze product shots and generate smart Kling prompts
+// ============ POST /api/video/judge-shots ============
+// Claude Quality Judge: score each generated shot
 
-router.post('/analyze-product', async (req, res) => {
+router.post('/judge-shots', async (req, res) => {
   try {
-    const { shots, productDescription } = req.body;
+    const { shots, productDescription, originalImagePath } = req.body;
 
     if (!shots || !Array.isArray(shots) || shots.length === 0) {
       return res.status(400).json({ error: 'shots array is required' });
     }
 
-    logger.info(`[VIDEO] Analyzing product with Claude Vision (${shots.length} shots)`);
-    const analysis = await analyzeProductAndGeneratePrompts(shots, productDescription || '');
+    let fullOrigPath = originalImagePath;
+    if (originalImagePath?.startsWith('/uploads/')) {
+      fullOrigPath = path.join(config.system.uploadsDir, originalImagePath.replace('/uploads/', ''));
+    }
 
-    res.json(analysis);
+    logger.info(`[VIDEO] Claude Quality Judge evaluating ${shots.length} shots`);
+    const scores = await judgeShots(shots, productDescription || '', fullOrigPath);
+
+    res.json(scores);
   } catch (err) {
-    logger.error('[VIDEO] Analyze product error:', err);
+    logger.error('[VIDEO] Judge shots error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============ POST /api/video/regenerate-shot ============
+// Regenerate a single shot that scored low
+
+router.post('/regenerate-shot', async (req, res) => {
+  try {
+    const { productImagePath, shotKey, imagePrompt, productDescription } = req.body;
+
+    if (!productImagePath || !shotKey || !imagePrompt) {
+      return res.status(400).json({ error: 'productImagePath, shotKey, and imagePrompt are required' });
+    }
+
+    let fullPath = productImagePath;
+    if (productImagePath.startsWith('/uploads/')) {
+      fullPath = path.join(config.system.uploadsDir, productImagePath.replace('/uploads/', ''));
+    }
+
+    if (!fs.existsSync(fullPath)) {
+      return res.status(400).json({ error: 'Product image file not found' });
+    }
+
+    logger.info(`[VIDEO] Regenerating shot: ${shotKey}`);
+    const result = await regenerateSingleShot(fullPath, shotKey, imagePrompt, productDescription || 'product');
+
+    res.json(result);
+  } catch (err) {
+    logger.error('[VIDEO] Regenerate shot error:', err);
     res.status(500).json({ error: err.message });
   }
 });

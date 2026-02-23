@@ -2,12 +2,13 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Video, Upload, Image, Play, Trash2, RefreshCw, CheckCircle,
   XCircle, Clock, AlertTriangle, Camera, Zap, Download,
-  Loader, Film, ArrowRight, Eye, Edit3, Brain, LayoutGrid
+  Loader, Film, ArrowRight, Eye, Edit3, Brain, LayoutGrid, Star, Award, RotateCcw
 } from 'lucide-react';
 import {
   getVideoMotions, uploadProductPhoto, getVideoShots,
-  deleteVideoShot, generateAngleShots, getShotJobStatus,
-  analyzeProduct, generateClipsBatch, getClipStatus, getClipStatusBatch
+  deleteVideoShot, generateShots, getShotJobStatus,
+  analyzeScene, judgeShots, regenerateShot,
+  generateClipsBatch, getClipStatus, getClipStatusBatch
 } from '../api';
 
 const BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
@@ -21,13 +22,26 @@ const STATUS_CFG = {
   error: { color: '#ef4444', bg: '#7f1d1d', label: 'Error', icon: XCircle },
 };
 
+// ═══ SCORE COLORS ═══
+const getScoreColor = (score) => {
+  if (score >= 8) return { color: '#22c55e', bg: '#14532d', border: '#22c55e' };
+  if (score >= 6) return { color: '#f59e0b', bg: '#78350f', border: '#f59e0b' };
+  return { color: '#ef4444', bg: '#7f1d1d', border: '#ef4444' };
+};
+
+const getVerdictLabel = (verdict) => {
+  if (verdict === 'approve') return 'Aprobado';
+  if (verdict === 'marginal') return 'Marginal';
+  return 'Rechazado';
+};
+
 // ═══ STEP INDICATOR ═══
 const StepIndicator = ({ number, title, subtitle, active, done }) => (
   <div style={{
     display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px',
     borderRadius: '10px', backgroundColor: active ? '#1e3a5f' : done ? '#14532d' : '#141720',
     border: `1px solid ${active ? '#3b82f6' : done ? '#22c55e' : '#2a2d3a'}`,
-    opacity: (!active && !done) ? 0.5 : 1, transition: 'all 0.2s ease', flex: 1, minWidth: '140px'
+    opacity: (!active && !done) ? 0.5 : 1, transition: 'all 0.2s ease', flex: 1, minWidth: '120px'
   }}>
     <div style={{
       width: '32px', height: '32px', borderRadius: '50%', display: 'flex',
@@ -44,100 +58,158 @@ const StepIndicator = ({ number, title, subtitle, active, done }) => (
   </div>
 );
 
-// ═══ SHOT CARD (used in step 2 grid) ═══
-const ShotCard = ({ shot, selected, onToggle, onDelete }) => (
-  <div style={{
-    position: 'relative', borderRadius: '10px', overflow: 'hidden',
-    border: selected ? '3px solid #3b82f6' : '2px solid #2a2d3a',
-    cursor: 'pointer', transition: 'all 0.15s ease', backgroundColor: '#111'
-  }}>
-    <img
-      src={`${BASE_URL}${shot.url}`}
-      alt={shot.angle}
-      onClick={onToggle}
-      style={{ width: '100%', aspectRatio: '2/3', objectFit: 'cover' }}
-    />
-    {selected && (
-      <div style={{
-        position: 'absolute', top: '6px', right: '6px', backgroundColor: '#3b82f6',
-        borderRadius: '50%', width: '22px', height: '22px', display: 'flex',
-        alignItems: 'center', justifyContent: 'center'
-      }}>
-        <CheckCircle size={14} color="#fff" />
-      </div>
-    )}
+// ═══ SHOT CARD with Score Badge ═══
+const ShotCard = ({ shot, score, selected, onToggle, onDelete, onRegenerate, regenerating }) => {
+  const scoreInfo = score ? getScoreColor(score.score) : null;
+  return (
     <div style={{
-      position: 'absolute', bottom: 0, left: 0, right: 0, padding: '6px 8px',
-      background: 'linear-gradient(transparent, rgba(0,0,0,0.85))',
-      display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+      position: 'relative', borderRadius: '10px', overflow: 'hidden',
+      border: selected ? '3px solid #3b82f6' : scoreInfo ? `2px solid ${scoreInfo.border}40` : '2px solid #2a2d3a',
+      cursor: 'pointer', transition: 'all 0.15s ease', backgroundColor: '#111'
     }}>
-      <span style={{ fontSize: '10px', color: '#d1d5db', fontWeight: '600' }}>{shot.label || shot.angle}</span>
-      <button onClick={(e) => { e.stopPropagation(); onDelete(); }}
-        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>
-        <Trash2 size={12} color="#fca5a5" />
-      </button>
-    </div>
-  </div>
-);
-
-// ═══ STORYBOARD CARD (step 3) ═══
-const StoryboardCard = ({ index, shot, prompt, cameraMotion, onPromptChange, onMotionChange, motions }) => (
-  <div style={{
-    backgroundColor: '#0d0f14', border: '1px solid #2a2d3a', borderRadius: '12px',
-    overflow: 'hidden', display: 'flex', flexDirection: 'column'
-  }}>
-    {/* Image + sequence number */}
-    <div style={{ position: 'relative' }}>
-      <img src={`${BASE_URL}${shot.url}`} alt={shot.angle}
-        style={{ width: '100%', aspectRatio: '2/3', objectFit: 'cover' }} />
-      <div style={{
-        position: 'absolute', top: '6px', left: '6px', backgroundColor: '#7c3aed',
-        borderRadius: '50%', width: '26px', height: '26px', display: 'flex',
-        alignItems: 'center', justifyContent: 'center', fontWeight: '700', fontSize: '12px', color: '#fff'
-      }}>
-        {index + 1}
-      </div>
-      <div style={{
-        position: 'absolute', bottom: 0, left: 0, right: 0, padding: '4px 8px',
-        background: 'linear-gradient(transparent, rgba(0,0,0,0.85))'
-      }}>
-        <span style={{ fontSize: '10px', color: '#c4b5fd', fontWeight: '600' }}>{shot.label || shot.angle}</span>
-      </div>
-    </div>
-
-    {/* Prompt editor */}
-    <div style={{ padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
-      <textarea
-        value={prompt}
-        onChange={(e) => onPromptChange(e.target.value)}
-        rows={3}
-        style={{
-          width: '100%', backgroundColor: '#141720', border: '1px solid #2a2d3a',
-          borderRadius: '6px', padding: '8px', color: '#e5e7eb', fontSize: '11px',
-          resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box', lineHeight: '1.4'
-        }}
-        placeholder="Video prompt for this shot..."
+      <img
+        src={`${BASE_URL}${shot.url}`}
+        alt={shot.angle}
+        onClick={onToggle}
+        style={{ width: '100%', aspectRatio: '2/3', objectFit: 'cover' }}
       />
+      {selected && (
+        <div style={{
+          position: 'absolute', top: '6px', right: '6px', backgroundColor: '#3b82f6',
+          borderRadius: '50%', width: '22px', height: '22px', display: 'flex',
+          alignItems: 'center', justifyContent: 'center'
+        }}>
+          <CheckCircle size={14} color="#fff" />
+        </div>
+      )}
 
-      {/* Camera motion selector per clip */}
-      <select
-        value={cameraMotion}
-        onChange={(e) => onMotionChange(e.target.value)}
-        style={{
-          width: '100%', backgroundColor: '#141720', border: '1px solid #2a2d3a',
-          borderRadius: '6px', padding: '6px 8px', color: '#c4b5fd', fontSize: '11px',
-          cursor: 'pointer', boxSizing: 'border-box'
-        }}
-      >
-        {motions.map(m => (
-          <option key={m.key} value={m.key}>{m.label}</option>
-        ))}
-      </select>
+      {/* Score Badge */}
+      {score && (
+        <div style={{
+          position: 'absolute', top: '6px', left: '6px', display: 'flex', flexDirection: 'column', gap: '4px'
+        }}>
+          <div style={{
+            backgroundColor: scoreInfo.bg, border: `1px solid ${scoreInfo.color}`,
+            borderRadius: '8px', padding: '3px 8px', display: 'flex', alignItems: 'center', gap: '4px'
+          }}>
+            <Star size={11} color={scoreInfo.color} fill={score.score >= 7 ? scoreInfo.color : 'none'} />
+            <span style={{ fontSize: '12px', fontWeight: '700', color: scoreInfo.color }}>{score.score}/10</span>
+          </div>
+          <div style={{
+            backgroundColor: 'rgba(0,0,0,0.8)', borderRadius: '6px', padding: '2px 6px',
+            fontSize: '9px', color: scoreInfo.color, fontWeight: '600', textAlign: 'center'
+          }}>
+            {getVerdictLabel(score.verdict)}
+          </div>
+        </div>
+      )}
+
+      <div style={{
+        position: 'absolute', bottom: 0, left: 0, right: 0, padding: '6px 8px',
+        background: 'linear-gradient(transparent, rgba(0,0,0,0.85))',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+      }}>
+        <span style={{ fontSize: '10px', color: '#d1d5db', fontWeight: '600' }}>{shot.label || shot.angle}</span>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          {score && score.verdict !== 'approve' && (
+            <button onClick={(e) => { e.stopPropagation(); onRegenerate(); }}
+              disabled={regenerating}
+              style={{ background: 'none', border: 'none', cursor: regenerating ? 'not-allowed' : 'pointer', padding: '2px' }}>
+              {regenerating
+                ? <Loader size={12} color="#f59e0b" className="spin" />
+                : <RotateCcw size={12} color="#f59e0b" />
+              }
+            </button>
+          )}
+          <button onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>
+            <Trash2 size={12} color="#fca5a5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Score reason tooltip on hover */}
+      {score?.reason && (
+        <div style={{
+          position: 'absolute', bottom: '28px', left: '4px', right: '4px',
+          backgroundColor: 'rgba(0,0,0,0.9)', borderRadius: '6px', padding: '6px 8px',
+          fontSize: '9px', color: '#d1d5db', lineHeight: '1.3',
+          opacity: 0, transition: 'opacity 0.2s', pointerEvents: 'none'
+        }} className="score-tooltip">
+          {score.reason}
+        </div>
+      )}
     </div>
-  </div>
-);
+  );
+};
 
-// ═══ CLIP CARD (step 4 results) ═══
+// ═══ STORYBOARD CARD (step 4) ═══
+const StoryboardCard = ({ index, shot, prompt, cameraMotion, score, onPromptChange, onMotionChange, motions }) => {
+  const scoreInfo = score ? getScoreColor(score.score) : null;
+  return (
+    <div style={{
+      backgroundColor: '#0d0f14', border: '1px solid #2a2d3a', borderRadius: '12px',
+      overflow: 'hidden', display: 'flex', flexDirection: 'column'
+    }}>
+      <div style={{ position: 'relative' }}>
+        <img src={`${BASE_URL}${shot.url}`} alt={shot.angle}
+          style={{ width: '100%', aspectRatio: '2/3', objectFit: 'cover' }} />
+        <div style={{
+          position: 'absolute', top: '6px', left: '6px', backgroundColor: '#7c3aed',
+          borderRadius: '50%', width: '26px', height: '26px', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', fontWeight: '700', fontSize: '12px', color: '#fff'
+        }}>
+          {index + 1}
+        </div>
+        {score && (
+          <div style={{
+            position: 'absolute', top: '6px', right: '6px',
+            backgroundColor: scoreInfo.bg, border: `1px solid ${scoreInfo.color}`,
+            borderRadius: '8px', padding: '2px 6px', display: 'flex', alignItems: 'center', gap: '3px'
+          }}>
+            <Star size={10} color={scoreInfo.color} fill={score.score >= 7 ? scoreInfo.color : 'none'} />
+            <span style={{ fontSize: '11px', fontWeight: '700', color: scoreInfo.color }}>{score.score}</span>
+          </div>
+        )}
+        <div style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0, padding: '4px 8px',
+          background: 'linear-gradient(transparent, rgba(0,0,0,0.85))'
+        }}>
+          <span style={{ fontSize: '10px', color: '#c4b5fd', fontWeight: '600' }}>{shot.label || shot.angle}</span>
+        </div>
+      </div>
+
+      <div style={{ padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
+        <textarea
+          value={prompt}
+          onChange={(e) => onPromptChange(e.target.value)}
+          rows={3}
+          style={{
+            width: '100%', backgroundColor: '#141720', border: '1px solid #2a2d3a',
+            borderRadius: '6px', padding: '8px', color: '#e5e7eb', fontSize: '11px',
+            resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box', lineHeight: '1.4'
+          }}
+          placeholder="Video prompt for this shot..."
+        />
+        <select
+          value={cameraMotion}
+          onChange={(e) => onMotionChange(e.target.value)}
+          style={{
+            width: '100%', backgroundColor: '#141720', border: '1px solid #2a2d3a',
+            borderRadius: '6px', padding: '6px 8px', color: '#c4b5fd', fontSize: '11px',
+            cursor: 'pointer', boxSizing: 'border-box'
+          }}
+        >
+          {motions.map(m => (
+            <option key={m.key} value={m.key}>{m.label}</option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+};
+
+// ═══ CLIP CARD (step 5 results) ═══
 const ClipCard = ({ clip, onRefresh }) => {
   const cfg = STATUS_CFG[clip.status] || STATUS_CFG.error;
   const Icon = cfg.icon;
@@ -211,19 +283,24 @@ export default function VideoGenerator() {
   const [productDescription, setProductDescription] = useState('Jersey Pickles product jar');
   const [uploading, setUploading] = useState(false);
 
-  // Step 2: Generated shots (async)
+  // Step 2: Claude Director Creativo
+  const [directorPlan, setDirectorPlan] = useState(null);
+  const [analyzingScene, setAnalyzingScene] = useState(false);
+
+  // Step 3: Generated shots (async) + quality scores
   const [shots, setShots] = useState([]);
   const [selectedShots, setSelectedShots] = useState(new Set());
   const [shotJobId, setShotJobId] = useState(null);
   const [shotJobStatus, setShotJobStatus] = useState(null);
   const [numShots, setNumShots] = useState(12);
+  const [shotScores, setShotScores] = useState(null); // { scores: { key: { score, verdict, reason } }, overallAverage, summary }
+  const [judging, setJudging] = useState(false);
+  const [regeneratingShot, setRegeneratingShot] = useState(null);
 
-  // Step 3: Storyboard + Claude prompts
-  const [storyboard, setStoryboard] = useState([]); // { shot, prompt, cameraMotion }
-  const [analyzing, setAnalyzing] = useState(false);
-  const [productAnalysis, setProductAnalysis] = useState(null);
+  // Step 4: Storyboard + Claude prompts
+  const [storyboard, setStoryboard] = useState([]);
 
-  // Step 4: Video clips
+  // Step 5: Video clips
   const [motions, setMotions] = useState([]);
   const [duration, setDuration] = useState(5);
   const [clips, setClips] = useState([]);
@@ -296,20 +373,44 @@ export default function VideoGenerator() {
     }
   };
 
-  // ═══ Step 2: Generate shots (async) ═══
-  const handleGenerateShots = async () => {
+  // ═══ Step 2: Claude Director Creativo ═══
+  const handleAnalyzeScene = async () => {
     if (!productPhoto) return;
+    setAnalyzingScene(true);
+    setError(null);
+    setDirectorPlan(null);
+    setShots([]);
+    setShotScores(null);
+    setSelectedShots(new Set());
+    setStoryboard([]);
+    try {
+      const plan = await analyzeScene({
+        productImagePath: productPhoto.path || productPhoto.url,
+        productDescription
+      });
+      setDirectorPlan(plan);
+    } catch (err) {
+      setError(`Error en Director Creativo: ${err.response?.data?.error || err.message}`);
+    } finally {
+      setAnalyzingScene(false);
+    }
+  };
+
+  // ═══ Step 3: Generate shots (async) ═══
+  const handleGenerateShots = async () => {
+    if (!productPhoto || !directorPlan) return;
     setError(null);
     setShotJobStatus(null);
     setShots([]);
+    setShotScores(null);
     setSelectedShots(new Set());
     setStoryboard([]);
-    setProductAnalysis(null);
     try {
-      const data = await generateAngleShots({
+      const data = await generateShots({
         productImagePath: productPhoto.path || productPhoto.url,
         productDescription,
-        numShots
+        numShots,
+        directorPlan
       });
       setShotJobId(data.jobId);
       setShotJobStatus({ status: 'running', total: data.total, completed: 0, failed: 0, shots: [] });
@@ -324,13 +425,11 @@ export default function VideoGenerator() {
       const data = await getShotJobStatus(shotJobId);
       setShotJobStatus(data);
 
-      // Update shots list with completed ones
       if (data.shots?.length > 0) {
         const completedShots = data.shots.filter(s => s.status === 'completed');
         setShots(completedShots);
       }
 
-      // Job done
       if (data.status === 'done' || data.status === 'failed') {
         if (shotPollRef.current) { clearInterval(shotPollRef.current); shotPollRef.current = null; }
         if (data.status === 'failed' && data.error) {
@@ -342,35 +441,80 @@ export default function VideoGenerator() {
     }
   };
 
-  // ═══ Step 3: Claude analyzes + storyboard ═══
-  const handleAnalyzeProduct = async () => {
-    if (selectedShots.size === 0) { setError('Selecciona al menos 1 shot para el storyboard'); return; }
-    setAnalyzing(true);
+  // ═══ Step 3b: Quality Judge ═══
+  const handleJudgeShots = async () => {
+    if (shots.length === 0) return;
+    setJudging(true);
     setError(null);
     try {
-      const selectedShotsList = [...selectedShots]
-        .map(filename => shots.find(s => s.filename === filename))
-        .filter(Boolean);
+      const result = await judgeShots({
+        shots,
+        productDescription,
+        originalImagePath: productPhoto?.path || productPhoto?.url
+      });
+      setShotScores(result);
+      // Auto-select all approved shots
+      const approvedSet = new Set();
+      for (const shot of shots) {
+        const score = result.scores?.[shot.angle];
+        if (score && score.verdict === 'approve') {
+          approvedSet.add(shot.filename);
+        }
+      }
+      setSelectedShots(approvedSet);
+    } catch (err) {
+      setError(`Error en Quality Judge: ${err.response?.data?.error || err.message}`);
+    } finally {
+      setJudging(false);
+    }
+  };
 
-      const analysis = await analyzeProduct({
-        shots: selectedShotsList,
+  // ═══ Step 3c: Regenerate single shot ═══
+  const handleRegenerateShot = async (shot) => {
+    if (!productPhoto || !directorPlan) return;
+    setRegeneratingShot(shot.angle);
+    try {
+      const imagePrompt = directorPlan.shots?.[shot.angle]?.imagePrompt || '';
+      const result = await regenerateShot({
+        productImagePath: productPhoto.path || productPhoto.url,
+        shotKey: shot.angle,
+        imagePrompt,
         productDescription
       });
-      setProductAnalysis(analysis);
 
-      // Build storyboard with Claude-generated prompts
-      const defaultMotion = 'slow-dolly-in';
-      const sb = selectedShotsList.map(shot => ({
-        shot,
-        prompt: analysis.prompts?.[shot.angle] || '',
-        cameraMotion: defaultMotion
-      }));
-      setStoryboard(sb);
+      // Replace the old shot with new one
+      setShots(prev => prev.map(s => s.angle === shot.angle ? { ...result, videoPrompt: shot.videoPrompt } : s));
+
+      // Clear the score for this shot
+      if (shotScores) {
+        setShotScores(prev => ({
+          ...prev,
+          scores: { ...prev.scores, [shot.angle]: null }
+        }));
+      }
     } catch (err) {
-      setError(`Error analizando producto: ${err.response?.data?.error || err.message}`);
+      setError(`Error regenerando ${shot.angle}: ${err.response?.data?.error || err.message}`);
     } finally {
-      setAnalyzing(false);
+      setRegeneratingShot(null);
     }
+  };
+
+  // ═══ Step 4: Build storyboard ═══
+  const handleBuildStoryboard = () => {
+    if (selectedShots.size === 0) { setError('Selecciona al menos 1 shot para el storyboard'); return; }
+
+    const selectedShotsList = [...selectedShots]
+      .map(filename => shots.find(s => s.filename === filename))
+      .filter(Boolean);
+
+    const defaultMotion = 'slow-dolly-in';
+    const sb = selectedShotsList.map(shot => ({
+      shot,
+      prompt: shot.videoPrompt || directorPlan?.shots?.[shot.angle]?.videoPrompt || '',
+      cameraMotion: defaultMotion,
+      score: shotScores?.scores?.[shot.angle] || null
+    }));
+    setStoryboard(sb);
   };
 
   const updateStoryboardPrompt = (index, prompt) => {
@@ -381,7 +525,7 @@ export default function VideoGenerator() {
     setStoryboard(prev => prev.map((item, i) => i === index ? { ...item, cameraMotion } : item));
   };
 
-  // ═══ Step 4: Generate videos ═══
+  // ═══ Step 5: Generate videos ═══
   const handleGenerateClips = async () => {
     if (storyboard.length === 0) { setError('Configura el storyboard primero'); return; }
     setGeneratingClips(true);
@@ -455,8 +599,16 @@ export default function VideoGenerator() {
   // Determine current step
   let step = 1;
   if (productPhoto) step = 2;
+  if (directorPlan) step = 3;
   if (shots.length > 0 && !isGeneratingShots) step = 3;
   if (storyboard.length > 0) step = 4;
+  if (clips.length > 0) step = 5;
+
+  const sceneInfo = directorPlan ? {
+    label: directorPlan.sceneLabel,
+    reason: directorPlan.sceneReason,
+    key: directorPlan.chosenScene
+  } : null;
 
   return (
     <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
@@ -464,22 +616,24 @@ export default function VideoGenerator() {
       <div style={{ marginBottom: '24px' }}>
         <h1 style={{ color: '#fff', fontSize: '22px', fontWeight: '700', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <Video size={24} color="#8b5cf6" />
-          Video AI — Product Commercials
+          Video AI — Director Creativo
         </h1>
         <p style={{ color: '#6b7280', fontSize: '13px' }}>
-          Foto → Escenas (OpenAI) → Analisis (Claude) → Storyboard → Videos (Kling 2.6)
+          Foto → Claude Director → Tomas (OpenAI) → Jurado (Claude) → Storyboard → Videos (Kling 2.6)
         </p>
       </div>
 
       {/* ═══ STEP INDICATORS ═══ */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', flexWrap: 'wrap', alignItems: 'center' }}>
-        <StepIndicator number={1} title="Subir Foto" subtitle="Producto" active={step === 1} done={!!productPhoto} />
-        <ArrowRight size={16} color="#374151" style={{ flexShrink: 0 }} />
-        <StepIndicator number={2} title="Escenas" subtitle={`${numShots} shots`} active={step === 2} done={shots.length > 0 && !isGeneratingShots} />
-        <ArrowRight size={16} color="#374151" style={{ flexShrink: 0 }} />
-        <StepIndicator number={3} title="Storyboard" subtitle="Claude + prompts" active={step === 3} done={storyboard.length > 0} />
-        <ArrowRight size={16} color="#374151" style={{ flexShrink: 0 }} />
-        <StepIndicator number={4} title="Videos" subtitle="Kling 2.6" active={step === 4} done={completedClips.length > 0} />
+      <div style={{ display: 'flex', gap: '6px', marginBottom: '24px', flexWrap: 'wrap', alignItems: 'center' }}>
+        <StepIndicator number={1} title="Foto" subtitle="Producto" active={step === 1} done={!!productPhoto} />
+        <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
+        <StepIndicator number={2} title="Director" subtitle="Claude IA" active={step === 2} done={!!directorPlan} />
+        <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
+        <StepIndicator number={3} title="Tomas" subtitle={`${numShots} shots + jurado`} active={step === 3} done={shots.length > 0 && !isGeneratingShots && shotScores} />
+        <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
+        <StepIndicator number={4} title="Storyboard" subtitle="Prompts" active={step === 4} done={storyboard.length > 0} />
+        <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
+        <StepIndicator number={5} title="Videos" subtitle="Kling 2.6" active={step === 5} done={completedClips.length > 0} />
       </div>
 
       {/* ═══ ERROR BANNER ═══ */}
@@ -541,34 +695,16 @@ export default function VideoGenerator() {
                   placeholder="ej: Jersey Pickles Spicy Garlic Dill jar"
                 />
               </div>
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ color: '#9ca3af', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '6px' }}>
-                  Cantidad de escenas
-                </label>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  {[6, 8, 12].map(n => (
-                    <button key={n} onClick={() => setNumShots(n)}
-                      style={{
-                        padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px',
-                        border: numShots === n ? '2px solid #8b5cf6' : '1px solid #2a2d3a',
-                        backgroundColor: numShots === n ? '#2e1065' : '#141720',
-                        color: numShots === n ? '#c4b5fd' : '#9ca3af'
-                      }}>
-                      {n}
-                    </button>
-                  ))}
-                </div>
-              </div>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button onClick={handleGenerateShots} disabled={isGeneratingShots}
+                <button onClick={handleAnalyzeScene} disabled={analyzingScene}
                   style={{
-                    padding: '10px 20px', backgroundColor: isGeneratingShots ? '#374151' : '#7c3aed',
+                    padding: '10px 20px', backgroundColor: analyzingScene ? '#374151' : '#7c3aed',
                     border: 'none', borderRadius: '8px', color: '#fff', fontSize: '13px', fontWeight: '600',
-                    cursor: isGeneratingShots ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
+                    cursor: analyzingScene ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
                   }}>
-                  {isGeneratingShots ? <><Loader size={14} className="spin" /> Generando...</> : <><Zap size={14} /> Generar {numShots} Escenas</>}
+                  {analyzingScene ? <><Loader size={14} className="spin" /> Claude analizando...</> : <><Brain size={14} /> Director Creativo</>}
                 </button>
-                <button onClick={() => { setProductPhoto(null); setShots([]); setSelectedShots(new Set()); setStoryboard([]); setProductAnalysis(null); }}
+                <button onClick={() => { setProductPhoto(null); setDirectorPlan(null); setShots([]); setSelectedShots(new Set()); setStoryboard([]); setShotScores(null); }}
                   style={{ padding: '10px 14px', backgroundColor: '#1f2937', border: 'none', borderRadius: '8px', color: '#9ca3af', fontSize: '13px', cursor: 'pointer' }}>
                   Cambiar foto
                 </button>
@@ -577,18 +713,91 @@ export default function VideoGenerator() {
           </div>
         )}
         <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleUpload} style={{ display: 'none' }} />
-
-        {/* Progress bar for async generation */}
-        {isGeneratingShots && shotJobStatus && (
-          <ProgressBar
-            completed={shotJobStatus.completed || 0}
-            total={shotJobStatus.total || numShots}
-            failed={shotJobStatus.failed || 0}
-          />
-        )}
       </div>
 
-      {/* ═══ STEP 2: GENERATED SHOTS ═══ */}
+      {/* ═══ STEP 2: DIRECTOR CREATIVO RECOMMENDATION ═══ */}
+      {directorPlan && (
+        <div style={{
+          backgroundColor: '#111318', border: '1px solid #1f2937', borderRadius: '14px',
+          padding: '24px', marginBottom: '20px'
+        }}>
+          <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Brain size={18} color="#c4b5fd" />
+            Paso 2 — Director Creativo
+          </h2>
+
+          {/* Product identification */}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
+            <div style={{ backgroundColor: '#1e293b', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', color: '#93c5fd' }}>
+              {directorPlan.brand} {directorPlan.productName}
+            </div>
+            <div style={{ backgroundColor: '#1e293b', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', color: '#f59e0b' }}>
+              {directorPlan.category}
+            </div>
+            {directorPlan.targetAudience && (
+              <div style={{ backgroundColor: '#1e293b', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', color: '#a78bfa' }}>
+                {directorPlan.targetAudience}
+              </div>
+            )}
+          </div>
+
+          {/* Scene recommendation */}
+          <div style={{
+            backgroundColor: '#0d0f14', border: '2px solid #7c3aed', borderRadius: '12px',
+            padding: '16px', marginBottom: '16px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+              <Award size={16} color="#c4b5fd" />
+              <span style={{ color: '#c4b5fd', fontSize: '13px', fontWeight: '700' }}>
+                Escena recomendada: {sceneInfo?.label}
+              </span>
+            </div>
+            <p style={{ color: '#9ca3af', fontSize: '12px', lineHeight: '1.5', margin: 0 }}>
+              {sceneInfo?.reason}
+            </p>
+          </div>
+
+          {/* Shot count + generate */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+            <div>
+              <label style={{ color: '#9ca3af', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', marginRight: '8px' }}>
+                Tomas
+              </label>
+              <div style={{ display: 'inline-flex', gap: '6px' }}>
+                {[6, 8, 12].map(n => (
+                  <button key={n} onClick={() => setNumShots(n)}
+                    style={{
+                      padding: '6px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px',
+                      border: numShots === n ? '2px solid #8b5cf6' : '1px solid #2a2d3a',
+                      backgroundColor: numShots === n ? '#2e1065' : '#141720',
+                      color: numShots === n ? '#c4b5fd' : '#9ca3af'
+                    }}>
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button onClick={handleGenerateShots} disabled={isGeneratingShots}
+              style={{
+                padding: '10px 20px', backgroundColor: isGeneratingShots ? '#374151' : '#7c3aed',
+                border: 'none', borderRadius: '8px', color: '#fff', fontSize: '13px', fontWeight: '600',
+                cursor: isGeneratingShots ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
+              }}>
+              {isGeneratingShots ? <><Loader size={14} className="spin" /> Generando...</> : <><Zap size={14} /> Generar {numShots} Tomas</>}
+            </button>
+          </div>
+
+          {isGeneratingShots && shotJobStatus && (
+            <ProgressBar
+              completed={shotJobStatus.completed || 0}
+              total={shotJobStatus.total || numShots}
+              failed={shotJobStatus.failed || 0}
+            />
+          )}
+        </div>
+      )}
+
+      {/* ═══ STEP 3: GENERATED SHOTS + QUALITY JUDGE ═══ */}
       {shots.length > 0 && (
         <div style={{
           backgroundColor: '#111318', border: '1px solid #1f2937', borderRadius: '14px',
@@ -597,10 +806,30 @@ export default function VideoGenerator() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
             <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Image size={18} color="#f59e0b" />
-              Paso 2 — Shots ({shots.length})
+              Paso 3 — Tomas ({shots.length})
               {isGeneratingShots && <Loader size={14} className="spin" color="#f59e0b" />}
             </h2>
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {!isGeneratingShots && !shotScores && shots.length > 0 && (
+                <button onClick={handleJudgeShots} disabled={judging}
+                  style={{
+                    backgroundColor: judging ? '#374151' : '#d97706', border: 'none', borderRadius: '8px',
+                    padding: '8px 16px', color: '#fff', fontSize: '12px', fontWeight: '600',
+                    cursor: judging ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
+                  }}>
+                  {judging ? <><Loader size={14} className="spin" /> Jurado evaluando...</> : <><Star size={14} /> Evaluar Calidad</>}
+                </button>
+              )}
+              {shotScores && (
+                <button onClick={handleJudgeShots} disabled={judging}
+                  style={{
+                    backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px',
+                    padding: '8px 14px', color: '#93c5fd', fontSize: '12px', fontWeight: '500',
+                    cursor: judging ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
+                  }}>
+                  {judging ? <><Loader size={14} className="spin" /> Re-evaluando...</> : <><RefreshCw size={14} /> Re-evaluar</>}
+                </button>
+              )}
               <button onClick={selectAllShots}
                 style={{
                   backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px',
@@ -608,29 +837,59 @@ export default function VideoGenerator() {
                   cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
                 }}>
                 <CheckCircle size={14} />
-                {selectedShots.size === shots.length ? 'Deseleccionar' : `Seleccionar Todas (${shots.length})`}
+                {selectedShots.size === shots.length ? 'Deseleccionar' : `Seleccionar Todas`}
               </button>
               {selectedShots.size > 0 && !isGeneratingShots && (
-                <button onClick={handleAnalyzeProduct} disabled={analyzing}
+                <button onClick={handleBuildStoryboard}
                   style={{
-                    backgroundColor: analyzing ? '#374151' : '#7c3aed', border: 'none', borderRadius: '8px',
+                    backgroundColor: '#7c3aed', border: 'none', borderRadius: '8px',
                     padding: '8px 16px', color: '#fff', fontSize: '12px', fontWeight: '600',
-                    cursor: analyzing ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
+                    cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
                   }}>
-                  {analyzing ? <><Loader size={14} className="spin" /> Claude analizando...</> : <><Brain size={14} /> Crear Storyboard ({selectedShots.size})</>}
+                  <LayoutGrid size={14} /> Crear Storyboard ({selectedShots.size})
                 </button>
               )}
             </div>
           </div>
 
+          {/* Quality Judge Summary */}
+          {shotScores && (
+            <div style={{
+              backgroundColor: '#0d0f14', border: '1px solid #2a2d3a', borderRadius: '10px',
+              padding: '12px 16px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Award size={16} color="#f59e0b" />
+                <span style={{ color: '#f59e0b', fontSize: '13px', fontWeight: '700' }}>
+                  Promedio: {shotScores.overallAverage}/10
+                </span>
+              </div>
+              <span style={{ color: '#9ca3af', fontSize: '12px', flex: 1 }}>{shotScores.summary}</span>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <span style={{ fontSize: '11px', color: '#22c55e' }}>
+                  {Object.values(shotScores.scores || {}).filter(s => s?.verdict === 'approve').length} aprobados
+                </span>
+                <span style={{ fontSize: '11px', color: '#f59e0b' }}>
+                  {Object.values(shotScores.scores || {}).filter(s => s?.verdict === 'marginal').length} marginales
+                </span>
+                <span style={{ fontSize: '11px', color: '#ef4444' }}>
+                  {Object.values(shotScores.scores || {}).filter(s => s?.verdict === 'reject').length} rechazados
+                </span>
+              </div>
+            </div>
+          )}
+
           <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '12px'
+            display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '12px'
           }}>
             {shots.map(shot => (
               <ShotCard key={shot.filename} shot={shot}
+                score={shotScores?.scores?.[shot.angle]}
                 selected={selectedShots.has(shot.filename)}
                 onToggle={() => toggleShot(shot.filename)}
                 onDelete={() => handleDeleteShot(shot.filename)}
+                onRegenerate={() => handleRegenerateShot(shot)}
+                regenerating={regeneratingShot === shot.angle}
               />
             ))}
           </div>
@@ -641,7 +900,7 @@ export default function VideoGenerator() {
         </div>
       )}
 
-      {/* ═══ STEP 3: STORYBOARD ═══ */}
+      {/* ═══ STEP 4: STORYBOARD ═══ */}
       {storyboard.length > 0 && (
         <div style={{
           backgroundColor: '#111318', border: '1px solid #1f2937', borderRadius: '14px',
@@ -650,17 +909,15 @@ export default function VideoGenerator() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
             <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <LayoutGrid size={18} color="#c4b5fd" />
-              Paso 3 — Storyboard
+              Paso 4 — Storyboard
             </h2>
-            {productAnalysis && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{
-                  backgroundColor: '#1e293b', padding: '6px 12px', borderRadius: '8px',
-                  fontSize: '12px', color: '#93c5fd', display: 'flex', alignItems: 'center', gap: '6px'
-                }}>
-                  <Brain size={13} />
-                  {productAnalysis.brand} {productAnalysis.productName} — {productAnalysis.category}
-                </div>
+            {directorPlan && (
+              <div style={{
+                backgroundColor: '#1e293b', padding: '6px 12px', borderRadius: '8px',
+                fontSize: '12px', color: '#93c5fd', display: 'flex', alignItems: 'center', gap: '6px'
+              }}>
+                <Brain size={13} />
+                {directorPlan.brand} {directorPlan.productName} — {sceneInfo?.label}
               </div>
             )}
           </div>
@@ -706,6 +963,7 @@ export default function VideoGenerator() {
                 shot={item.shot}
                 prompt={item.prompt}
                 cameraMotion={item.cameraMotion}
+                score={item.score}
                 onPromptChange={(p) => updateStoryboardPrompt(i, p)}
                 onMotionChange={(m) => updateStoryboardMotion(i, m)}
                 motions={motions}
@@ -713,7 +971,6 @@ export default function VideoGenerator() {
             ))}
           </div>
 
-          {/* Generate button */}
           <button onClick={handleGenerateClips} disabled={generatingClips}
             style={{
               width: '100%', padding: '14px',
@@ -730,7 +987,7 @@ export default function VideoGenerator() {
         </div>
       )}
 
-      {/* ═══ STEP 4: CLIP RESULTS ═══ */}
+      {/* ═══ STEP 5: CLIP RESULTS ═══ */}
       {clips.length > 0 && (
         <div style={{
           backgroundColor: '#111318', border: '1px solid #1f2937', borderRadius: '14px',
@@ -739,7 +996,7 @@ export default function VideoGenerator() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
             <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Film size={18} color="#22c55e" />
-              Paso 4 — Videos ({completedClips.length}/{clips.length})
+              Paso 5 — Videos ({completedClips.length}/{clips.length})
             </h2>
             {pendingClips.length > 0 && (
               <button onClick={refreshPendingClips}
@@ -763,6 +1020,8 @@ export default function VideoGenerator() {
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .spin { animation: spin 1s linear infinite; }
+        .score-tooltip { pointer-events: none; }
+        *:hover > .score-tooltip { opacity: 1 !important; }
       `}</style>
     </div>
   );

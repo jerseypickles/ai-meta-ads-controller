@@ -1,12 +1,13 @@
 /**
- * Video Pipeline — OpenAI gpt-image-1.5 + Claude Vision + Kling 2.6 via fal.ai
+ * Video Pipeline — "Director Creativo" Mode
  *
  * Workflow:
  *   1. Upload 1 product photo
- *   2. OpenAI generates 12 scene variations (async, polled by frontend)
- *   3. Claude Vision analyzes the product and generates smart prompts per shot
- *   4. Kling 2.6 converts each shot to a 5s video clip with camera motion + smart prompt
- *   5. Return video URLs for download/stitching
+ *   2. Claude Vision analyzes product → recommends best commercial scene → designs 12 cinematic shots
+ *   3. OpenAI gpt-image-1.5 generates 12 shots within the SAME scene (async, polled)
+ *   4. Claude Vision judges each shot quality (1-10 score + feedback)
+ *   5. User reviews storyboard with scores, can regenerate low-scoring shots
+ *   6. Kling 2.6 converts each approved shot to a 5s video clip
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
@@ -31,22 +32,36 @@ function getMimeType(filePath) {
   return types[ext] || 'image/png';
 }
 
-// ═══ SCENE DEFINITIONS ═══
-// 12 commercial scenes — product stays identical, only background/context changes
-// Uses same approach as Banco Creativo: "Edit this product photograph. Change ONLY the background and surroundings."
-const PRODUCT_SCENES = [
-  { key: 'studio-hero', label: 'Estudio Hero', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Premium studio product photography. Place the product centered on a clean, elegant surface with a soft gradient background. Professional directional lighting with subtle rim light on the background only. High-end e-commerce hero shot feel.' },
-  { key: 'kitchen-warm', label: 'Cocina Calida', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Place the product on a warm wooden kitchen countertop. Blurred background showing a cozy home kitchen with warm ambient lighting, copper utensils, and soft morning sunlight streaming through a window. Appetizing food photography feel.' },
-  { key: 'picnic-outdoor', label: 'Picnic Exterior', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Place the product on a rustic picnic blanket outdoors. Background shows a sunny park or garden with soft bokeh greenery. Natural golden hour sunlight. Summer lifestyle photography, relaxed and inviting mood.' },
-  { key: 'party-table', label: 'Mesa de Fiesta', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Place the product on a festive party table with colorful decorations, confetti, and party snacks scattered around. Warm, vibrant lighting. Celebration mood, fun and social atmosphere.' },
-  { key: 'ingredients-splash', label: 'Splash Ingredientes', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Surround the product with its key ingredients floating and splashing dynamically around it — fresh vegetables, spices, herbs flying through the air. Dark dramatic background with spotlighting on the product. High-energy food commercial photography.' },
-  { key: 'rustic-wood', label: 'Rustico Madera', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Place the product on a weathered dark wood surface with rustic texture. Background shows an artisanal workshop or farmhouse setting, slightly blurred. Moody, warm directional lighting. Craft and authenticity feel.' },
-  { key: 'neon-modern', label: 'Neon Moderno', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Place the product on a sleek dark surface with vibrant neon color accents (purple, blue, pink) glowing in the background. Modern, trendy aesthetic. Urban nightlife commercial feel. Bold and eye-catching for social media.' },
-  { key: 'ice-fresh', label: 'Hielo Fresco', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Place the product surrounded by crushed ice, water droplets, and frost on a cold surface. Cool blue-tinted lighting. Condensation on surrounding surfaces. Refreshing, cold, and crisp commercial feel.' },
-  { key: 'marble-elegant', label: 'Marmol Elegante', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Place the product on a white marble surface with gold accent elements nearby. Soft, diffused premium lighting. Minimalist luxury aesthetic. High-end gourmet product photography.' },
-  { key: 'bbq-grill', label: 'BBQ Parrilla', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Place the product near a BBQ grill scene with visible smoke, charcoal glow, and grilled food in the blurred background. Warm orange firelight mixed with outdoor afternoon sun. Summer cookout atmosphere.' },
-  { key: 'colorful-flat', label: 'Flat Lay Color', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Top-down flat lay composition. Place the product on a vibrant solid color background with complementary props arranged aesthetically around it — utensils, napkins, garnishes. Bright, even lighting. Social media flat lay photography style.' },
-  { key: 'nature-green', label: 'Naturaleza Verde', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Place the product on a mossy natural stone surface surrounded by fresh green leaves and herbs. Dappled forest sunlight filtering through foliage. Organic, natural, and fresh feel. Farm-to-table aesthetic.' },
+// ═══ AVAILABLE SCENES (Claude picks the best one) ═══
+const AVAILABLE_SCENES = [
+  { key: 'studio-hero', label: 'Estudio Hero', description: 'Premium studio with clean surface, soft gradient background, professional directional lighting' },
+  { key: 'kitchen-warm', label: 'Cocina Calida', description: 'Warm wooden kitchen countertop, cozy home kitchen, copper utensils, morning sunlight' },
+  { key: 'picnic-outdoor', label: 'Picnic Exterior', description: 'Rustic picnic blanket outdoors, sunny park, golden hour, summer lifestyle' },
+  { key: 'party-table', label: 'Mesa de Fiesta', description: 'Festive party table with decorations, confetti, party snacks, celebration mood' },
+  { key: 'ingredients-splash', label: 'Splash Ingredientes', description: 'Key ingredients floating/splashing around product, dark dramatic background, spotlight' },
+  { key: 'rustic-wood', label: 'Rustico Madera', description: 'Weathered dark wood surface, artisanal farmhouse setting, moody warm lighting' },
+  { key: 'neon-modern', label: 'Neon Moderno', description: 'Sleek dark surface with neon color accents, urban nightlife, bold social media aesthetic' },
+  { key: 'ice-fresh', label: 'Hielo Fresco', description: 'Crushed ice, water droplets, frost, cool blue lighting, refreshing commercial feel' },
+  { key: 'marble-elegant', label: 'Marmol Elegante', description: 'White marble surface with gold accents, diffused premium lighting, luxury aesthetic' },
+  { key: 'bbq-grill', label: 'BBQ Parrilla', description: 'BBQ grill with smoke, charcoal glow, grilled food background, summer cookout' },
+  { key: 'colorful-flat', label: 'Flat Lay Color', description: 'Top-down flat lay, vibrant solid background, complementary props, social media style' },
+  { key: 'nature-green', label: 'Naturaleza Verde', description: 'Mossy natural stone, fresh green leaves and herbs, dappled forest sunlight, farm-to-table' },
+];
+
+// ═══ 12 CINEMATIC SHOT TYPES (used within the chosen scene) ═══
+const SHOT_TYPES = [
+  { key: 'hero-center', label: 'Hero Central', composition: 'Product perfectly centered, straight-on eye-level shot, balanced symmetrical framing, full product visible' },
+  { key: 'close-up-label', label: 'Close-up Label', composition: 'Tight close-up on the product label/branding, filling 70% of the frame, sharp focus on text and logo' },
+  { key: 'three-quarter', label: 'Tres Cuartos', composition: 'Product at a slight three-quarter angle view, showing depth and dimension of the packaging' },
+  { key: 'overhead-top', label: 'Cenital', composition: 'Top-down overhead bird\'s eye view looking straight down at the product from above' },
+  { key: 'low-angle', label: 'Angulo Bajo', composition: 'Low angle looking up at the product, making it appear grand and prominent, hero perspective' },
+  { key: 'wide-context', label: 'Contexto Amplio', composition: 'Wide shot showing the product smaller in frame with the full scene/environment visible around it' },
+  { key: 'macro-detail', label: 'Macro Detalle', composition: 'Extreme close-up on a distinctive detail — texture, seal, cap, ingredient highlight, or unique packaging feature' },
+  { key: 'rule-thirds-left', label: 'Tercios Izquierda', composition: 'Product positioned on the left third of frame, negative space on right, artistic editorial composition' },
+  { key: 'rule-thirds-right', label: 'Tercios Derecha', composition: 'Product positioned on the right third of frame, negative space on left, dynamic commercial composition' },
+  { key: 'tilted-dynamic', label: 'Dinamico Inclinado', composition: 'Slightly tilted/dutch angle for energy and dynamism, product still clearly visible, action feel' },
+  { key: 'depth-bokeh', label: 'Profundidad Bokeh', composition: 'Product sharp in foreground with heavy bokeh blurring the background scene, cinematic depth of field' },
+  { key: 'group-props', label: 'Con Elementos', composition: 'Product surrounded by complementary props and contextual elements that enhance the scene storytelling' },
 ];
 
 // ═══ CAMERA MOTIONS for Kling ═══
@@ -61,236 +76,113 @@ const CAMERA_MOTIONS = [
   { key: 'static', prompt: 'Static camera, product gently animating, studio lighting, subtle movement', label: 'Estatico' },
 ];
 
-// ═══ IN-MEMORY JOB TRACKER for async shot generation ═══
+// ═══ IN-MEMORY JOB TRACKER ═══
 const shotJobs = new Map();
 
-/**
- * Start async shot generation — returns jobId immediately, generates in background
- */
-function startShotGenerationJob(productImagePath, options = {}) {
-  const jobId = `shots-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const numShots = options.numShots || 12;
+// ═══ STEP 1: Claude "Director Creativo" — Analyze product + pick scene + design shots ═══
 
-  const job = {
-    jobId,
-    status: 'running',
-    total: numShots,
-    completed: 0,
-    failed: 0,
-    shots: [],
-    startedAt: new Date().toISOString(),
-    error: null
-  };
-
-  shotJobs.set(jobId, job);
-
-  // Run in background — don't await
-  _generateShotsBackground(jobId, productImagePath, options).catch(err => {
-    logger.error(`[VIDEO-PIPE] Background job ${jobId} crashed: ${err.message}`);
-    const j = shotJobs.get(jobId);
-    if (j) { j.status = 'failed'; j.error = err.message; }
-  });
-
-  return { jobId, status: 'running', total: numShots };
-}
-
-/**
- * Get status of a shot generation job
- */
-function getShotJobStatus(jobId) {
-  const job = shotJobs.get(jobId);
-  if (!job) return null;
-  return { ...job };
-}
-
-/**
- * Background worker — generates angle shots one by one, updates job state
- */
-async function _generateShotsBackground(jobId, productImagePath, options = {}) {
-  const apiKey = config.imageGen.openai.apiKey;
-  if (!apiKey) throw new Error('OPENAI_API_KEY not configured');
-  if (!productImagePath || !fs.existsSync(productImagePath)) {
-    throw new Error('Product image not found: ' + productImagePath);
-  }
-
-  ensureDir(SHOTS_DIR);
-  const client = new OpenAI({ apiKey });
-  const mimeType = getMimeType(productImagePath);
-  const numShots = options.numShots || 12;
-  const scenes = PRODUCT_SCENES.slice(0, numShots);
-  const productDescription = options.productDescription || 'product';
-  const job = shotJobs.get(jobId);
-
-  for (let i = 0; i < scenes.length; i++) {
-    const scene = scenes[i];
-
-    // Build prompt using Banco Creativo approach: preserve product, change only surroundings
-    const fullPrompt = [
-      scene.prompt,
-      `\nThe product is: ${productDescription}.`,
-      '\nVertical 9:16 format (1080x1920).',
-      '\nThe product from the reference photo must remain EXACTLY as it appears — same shape, same label, same colors, same text, same proportions.',
-      ' Do NOT re-render, redraw, or generate a 3D version of the product.',
-      ' Keep it as the original flat photographic element.',
-      ' Do NOT add lighting effects (rim light, glow, highlights) ON the product.',
-      ' Do NOT alter, warp, or reshape the packaging.',
-      ' The product should look physically placed in the new scene.',
-      ' Photorealistic, high-end commercial product photography quality.'
-    ].join('');
-
-    try {
-      logger.info(`[VIDEO-PIPE] Job ${jobId}: Generating scene ${i + 1}/${scenes.length}: ${scene.key}`);
-
-      const imageFile = await toFile(fs.createReadStream(productImagePath), null, { type: mimeType });
-
-      const result = await client.images.edit({
-        model: 'gpt-image-1.5',
-        image: imageFile,
-        prompt: fullPrompt,
-        size: '1024x1536',
-        n: 1,
-        input_fidelity: 'high'
-      });
-
-      // Download and save
-      const imageUrl = result.data[0]?.url || result.data[0]?.b64_json;
-      let filename;
-
-      if (imageUrl && imageUrl.startsWith('http')) {
-        const res = await fetch(imageUrl);
-        const buffer = Buffer.from(await res.arrayBuffer());
-        filename = `shot-${scene.key}-${Date.now()}.png`;
-        fs.writeFileSync(path.join(SHOTS_DIR, filename), buffer);
-      } else if (result.data[0]?.b64_json) {
-        const buffer = Buffer.from(result.data[0].b64_json, 'base64');
-        filename = `shot-${scene.key}-${Date.now()}.png`;
-        fs.writeFileSync(path.join(SHOTS_DIR, filename), buffer);
-      } else {
-        throw new Error('No image data in response');
-      }
-
-      job.shots.push({
-        angle: scene.key,
-        label: scene.label,
-        filename,
-        url: `/uploads/video-shots/${filename}`,
-        status: 'completed'
-      });
-      job.completed++;
-
-      // Rate limit: delay between calls
-      if (i < scenes.length - 1) await new Promise(r => setTimeout(r, 2000));
-
-    } catch (err) {
-      logger.error(`[VIDEO-PIPE] Job ${jobId}: Scene ${scene.key} failed: ${err.message}`);
-      job.shots.push({ angle: scene.key, label: scene.label, filename: null, url: null, status: 'failed', error: err.message });
-      job.failed++;
-
-      // If rate limited, wait longer
-      if (err.status === 429) {
-        logger.warn('[VIDEO-PIPE] Rate limited, waiting 30s...');
-        await new Promise(r => setTimeout(r, 30000));
-      }
-    }
-  }
-
-  job.status = job.failed === job.total ? 'failed' : 'done';
-  job.finishedAt = new Date().toISOString();
-  logger.info(`[VIDEO-PIPE] Job ${jobId} finished: ${job.completed} ok, ${job.failed} failed`);
-}
-
-// ═══ STEP 2.5: Claude Vision — Analyze Product + Generate Smart Kling Prompts ═══
-
-async function analyzeProductAndGeneratePrompts(shotUrls, productDescription) {
+async function analyzeProductAndRecommendScene(productImagePath, productDescription) {
   const apiKey = config.claude.apiKey;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
 
   const anthropic = new Anthropic({ apiKey });
 
-  // Pick up to 3 shots to analyze (hero-front preferred, plus 2 others)
-  const shotsToAnalyze = [];
-  for (const shot of shotUrls) {
-    if (shotsToAnalyze.length >= 3) break;
-    const filePath = path.join(config.system.uploadsDir, shot.url.replace('/uploads/', ''));
-    if (fs.existsSync(filePath)) {
-      shotsToAnalyze.push({ ...shot, filePath });
-    }
-  }
+  const imageBuffer = fs.readFileSync(productImagePath);
+  const base64 = imageBuffer.toString('base64');
+  const mediaType = getMimeType(productImagePath);
 
-  if (shotsToAnalyze.length === 0) {
-    throw new Error('No shot images available for analysis');
-  }
+  const scenesListText = AVAILABLE_SCENES.map((s, i) =>
+    `${i + 1}. ${s.key} — "${s.label}": ${s.description}`
+  ).join('\n');
 
-  // Build vision message with images
-  const content = [];
-  for (const shot of shotsToAnalyze) {
-    const imageBuffer = fs.readFileSync(shot.filePath);
-    const base64 = imageBuffer.toString('base64');
-    const mediaType = getMimeType(shot.filePath);
-    content.push({
+  const shotTypesText = SHOT_TYPES.map((s, i) =>
+    `${i + 1}. ${s.key} — "${s.label}": ${s.composition}`
+  ).join('\n');
+
+  const content = [
+    {
       type: 'image',
       source: { type: 'base64', media_type: mediaType, data: base64 }
-    });
-  }
-
-  content.push({
-    type: 'text',
-    text: `You are a product video commercial director. Analyze these product images.
+    },
+    {
+      type: 'text',
+      text: `You are an expert commercial video director. Analyze this product photograph and act as creative director for a cohesive product commercial video.
 
 User's product description: "${productDescription}"
 
-Based on the images, identify:
-1. The exact product name and brand
-2. Product category (chips, salsa, pickles, beverage, snack, etc.)
-3. Key visual elements (colors, packaging type, distinguishing features)
+STEP 1 — Identify the product:
+- Exact product name and brand
+- Product category (pickles, chips, salsa, beverage, snack, sauce, etc.)
+- Key visual elements (colors, packaging type, distinguishing features)
+- Target audience and brand personality
 
-Then generate a video prompt for EACH of these 12 scene variations. Each prompt should be specific to THIS product and describe what happens in the 5-second video clip — camera movement, environment interaction, atmosphere. The product itself stays the same in every scene, only the background and surroundings change.
+STEP 2 — Choose the BEST commercial scene:
+From the available scenes below, pick the ONE scene that would create the most compelling, authentic commercial for THIS specific product. Consider:
+- What context would a real customer see this product in?
+- What setting makes the product look most appealing and authentic?
+- What scene creates the strongest emotional connection?
 
-The 12 scenes are:
-1. studio-hero (Estudio Hero)
-2. kitchen-warm (Cocina Calida)
-3. picnic-outdoor (Picnic Exterior)
-4. party-table (Mesa de Fiesta)
-5. ingredients-splash (Splash Ingredientes)
-6. rustic-wood (Rustico Madera)
-7. neon-modern (Neon Moderno)
-8. ice-fresh (Hielo Fresco)
-9. marble-elegant (Marmol Elegante)
-10. bbq-grill (BBQ Parrilla)
-11. colorful-flat (Flat Lay Color)
-12. nature-green (Naturaleza Verde)
+Available scenes:
+${scenesListText}
 
-For each prompt:
-- Describe a cinematic 5-second scene specific to this product in that setting
-- Include product-specific interactions with the environment (e.g. for pickles: condensation dripping, brine splash; for chips: crumbs falling around the bag)
-- Include camera movement description
-- Keep prompts in English, 1-2 sentences each
-- Make them visually exciting for a social media vertical video ad
+STEP 3 — Design 12 cinematic shots within that scene:
+For each of the 12 shot types below, write a specific OpenAI image generation prompt that places this product in the chosen scene with that specific camera composition. Each prompt MUST:
+- Start with "Edit this product photograph. Change ONLY the background and surroundings."
+- Describe the chosen scene context specifically for this product
+- Include the specific camera composition/framing for that shot type
+- Be 2-3 sentences, detailed enough for high-quality generation
+- All 12 shots must share the SAME visual world (same scene, same lighting mood, same color palette)
 
-Return ONLY valid JSON in this exact format:
+The 12 shot types are:
+${shotTypesText}
+
+STEP 4 — Design 12 video prompts for Kling 2.6:
+For each shot, also write a cinematic 5-second video motion prompt describing:
+- Camera movement specific to this shot type
+- Product-specific environmental interactions (condensation, splash, steam, crumbs, etc.)
+- Atmosphere and mood continuity
+- Keep in English, 1-2 sentences each
+
+Return ONLY valid JSON:
 {
   "productName": "...",
   "brand": "...",
   "category": "...",
-  "prompts": {
-    "studio-hero": "Slow cinematic dolly in toward the jar on a clean studio surface, soft rim lighting revealing the label details as subtle condensation forms",
-    "kitchen-warm": "...",
-    ...all 12 scenes...
+  "targetAudience": "...",
+  "chosenScene": "scene-key",
+  "sceneLabel": "Scene Label",
+  "sceneReason": "2-3 sentence explanation of why this scene is ideal for this product",
+  "shots": {
+    "hero-center": {
+      "imagePrompt": "Edit this product photograph. Change ONLY the background and surroundings. ...",
+      "videoPrompt": "Slow cinematic dolly in toward..."
+    },
+    "close-up-label": { "imagePrompt": "...", "videoPrompt": "..." },
+    "three-quarter": { "imagePrompt": "...", "videoPrompt": "..." },
+    "overhead-top": { "imagePrompt": "...", "videoPrompt": "..." },
+    "low-angle": { "imagePrompt": "...", "videoPrompt": "..." },
+    "wide-context": { "imagePrompt": "...", "videoPrompt": "..." },
+    "macro-detail": { "imagePrompt": "...", "videoPrompt": "..." },
+    "rule-thirds-left": { "imagePrompt": "...", "videoPrompt": "..." },
+    "rule-thirds-right": { "imagePrompt": "...", "videoPrompt": "..." },
+    "tilted-dynamic": { "imagePrompt": "...", "videoPrompt": "..." },
+    "depth-bokeh": { "imagePrompt": "...", "videoPrompt": "..." },
+    "group-props": { "imagePrompt": "...", "videoPrompt": "..." }
   }
 }`
-  });
+    }
+  ];
 
-  logger.info('[VIDEO-PIPE] Calling Claude Vision to analyze product and generate prompts...');
+  logger.info('[VIDEO-PIPE] Calling Claude Director Creativo to analyze product and recommend scene...');
 
   const response = await anthropic.messages.create({
     model: config.claude.model,
-    max_tokens: 4096,
+    max_tokens: 8192,
     messages: [{ role: 'user', content }]
   });
 
   const rawText = response.content[0]?.text || '';
 
-  // Parse JSON from response
   let cleaned = rawText.trim();
   if (cleaned.startsWith('```')) {
     cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
@@ -304,12 +196,319 @@ Return ONLY valid JSON in this exact format:
   }
 
   const parsed = JSON.parse(cleaned);
-  logger.info(`[VIDEO-PIPE] Claude identified: ${parsed.brand} ${parsed.productName} (${parsed.category})`);
+  logger.info(`[VIDEO-PIPE] Claude recommends scene "${parsed.chosenScene}" for ${parsed.brand} ${parsed.productName}: ${parsed.sceneReason}`);
 
   return parsed;
 }
 
-// ═══ STEP 3: Generate Video from Shot with Kling 2.6 via fal.ai ═══
+// ═══ STEP 2: Generate shots (async background job) ═══
+
+function startShotGenerationJob(productImagePath, options = {}) {
+  const jobId = `shots-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const numShots = options.numShots || 12;
+
+  const job = {
+    jobId,
+    status: 'running',
+    total: numShots,
+    completed: 0,
+    failed: 0,
+    shots: [],
+    directorPlan: options.directorPlan || null,
+    startedAt: new Date().toISOString(),
+    error: null
+  };
+
+  shotJobs.set(jobId, job);
+
+  _generateShotsBackground(jobId, productImagePath, options).catch(err => {
+    logger.error(`[VIDEO-PIPE] Background job ${jobId} crashed: ${err.message}`);
+    const j = shotJobs.get(jobId);
+    if (j) { j.status = 'failed'; j.error = err.message; }
+  });
+
+  return { jobId, status: 'running', total: numShots };
+}
+
+function getShotJobStatus(jobId) {
+  const job = shotJobs.get(jobId);
+  if (!job) return null;
+  return { ...job };
+}
+
+async function _generateShotsBackground(jobId, productImagePath, options = {}) {
+  const apiKey = config.imageGen.openai.apiKey;
+  if (!apiKey) throw new Error('OPENAI_API_KEY not configured');
+  if (!productImagePath || !fs.existsSync(productImagePath)) {
+    throw new Error('Product image not found: ' + productImagePath);
+  }
+
+  ensureDir(SHOTS_DIR);
+  const client = new OpenAI({ apiKey });
+  const mimeType = getMimeType(productImagePath);
+  const productDescription = options.productDescription || 'product';
+  const directorPlan = options.directorPlan;
+  const job = shotJobs.get(jobId);
+
+  // Use director plan shots if available, otherwise fall back to default
+  const numShots = options.numShots || 12;
+  const shotKeys = directorPlan
+    ? Object.keys(directorPlan.shots).slice(0, numShots)
+    : SHOT_TYPES.slice(0, numShots).map(s => s.key);
+
+  for (let i = 0; i < shotKeys.length; i++) {
+    const shotKey = shotKeys[i];
+    const shotType = SHOT_TYPES.find(s => s.key === shotKey);
+    const shotLabel = shotType?.label || shotKey;
+
+    // Build prompt: use director plan's specific prompt or generate a default
+    let fullPrompt;
+    if (directorPlan?.shots?.[shotKey]?.imagePrompt) {
+      fullPrompt = [
+        directorPlan.shots[shotKey].imagePrompt,
+        `\nThe product is: ${productDescription}.`,
+        '\nVertical 9:16 format (1080x1920).',
+        '\nThe product from the reference photo must remain EXACTLY as it appears — same shape, same label, same colors, same text, same proportions.',
+        ' Do NOT re-render, redraw, or generate a 3D version of the product.',
+        ' Keep it as the original flat photographic element.',
+        ' Do NOT add lighting effects (rim light, glow, highlights) ON the product.',
+        ' Do NOT alter, warp, or reshape the packaging.',
+        ' The product should look physically placed in the new scene.',
+        ' Photorealistic, high-end commercial product photography quality.'
+      ].join('');
+    } else {
+      fullPrompt = [
+        'Edit this product photograph. Change ONLY the background and surroundings.',
+        ` ${shotType?.composition || 'Product centered in frame.'}`,
+        `\nThe product is: ${productDescription}.`,
+        '\nVertical 9:16 format (1080x1920).',
+        '\nThe product from the reference photo must remain EXACTLY as it appears — same shape, same label, same colors, same text, same proportions.',
+        ' Do NOT re-render, redraw, or generate a 3D version of the product.',
+        ' Keep it as the original flat photographic element.',
+        ' Photorealistic, high-end commercial product photography quality.'
+      ].join('');
+    }
+
+    try {
+      logger.info(`[VIDEO-PIPE] Job ${jobId}: Generating shot ${i + 1}/${shotKeys.length}: ${shotKey}`);
+
+      const imageFile = await toFile(fs.createReadStream(productImagePath), null, { type: mimeType });
+
+      const result = await client.images.edit({
+        model: 'gpt-image-1.5',
+        image: imageFile,
+        prompt: fullPrompt,
+        size: '1024x1536',
+        n: 1,
+        input_fidelity: 'high'
+      });
+
+      const imageUrl = result.data[0]?.url || result.data[0]?.b64_json;
+      let filename;
+
+      if (imageUrl && imageUrl.startsWith('http')) {
+        const res = await fetch(imageUrl);
+        const buffer = Buffer.from(await res.arrayBuffer());
+        filename = `shot-${shotKey}-${Date.now()}.png`;
+        fs.writeFileSync(path.join(SHOTS_DIR, filename), buffer);
+      } else if (result.data[0]?.b64_json) {
+        const buffer = Buffer.from(result.data[0].b64_json, 'base64');
+        filename = `shot-${shotKey}-${Date.now()}.png`;
+        fs.writeFileSync(path.join(SHOTS_DIR, filename), buffer);
+      } else {
+        throw new Error('No image data in response');
+      }
+
+      job.shots.push({
+        angle: shotKey,
+        label: shotLabel,
+        filename,
+        url: `/uploads/video-shots/${filename}`,
+        videoPrompt: directorPlan?.shots?.[shotKey]?.videoPrompt || '',
+        status: 'completed'
+      });
+      job.completed++;
+
+      if (i < shotKeys.length - 1) await new Promise(r => setTimeout(r, 2000));
+
+    } catch (err) {
+      logger.error(`[VIDEO-PIPE] Job ${jobId}: Shot ${shotKey} failed: ${err.message}`);
+      job.shots.push({ angle: shotKey, label: shotLabel, filename: null, url: null, status: 'failed', error: err.message });
+      job.failed++;
+
+      if (err.status === 429) {
+        logger.warn('[VIDEO-PIPE] Rate limited, waiting 30s...');
+        await new Promise(r => setTimeout(r, 30000));
+      }
+    }
+  }
+
+  job.status = job.failed === job.total ? 'failed' : 'done';
+  job.finishedAt = new Date().toISOString();
+  logger.info(`[VIDEO-PIPE] Job ${jobId} finished: ${job.completed} ok, ${job.failed} failed`);
+}
+
+// ═══ STEP 3: Claude "Quality Judge" — Score each generated shot ═══
+
+async function judgeShots(shotUrls, productDescription, originalImagePath) {
+  const apiKey = config.claude.apiKey;
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
+
+  const anthropic = new Anthropic({ apiKey });
+
+  const content = [];
+
+  // Include original product photo as reference
+  if (originalImagePath && fs.existsSync(originalImagePath)) {
+    const origBuffer = fs.readFileSync(originalImagePath);
+    const origBase64 = origBuffer.toString('base64');
+    const origMime = getMimeType(originalImagePath);
+    content.push({
+      type: 'image',
+      source: { type: 'base64', media_type: origMime, data: origBase64 }
+    });
+    content.push({
+      type: 'text',
+      text: '↑ ORIGINAL product reference photo (this is what the product should look like)'
+    });
+  }
+
+  // Include each generated shot (limit to avoid token overflow)
+  const shotsToJudge = shotUrls.slice(0, 12);
+  for (const shot of shotsToJudge) {
+    const filePath = path.join(config.system.uploadsDir, shot.url.replace('/uploads/', ''));
+    if (fs.existsSync(filePath)) {
+      const imgBuffer = fs.readFileSync(filePath);
+      const base64 = imgBuffer.toString('base64');
+      const mediaType = getMimeType(filePath);
+      content.push({
+        type: 'image',
+        source: { type: 'base64', media_type: mediaType, data: base64 }
+      });
+      content.push({
+        type: 'text',
+        text: `↑ Shot: "${shot.label}" (key: ${shot.angle})`
+      });
+    }
+  }
+
+  content.push({
+    type: 'text',
+    text: `You are a quality control judge for product commercial photography. The product is: "${productDescription}".
+
+Score EACH generated shot on a scale of 1-10 based on these criteria:
+1. **Label Fidelity (40%)**: Is the product label/text readable, undistorted, and matching the original? Any warping, blurring, or text alteration is a major penalty.
+2. **Product Integrity (25%)**: Does the product shape, color, and packaging match the original photo exactly? No reshaping, 3D rendering, or artistic reinterpretation.
+3. **Scene Quality (20%)**: Is the background/scene realistic, well-lit, and commercially appealing? Good composition and professional feel.
+4. **Commercial Value (15%)**: Would this image work as a frame in a real product commercial? Is it ad-quality?
+
+For each shot, provide:
+- score: 1-10 integer
+- verdict: "approve" (7-10), "marginal" (5-6), or "reject" (1-4)
+- reason: One sentence explaining the score, focusing on the most important issue
+
+Return ONLY valid JSON:
+{
+  "scores": {
+    "shot-key": { "score": 8, "verdict": "approve", "reason": "Label is sharp and readable, product perfectly placed in scene" },
+    ...for each shot...
+  },
+  "overallAverage": 7.5,
+  "summary": "One sentence overall assessment"
+}`
+  });
+
+  logger.info(`[VIDEO-PIPE] Calling Claude Quality Judge for ${shotsToJudge.length} shots...`);
+
+  const response = await anthropic.messages.create({
+    model: config.claude.model,
+    max_tokens: 4096,
+    messages: [{ role: 'user', content }]
+  });
+
+  const rawText = response.content[0]?.text || '';
+
+  let cleaned = rawText.trim();
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+  }
+  if (!cleaned.startsWith('{')) {
+    const jsonStart = cleaned.indexOf('{');
+    const jsonEnd = cleaned.lastIndexOf('}');
+    if (jsonStart !== -1 && jsonEnd !== -1) {
+      cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+    }
+  }
+
+  const parsed = JSON.parse(cleaned);
+  logger.info(`[VIDEO-PIPE] Quality Judge: avg ${parsed.overallAverage}/10 — ${parsed.summary}`);
+
+  return parsed;
+}
+
+// ═══ STEP 4: Regenerate a single shot ═══
+
+async function regenerateSingleShot(productImagePath, shotKey, imagePrompt, productDescription) {
+  const apiKey = config.imageGen.openai.apiKey;
+  if (!apiKey) throw new Error('OPENAI_API_KEY not configured');
+
+  ensureDir(SHOTS_DIR);
+  const client = new OpenAI({ apiKey });
+  const mimeType = getMimeType(productImagePath);
+
+  const fullPrompt = [
+    imagePrompt,
+    `\nThe product is: ${productDescription}.`,
+    '\nVertical 9:16 format (1080x1920).',
+    '\nThe product from the reference photo must remain EXACTLY as it appears — same shape, same label, same colors, same text, same proportions.',
+    ' Do NOT re-render, redraw, or generate a 3D version of the product.',
+    ' Keep it as the original flat photographic element.',
+    ' Do NOT add lighting effects (rim light, glow, highlights) ON the product.',
+    ' Do NOT alter, warp, or reshape the packaging.',
+    ' The product should look physically placed in the new scene.',
+    ' Photorealistic, high-end commercial product photography quality.'
+  ].join('');
+
+  logger.info(`[VIDEO-PIPE] Regenerating shot: ${shotKey}`);
+
+  const imageFile = await toFile(fs.createReadStream(productImagePath), null, { type: mimeType });
+
+  const result = await client.images.edit({
+    model: 'gpt-image-1.5',
+    image: imageFile,
+    prompt: fullPrompt,
+    size: '1024x1536',
+    n: 1,
+    input_fidelity: 'high'
+  });
+
+  const imageUrl = result.data[0]?.url || result.data[0]?.b64_json;
+  let filename;
+
+  if (imageUrl && imageUrl.startsWith('http')) {
+    const res = await fetch(imageUrl);
+    const buffer = Buffer.from(await res.arrayBuffer());
+    filename = `shot-${shotKey}-${Date.now()}.png`;
+    fs.writeFileSync(path.join(SHOTS_DIR, filename), buffer);
+  } else if (result.data[0]?.b64_json) {
+    const buffer = Buffer.from(result.data[0].b64_json, 'base64');
+    filename = `shot-${shotKey}-${Date.now()}.png`;
+    fs.writeFileSync(path.join(SHOTS_DIR, filename), buffer);
+  } else {
+    throw new Error('No image data in response');
+  }
+
+  const shotType = SHOT_TYPES.find(s => s.key === shotKey);
+  return {
+    angle: shotKey,
+    label: shotType?.label || shotKey,
+    filename,
+    url: `/uploads/video-shots/${filename}`,
+    status: 'completed'
+  };
+}
+
+// ═══ STEP 5: Generate Video from Shot with Kling 2.6 via fal.ai ═══
 
 function initFal() {
   const falKey = config.fal?.apiKey;
@@ -317,9 +516,6 @@ function initFal() {
   fal.config({ credentials: falKey });
 }
 
-/**
- * Submit video job without waiting (returns request_id for polling)
- */
 async function submitVideoJob(imageUrl, options = {}) {
   initFal();
 
@@ -346,9 +542,6 @@ async function submitVideoJob(imageUrl, options = {}) {
   return { requestId: request_id, status: 'queued', cameraMotion: motion.key };
 }
 
-/**
- * Check status of a fal.ai queued job
- */
 async function checkVideoStatus(requestId) {
   initFal();
 
@@ -372,9 +565,6 @@ async function checkVideoStatus(requestId) {
   };
 }
 
-/**
- * Submit batch of video jobs (one per shot image)
- */
 async function submitVideoBatch(shots, options = {}) {
   const results = [];
   const batchSize = 3;
@@ -406,11 +596,14 @@ async function submitVideoBatch(shots, options = {}) {
 }
 
 module.exports = {
-  PRODUCT_SCENES,
+  AVAILABLE_SCENES,
+  SHOT_TYPES,
   CAMERA_MOTIONS,
+  analyzeProductAndRecommendScene,
   startShotGenerationJob,
   getShotJobStatus,
-  analyzeProductAndGeneratePrompts,
+  judgeShots,
+  regenerateSingleShot,
   submitVideoJob,
   checkVideoStatus,
   submitVideoBatch

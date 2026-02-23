@@ -889,11 +889,16 @@ export const dismissInsight = async (insightId) => {
 };
 
 // ============================================
-// VIDEO GENERATION (OpenAI + Kling 2.6)
+// VIDEO GENERATION — Director Creativo Mode
 // ============================================
 
-export const getVideoAngles = async () => {
-  const response = await api.get('/api/video/angles');
+export const getVideoScenes = async () => {
+  const response = await api.get('/api/video/scenes');
+  return response.data;
+};
+
+export const getVideoShotTypes = async () => {
+  const response = await api.get('/api/video/shot-types');
   return response.data;
 };
 
@@ -910,6 +915,12 @@ export const uploadProductPhoto = async (formData) => {
   return response.data;
 };
 
+// Claude Director Creativo: analyze product + recommend scene + design shots
+export const analyzeScene = async (data) => {
+  const response = await api.post('/api/video/analyze-scene', data, { timeout: 180000 });
+  return response.data;
+};
+
 export const getVideoShots = async () => {
   const response = await api.get('/api/video/shots');
   return response.data;
@@ -921,7 +932,7 @@ export const deleteVideoShot = async (filename) => {
 };
 
 // Start async shot generation (returns jobId immediately)
-export const generateAngleShots = async (data) => {
+export const generateShots = async (data) => {
   const response = await api.post('/api/video/generate-shots', data);
   return response.data;
 };
@@ -932,9 +943,15 @@ export const getShotJobStatus = async (jobId) => {
   return response.data;
 };
 
-// Claude Vision: analyze product and generate smart prompts
-export const analyzeProduct = async (data) => {
-  const response = await api.post('/api/video/analyze-product', data, { timeout: 120000 });
+// Claude Quality Judge: score each generated shot
+export const judgeShots = async (data) => {
+  const response = await api.post('/api/video/judge-shots', data, { timeout: 180000 });
+  return response.data;
+};
+
+// Regenerate a single low-scoring shot
+export const regenerateShot = async (data) => {
+  const response = await api.post('/api/video/regenerate-shot', data, { timeout: 120000 });
   return response.data;
 };
 
