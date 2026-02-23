@@ -56,9 +56,8 @@ module.exports = {
     }
   },
 
-  higgsfield: {
-    apiKey: process.env.HIGGSFIELD_API_KEY || '',
-    apiSecret: process.env.HIGGSFIELD_API_SECRET || ''
+  fal: {
+    apiKey: process.env.FAL_KEY || ''
   },
 
   search: {

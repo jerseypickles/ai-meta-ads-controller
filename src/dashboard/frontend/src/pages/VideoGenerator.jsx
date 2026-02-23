@@ -1,186 +1,125 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Video, Upload, Image, Play, Trash2, RefreshCw, CheckCircle,
-  XCircle, Clock, AlertTriangle, Camera, Zap, Download, ChevronDown,
-  ChevronRight, Loader, Film, ArrowRight, RotateCcw, Eye
+  XCircle, Clock, AlertTriangle, Camera, Zap, Download,
+  Loader, Film, ArrowRight, Eye, ChevronDown, ChevronRight
 } from 'lucide-react';
 import {
-  getVideoPresets, uploadVideoPhotos, getVideoPhotos, deleteVideoPhoto,
-  generateVideo, generateVideoBatch, getVideoStatus, getVideoStatusBatch,
-  getVideoPhotoUrl
+  getVideoAngles, getVideoMotions, uploadProductPhoto, getVideoShots,
+  deleteVideoShot, generateAngleShots, generateClipsBatch, getClipStatus,
+  getClipStatusBatch
 } from '../api';
 
-// ═══ HELPERS ═══
 const BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
 
-// ═══ STATUS COLORS ═══
-const STATUS_CONFIG = {
-  submitted: { color: '#f59e0b', bg: '#78350f', label: 'Procesando', icon: Clock },
-  processing: { color: '#f59e0b', bg: '#78350f', label: 'Procesando', icon: Clock },
-  completed: { color: '#22c55e', bg: '#14532d', label: 'Completado', icon: CheckCircle },
+// ═══ STATUS CONFIG ═══
+const STATUS_CFG = {
+  completed: { color: '#22c55e', bg: '#14532d', label: 'Listo', icon: CheckCircle },
+  queued: { color: '#f59e0b', bg: '#78350f', label: 'En Cola', icon: Clock },
+  processing: { color: '#3b82f6', bg: '#1e3a5f', label: 'Generando', icon: Loader },
   failed: { color: '#ef4444', bg: '#7f1d1d', label: 'Error', icon: XCircle },
   error: { color: '#ef4444', bg: '#7f1d1d', label: 'Error', icon: XCircle },
-  nsfw_rejected: { color: '#ef4444', bg: '#7f1d1d', label: 'Rechazado', icon: XCircle },
-  unknown: { color: '#6b7280', bg: '#374151', label: 'Desconocido', icon: Clock }
 };
 
-// ═══ STAT BADGE ═══
-const StatBadge = ({ icon: Icon, iconColor, label, value }) => (
+// ═══ STEP INDICATOR ═══
+const StepIndicator = ({ number, title, subtitle, active, done }) => (
   <div style={{
-    backgroundColor: '#1a1d27', border: '1px solid #2a2d3a', borderRadius: '12px',
-    padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '140px'
+    display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px',
+    borderRadius: '10px', backgroundColor: active ? '#1e3a5f' : done ? '#14532d' : '#141720',
+    border: `1px solid ${active ? '#3b82f6' : done ? '#22c55e' : '#2a2d3a'}`,
+    opacity: (!active && !done) ? 0.5 : 1, transition: 'all 0.2s ease'
   }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-      <Icon size={15} color={iconColor} />
-      <span style={{ fontSize: '11px', color: '#9ca3af', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-        {label}
-      </span>
+    <div style={{
+      width: '32px', height: '32px', borderRadius: '50%', display: 'flex',
+      alignItems: 'center', justifyContent: 'center', fontWeight: '700', fontSize: '14px',
+      backgroundColor: done ? '#22c55e' : active ? '#3b82f6' : '#374151',
+      color: '#fff'
+    }}>
+      {done ? <CheckCircle size={16} /> : number}
     </div>
-    <div style={{ fontSize: '22px', fontWeight: '700', color: '#fff' }}>{value}</div>
+    <div>
+      <div style={{ fontWeight: '600', fontSize: '13px', color: active ? '#93c5fd' : done ? '#86efac' : '#9ca3af' }}>{title}</div>
+      <div style={{ fontSize: '11px', color: '#6b7280' }}>{subtitle}</div>
+    </div>
   </div>
 );
 
-// ═══ PRESET CARD ═══
-const PresetCard = ({ preset, selected, onClick }) => (
-  <div
-    onClick={onClick}
-    style={{
-      padding: '12px 16px',
-      borderRadius: '10px',
-      border: selected ? '2px solid #3b82f6' : '1px solid #2a2d3a',
-      backgroundColor: selected ? '#1e3a5f' : '#141720',
-      cursor: 'pointer',
-      transition: 'all 0.15s ease',
-      minWidth: '150px'
-    }}
-  >
-    <div style={{ fontWeight: '600', fontSize: '13px', color: selected ? '#93c5fd' : '#e5e7eb', marginBottom: '4px' }}>
-      {preset.label}
-    </div>
-    <div style={{ fontSize: '11px', color: '#6b7280' }}>{preset.description}</div>
-  </div>
-);
-
-// ═══ PHOTO THUMBNAIL ═══
-const PhotoThumb = ({ photo, selected, onToggle, onDelete }) => (
+// ═══ SHOT CARD ═══
+const ShotCard = ({ shot, selected, onToggle, onDelete }) => (
   <div style={{
-    position: 'relative',
-    borderRadius: '10px',
-    overflow: 'hidden',
+    position: 'relative', borderRadius: '10px', overflow: 'hidden',
     border: selected ? '3px solid #3b82f6' : '2px solid #2a2d3a',
-    cursor: 'pointer',
-    transition: 'all 0.15s ease',
-    aspectRatio: '1',
-    backgroundColor: '#111'
+    cursor: 'pointer', transition: 'all 0.15s ease', backgroundColor: '#111'
   }}>
     <img
-      src={`${BASE_URL}${photo.url}`}
-      alt={photo.filename}
+      src={`${BASE_URL}${shot.url}`}
+      alt={shot.angle}
       onClick={onToggle}
-      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+      style={{ width: '100%', aspectRatio: '2/3', objectFit: 'cover' }}
     />
     {selected && (
       <div style={{
-        position: 'absolute', top: '6px', right: '6px',
-        backgroundColor: '#3b82f6', borderRadius: '50%',
-        width: '22px', height: '22px', display: 'flex',
+        position: 'absolute', top: '6px', right: '6px', backgroundColor: '#3b82f6',
+        borderRadius: '50%', width: '22px', height: '22px', display: 'flex',
         alignItems: 'center', justifyContent: 'center'
       }}>
         <CheckCircle size={14} color="#fff" />
       </div>
     )}
-    <button
-      onClick={(e) => { e.stopPropagation(); onDelete(); }}
-      style={{
-        position: 'absolute', bottom: '6px', right: '6px',
-        backgroundColor: 'rgba(127,29,29,0.9)', border: 'none',
-        borderRadius: '6px', padding: '4px 6px', cursor: 'pointer',
-        display: 'flex', alignItems: 'center', gap: '2px'
-      }}
-    >
-      <Trash2 size={12} color="#fca5a5" />
-    </button>
+    <div style={{
+      position: 'absolute', bottom: 0, left: 0, right: 0, padding: '6px 8px',
+      background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
+      display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+    }}>
+      <span style={{ fontSize: '10px', color: '#d1d5db', fontWeight: '500' }}>{shot.angle}</span>
+      <button onClick={(e) => { e.stopPropagation(); onDelete(); }}
+        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>
+        <Trash2 size={12} color="#fca5a5" />
+      </button>
+    </div>
   </div>
 );
 
-// ═══ JOB CARD ═══
-const JobCard = ({ job, onRefresh }) => {
-  const cfg = STATUS_CONFIG[job.status] || STATUS_CONFIG.unknown;
+// ═══ CLIP CARD ═══
+const ClipCard = ({ clip, onRefresh }) => {
+  const cfg = STATUS_CFG[clip.status] || STATUS_CFG.error;
   const Icon = cfg.icon;
-
   return (
     <div style={{
       backgroundColor: '#141720', border: '1px solid #2a2d3a', borderRadius: '12px',
-      padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px'
+      padding: '14px', display: 'flex', flexDirection: 'column', gap: '8px'
     }}>
-      {/* Status */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{
           display: 'flex', alignItems: 'center', gap: '6px',
           backgroundColor: cfg.bg, padding: '4px 10px', borderRadius: '6px'
         }}>
-          <Icon size={13} color={cfg.color} />
+          <Icon size={13} color={cfg.color} className={clip.status === 'processing' ? 'spin' : ''} />
           <span style={{ fontSize: '11px', fontWeight: '600', color: cfg.color }}>{cfg.label}</span>
         </div>
-        {(job.status === 'submitted' || job.status === 'processing') && (
-          <button
-            onClick={() => onRefresh(job.jobSetId)}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              color: '#6b7280', padding: '4px'
-            }}
-          >
-            <RefreshCw size={14} />
-          </button>
+        {clip.cameraMotion && (
+          <span style={{ fontSize: '10px', color: '#6b7280' }}>{clip.cameraMotion}</span>
         )}
       </div>
 
-      {/* Source image */}
-      {job.imageUrl && (
-        <div style={{ borderRadius: '8px', overflow: 'hidden', maxHeight: '120px' }}>
-          <img
-            src={job.imageUrl.startsWith('http') ? job.imageUrl : `${BASE_URL}${job.imageUrl}`}
-            alt="Source"
-            style={{ width: '100%', height: '120px', objectFit: 'cover' }}
-          />
+      {clip.status === 'completed' && clip.videoUrl && (
+        <div>
+          <video src={clip.videoUrl} controls style={{ width: '100%', borderRadius: '8px', maxHeight: '200px' }} />
+          <a href={clip.videoUrl} target="_blank" rel="noreferrer"
+            style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#3b82f6', fontSize: '11px', marginTop: '4px', textDecoration: 'none' }}>
+            <Download size={11} /> Descargar
+          </a>
         </div>
       )}
 
-      {/* Result video */}
-      {job.status === 'completed' && job.results?.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {job.results.map((r, i) => (
-            <div key={i}>
-              {r.videoUrl && (
-                <video
-                  src={r.videoUrl}
-                  controls
-                  style={{ width: '100%', borderRadius: '8px', maxHeight: '240px' }}
-                />
-              )}
-              {r.videoUrl && (
-                <a
-                  href={r.videoUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '6px',
-                    color: '#3b82f6', fontSize: '12px', marginTop: '6px',
-                    textDecoration: 'none'
-                  }}
-                >
-                  <Download size={12} /> Descargar video
-                </a>
-              )}
-            </div>
-          ))}
-        </div>
+      {(clip.status === 'queued' || clip.status === 'processing') && (
+        <button onClick={() => onRefresh(clip.requestId)}
+          style={{ background: 'none', border: '1px solid #334155', borderRadius: '6px', padding: '6px', cursor: 'pointer', color: '#6b7280', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
+          <RefreshCw size={12} /> Verificar
+        </button>
       )}
 
-      {/* Job ID */}
-      <div style={{ fontSize: '10px', color: '#4b5563', fontFamily: 'monospace' }}>
-        {job.jobSetId}
-      </div>
+      <div style={{ fontSize: '9px', color: '#374151', fontFamily: 'monospace' }}>{clip.requestId}</div>
     </div>
   );
 };
@@ -189,75 +128,71 @@ const JobCard = ({ job, onRefresh }) => {
 // MAIN COMPONENT
 // ═══════════════════════════════════════════════
 export default function VideoGenerator() {
-  // State
-  const [photos, setPhotos] = useState([]);
-  const [selectedPhotos, setSelectedPhotos] = useState(new Set());
-  const [presets, setPresets] = useState([]);
-  const [selectedPreset, setSelectedPreset] = useState(null);
-  const [prompt, setPrompt] = useState('Smooth cinematic camera movement, studio lighting, professional product video, elegant slow motion');
-  const [model, setModel] = useState('dop-turbo');
-  const [jobs, setJobs] = useState([]);
-  const [loading, setLoading] = useState(false);
+  // Step 1: Product photo
+  const [productPhoto, setProductPhoto] = useState(null);
+  const [productDescription, setProductDescription] = useState('Jersey Pickles product jar');
   const [uploading, setUploading] = useState(false);
+
+  // Step 2: Generated shots
+  const [shots, setShots] = useState([]);
+  const [selectedShots, setSelectedShots] = useState(new Set());
+  const [generatingShots, setGeneratingShots] = useState(false);
+  const [numShots, setNumShots] = useState(12);
+
+  // Step 3: Video clips
+  const [motions, setMotions] = useState([]);
+  const [selectedMotion, setSelectedMotion] = useState('slow-dolly-in');
+  const [duration, setDuration] = useState(5);
+  const [clips, setClips] = useState([]);
+  const [generatingClips, setGeneratingClips] = useState(false);
+
   const [error, setError] = useState(null);
-  const [showAllPresets, setShowAllPresets] = useState(false);
   const fileInputRef = useRef(null);
   const pollingRef = useRef(null);
 
-  // Load data on mount
+  // Load motions + existing shots on mount
   useEffect(() => {
-    loadPhotos();
-    loadPresets();
-    return () => {
-      if (pollingRef.current) clearInterval(pollingRef.current);
-    };
+    loadMotions();
+    loadShots();
+    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
   }, []);
 
-  // Auto-poll pending jobs
+  // Auto-poll pending clips
   useEffect(() => {
-    const pendingJobs = jobs.filter(j => j.status === 'submitted' || j.status === 'processing');
-    if (pendingJobs.length > 0 && !pollingRef.current) {
-      pollingRef.current = setInterval(() => refreshPendingJobs(), 10000);
-    } else if (pendingJobs.length === 0 && pollingRef.current) {
+    const pending = clips.filter(c => c.status === 'queued' || c.status === 'processing');
+    if (pending.length > 0 && !pollingRef.current) {
+      pollingRef.current = setInterval(refreshPendingClips, 15000);
+    } else if (pending.length === 0 && pollingRef.current) {
       clearInterval(pollingRef.current);
       pollingRef.current = null;
     }
-  }, [jobs]);
+  }, [clips]);
 
-  const loadPhotos = async () => {
+  const loadMotions = async () => {
     try {
-      const data = await getVideoPhotos();
-      setPhotos(data.photos || []);
-    } catch (err) {
-      console.error('Error loading photos:', err);
-    }
+      const data = await getVideoMotions();
+      setMotions(data.motions || []);
+    } catch (err) { console.error('Load motions error:', err); }
   };
 
-  const loadPresets = async () => {
+  const loadShots = async () => {
     try {
-      const data = await getVideoPresets();
-      setPresets(data.presets || []);
-      if (data.presets?.length > 0) {
-        setSelectedPreset(data.presets[0].id); // Default: Dolly In
-      }
-    } catch (err) {
-      console.error('Error loading presets:', err);
-    }
+      const data = await getVideoShots();
+      setShots(data.shots || []);
+    } catch (err) { console.error('Load shots error:', err); }
   };
 
+  // Step 1: Upload product photo
   const handleUpload = async (e) => {
-    const files = e.target.files;
-    if (!files?.length) return;
-
+    const file = e.target.files?.[0];
+    if (!file) return;
     setUploading(true);
     setError(null);
     try {
       const formData = new FormData();
-      for (const file of files) {
-        formData.append('photos', file);
-      }
-      await uploadVideoPhotos(formData);
-      await loadPhotos();
+      formData.append('photo', file);
+      const data = await uploadProductPhoto(formData);
+      setProductPhoto(data);
     } catch (err) {
       setError(`Upload error: ${err.response?.data?.error || err.message}`);
     } finally {
@@ -266,144 +201,120 @@ export default function VideoGenerator() {
     }
   };
 
-  const handleDelete = async (filename) => {
+  // Step 2: Generate angle shots
+  const handleGenerateShots = async () => {
+    if (!productPhoto) return;
+    setGeneratingShots(true);
+    setError(null);
     try {
-      await deleteVideoPhoto(filename);
-      setPhotos(prev => prev.filter(p => p.filename !== filename));
-      setSelectedPhotos(prev => {
-        const next = new Set(prev);
-        next.delete(filename);
-        return next;
+      const data = await generateAngleShots({
+        productImagePath: productPhoto.path || productPhoto.url,
+        productDescription,
+        numShots
       });
+      setShots(data.shots?.filter(s => s.status === 'completed') || []);
     } catch (err) {
-      setError(`Delete error: ${err.message}`);
+      setError(`Error generando shots: ${err.response?.data?.error || err.message}`);
+    } finally {
+      setGeneratingShots(false);
     }
   };
 
-  const togglePhotoSelection = (filename) => {
-    setSelectedPhotos(prev => {
-      const next = new Set(prev);
-      if (next.has(filename)) {
-        next.delete(filename);
-      } else {
-        next.add(filename);
+  // Step 3: Generate video clips
+  const handleGenerateClips = async () => {
+    if (selectedShots.size === 0) { setError('Selecciona al menos 1 shot'); return; }
+    setGeneratingClips(true);
+    setError(null);
+    try {
+      const origin = window.location.origin;
+      const shotsList = [...selectedShots].map(filename => {
+        const shot = shots.find(s => s.filename === filename);
+        return {
+          imageUrl: `${origin}${shot.url}`,
+          angle: shot.angle,
+          cameraMotion: selectedMotion
+        };
+      });
+
+      const data = await generateClipsBatch({ shots: shotsList, cameraMotion: selectedMotion, duration });
+      setClips(prev => [...(data.jobs || []), ...prev]);
+    } catch (err) {
+      setError(`Error generando clips: ${err.response?.data?.error || err.message}`);
+    } finally {
+      setGeneratingClips(false);
+    }
+  };
+
+  const refreshPendingClips = useCallback(async () => {
+    const pending = clips.filter(c => c.status === 'queued' || c.status === 'processing');
+    if (pending.length === 0) return;
+    try {
+      const ids = pending.map(c => c.requestId).filter(Boolean);
+      if (ids.length === 0) return;
+      const data = await getClipStatusBatch(ids);
+      if (data.jobs) {
+        setClips(prev => prev.map(c => {
+          const updated = data.jobs.find(u => u.requestId === c.requestId);
+          return updated ? { ...c, ...updated } : c;
+        }));
       }
+    } catch (err) { console.error('Poll error:', err); }
+  }, [clips]);
+
+  const refreshSingleClip = async (requestId) => {
+    try {
+      const data = await getClipStatus(requestId);
+      setClips(prev => prev.map(c => c.requestId === requestId ? { ...c, ...data } : c));
+    } catch (err) { console.error('Refresh error:', err); }
+  };
+
+  const toggleShot = (filename) => {
+    setSelectedShots(prev => {
+      const next = new Set(prev);
+      next.has(filename) ? next.delete(filename) : next.add(filename);
       return next;
     });
   };
 
-  const selectAll = () => {
-    if (selectedPhotos.size === photos.length) {
-      setSelectedPhotos(new Set());
-    } else {
-      setSelectedPhotos(new Set(photos.map(p => p.filename)));
-    }
+  const selectAllShots = () => {
+    if (selectedShots.size === shots.length) setSelectedShots(new Set());
+    else setSelectedShots(new Set(shots.map(s => s.filename)));
   };
 
-  const handleGenerate = async () => {
-    if (selectedPhotos.size === 0) {
-      setError('Selecciona al menos 1 foto');
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
+  const handleDeleteShot = async (filename) => {
     try {
-      // Build public URLs for selected photos
-      const origin = window.location.origin;
-      const images = [...selectedPhotos].map(filename => ({
-        imageUrl: `${origin}/uploads/video-photos/${filename}`,
-        prompt,
-        motionPresetId: selectedPreset,
-        model
-      }));
-
-      if (images.length === 1) {
-        // Single image
-        const result = await generateVideo({
-          imageUrl: images[0].imageUrl,
-          prompt,
-          model,
-          motionPresetId: selectedPreset
-        });
-        setJobs(prev => [{
-          ...result,
-          imageUrl: `/uploads/video-photos/${[...selectedPhotos][0]}`,
-          results: result.results || []
-        }, ...prev]);
-      } else {
-        // Batch
-        const result = await generateVideoBatch({ images, prompt, model, motionPresetId: selectedPreset });
-        const newJobs = (result.jobs || []).map(j => ({
-          ...j,
-          results: j.results || []
-        }));
-        setJobs(prev => [...newJobs, ...prev]);
-      }
-    } catch (err) {
-      setError(`Error generando: ${err.response?.data?.error || err.message}`);
-    } finally {
-      setLoading(false);
-    }
+      await deleteVideoShot(filename);
+      setShots(prev => prev.filter(s => s.filename !== filename));
+      setSelectedShots(prev => { const n = new Set(prev); n.delete(filename); return n; });
+    } catch (err) { setError(err.message); }
   };
 
-  const refreshPendingJobs = useCallback(async () => {
-    const pending = jobs.filter(j => j.status === 'submitted' || j.status === 'processing');
-    if (pending.length === 0) return;
+  const completedClips = clips.filter(c => c.status === 'completed');
+  const pendingClips = clips.filter(c => c.status === 'queued' || c.status === 'processing');
 
-    try {
-      const ids = pending.map(j => j.jobSetId).filter(Boolean);
-      if (ids.length === 0) return;
-      const data = await getVideoStatusBatch(ids);
-
-      if (data.jobs) {
-        setJobs(prev => prev.map(j => {
-          const updated = data.jobs.find(u => u.jobSetId === j.jobSetId);
-          return updated ? { ...j, ...updated } : j;
-        }));
-      }
-    } catch (err) {
-      console.error('Poll error:', err);
-    }
-  }, [jobs]);
-
-  const refreshSingleJob = async (jobSetId) => {
-    try {
-      const data = await getVideoStatus(jobSetId);
-      setJobs(prev => prev.map(j =>
-        j.jobSetId === jobSetId ? { ...j, ...data } : j
-      ));
-    } catch (err) {
-      console.error('Refresh error:', err);
-    }
-  };
-
-  const completedJobs = jobs.filter(j => j.status === 'completed');
-  const pendingJobs = jobs.filter(j => j.status === 'submitted' || j.status === 'processing');
-  const failedJobs = jobs.filter(j => j.status === 'failed' || j.status === 'error');
+  // Determine current step
+  const step = !productPhoto ? 1 : shots.length === 0 ? 2 : 3;
 
   return (
     <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
       {/* ═══ HEADER ═══ */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
-        <div>
-          <h1 style={{ color: '#fff', fontSize: '22px', fontWeight: '700', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <Video size={24} color="#8b5cf6" />
-            Video Generator
-          </h1>
-          <p style={{ color: '#6b7280', fontSize: '13px' }}>
-            Genera videos de producto con IA — sube fotos y selecciona movimiento de camara
-          </p>
-        </div>
+      <div style={{ marginBottom: '24px' }}>
+        <h1 style={{ color: '#fff', fontSize: '22px', fontWeight: '700', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <Video size={24} color="#8b5cf6" />
+          Video AI — Product Commercials
+        </h1>
+        <p style={{ color: '#6b7280', fontSize: '13px' }}>
+          1 foto del producto → 12 angulos con OpenAI → videos con Kling 2.6
+        </p>
       </div>
 
-      {/* ═══ STATS ═══ */}
+      {/* ═══ STEP INDICATORS ═══ */}
       <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', flexWrap: 'wrap' }}>
-        <StatBadge icon={Image} iconColor="#3b82f6" label="Fotos" value={photos.length} />
-        <StatBadge icon={CheckCircle} iconColor="#22c55e" label="Seleccionadas" value={selectedPhotos.size} />
-        <StatBadge icon={Film} iconColor="#8b5cf6" label="Videos Generados" value={completedJobs.length} />
-        <StatBadge icon={Clock} iconColor="#f59e0b" label="En Proceso" value={pendingJobs.length} />
+        <StepIndicator number={1} title="Subir Foto" subtitle="1 foto del producto" active={step === 1} done={!!productPhoto} />
+        <ArrowRight size={20} color="#374151" style={{ alignSelf: 'center' }} />
+        <StepIndicator number={2} title="Generar Angulos" subtitle={`${numShots} shots con OpenAI`} active={step === 2} done={shots.length > 0} />
+        <ArrowRight size={20} color="#374151" style={{ alignSelf: 'center' }} />
+        <StepIndicator number={3} title="Crear Videos" subtitle="Kling 2.6 + camara" active={step === 3} done={completedClips.length > 0} />
       </div>
 
       {/* ═══ ERROR BANNER ═══ */}
@@ -413,243 +324,247 @@ export default function VideoGenerator() {
           padding: '12px 16px', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px'
         }}>
           <AlertTriangle size={16} color="#fca5a5" />
-          <span style={{ color: '#fca5a5', fontSize: '13px' }}>{error}</span>
-          <button onClick={() => setError(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#fca5a5', cursor: 'pointer' }}>
+          <span style={{ color: '#fca5a5', fontSize: '13px', flex: 1 }}>{error}</span>
+          <button onClick={() => setError(null)} style={{ background: 'none', border: 'none', color: '#fca5a5', cursor: 'pointer' }}>
             <XCircle size={16} />
           </button>
         </div>
       )}
 
-      {/* ═══ SECTION 1: PRODUCT PHOTOS ═══ */}
-      <div style={{
-        backgroundColor: '#111318', border: '1px solid #1f2937', borderRadius: '14px',
-        padding: '24px', marginBottom: '20px'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-          <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Camera size={18} color="#3b82f6" />
-            Fotos del Producto
-          </h2>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            {photos.length > 0 && (
-              <button
-                onClick={selectAll}
-                style={{
-                  backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px',
-                  padding: '8px 14px', color: '#93c5fd', fontSize: '12px', fontWeight: '500',
-                  cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
-                }}
-              >
-                <CheckCircle size={14} />
-                {selectedPhotos.size === photos.length ? 'Deseleccionar' : 'Seleccionar Todas'}
-              </button>
-            )}
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              style={{
-                backgroundColor: '#1e3a5f', border: '1px solid #3b82f6', borderRadius: '8px',
-                padding: '8px 16px', color: '#93c5fd', fontSize: '12px', fontWeight: '600',
-                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
-                opacity: uploading ? 0.6 : 1
-              }}
-            >
-              {uploading ? <Loader size={14} className="spin" /> : <Upload size={14} />}
-              {uploading ? 'Subiendo...' : 'Subir Fotos'}
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              multiple
-              onChange={handleUpload}
-              style={{ display: 'none' }}
-            />
-          </div>
-        </div>
-
-        {photos.length === 0 ? (
-          <div style={{
-            textAlign: 'center', padding: '48px 20px',
-            border: '2px dashed #2a2d3a', borderRadius: '12px'
-          }}>
-            <Upload size={40} color="#4b5563" style={{ margin: '0 auto 12px' }} />
-            <p style={{ color: '#6b7280', fontSize: '14px', marginBottom: '4px' }}>
-              Sube hasta 15 fotos del producto
-            </p>
-            <p style={{ color: '#4b5563', fontSize: '12px' }}>
-              Diferentes angulos — frontal, lateral, detalle, etiqueta, etc.
-            </p>
-          </div>
-        ) : (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
-            gap: '12px'
-          }}>
-            {photos.map(photo => (
-              <PhotoThumb
-                key={photo.filename}
-                photo={photo}
-                selected={selectedPhotos.has(photo.filename)}
-                onToggle={() => togglePhotoSelection(photo.filename)}
-                onDelete={() => handleDelete(photo.filename)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* ═══ SECTION 2: GENERATION SETTINGS ═══ */}
+      {/* ═══ STEP 1: UPLOAD PRODUCT PHOTO ═══ */}
       <div style={{
         backgroundColor: '#111318', border: '1px solid #1f2937', borderRadius: '14px',
         padding: '24px', marginBottom: '20px'
       }}>
         <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Zap size={18} color="#f59e0b" />
-          Configuracion de Video
+          <Camera size={18} color="#3b82f6" />
+          Paso 1 — Foto del Producto
         </h2>
 
-        {/* Motion Presets */}
-        <div style={{ marginBottom: '20px' }}>
-          <label style={{ color: '#9ca3af', fontSize: '12px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '10px', display: 'block' }}>
-            Movimiento de Camara
-          </label>
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-            {presets.map(preset => (
-              <PresetCard
-                key={preset.key}
-                preset={preset}
-                selected={selectedPreset === preset.id}
-                onClick={() => setSelectedPreset(preset.id)}
+        {!productPhoto ? (
+          <div
+            onClick={() => fileInputRef.current?.click()}
+            style={{
+              textAlign: 'center', padding: '48px 20px', border: '2px dashed #2a2d3a',
+              borderRadius: '12px', cursor: 'pointer', transition: 'border-color 0.2s'
+            }}
+          >
+            <Upload size={40} color="#4b5563" style={{ margin: '0 auto 12px' }} />
+            <p style={{ color: '#6b7280', fontSize: '14px', marginBottom: '4px' }}>
+              {uploading ? 'Subiendo...' : 'Haz click para subir la foto del producto'}
+            </p>
+            <p style={{ color: '#4b5563', fontSize: '12px' }}>JPEG, PNG o WEBP — una sola foto clara del producto</p>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <div style={{ borderRadius: '10px', overflow: 'hidden', border: '2px solid #22c55e', width: '200px', flexShrink: 0 }}>
+              <img src={`${BASE_URL}${productPhoto.url}`} alt="Product" style={{ width: '100%', display: 'block' }} />
+            </div>
+            <div style={{ flex: 1, minWidth: '250px' }}>
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ color: '#9ca3af', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '6px' }}>
+                  Descripcion del producto
+                </label>
+                <input
+                  type="text" value={productDescription}
+                  onChange={(e) => setProductDescription(e.target.value)}
+                  style={{
+                    width: '100%', backgroundColor: '#0d0f14', border: '1px solid #2a2d3a',
+                    borderRadius: '8px', padding: '10px 12px', color: '#e5e7eb', fontSize: '13px',
+                    boxSizing: 'border-box'
+                  }}
+                  placeholder="ej: Jersey Pickles Spicy Garlic Dill jar"
+                />
+              </div>
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ color: '#9ca3af', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '6px' }}>
+                  Cantidad de angulos
+                </label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {[6, 8, 12].map(n => (
+                    <button key={n} onClick={() => setNumShots(n)}
+                      style={{
+                        padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px',
+                        border: numShots === n ? '2px solid #8b5cf6' : '1px solid #2a2d3a',
+                        backgroundColor: numShots === n ? '#2e1065' : '#141720',
+                        color: numShots === n ? '#c4b5fd' : '#9ca3af'
+                      }}>
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={handleGenerateShots} disabled={generatingShots}
+                  style={{
+                    padding: '10px 20px', backgroundColor: generatingShots ? '#374151' : '#7c3aed',
+                    border: 'none', borderRadius: '8px', color: '#fff', fontSize: '13px', fontWeight: '600',
+                    cursor: generatingShots ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
+                  }}>
+                  {generatingShots ? <><Loader size={14} className="spin" /> Generando {numShots} shots...</> : <><Zap size={14} /> Generar {numShots} Angulos</>}
+                </button>
+                <button onClick={() => { setProductPhoto(null); setShots([]); setSelectedShots(new Set()); }}
+                  style={{ padding: '10px 14px', backgroundColor: '#1f2937', border: 'none', borderRadius: '8px', color: '#9ca3af', fontSize: '13px', cursor: 'pointer' }}>
+                  Cambiar foto
+                </button>
+              </div>
+              {generatingShots && (
+                <p style={{ color: '#f59e0b', fontSize: '12px', marginTop: '8px' }}>
+                  OpenAI esta generando {numShots} angulos... esto toma ~1-2 minutos
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+        <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={handleUpload} style={{ display: 'none' }} />
+      </div>
+
+      {/* ═══ STEP 2: GENERATED SHOTS ═══ */}
+      {shots.length > 0 && (
+        <div style={{
+          backgroundColor: '#111318', border: '1px solid #1f2937', borderRadius: '14px',
+          padding: '24px', marginBottom: '20px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+            <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Image size={18} color="#f59e0b" />
+              Paso 2 — Shots Generados ({shots.length})
+            </h2>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button onClick={selectAllShots}
+                style={{
+                  backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px',
+                  padding: '8px 14px', color: '#93c5fd', fontSize: '12px', fontWeight: '500',
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
+                }}>
+                <CheckCircle size={14} />
+                {selectedShots.size === shots.length ? 'Deseleccionar' : `Seleccionar Todas (${shots.length})`}
+              </button>
+            </div>
+          </div>
+
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '12px'
+          }}>
+            {shots.map(shot => (
+              <ShotCard key={shot.filename} shot={shot}
+                selected={selectedShots.has(shot.filename)}
+                onToggle={() => toggleShot(shot.filename)}
+                onDelete={() => handleDeleteShot(shot.filename)}
               />
             ))}
           </div>
-        </div>
 
-        {/* Prompt */}
-        <div style={{ marginBottom: '20px' }}>
-          <label style={{ color: '#9ca3af', fontSize: '12px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', display: 'block' }}>
-            Prompt (descripcion del video)
-          </label>
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            rows={3}
-            style={{
-              width: '100%', backgroundColor: '#0d0f14', border: '1px solid #2a2d3a',
-              borderRadius: '10px', padding: '12px', color: '#e5e7eb', fontSize: '13px',
-              fontFamily: 'Inter, system-ui, sans-serif', resize: 'vertical',
-              boxSizing: 'border-box'
-            }}
-            placeholder="Describe el estilo de video que quieres..."
-          />
+          <div style={{ color: '#6b7280', fontSize: '12px', marginTop: '12px' }}>
+            {selectedShots.size} de {shots.length} seleccionadas para video
+          </div>
         </div>
+      )}
 
-        {/* Model selector */}
-        <div style={{ marginBottom: '20px' }}>
-          <label style={{ color: '#9ca3af', fontSize: '12px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', display: 'block' }}>
-            Modelo
-          </label>
-          <div style={{ display: 'flex', gap: '10px' }}>
-            {[
-              { value: 'dop-lite', label: 'Lite', desc: 'Rapido, $0.12/video' },
-              { value: 'dop-turbo', label: 'Turbo', desc: 'Equilibrado, $0.40/video' },
-              { value: 'dop-standard', label: 'Standard', desc: 'Mejor calidad, $0.56/video' }
-            ].map(m => (
-              <div
-                key={m.value}
-                onClick={() => setModel(m.value)}
-                style={{
-                  padding: '10px 16px', borderRadius: '10px', cursor: 'pointer',
-                  border: model === m.value ? '2px solid #8b5cf6' : '1px solid #2a2d3a',
-                  backgroundColor: model === m.value ? '#2e1065' : '#141720',
-                  minWidth: '130px'
-                }}
-              >
-                <div style={{ fontWeight: '600', fontSize: '13px', color: model === m.value ? '#c4b5fd' : '#e5e7eb' }}>
-                  {m.label}
+      {/* ═══ STEP 3: VIDEO GENERATION ═══ */}
+      {shots.length > 0 && (
+        <div style={{
+          backgroundColor: '#111318', border: '1px solid #1f2937', borderRadius: '14px',
+          padding: '24px', marginBottom: '20px'
+        }}>
+          <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Film size={18} color="#8b5cf6" />
+            Paso 3 — Generar Videos (Kling 2.6)
+          </h2>
+
+          {/* Camera motion selector */}
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ color: '#9ca3af', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '8px' }}>
+              Movimiento de Camara
+            </label>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {motions.map(m => (
+                <div key={m.key} onClick={() => setSelectedMotion(m.key)}
+                  style={{
+                    padding: '8px 14px', borderRadius: '8px', cursor: 'pointer',
+                    border: selectedMotion === m.key ? '2px solid #8b5cf6' : '1px solid #2a2d3a',
+                    backgroundColor: selectedMotion === m.key ? '#2e1065' : '#141720'
+                  }}>
+                  <div style={{ fontWeight: '600', fontSize: '12px', color: selectedMotion === m.key ? '#c4b5fd' : '#e5e7eb' }}>{m.label}</div>
                 </div>
-                <div style={{ fontSize: '11px', color: '#6b7280' }}>{m.desc}</div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
 
-        {/* Generate button */}
-        <button
-          onClick={handleGenerate}
-          disabled={loading || selectedPhotos.size === 0}
-          style={{
-            width: '100%', padding: '14px',
-            backgroundColor: loading ? '#374151' : '#7c3aed',
-            border: 'none', borderRadius: '10px',
-            color: '#fff', fontSize: '14px', fontWeight: '700',
-            cursor: loading ? 'not-allowed' : 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-            opacity: selectedPhotos.size === 0 ? 0.5 : 1,
-            transition: 'all 0.15s ease'
-          }}
-        >
-          {loading ? (
-            <>
-              <Loader size={18} className="spin" />
-              Generando {selectedPhotos.size} video{selectedPhotos.size !== 1 ? 's' : ''}...
-            </>
-          ) : (
-            <>
-              <Play size={18} />
-              Generar {selectedPhotos.size} Video{selectedPhotos.size !== 1 ? 's' : ''}
-            </>
+          {/* Duration */}
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ color: '#9ca3af', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '8px' }}>
+              Duracion por clip
+            </label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              {[5, 10].map(d => (
+                <button key={d} onClick={() => setDuration(d)}
+                  style={{
+                    padding: '8px 20px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600', fontSize: '13px',
+                    border: duration === d ? '2px solid #8b5cf6' : '1px solid #2a2d3a',
+                    backgroundColor: duration === d ? '#2e1065' : '#141720',
+                    color: duration === d ? '#c4b5fd' : '#9ca3af'
+                  }}>
+                  {d}s
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Generate button */}
+          <button onClick={handleGenerateClips} disabled={generatingClips || selectedShots.size === 0}
+            style={{
+              width: '100%', padding: '14px',
+              backgroundColor: generatingClips ? '#374151' : '#7c3aed',
+              border: 'none', borderRadius: '10px', color: '#fff', fontSize: '14px', fontWeight: '700',
+              cursor: (generatingClips || selectedShots.size === 0) ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+              opacity: selectedShots.size === 0 ? 0.5 : 1
+            }}>
+            {generatingClips
+              ? <><Loader size={18} className="spin" /> Enviando {selectedShots.size} clips a Kling 2.6...</>
+              : <><Play size={18} /> Generar {selectedShots.size} Video{selectedShots.size !== 1 ? 's' : ''} con Kling 2.6</>
+            }
+          </button>
+
+          {selectedShots.size > 0 && (
+            <div style={{ textAlign: 'center', marginTop: '8px', color: '#6b7280', fontSize: '12px' }}>
+              Costo estimado: ~${(selectedShots.size * duration * 0.07).toFixed(2)} USD ({selectedShots.size} clips x {duration}s x $0.07/s)
+            </div>
           )}
-        </button>
+        </div>
+      )}
 
-        {selectedPhotos.size > 0 && (
-          <div style={{ textAlign: 'center', marginTop: '8px', color: '#6b7280', fontSize: '12px' }}>
-            Costo estimado: ~${(selectedPhotos.size * (model === 'dop-lite' ? 0.12 : model === 'dop-turbo' ? 0.40 : 0.56)).toFixed(2)} USD
-          </div>
-        )}
-      </div>
-
-      {/* ═══ SECTION 3: GENERATED VIDEOS ═══ */}
-      {jobs.length > 0 && (
+      {/* ═══ CLIP RESULTS ═══ */}
+      {clips.length > 0 && (
         <div style={{
           backgroundColor: '#111318', border: '1px solid #1f2937', borderRadius: '14px',
           padding: '24px'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
             <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Film size={18} color="#8b5cf6" />
-              Videos Generados ({jobs.length})
+              <Video size={18} color="#22c55e" />
+              Videos ({completedClips.length}/{clips.length})
             </h2>
-            {pendingJobs.length > 0 && (
-              <button
-                onClick={refreshPendingJobs}
+            {pendingClips.length > 0 && (
+              <button onClick={refreshPendingClips}
                 style={{
                   backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px',
                   padding: '8px 14px', color: '#93c5fd', fontSize: '12px', fontWeight: '500',
                   cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
-                }}
-              >
-                <RefreshCw size={14} />
-                Actualizar ({pendingJobs.length} en proceso)
+                }}>
+                <RefreshCw size={14} /> {pendingClips.length} en proceso
               </button>
             )}
           </div>
-
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-            gap: '16px'
-          }}>
-            {jobs.map((job, idx) => (
-              <JobCard key={job.jobSetId || idx} job={job} onRefresh={refreshSingleJob} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '14px' }}>
+            {clips.map((clip, i) => (
+              <ClipCard key={clip.requestId || i} clip={clip} onRefresh={refreshSingleClip} />
             ))}
           </div>
         </div>
       )}
 
-      {/* Spinner CSS */}
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .spin { animation: spin 1s linear infinite; }

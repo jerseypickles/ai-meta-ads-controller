@@ -1,8 +1,7 @@
 /**
  * Video Generation Routes
  *
- * Endpoints for Higgsfield image-to-video generation.
- * Upload product photos, generate videos, check status.
+ * Pipeline: Upload product photo → OpenAI generates angle shots → Kling 2.6 creates videos
  */
 
 const express = require('express');
@@ -12,7 +11,10 @@ const path = require('path');
 const fs = require('fs');
 const config = require('../../../config');
 const logger = require('../../utils/logger');
-const { getHiggsfieldClient, PRODUCT_MOTION_PRESETS } = require('../../video/higgsfield-client');
+const {
+  PRODUCT_ANGLES, CAMERA_MOTIONS,
+  generateAngleShots, submitVideoJob, checkVideoStatus, submitVideoBatch
+} = require('../../video/video-pipeline');
 
 // ============ UPLOAD CONFIG ============
 
@@ -20,203 +22,174 @@ const UPLOAD_DIR = path.join(config.system.uploadsDir, 'video-photos');
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    if (!fs.existsSync(UPLOAD_DIR)) {
-      fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-    }
+    if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
     cb(null, UPLOAD_DIR);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E6)}`;
     const ext = path.extname(file.originalname);
-    cb(null, `${uniqueSuffix}${ext}`);
+    cb(null, `product${uniqueSuffix}${ext}`);
   }
 });
-
-const fileFilter = (req, file, cb) => {
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
-  if (allowedTypes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error(`Tipo de archivo no permitido: ${file.mimetype}. Solo JPEG, PNG, WEBP.`), false);
-  }
-};
 
 const upload = multer({
   storage,
-  fileFilter,
-  limits: { fileSize: 20 * 1024 * 1024 } // 20MB per image
+  fileFilter: (req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    cb(null, allowed.includes(file.mimetype));
+  },
+  limits: { fileSize: 20 * 1024 * 1024 }
 });
 
-// ============ GET /api/video/presets ============
-// List available motion presets for product videos
+// ============ GET /api/video/angles ============
+// List available product angles
 
-router.get('/presets', (req, res) => {
-  try {
-    const presets = PRODUCT_MOTION_PRESETS;
-    const list = Object.entries(presets).map(([key, val]) => ({
-      key,
-      ...val
-    }));
-    res.json({ presets: list });
-  } catch (err) {
-    logger.error('[VIDEO] Error listing presets:', err);
-    res.status(500).json({ error: err.message });
-  }
+router.get('/angles', (req, res) => {
+  res.json({ angles: PRODUCT_ANGLES, count: PRODUCT_ANGLES.length });
 });
 
-// ============ GET /api/video/presets/all ============
-// List ALL motion presets from Higgsfield API
+// ============ GET /api/video/motions ============
+// List available camera motions for video
 
-router.get('/presets/all', async (req, res) => {
-  try {
-    const client = getHiggsfieldClient();
-    const motions = await client.listMotions();
-    res.json({ motions, count: Array.isArray(motions) ? motions.length : 0 });
-  } catch (err) {
-    logger.error('[VIDEO] Error listing all motions:', err);
-    res.status(500).json({ error: err.message });
-  }
+router.get('/motions', (req, res) => {
+  res.json({ motions: CAMERA_MOTIONS, count: CAMERA_MOTIONS.length });
 });
 
-// ============ POST /api/video/upload-photos ============
-// Upload product photos (up to 15)
+// ============ POST /api/video/upload-product ============
+// Upload the source product photo
 
-router.post('/upload-photos', upload.array('photos', 15), async (req, res) => {
+router.post('/upload-product', upload.single('photo'), (req, res) => {
   try {
-    if (!req.files || req.files.length === 0) {
-      return res.status(400).json({ error: 'No photos uploaded' });
-    }
+    if (!req.file) return res.status(400).json({ error: 'No photo uploaded' });
 
-    const photos = req.files.map(f => ({
-      filename: f.filename,
-      originalName: f.originalname,
-      size: f.size,
-      mimetype: f.mimetype,
-      url: `/uploads/video-photos/${f.filename}`
-    }));
-
-    logger.info(`[VIDEO] Uploaded ${photos.length} product photos`);
-    res.json({ photos, count: photos.length });
+    res.json({
+      filename: req.file.filename,
+      originalName: req.file.originalname,
+      url: `/uploads/video-photos/${req.file.filename}`,
+      path: req.file.path,
+      size: req.file.size
+    });
   } catch (err) {
     logger.error('[VIDEO] Upload error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ============ GET /api/video/photos ============
-// List uploaded product photos
+// ============ GET /api/video/shots ============
+// List generated angle shots
 
-router.get('/photos', (req, res) => {
+router.get('/shots', (req, res) => {
   try {
-    if (!fs.existsSync(UPLOAD_DIR)) {
-      return res.json({ photos: [] });
-    }
+    const shotsDir = path.join(config.system.uploadsDir, 'video-shots');
+    if (!fs.existsSync(shotsDir)) return res.json({ shots: [] });
 
-    const files = fs.readdirSync(UPLOAD_DIR)
-      .filter(f => /\.(jpg|jpeg|png|webp)$/i.test(f))
+    const files = fs.readdirSync(shotsDir)
+      .filter(f => /\.(png|jpg|jpeg|webp)$/i.test(f))
       .map(f => {
-        const stats = fs.statSync(path.join(UPLOAD_DIR, f));
-        return {
-          filename: f,
-          url: `/uploads/video-photos/${f}`,
-          size: stats.size,
-          uploaded_at: stats.mtime
-        };
+        const stats = fs.statSync(path.join(shotsDir, f));
+        const angle = f.match(/shot-([a-z-]+)-/)?.[1] || 'unknown';
+        return { filename: f, angle, url: `/uploads/video-shots/${f}`, size: stats.size, created: stats.mtime };
       })
-      .sort((a, b) => new Date(b.uploaded_at) - new Date(a.uploaded_at));
+      .sort((a, b) => new Date(b.created) - new Date(a.created));
 
-    res.json({ photos: files, count: files.length });
+    res.json({ shots: files, count: files.length });
   } catch (err) {
-    logger.error('[VIDEO] Error listing photos:', err);
+    logger.error('[VIDEO] List shots error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ============ DELETE /api/video/photos/:filename ============
-// Delete a photo
+// ============ POST /api/video/generate-shots ============
+// Step 1: Generate 12 angle shots from the product photo using OpenAI
 
-router.delete('/photos/:filename', (req, res) => {
+router.post('/generate-shots', async (req, res) => {
   try {
-    const filePath = path.join(UPLOAD_DIR, req.params.filename);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-      res.json({ success: true });
-    } else {
-      res.status(404).json({ error: 'File not found' });
+    const { productImagePath, productDescription, numShots } = req.body;
+
+    if (!productImagePath) {
+      return res.status(400).json({ error: 'productImagePath is required' });
     }
+
+    // Resolve path — could be absolute or relative /uploads/ path
+    let fullPath = productImagePath;
+    if (productImagePath.startsWith('/uploads/')) {
+      fullPath = path.join(config.system.uploadsDir, productImagePath.replace('/uploads/', ''));
+    }
+
+    if (!fs.existsSync(fullPath)) {
+      return res.status(400).json({ error: 'Product image file not found' });
+    }
+
+    logger.info(`[VIDEO] Generating ${numShots || 12} angle shots from: ${fullPath}`);
+
+    const shots = await generateAngleShots(fullPath, {
+      productDescription: productDescription || 'packaged food product',
+      numShots: numShots || 12
+    });
+
+    const completed = shots.filter(s => s.status === 'completed').length;
+    const failed = shots.filter(s => s.status === 'failed').length;
+
+    logger.info(`[VIDEO] Shots generated: ${completed} ok, ${failed} failed`);
+    res.json({ shots, completed, failed });
   } catch (err) {
-    logger.error('[VIDEO] Delete error:', err);
+    logger.error('[VIDEO] Generate shots error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ============ POST /api/video/generate ============
-// Generate video from a single image
+// ============ POST /api/video/generate-clip ============
+// Step 2a: Generate ONE video clip from a shot image
 
-router.post('/generate', async (req, res) => {
+router.post('/generate-clip', async (req, res) => {
   try {
-    const { imageUrl, prompt, model, motionPresetId } = req.body;
+    const { imageUrl, cameraMotion, duration, prompt } = req.body;
 
-    if (!imageUrl) {
-      return res.status(400).json({ error: 'imageUrl is required' });
-    }
+    if (!imageUrl) return res.status(400).json({ error: 'imageUrl is required' });
 
-    const client = getHiggsfieldClient();
-    const result = await client.submitVideo(imageUrl, { prompt, model, motionPresetId });
+    const result = await submitVideoJob(imageUrl, { cameraMotion, duration, prompt });
 
-    logger.info(`[VIDEO] Job submitted: ${result.jobSetId}`);
+    logger.info(`[VIDEO] Clip job queued: ${result.requestId}`);
     res.json(result);
   } catch (err) {
-    logger.error('[VIDEO] Generate error:', err);
+    logger.error('[VIDEO] Generate clip error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ============ POST /api/video/generate-batch ============
-// Generate videos from multiple images in batch
+// ============ POST /api/video/generate-clips-batch ============
+// Step 2b: Generate video clips from multiple shots
 
-router.post('/generate-batch', async (req, res) => {
+router.post('/generate-clips-batch', async (req, res) => {
   try {
-    const { images, prompt, model, motionPresetId } = req.body;
+    const { shots, cameraMotion, duration, prompt } = req.body;
 
-    if (!images || !Array.isArray(images) || images.length === 0) {
-      return res.status(400).json({ error: 'images array is required' });
+    if (!shots || !Array.isArray(shots) || shots.length === 0) {
+      return res.status(400).json({ error: 'shots array is required' });
+    }
+    if (shots.length > 15) {
+      return res.status(400).json({ error: 'Maximum 15 shots per batch' });
     }
 
-    if (images.length > 15) {
-      return res.status(400).json({ error: 'Maximum 15 images per batch' });
-    }
+    const results = await submitVideoBatch(shots, { cameraMotion, duration, prompt });
 
-    const client = getHiggsfieldClient();
-
-    // Build image list with per-image or global options
-    const imageList = images.map(img => ({
-      imageUrl: typeof img === 'string' ? img : img.imageUrl,
-      prompt: (typeof img === 'object' ? img.prompt : null) || prompt,
-      motionPresetId: (typeof img === 'object' ? img.motionPresetId : null) || motionPresetId,
-      model: (typeof img === 'object' ? img.model : null) || model
-    }));
-
-    const results = await client.submitBatch(imageList, { prompt, model, motionPresetId });
-
-    const submitted = results.filter(r => r.status === 'submitted').length;
+    const queued = results.filter(r => r.status === 'queued').length;
     const errors = results.filter(r => r.status === 'error').length;
 
-    logger.info(`[VIDEO] Batch submitted: ${submitted} jobs, ${errors} errors`);
-    res.json({ jobs: results, submitted, errors });
+    logger.info(`[VIDEO] Batch clips: ${queued} queued, ${errors} errors`);
+    res.json({ jobs: results, queued, errors });
   } catch (err) {
-    logger.error('[VIDEO] Batch generate error:', err);
+    logger.error('[VIDEO] Batch clips error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ============ GET /api/video/status/:jobSetId ============
-// Check status of a video generation job
+// ============ GET /api/video/clip-status/:requestId ============
+// Check status of a video clip job
 
-router.get('/status/:jobSetId', async (req, res) => {
+router.get('/clip-status/:requestId', async (req, res) => {
   try {
-    const client = getHiggsfieldClient();
-    const result = await client.checkStatus(req.params.jobSetId);
+    const result = await checkVideoStatus(req.params.requestId);
     res.json(result);
   } catch (err) {
     logger.error('[VIDEO] Status check error:', err);
@@ -224,31 +197,47 @@ router.get('/status/:jobSetId', async (req, res) => {
   }
 });
 
-// ============ POST /api/video/status-batch ============
-// Check status of multiple jobs at once
+// ============ POST /api/video/clip-status-batch ============
+// Check status of multiple clip jobs
 
-router.post('/status-batch', async (req, res) => {
+router.post('/clip-status-batch', async (req, res) => {
   try {
-    const { jobSetIds } = req.body;
-    if (!jobSetIds || !Array.isArray(jobSetIds)) {
-      return res.status(400).json({ error: 'jobSetIds array required' });
+    const { requestIds } = req.body;
+    if (!requestIds || !Array.isArray(requestIds)) {
+      return res.status(400).json({ error: 'requestIds array required' });
     }
 
-    const client = getHiggsfieldClient();
     const results = [];
-
-    for (const id of jobSetIds) {
+    for (const id of requestIds) {
       try {
-        const status = await client.checkStatus(id);
+        const status = await checkVideoStatus(id);
         results.push(status);
       } catch (err) {
-        results.push({ jobSetId: id, status: 'error', error: err.message, results: [] });
+        results.push({ requestId: id, status: 'error', error: err.message });
       }
     }
 
     res.json({ jobs: results });
   } catch (err) {
     logger.error('[VIDEO] Batch status error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============ DELETE /api/video/shots/:filename ============
+// Delete a shot
+
+router.delete('/shots/:filename', (req, res) => {
+  try {
+    const shotsDir = path.join(config.system.uploadsDir, 'video-shots');
+    const filePath = path.join(shotsDir, req.params.filename);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      res.json({ success: true });
+    } else {
+      res.status(404).json({ error: 'File not found' });
+    }
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

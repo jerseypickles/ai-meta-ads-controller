@@ -889,54 +889,60 @@ export const dismissInsight = async (insightId) => {
 };
 
 // ============================================
-// VIDEO GENERATION (Higgsfield)
+// VIDEO GENERATION (OpenAI + Kling 2.6)
 // ============================================
 
-export const getVideoPresets = async () => {
-  const response = await api.get('/api/video/presets');
+export const getVideoAngles = async () => {
+  const response = await api.get('/api/video/angles');
   return response.data;
 };
 
-export const uploadVideoPhotos = async (formData) => {
-  const response = await api.post('/api/video/upload-photos', formData, {
+export const getVideoMotions = async () => {
+  const response = await api.get('/api/video/motions');
+  return response.data;
+};
+
+export const uploadProductPhoto = async (formData) => {
+  const response = await api.post('/api/video/upload-product', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 120000
   });
   return response.data;
 };
 
-export const getVideoPhotos = async () => {
-  const response = await api.get('/api/video/photos');
+export const getVideoShots = async () => {
+  const response = await api.get('/api/video/shots');
   return response.data;
 };
 
-export const deleteVideoPhoto = async (filename) => {
-  const response = await api.delete(`/api/video/photos/${filename}`);
+export const deleteVideoShot = async (filename) => {
+  const response = await api.delete(`/api/video/shots/${filename}`);
   return response.data;
 };
 
-export const generateVideo = async (data) => {
-  const response = await api.post('/api/video/generate', data, { timeout: 300000 });
+export const generateAngleShots = async (data) => {
+  const response = await api.post('/api/video/generate-shots', data, { timeout: 600000 });
   return response.data;
 };
 
-export const generateVideoBatch = async (data) => {
-  const response = await api.post('/api/video/generate-batch', data, { timeout: 600000 });
+export const generateClip = async (data) => {
+  const response = await api.post('/api/video/generate-clip', data, { timeout: 300000 });
   return response.data;
 };
 
-export const getVideoStatus = async (jobSetId) => {
-  const response = await api.get(`/api/video/status/${jobSetId}`);
+export const generateClipsBatch = async (data) => {
+  const response = await api.post('/api/video/generate-clips-batch', data, { timeout: 600000 });
   return response.data;
 };
 
-export const getVideoStatusBatch = async (jobSetIds) => {
-  const response = await api.post('/api/video/status-batch', { jobSetIds });
+export const getClipStatus = async (requestId) => {
+  const response = await api.get(`/api/video/clip-status/${requestId}`);
   return response.data;
 };
 
-export const getVideoPhotoUrl = (filename) => {
-  return `${BASE_URL}/uploads/video-photos/${filename}`;
+export const getClipStatusBatch = async (requestIds) => {
+  const response = await api.post('/api/video/clip-status-batch', { requestIds });
+  return response.data;
 };
 
 // ============================================
