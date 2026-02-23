@@ -2,8 +2,44 @@ const ActionLog = require('../db/models/ActionLog');
 const logger = require('../utils/logger');
 
 const COOLDOWN_DAYS = 3;
+const MIN_HOURS_BETWEEN_ACTIONS = 24;
 
 class CooldownManager {
+  /**
+   * Verifica si algún agente (brain, ai_manager, anomaly_detector) actuó
+   * sobre esta entidad en las últimas N horas. Esto es el "tiempo de respiración"
+   * mínimo entre cualquier acción — independiente del cooldown largo de 3 días.
+   *
+   * Meta Ads necesita mínimo 24h para atribuir conversiones y estabilizar delivery.
+   * Actuar más seguido es ruido.
+   *
+   * @param {string} entityId
+   * @param {number} hours - Mínimo de horas entre acciones (default 24)
+   * @returns {Object} { hasRecent, hoursAgo, lastAction, lastAgent }
+   */
+  async hasRecentAction(entityId, hours = MIN_HOURS_BETWEEN_ACTIONS) {
+    const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+
+    const lastAction = await ActionLog.findOne({
+      entity_id: entityId,
+      success: true,
+      executed_at: { $gte: since }
+    })
+      .sort({ executed_at: -1 })
+      .lean();
+
+    if (!lastAction) return { hasRecent: false };
+
+    const hoursAgo = Math.round((Date.now() - new Date(lastAction.executed_at).getTime()) / (1000 * 60 * 60));
+    return {
+      hasRecent: true,
+      hoursAgo,
+      lastAction: lastAction.action,
+      lastAgent: lastAction.agent_type || _extractAgent(lastAction.reasoning),
+      executedAt: lastAction.executed_at
+    };
+  }
+
   /**
    * Verifica si una entidad está en período de cooldown.
    * Basado en ActionLog: si hay una acción exitosa en los últimos 3 días, está en cooldown.
@@ -123,4 +159,4 @@ function _extractAgent(reasoning) {
   return match ? match[1].toLowerCase() : 'unknown';
 }
 
-module.exports = { CooldownManager, COOLDOWN_DAYS };
+module.exports = { CooldownManager, COOLDOWN_DAYS, MIN_HOURS_BETWEEN_ACTIONS };

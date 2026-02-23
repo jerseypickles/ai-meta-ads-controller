@@ -113,9 +113,9 @@ async function jobKillSwitchMonitor() {
 }
 
 /**
- * Job: Detección de anomalías por entidad — cada 10 minutos.
- * Busca caídas bruscas de ROAS, spikes de gasto, y CPA explosivo
- * en entidades individuales. Pausa selectiva (no toda la cuenta).
+ * Job: Detección de anomalías por entidad — cada 1 hora.
+ * Busca caídas bruscas de ROAS (3d vs 7d), spikes de gasto, y CPA explosivo
+ * en entidades individuales. Solo alerta (no pausa automática).
  */
 async function jobAnomalyDetection() {
   if (!isActiveHours()) return;
@@ -397,9 +397,10 @@ async function jobLifecycleManager() {
 }
 
 /**
- * Job: AI Manager — cada 8 horas.
+ * Job: AI Manager — 3 veces al día (9am, 5pm, 10pm ET).
  * Claude revisa todos los ad sets que él creó (managed_by_ai: true)
- * y toma acciones autónomas: escalar, pausar ads, rotar creativos, matar.
+ * y toma acciones autónomas: escalar, pausar ads, rotar creativos.
+ * Corre DESPUÉS del Brain para leer directivas estratégicas frescas.
  */
 async function jobAIManager() {
   if (!isActiveHours()) {
@@ -485,12 +486,12 @@ function initCronJobs() {
   });
   logger.info('  [*] Kill switch monitor — cada 15 min');
 
-  // Cada 10 minutos: Detección de anomalías por entidad
-  cron.schedule('*/10 * * * *', jobAnomalyDetection, {
+  // Cada hora: Detección de anomalías por entidad (Meta necesita tiempo para atribuir conversiones)
+  cron.schedule('0 * * * *', jobAnomalyDetection, {
     timezone: TIMEZONE,
     name: 'anomaly-detection'
   });
-  logger.info('  [*] Detección de anomalías — cada 10 min (horas activas)');
+  logger.info('  [*] Detección de anomalías — cada 1 hora (horas activas)');
 
   // Cada 10 minutos: Recolección de datos (horas activas)
   cron.schedule('*/10 * * * *', jobDataCollection, {
@@ -499,19 +500,22 @@ function initCronJobs() {
   });
   logger.info('  [*] Recolección de datos — cada 10 min (horas activas)');
 
-  // Cada 30 minutos (offset 15): Ciclo del Cerebro IA unificado
-  cron.schedule('15,45 * * * *', jobAgentsCycle, {
+  // 4 veces al día: Ciclo del Cerebro IA unificado (7am, 1pm, 7pm, 11pm ET)
+  // Reducido de cada 30min — Meta Ads necesita horas/días para mostrar resultados reales.
+  // Un cerebro de calidad analiza, actúa, y ESPERA antes de volver a evaluar.
+  cron.schedule('0 7,13,19,23 * * *', jobAgentsCycle, {
     timezone: TIMEZONE,
     name: 'brain-cycle'
   });
-  logger.info('  [*] Cerebro IA — cada 30 min (horas activas)');
+  logger.info('  [*] Cerebro IA — 4x/día: 7am, 1pm, 7pm, 11pm ET (horas activas)');
 
-  // Cada 30 minutos (offset 5): Lifecycle manager (activar, learning, escalar, matar)
-  cron.schedule('5,35 * * * *', jobLifecycleManager, {
+  // Cada 2 horas: Lifecycle manager (activar, learning, escalar, matar)
+  // Reducido de cada 30min — las transiciones de fase no necesitan velocidad extrema.
+  cron.schedule('30 */2 * * *', jobLifecycleManager, {
     timezone: TIMEZONE,
     name: 'lifecycle-manager'
   });
-  logger.info('  [*] Lifecycle Manager IA — cada 30 min (horas activas)');
+  logger.info('  [*] Lifecycle Manager IA — cada 2 horas (horas activas)');
 
   // Cada 2 horas: Medición de impacto (24h y 3d checkpoints)
   cron.schedule('0 */2 * * *', jobMeasureImpact, {
@@ -520,12 +524,14 @@ function initCronJobs() {
   });
   logger.info('  [*] Medición de impacto — cada 2 horas');
 
-  // Cada 2 horas: AI Manager autónomo (ad sets creados por Claude)
-  cron.schedule('0 */2 * * *', jobAIManager, {
+  // 3 veces al día: AI Manager autónomo (9am, 5pm, 10pm ET)
+  // Reducido de cada 2h — corre DESPUÉS del Brain para leer directivas frescas.
+  // Meta necesita horas/días para procesar cambios. Más frecuencia = más ruido.
+  cron.schedule('0 9,17,22 * * *', jobAIManager, {
     timezone: TIMEZONE,
     name: 'ai-manager'
   });
-  logger.info('  [*] AI Manager autónomo — cada 2 horas (horas activas)');
+  logger.info('  [*] AI Manager autónomo — 3x/día: 9am, 5pm, 10pm ET (horas activas)');
 
   // Cada 6 horas: Sync de métricas de creativos (después de data collection)
   cron.schedule('30 */6 * * *', jobCreativeMetricsSync, {

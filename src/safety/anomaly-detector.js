@@ -84,7 +84,8 @@ class AnomalyDetector {
               checks,
               snapshot_metrics: {
                 roas_7d: snapshot.metrics?.last_7d?.roas || 0,
-                roas_today: snapshot.metrics?.today?.roas || 0,
+                roas_3d: snapshot.metrics?.last_3d?.roas || 0,
+                spend_3d: snapshot.metrics?.last_3d?.spend || 0,
                 spend_today: snapshot.metrics?.today?.spend || 0,
                 daily_budget: snapshot.daily_budget || 0,
                 cpa_7d: snapshot.metrics?.last_7d?.cpa || 0,
@@ -153,28 +154,32 @@ class AnomalyDetector {
     const checks = [];
     const metrics = snapshot.metrics || {};
     const today = metrics.today || {};
+    const last3d = metrics.last_3d || {};
     const last7d = metrics.last_7d || {};
 
     const spendToday = toNumber(today.spend);
+    const spend3d = toNumber(last3d.spend);
     const dailyBudget = toNumber(snapshot.daily_budget);
     const roas7d = toNumber(last7d.roas);
-    const roasToday = toNumber(today.roas);
+    const roas3d = toNumber(last3d.roas);
     const spendThreshold = toNumber(this.config.min_spend_for_anomaly, 15);
 
-    // No evaluar entidades con poco gasto (evitar falsos positivos)
-    if (spendToday < spendThreshold) return [];
+    // No evaluar entidades con poco gasto en 3d (evitar falsos positivos con datos incompletos)
+    // ROAS de "hoy" siempre es bajo temprano porque Meta atribuye conversiones con delay de 24h+
+    if (spend3d < spendThreshold * 2) return [];
 
-    // CHECK 1: Caída brusca de ROAS
-    // ROAS hoy vs ROAS promedio 7d
+    // CHECK 1: Caída real de ROAS
+    // Comparar 3d vs 7d (señal real de deterioro, no ruido intradiario)
+    // ROAS de "hoy" NO se usa porque Meta atribuye conversiones con ventana de 24h-7d
     const roasDropThreshold = toNumber(this.config.roas_drop_threshold, 0.50);
-    if (roas7d > 0.5 && roasToday >= 0) {
-      const roasDrop = (roas7d - roasToday) / roas7d;
+    if (roas7d > 0.5 && roas3d >= 0) {
+      const roasDrop = (roas7d - roas3d) / roas7d;
       if (roasDrop >= roasDropThreshold) {
         checks.push({
           type: 'roas_drop',
           severity: roasDrop >= 0.75 ? 'critical' : 'warning',
-          reason: `ROAS cayó ${(roasDrop * 100).toFixed(0)}%: ${roasToday.toFixed(2)}x hoy vs ${roas7d.toFixed(2)}x promedio 7d`,
-          roas_today: roasToday,
+          reason: `ROAS cayó ${(roasDrop * 100).toFixed(0)}%: ${roas3d.toFixed(2)}x (3d) vs ${roas7d.toFixed(2)}x promedio 7d`,
+          roas_3d: roas3d,
           roas_7d: roas7d,
           drop_pct: Math.round(roasDrop * 100)
         });

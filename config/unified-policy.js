@@ -6,7 +6,7 @@ module.exports = {
 
   // Decision thresholds
   min_action_score: 0.55,
-  max_recommendations_per_cycle: 12,
+  max_recommendations_per_cycle: 5,
   min_spend_for_action: 20,
   min_impressions_for_action: 2500,
 

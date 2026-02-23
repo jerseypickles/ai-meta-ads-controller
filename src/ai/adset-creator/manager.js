@@ -8,6 +8,7 @@ const { getMetaClient } = require('../../meta/client');
 const { getLatestSnapshots, getAdsForAdSet } = require('../../db/queries');
 const MetricSnapshot = require('../../db/models/MetricSnapshot');
 const StrategicDirective = require('../../db/models/StrategicDirective');
+const { CooldownManager } = require('../../safety/cooldown-manager');
 
 const client = new Anthropic({ apiKey: config.claude.apiKey });
 
@@ -241,6 +242,44 @@ async function manageAdSet(creation) {
 
   const now = new Date();
   const daysSinceCreation = (now - new Date(creation.created_at)) / (1000 * 60 * 60 * 24);
+
+  // ═══ BREATHING CHECK: no actuar si alguien ya tocó este ad set en las últimas 24h ═══
+  // Meta Ads necesita mínimo 24h para atribuir conversiones y estabilizar delivery.
+  // Si el Brain o este Manager ya actuó recientemente, esperar.
+  const cooldownManager = new CooldownManager();
+  const recentCheck = await cooldownManager.hasRecentAction(adSetId);
+  if (recentCheck.hasRecent) {
+    logger.info(`[AI-MANAGER] Saltando ${creation.meta_entity_name} — acción reciente hace ${recentCheck.hoursAgo}h por ${recentCheck.lastAgent} (${recentCheck.lastAction}). Esperando respiración 24h.`);
+    return {
+      actionsExecuted: 0,
+      assessment: `Esperando respiración: última acción hace ${recentCheck.hoursAgo}h por ${recentCheck.lastAgent}`,
+      frequency_status: 'unknown',
+      performance_trend: 'unknown',
+      needs_new_creatives: false
+    };
+  }
+
+  // ═══ PENDING IMPACT CHECK: no actuar si hay acciones pendientes de medición ═══
+  // Si ejecutamos algo en los últimos 3 días que aún no se midió, esperar resultado.
+  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  const pendingAction = await ActionLog.findOne({
+    entity_id: adSetId,
+    success: true,
+    impact_measured: { $ne: true },
+    executed_at: { $gte: threeDaysAgo }
+  }).sort({ executed_at: -1 }).lean();
+
+  if (pendingAction) {
+    const hoursAgo = Math.round((Date.now() - new Date(pendingAction.executed_at).getTime()) / (1000 * 60 * 60));
+    logger.info(`[AI-MANAGER] Saltando ${creation.meta_entity_name} — acción pendiente de medición: ${pendingAction.action} hace ${hoursAgo}h. Esperando resultado.`);
+    return {
+      actionsExecuted: 0,
+      assessment: `Esperando medición de impacto: ${pendingAction.action} hace ${hoursAgo}h`,
+      frequency_status: 'unknown',
+      performance_trend: 'unknown',
+      needs_new_creatives: false
+    };
+  }
 
   // ═══ READ ALL METRICS FROM MONGODB (no Meta API calls for reads) ═══
   // DataCollector already fetches all metrics every 10 min and stores in MetricSnapshot.
@@ -479,6 +518,7 @@ async function manageAdSet(creation) {
     }).sort({ created_at: -1 }).lean();
 
     brainDirectives = directives.map(d => ({
+      _id: d._id,
       type: d.directive_type,
       target_action: d.target_action,
       target_entity_id: d.entity_id,
@@ -1018,6 +1058,31 @@ async function manageAdSet(creation) {
 
   if (actionsExecuted > 0) {
     logger.info(`[AI-MANAGER] ${creation.meta_entity_name}: ${actionsExecuted} acciones ejecutadas — ${decision.assessment}`);
+
+    // ═══ MARK BRAIN DIRECTIVES AS APPLIED ═══
+    // Si actuamos sobre este ad set, marcar las directivas del Brain como cumplidas.
+    // Esto mejora el compliance tracking y evita que el Brain re-emita la misma directiva.
+    if (brainDirectives.length > 0) {
+      try {
+        const directiveIds = brainDirectives.map(d => d._id || d.id).filter(Boolean);
+        if (directiveIds.length > 0) {
+          await StrategicDirective.updateMany(
+            { _id: { $in: directiveIds }, status: 'active' },
+            { $set: { status: 'applied', applied_at: new Date() }, $inc: { applied_count: 1 } }
+          );
+          logger.info(`[AI-MANAGER] ${directiveIds.length} directivas del Brain marcadas como applied`);
+        } else {
+          // Fallback: buscar por entity_id si no tenemos IDs directos
+          await StrategicDirective.updateMany(
+            { entity_id: adSetId, status: 'active', source_insight_type: 'brain_supervision' },
+            { $set: { status: 'applied', applied_at: new Date() }, $inc: { applied_count: 1 } }
+          );
+          logger.info(`[AI-MANAGER] Directivas del Brain para ${adSetId} marcadas como applied`);
+        }
+      } catch (dirErr) {
+        logger.warn(`[AI-MANAGER] Error marcando directivas como applied: ${dirErr.message}`);
+      }
+    }
   }
 
   return {

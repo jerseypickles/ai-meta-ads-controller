@@ -944,6 +944,29 @@ class UnifiedBrain {
         const supportingMetrics = this._extractSupportingMetrics(rec);
         const suggestedActions = this._buildSuggestedActions(rec, reasonCategory);
 
+        // Check for existing active directive with same entity+type+target (avoid spam)
+        // If one exists from the last 24h, just update consecutive_count instead of creating duplicate
+        const existingDirective = await StrategicDirective.findOne({
+          entity_id: rec.entity_id,
+          directive_type: directiveType,
+          target_action: targetAction,
+          source_insight_type: 'brain_supervision',
+          status: 'active',
+          created_at: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+        }).sort({ created_at: -1 });
+
+        if (existingDirective) {
+          // Directive already exists — just bump consecutive_count and update reason
+          existingDirective.consecutive_count = (existingDirective.consecutive_count || 1) + 1;
+          existingDirective.reason = `[BRAIN→AI-MANAGER] ${rec.reasoning}`;
+          existingDirective.supporting_metrics = supportingMetrics;
+          existingDirective.urgency_level = urgencyLevel;
+          await existingDirective.save();
+          logger.info(`[BRAIN] Directiva existente actualizada (consecutive=${existingDirective.consecutive_count}) para ${rec.entity_name}: ${directiveType}/${targetAction}`);
+          created++;
+          continue;
+        }
+
         // Count consecutive directives for same entity+type (escalation signal)
         let consecutiveCount = 1;
         try {
@@ -973,7 +996,7 @@ class UnifiedBrain {
           supporting_metrics: supportingMetrics,
           suggested_actions: suggestedActions,
           consecutive_count: consecutiveCount,
-          expires_at: new Date(Date.now() + 72 * 60 * 60 * 1000), // 72h (was 24h) — gives AI Manager multiple cycles to act
+          expires_at: new Date(Date.now() + 72 * 60 * 60 * 1000), // 72h — gives AI Manager multiple cycles to act
           status: 'active'
         });
 
@@ -1181,6 +1204,13 @@ class UnifiedBrain {
         const cooldownCheck = await cooldownManager.isOnCooldown(rec.entity_id);
         if (cooldownCheck.onCooldown) {
           logger.info(`[BRAIN][AUTO] Saltando ${rec.entity_name} — cooldown ${cooldownCheck.hoursLeft}h`);
+          continue;
+        }
+
+        // Check de respiración: no actuar si alguien (brain, manager, etc) ya tocó esta entidad en las últimas 24h
+        const recentCheck = await cooldownManager.hasRecentAction(rec.entity_id);
+        if (recentCheck.hasRecent) {
+          logger.info(`[BRAIN][AUTO] Saltando ${rec.entity_name} — acción reciente hace ${recentCheck.hoursAgo}h por ${recentCheck.lastAgent} (${recentCheck.lastAction}). Esperando respiración.`);
           continue;
         }
 

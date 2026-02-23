@@ -10,7 +10,7 @@ module.exports = {
   max_total_daily_change_pct: 20,    // Máximo 20% de cambio total diario en la cuenta (alineado con limite de Meta para no resetear learning phase)
 
   // Períodos de enfriamiento
-  cooldown_hours: 6,                 // No tocar la misma entidad por 6 horas (suficiente para que Meta procese)
+  cooldown_hours: 24,                // No tocar la misma entidad por 24 horas (Meta necesita mínimo 24h para atribuir conversiones y estabilizar delivery)
   learning_phase_protection: true,   // No modificar entidades en fase de aprendizaje
 
   // Kill switch — disparadores de emergencia
@@ -45,7 +45,7 @@ module.exports = {
     // Mínimo de gasto para considerar una entidad (evitar falsos positivos con $2)
     min_spend_for_anomaly: 15,
     // Cooldown entre detecciones sobre la misma entidad (horas)
-    cooldown_hours: 6,
+    cooldown_hours: 24,
     // Auto-pausar entidades anómalas (si false, solo alerta)
     // DESHABILITADO: el AI Manager maneja ad sets IA, y los manuales los maneja el humano.
     // El anomaly detector solo registra el evento como alerta.
