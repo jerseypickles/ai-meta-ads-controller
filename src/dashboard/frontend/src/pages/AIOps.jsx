@@ -541,32 +541,6 @@ export default function AIOps() {
     }
   };
 
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: '#6b7280' }}>
-        <RefreshCw size={20} style={{ animation: 'spin 1s linear infinite' }} />
-        <span style={{ marginLeft: '10px' }}>Loading AI Operations...</span>
-      </div>
-    );
-  }
-
-  if (!data && error) {
-    return (
-      <div style={{ maxWidth: '1400px' }}>
-        <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#fff', margin: '0 0 16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <Activity size={22} color="#3b82f6" /> AI Operations
-        </h1>
-        <div style={{ padding: '20px', backgroundColor: '#7f1d1d', border: '1px solid #dc2626', borderRadius: '12px', color: '#fca5a5', fontSize: '14px' }}>
-          Error loading data: {error}
-          <button onClick={() => { setLoading(true); fetchData(); }} style={{
-            marginLeft: '16px', padding: '6px 12px', borderRadius: '6px', border: '1px solid #dc2626',
-            backgroundColor: '#991b1b', color: '#fca5a5', cursor: 'pointer', fontSize: '12px'
-          }}>Retry</button>
-        </div>
-      </div>
-    );
-  }
-
   const mgr = data?.ai_manager || {};
   const brain = data?.brain || {};
   const compliance = data?.compliance || {};
@@ -606,6 +580,32 @@ export default function AIOps() {
       return order(a) - order(b);
     });
   }, [adSets, statusFilter]);
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: '#6b7280' }}>
+        <RefreshCw size={20} style={{ animation: 'spin 1s linear infinite' }} />
+        <span style={{ marginLeft: '10px' }}>Loading AI Operations...</span>
+      </div>
+    );
+  }
+
+  if (!data && error) {
+    return (
+      <div style={{ maxWidth: '1400px' }}>
+        <h1 style={{ fontSize: '22px', fontWeight: '700', color: '#fff', margin: '0 0 16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <Activity size={22} color="#3b82f6" /> AI Operations
+        </h1>
+        <div style={{ padding: '20px', backgroundColor: '#7f1d1d', border: '1px solid #dc2626', borderRadius: '12px', color: '#fca5a5', fontSize: '14px' }}>
+          Error loading data: {error}
+          <button onClick={() => { setLoading(true); fetchData(); }} style={{
+            marginLeft: '16px', padding: '6px 12px', borderRadius: '6px', border: '1px solid #dc2626',
+            backgroundColor: '#991b1b', color: '#fca5a5', cursor: 'pointer', fontSize: '12px'
+          }}>Retry</button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: '1400px' }}>
