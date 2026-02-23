@@ -12,7 +12,8 @@ import {
   X,
   Palette,
   Rocket,
-  Activity
+  Activity,
+  Video
 } from 'lucide-react';
 import { getToken, getControlsStatus } from './api';
 import Login from './pages/Login';
@@ -26,6 +27,7 @@ import CreativeBank from './pages/CreativeBank';
 import AdSetCreator from './pages/AdSetCreator';
 import ImpactReport from './pages/ImpactReport';
 import AIOps from './pages/AIOps';
+import VideoGenerator from './pages/VideoGenerator';
 
 // AuthContext
 const AuthContext = createContext();
@@ -121,6 +123,7 @@ const Sidebar = ({ collapsed, onToggle }) => {
     { path: '/ai-ops', icon: Activity, label: 'AI Ops' },
     { path: '/creatives', icon: Palette, label: 'Banco Creativo' },
     { path: '/adset-creator', icon: Rocket, label: 'Crear Ad Set' },
+    { path: '/video', icon: Video, label: 'Video AI' },
     { path: '/impact', icon: BarChart3, label: 'Impacto' },
     { path: '/controls', icon: Shield, label: 'Controles' },
     { path: '/meta-connect', icon: Facebook, label: 'Meta' },
@@ -380,6 +383,16 @@ function App() {
               <ProtectedRoute>
                 <DashboardLayout>
                   <AdSetCreator />
+                </DashboardLayout>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/video"
+            element={
+              <ProtectedRoute>
+                <DashboardLayout>
+                  <VideoGenerator />
                 </DashboardLayout>
               </ProtectedRoute>
             }

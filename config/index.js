@@ -56,6 +56,11 @@ module.exports = {
     }
   },
 
+  higgsfield: {
+    apiKey: process.env.HIGGSFIELD_API_KEY || '',
+    apiSecret: process.env.HIGGSFIELD_API_SECRET || ''
+  },
+
   search: {
     braveApiKey: process.env.BRAVE_SEARCH_API_KEY || '',
     serpApiKey: process.env.SERP_API_KEY || ''

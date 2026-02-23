@@ -889,6 +889,57 @@ export const dismissInsight = async (insightId) => {
 };
 
 // ============================================
+// VIDEO GENERATION (Higgsfield)
+// ============================================
+
+export const getVideoPresets = async () => {
+  const response = await api.get('/api/video/presets');
+  return response.data;
+};
+
+export const uploadVideoPhotos = async (formData) => {
+  const response = await api.post('/api/video/upload-photos', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000
+  });
+  return response.data;
+};
+
+export const getVideoPhotos = async () => {
+  const response = await api.get('/api/video/photos');
+  return response.data;
+};
+
+export const deleteVideoPhoto = async (filename) => {
+  const response = await api.delete(`/api/video/photos/${filename}`);
+  return response.data;
+};
+
+export const generateVideo = async (data) => {
+  const response = await api.post('/api/video/generate', data, { timeout: 300000 });
+  return response.data;
+};
+
+export const generateVideoBatch = async (data) => {
+  const response = await api.post('/api/video/generate-batch', data, { timeout: 600000 });
+  return response.data;
+};
+
+export const getVideoStatus = async (jobSetId) => {
+  const response = await api.get(`/api/video/status/${jobSetId}`);
+  return response.data;
+};
+
+export const getVideoStatusBatch = async (jobSetIds) => {
+  const response = await api.post('/api/video/status-batch', { jobSetIds });
+  return response.data;
+};
+
+export const getVideoPhotoUrl = (filename) => {
+  return `${BASE_URL}/uploads/video-photos/${filename}`;
+};
+
+// ============================================
 // EXPORT DEFAULT
 // ============================================
 
