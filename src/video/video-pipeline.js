@@ -373,6 +373,7 @@ async function _generateShotsBackground(jobId, productImagePath, options = {}) {
 }
 
 // ═══ STEP 3: Claude "Quality Judge" — Score each generated shot ═══
+// Batches shots in groups of 4 to avoid 413 request_too_large errors
 
 async function judgeShots(shotUrls, productDescription, originalImagePath) {
   const apiKey = config.claude.apiKey;
@@ -380,51 +381,75 @@ async function judgeShots(shotUrls, productDescription, originalImagePath) {
 
   const anthropic = new Anthropic({ apiKey });
 
-  const content = [];
-
-  // Include original product photo as reference
+  // Load original product photo once (for reference in each batch)
+  let origImageContent = null;
   if (originalImagePath && fs.existsSync(originalImagePath)) {
     const origBuffer = fs.readFileSync(originalImagePath);
     const origBase64 = origBuffer.toString('base64');
     const origMime = getMimeType(originalImagePath);
-    content.push({
+    origImageContent = {
       type: 'image',
       source: { type: 'base64', media_type: origMime, data: origBase64 }
-    });
-    content.push({
-      type: 'text',
-      text: '↑ ORIGINAL product reference photo (this is what the product should look like)'
-    });
+    };
   }
 
-  // Include each generated shot (limit to avoid token overflow)
-  const shotsToJudge = shotUrls.slice(0, 12);
-  for (const shot of shotsToJudge) {
-    const filePath = path.join(config.system.uploadsDir, shot.url.replace('/uploads/', ''));
-    if (fs.existsSync(filePath)) {
-      const imgBuffer = fs.readFileSync(filePath);
-      const base64 = imgBuffer.toString('base64');
-      const mediaType = getMimeType(filePath);
-      content.push({
-        type: 'image',
-        source: { type: 'base64', media_type: mediaType, data: base64 }
-      });
+  // Split shots into batches of 4
+  const BATCH_SIZE = 4;
+  const allShots = shotUrls.slice(0, 12);
+  const batches = [];
+  for (let i = 0; i < allShots.length; i += BATCH_SIZE) {
+    batches.push(allShots.slice(i, i + BATCH_SIZE));
+  }
+
+  logger.info(`[VIDEO-PIPE] Quality Judge: ${allShots.length} shots in ${batches.length} batches of ${BATCH_SIZE}`);
+
+  const allScores = {};
+  let totalScore = 0;
+  let scoreCount = 0;
+
+  for (let b = 0; b < batches.length; b++) {
+    const batch = batches[b];
+    const content = [];
+
+    // Include original product photo as reference
+    if (origImageContent) {
+      content.push(origImageContent);
       content.push({
         type: 'text',
-        text: `↑ Shot: "${shot.label}" (key: ${shot.angle})`
+        text: '↑ ORIGINAL product reference photo (this is what the product should look like)'
       });
     }
-  }
 
-  content.push({
-    type: 'text',
-    text: `You are a quality control judge for product commercial photography. The product is: "${productDescription}".
+    // Include each shot in this batch
+    for (const shot of batch) {
+      const filePath = path.join(config.system.uploadsDir, shot.url.replace('/uploads/', ''));
+      if (fs.existsSync(filePath)) {
+        const imgBuffer = fs.readFileSync(filePath);
+        const base64 = imgBuffer.toString('base64');
+        const mediaType = getMimeType(filePath);
+        content.push({
+          type: 'image',
+          source: { type: 'base64', media_type: mediaType, data: base64 }
+        });
+        content.push({
+          type: 'text',
+          text: `↑ Shot: "${shot.label}" (key: ${shot.angle})`
+        });
+      }
+    }
+
+    const shotKeysInBatch = batch.map(s => s.angle).join(', ');
+    content.push({
+      type: 'text',
+      text: `You are a quality control judge for product commercial photography. The product is: "${productDescription}".
 
 Score EACH generated shot on a scale of 1-10 based on these criteria:
 1. **Label Fidelity (40%)**: Is the product label/text readable, undistorted, and matching the original? Any warping, blurring, or text alteration is a major penalty.
 2. **Product Integrity (25%)**: Does the product shape, color, and packaging match the original photo exactly? No reshaping, 3D rendering, or artistic reinterpretation.
 3. **Scene Quality (20%)**: Is the background/scene realistic, well-lit, and commercially appealing? Good composition and professional feel.
 4. **Commercial Value (15%)**: Would this image work as a frame in a real product commercial? Is it ad-quality?
+
+You are judging these shots: ${shotKeysInBatch}
 
 For each shot, provide:
 - score: 1-10 integer
@@ -434,40 +459,55 @@ For each shot, provide:
 Return ONLY valid JSON:
 {
   "scores": {
-    "shot-key": { "score": 8, "verdict": "approve", "reason": "Label is sharp and readable, product perfectly placed in scene" },
-    ...for each shot...
-  },
-  "overallAverage": 7.5,
-  "summary": "One sentence overall assessment"
+    "shot-key": { "score": 8, "verdict": "approve", "reason": "..." },
+    ...for each shot in this batch...
+  }
 }`
-  });
+    });
 
-  logger.info(`[VIDEO-PIPE] Calling Claude Quality Judge for ${shotsToJudge.length} shots...`);
+    logger.info(`[VIDEO-PIPE] Quality Judge batch ${b + 1}/${batches.length}: ${shotKeysInBatch}`);
 
-  const response = await anthropic.messages.create({
-    model: config.claude.model,
-    max_tokens: 4096,
-    messages: [{ role: 'user', content }]
-  });
+    const response = await anthropic.messages.create({
+      model: config.claude.model,
+      max_tokens: 2048,
+      messages: [{ role: 'user', content }]
+    });
 
-  const rawText = response.content[0]?.text || '';
-
-  let cleaned = rawText.trim();
-  if (cleaned.startsWith('```')) {
-    cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
-  }
-  if (!cleaned.startsWith('{')) {
-    const jsonStart = cleaned.indexOf('{');
-    const jsonEnd = cleaned.lastIndexOf('}');
-    if (jsonStart !== -1 && jsonEnd !== -1) {
-      cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+    const rawText = response.content[0]?.text || '';
+    let cleaned = rawText.trim();
+    if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
     }
+    if (!cleaned.startsWith('{')) {
+      const jsonStart = cleaned.indexOf('{');
+      const jsonEnd = cleaned.lastIndexOf('}');
+      if (jsonStart !== -1 && jsonEnd !== -1) {
+        cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
+      }
+    }
+
+    const batchResult = JSON.parse(cleaned);
+
+    // Merge batch scores into allScores
+    if (batchResult.scores) {
+      for (const [key, val] of Object.entries(batchResult.scores)) {
+        allScores[key] = val;
+        if (val?.score) { totalScore += val.score; scoreCount++; }
+      }
+    }
+
+    // Small delay between batches
+    if (b < batches.length - 1) await new Promise(r => setTimeout(r, 1000));
   }
 
-  const parsed = JSON.parse(cleaned);
-  logger.info(`[VIDEO-PIPE] Quality Judge: avg ${parsed.overallAverage}/10 — ${parsed.summary}`);
+  const overallAverage = scoreCount > 0 ? Math.round((totalScore / scoreCount) * 10) / 10 : 0;
+  const approved = Object.values(allScores).filter(s => s?.verdict === 'approve').length;
+  const rejected = Object.values(allScores).filter(s => s?.verdict === 'reject').length;
+  const summary = `${approved} aprobados, ${Object.values(allScores).length - approved - rejected} marginales, ${rejected} rechazados de ${scoreCount} evaluados`;
 
-  return parsed;
+  logger.info(`[VIDEO-PIPE] Quality Judge complete: avg ${overallAverage}/10 — ${summary}`);
+
+  return { scores: allScores, overallAverage, summary };
 }
 
 // ═══ STEP 4: Regenerate a single shot ═══

@@ -571,13 +571,29 @@ export default function VideoGenerator() {
       if (ids.length === 0) return;
       const data = await getClipStatusBatch(ids);
       if (data.jobs) {
-        setClips(prev => prev.map(c => {
+        const updatedClips = clips.map(c => {
           const updated = data.jobs.find(u => u.requestId === c.requestId);
           return updated ? { ...c, ...updated } : c;
-        }));
+        });
+        setClips(updatedClips);
+
+        // Auto-stitch: if ALL clips are now completed and no stitch running yet
+        const allDone = updatedClips.length >= 2 &&
+          updatedClips.every(c => c.status === 'completed' && c.videoUrl) &&
+          !stitchJobId && !stitchStatus;
+        if (allDone) {
+          const urls = updatedClips.map(c => c.videoUrl);
+          try {
+            const stitchData = await stitchClips(urls);
+            setStitchJobId(stitchData.jobId);
+            setStitchStatus({ status: 'running', totalClips: stitchData.totalClips, downloaded: 0 });
+          } catch (err) {
+            console.error('Auto-stitch error:', err);
+          }
+        }
       }
     } catch (err) { console.error('Poll error:', err); }
-  }, [clips]);
+  }, [clips, stitchJobId, stitchStatus]);
 
   const refreshSingleClip = async (requestId) => {
     try {
