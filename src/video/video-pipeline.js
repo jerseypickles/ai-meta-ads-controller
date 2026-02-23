@@ -806,12 +806,11 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
       cumulativeOffset = offset;
     }
 
-    // Audio: concat all audio streams (no crossfade on audio — simpler and cleaner)
-    const audioInputs = localFiles.map((_, i) => `[${i}:a]`).join('');
-    filterParts.push(`${audioInputs}concat=n=${n}:v=0:a=1[aconcat]`);
-
     // Calculate total video duration (accounting for crossfades)
     const totalDuration = clipDurations.reduce((s, d) => s + d, 0) - (n - 1) * crossfadeDuration;
+
+    // NOTE: Kling 2.6 generates video-only clips (no audio stream).
+    // We generate a silent audio base and only add music on top if selected.
 
     // ── Step D: Closing text overlay on last seconds ──
     let videoFinal = '[vout]';
@@ -825,8 +824,8 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
       videoFinal = '[vtxt]';
     }
 
-    // ── Step E: Mix background music ──
-    let audioFinal = '[aconcat]';
+    // ── Step E: Audio — music track or silence ──
+    let audioFinal = null;
     const musicTrack = MUSIC_TRACKS.find(m => m.key === musicKey);
     const musicFilePath = musicTrack?.file ? path.join(MUSIC_DIR, musicTrack.file) : null;
     let extraInputs = [];
@@ -834,12 +833,19 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
     if (musicFilePath && fs.existsSync(musicFilePath)) {
       const musicIdx = n; // next input index after all video clips
       extraInputs = ['-i', musicFilePath];
-      // Trim music to total duration, lower volume, fade out at end, mix under clip audio
+      // Trim music to total duration, set volume, fade in at start, fade out at end
       filterParts.push(
-        `[${musicIdx}:a]atrim=0:${totalDuration.toFixed(2)},asetpts=PTS-STARTPTS,volume=0.18,afade=t=out:st=${(totalDuration - 3).toFixed(2)}:d=3[bgm]`,
-        `[aconcat][bgm]amix=inputs=2:duration=shortest:dropout_transition=2[amixed]`
+        `[${musicIdx}:a]atrim=0:${totalDuration.toFixed(2)},asetpts=PTS-STARTPTS,volume=0.35,afade=t=in:ss=0:d=2,afade=t=out:st=${Math.max(0, totalDuration - 3).toFixed(2)}:d=3[aout]`
       );
-      audioFinal = '[amixed]';
+      audioFinal = '[aout]';
+    } else {
+      // No music selected — generate silent audio track matching video duration
+      extraInputs = ['-f', 'lavfi', '-i', `anullsrc=r=44100:cl=stereo`];
+      const silenceIdx = n;
+      filterParts.push(
+        `[${silenceIdx}:a]atrim=0:${totalDuration.toFixed(2)},asetpts=PTS-STARTPTS[aout]`
+      );
+      audioFinal = '[aout]';
     }
 
     // ── Step F: Execute FFmpeg ──
@@ -851,6 +857,7 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
       '-map', videoFinal, '-map', audioFinal,
       '-c:v', 'libx264', '-preset', 'fast', '-crf', '22',
       '-c:a', 'aac', '-b:a', '192k',
+      '-shortest',
       '-movflags', '+faststart',
       '-y', outputPath
     ];
