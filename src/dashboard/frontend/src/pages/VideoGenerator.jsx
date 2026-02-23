@@ -2,14 +2,15 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Video, Upload, Image, Play, Trash2, RefreshCw, CheckCircle,
   XCircle, Clock, AlertTriangle, Camera, Zap, Download,
-  Loader, Film, ArrowRight, Eye, Edit3, Brain, LayoutGrid, Star, Award, RotateCcw
+  Loader, Film, ArrowRight, Eye, Edit3, Brain, LayoutGrid, Star, Award, RotateCcw,
+  Music, Type
 } from 'lucide-react';
 import {
   getVideoMotions, uploadProductPhoto, getVideoShots,
   deleteVideoShot, generateShots, getShotJobStatus,
   analyzeScene, judgeShots, regenerateShot,
   generateClipsBatch, getClipStatus, getClipStatusBatch,
-  stitchClips, getStitchStatus
+  stitchClips, getStitchStatus, getMusicTracks
 } from '../api';
 
 const BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
@@ -311,15 +312,21 @@ export default function VideoGenerator() {
   const [stitchJobId, setStitchJobId] = useState(null);
   const [stitchStatus, setStitchStatus] = useState(null);
 
+  // Production options: music + closing text
+  const [musicTracks, setMusicTracks] = useState([]);
+  const [selectedMusic, setSelectedMusic] = useState('none');
+  const [brandText, setBrandText] = useState('');
+
   const [error, setError] = useState(null);
   const fileInputRef = useRef(null);
   const shotPollRef = useRef(null);
   const clipPollRef = useRef(null);
   const stitchPollRef = useRef(null);
 
-  // Load motions + existing shots on mount
+  // Load motions + music tracks + existing shots on mount
   useEffect(() => {
     loadMotions();
+    loadMusicTracks();
     loadShots();
     return () => {
       if (shotPollRef.current) clearInterval(shotPollRef.current);
@@ -360,6 +367,13 @@ export default function VideoGenerator() {
       const data = await getVideoMotions();
       setMotions(data.motions || []);
     } catch (err) { console.error('Load motions error:', err); }
+  };
+
+  const loadMusicTracks = async () => {
+    try {
+      const data = await getMusicTracks();
+      setMusicTracks(data.tracks || []);
+    } catch (err) { console.error('Load music tracks error:', err); }
   };
 
   const loadShots = async () => {
@@ -404,6 +418,9 @@ export default function VideoGenerator() {
         productDescription
       });
       setDirectorPlan(plan);
+      // Pre-fill music and closing text from Director recommendation
+      if (plan.recommendedMusic) setSelectedMusic(plan.recommendedMusic);
+      if (plan.closingText) setBrandText(plan.closingText);
     } catch (err) {
       setError(`Error en Director Creativo: ${err.response?.data?.error || err.message}`);
     } finally {
@@ -584,7 +601,11 @@ export default function VideoGenerator() {
         if (allDone) {
           const urls = updatedClips.map(c => c.videoUrl);
           try {
-            const stitchData = await stitchClips(urls);
+            const stitchData = await stitchClips(urls, {
+              musicTrack: selectedMusic,
+              brandText: brandText,
+              crossfadeDuration: 0.5
+            });
             setStitchJobId(stitchData.jobId);
             setStitchStatus({ status: 'running', totalClips: stitchData.totalClips, downloaded: 0 });
           } catch (err) {
@@ -593,7 +614,7 @@ export default function VideoGenerator() {
         }
       }
     } catch (err) { console.error('Poll error:', err); }
-  }, [clips, stitchJobId, stitchStatus]);
+  }, [clips, stitchJobId, stitchStatus, selectedMusic, brandText]);
 
   const refreshSingleClip = async (requestId) => {
     try {
@@ -616,7 +637,11 @@ export default function VideoGenerator() {
     setError(null);
     setStitchStatus(null);
     try {
-      const data = await stitchClips(completedClipUrls);
+      const data = await stitchClips(completedClipUrls, {
+        musicTrack: selectedMusic,
+        brandText: brandText,
+        crossfadeDuration: 0.5
+      });
       setStitchJobId(data.jobId);
       setStitchStatus({ status: 'running', totalClips: data.totalClips, downloaded: 0 });
     } catch (err) {
@@ -829,6 +854,32 @@ export default function VideoGenerator() {
               {sceneInfo?.reason}
             </p>
           </div>
+
+          {/* Music + closing text recommendation */}
+          {(directorPlan.recommendedMusic || directorPlan.closingText) && (
+            <div style={{
+              display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px'
+            }}>
+              {directorPlan.recommendedMusic && directorPlan.recommendedMusic !== 'none' && (
+                <div style={{
+                  backgroundColor: '#1e1338', border: '1px solid #7c3aed40', padding: '6px 12px',
+                  borderRadius: '8px', fontSize: '12px', color: '#c4b5fd', display: 'flex', alignItems: 'center', gap: '6px'
+                }}>
+                  <Music size={12} />
+                  Musica: {musicTracks.find(t => t.key === directorPlan.recommendedMusic)?.label || directorPlan.recommendedMusic}
+                </div>
+              )}
+              {directorPlan.closingText && (
+                <div style={{
+                  backgroundColor: '#0d2818', border: '1px solid #22c55e40', padding: '6px 12px',
+                  borderRadius: '8px', fontSize: '12px', color: '#86efac', display: 'flex', alignItems: 'center', gap: '6px'
+                }}>
+                  <Type size={12} />
+                  Cierre: "{directorPlan.closingText}"
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Narrative summary */}
           {directorPlan.narrativeSummary && (
@@ -1122,7 +1173,67 @@ export default function VideoGenerator() {
               display: 'flex', alignItems: 'center', gap: '8px'
             }}>
               <Film size={14} color="#22c55e" />
-              Estos {completedClips.length} segmentos se ensamblan en UN solo video comercial de ~{completedClips.length * duration}s
+              Estos {completedClips.length} segmentos se ensamblan en UN solo video comercial de ~{completedClips.length * duration}s con crossfades
+            </div>
+          )}
+
+          {/* ── Production Controls: Music + Closing Text ── */}
+          {completedClips.length >= 2 && pendingClips.length === 0 && !isStitching && stitchStatus?.status !== 'done' && (
+            <div style={{
+              backgroundColor: '#0d0f14', border: '1px solid #2a2d3a', borderRadius: '12px',
+              padding: '16px', marginBottom: '14px', display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'flex-end'
+            }}>
+              {/* Music selector */}
+              <div style={{ flex: '1 1 220px', minWidth: '200px' }}>
+                <label style={{
+                  color: '#9ca3af', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase',
+                  letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px'
+                }}>
+                  <Music size={13} color="#8b5cf6" /> Musica de Fondo
+                </label>
+                <select
+                  value={selectedMusic}
+                  onChange={(e) => setSelectedMusic(e.target.value)}
+                  style={{
+                    width: '100%', backgroundColor: '#141720', border: '1px solid #2a2d3a',
+                    borderRadius: '8px', padding: '8px 10px', color: '#c4b5fd', fontSize: '12px',
+                    cursor: 'pointer', boxSizing: 'border-box'
+                  }}
+                >
+                  {musicTracks.map(t => (
+                    <option key={t.key} value={t.key}>{t.label}</option>
+                  ))}
+                </select>
+                {selectedMusic !== 'none' && (
+                  <div style={{ fontSize: '10px', color: '#6b7280', marginTop: '4px' }}>
+                    {musicTracks.find(t => t.key === selectedMusic)?.mood || ''}
+                  </div>
+                )}
+              </div>
+
+              {/* Closing text input */}
+              <div style={{ flex: '1 1 220px', minWidth: '200px' }}>
+                <label style={{
+                  color: '#9ca3af', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase',
+                  letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px'
+                }}>
+                  <Type size={13} color="#22c55e" /> Texto de Cierre
+                </label>
+                <input
+                  type="text"
+                  value={brandText}
+                  onChange={(e) => setBrandText(e.target.value)}
+                  placeholder="ej: Jersey Pickles"
+                  style={{
+                    width: '100%', backgroundColor: '#141720', border: '1px solid #2a2d3a',
+                    borderRadius: '8px', padding: '8px 10px', color: '#e5e7eb', fontSize: '12px',
+                    boxSizing: 'border-box'
+                  }}
+                />
+                <div style={{ fontSize: '10px', color: '#6b7280', marginTop: '4px' }}>
+                  Aparece sobre el ultimo segmento del comercial
+                </div>
+              </div>
             </div>
           )}
 
@@ -1149,10 +1260,12 @@ export default function VideoGenerator() {
             <div style={{ textAlign: 'center', padding: '40px 20px' }}>
               <Loader size={32} color="#22c55e" className="spin" style={{ margin: '0 auto 12px', display: 'block' }} />
               <p style={{ color: '#9ca3af', fontSize: '14px', marginBottom: '6px' }}>
-                Ensamblando video comercial...
+                Ensamblando video comercial con crossfades...
               </p>
               <p style={{ color: '#6b7280', fontSize: '12px' }}>
-                Descargando {stitchStatus.downloaded || 0}/{stitchStatus.totalClips || '?'} clips y concatenando
+                Descargando {stitchStatus.downloaded || 0}/{stitchStatus.totalClips || '?'} clips
+                {stitchStatus.musicTrack && stitchStatus.musicTrack !== 'none' ? ' + mezclando musica' : ''}
+                {stitchStatus.brandText ? ' + texto de cierre' : ''}
               </p>
             </div>
           )}
@@ -1176,22 +1289,41 @@ export default function VideoGenerator() {
                   }}>
                   <Download size={16} /> Descargar Video Comercial
                 </a>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ color: '#6b7280', fontSize: '12px' }}>
-                    {completedClips.length} segmentos x {duration}s = ~{completedClips.length * duration}s total
-                  </span>
-                </div>
+                <button onClick={handleStitchClips}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '6px',
+                    backgroundColor: '#1e293b', color: '#93c5fd', padding: '10px 16px',
+                    borderRadius: '8px', border: '1px solid #334155', fontWeight: '500', fontSize: '13px',
+                    cursor: 'pointer'
+                  }}>
+                  <RefreshCw size={14} /> Re-ensamblar
+                </button>
               </div>
-              {directorPlan && (
-                <div style={{
-                  marginTop: '16px', backgroundColor: '#0d0f14', border: '1px solid #2a2d3a',
-                  borderRadius: '10px', padding: '12px 16px', textAlign: 'center'
-                }}>
+              {/* Production details */}
+              <div style={{
+                marginTop: '16px', backgroundColor: '#0d0f14', border: '1px solid #2a2d3a',
+                borderRadius: '10px', padding: '12px 16px', textAlign: 'center',
+                display: 'flex', gap: '16px', justifyContent: 'center', flexWrap: 'wrap', alignItems: 'center'
+              }}>
+                {directorPlan && (
                   <span style={{ color: '#c4b5fd', fontSize: '12px', fontWeight: '600' }}>
                     {directorPlan.brand} {directorPlan.productName} — {sceneInfo?.label}
                   </span>
-                </div>
-              )}
+                )}
+                <span style={{ color: '#6b7280', fontSize: '11px' }}>
+                  {completedClips.length} clips con crossfades
+                </span>
+                {selectedMusic !== 'none' && (
+                  <span style={{ color: '#8b5cf6', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <Music size={11} /> {musicTracks.find(t => t.key === selectedMusic)?.label || selectedMusic}
+                  </span>
+                )}
+                {brandText && (
+                  <span style={{ color: '#22c55e', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <Type size={11} /> "{brandText}"
+                  </span>
+                )}
+              </div>
             </div>
           )}
         </div>

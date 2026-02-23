@@ -14,12 +14,13 @@ const fs = require('fs');
 const config = require('../../../config');
 const logger = require('../../utils/logger');
 const {
-  AVAILABLE_SCENES, SHOT_TYPES, NARRATIVE_BEATS, CAMERA_MOTIONS,
+  AVAILABLE_SCENES, SHOT_TYPES, NARRATIVE_BEATS, CAMERA_MOTIONS, MUSIC_TRACKS,
   analyzeProductAndRecommendScene,
   startShotGenerationJob, getShotJobStatus,
   judgeShots, regenerateSingleShot,
   submitVideoJob, checkVideoStatus, submitVideoBatch,
-  startStitchJob, getStitchJobStatus
+  startStitchJob, getStitchJobStatus,
+  getAvailableMusicTracks
 } = require('../../video/video-pipeline');
 
 // ============ UPLOAD CONFIG ============
@@ -69,6 +70,12 @@ router.get('/narrative-beats', (req, res) => {
 
 router.get('/motions', (req, res) => {
   res.json({ motions: CAMERA_MOTIONS, count: CAMERA_MOTIONS.length });
+});
+
+// ============ GET /api/video/music-tracks ============
+
+router.get('/music-tracks', (req, res) => {
+  res.json({ tracks: MUSIC_TRACKS, count: MUSIC_TRACKS.length });
 });
 
 // ============ POST /api/video/upload-product ============
@@ -342,7 +349,7 @@ router.post('/clip-status-batch', async (req, res) => {
 
 router.post('/stitch', (req, res) => {
   try {
-    const { clipUrls } = req.body;
+    const { clipUrls, musicTrack, brandText, crossfadeDuration } = req.body;
 
     if (!clipUrls || !Array.isArray(clipUrls) || clipUrls.length < 2) {
       return res.status(400).json({ error: 'clipUrls array with at least 2 URLs is required' });
@@ -351,8 +358,12 @@ router.post('/stitch', (req, res) => {
       return res.status(400).json({ error: 'Maximum 20 clips per stitch' });
     }
 
-    logger.info(`[VIDEO] Starting stitch job: ${clipUrls.length} clips`);
-    const result = startStitchJob(clipUrls);
+    logger.info(`[VIDEO] Starting stitch job: ${clipUrls.length} clips, music=${musicTrack || 'none'}, text="${brandText || ''}", xfade=${crossfadeDuration || 0.5}s`);
+    const result = startStitchJob(clipUrls, {
+      musicTrack: musicTrack || 'none',
+      brandText: brandText || '',
+      crossfadeDuration: crossfadeDuration ?? 0.5
+    });
     res.json(result);
   } catch (err) {
     logger.error('[VIDEO] Stitch error:', err);

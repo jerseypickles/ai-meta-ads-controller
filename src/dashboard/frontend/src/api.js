@@ -975,9 +975,20 @@ export const getClipStatusBatch = async (requestIds) => {
   return response.data;
 };
 
-// Stitch completed clips into ONE commercial video
-export const stitchClips = async (clipUrls) => {
-  const response = await api.post('/api/video/stitch', { clipUrls });
+// Get available music tracks
+export const getMusicTracks = async () => {
+  const response = await api.get('/api/video/music-tracks');
+  return response.data;
+};
+
+// Stitch completed clips into ONE commercial video with crossfades, music, and text
+export const stitchClips = async (clipUrls, options = {}) => {
+  const response = await api.post('/api/video/stitch', {
+    clipUrls,
+    musicTrack: options.musicTrack || 'none',
+    brandText: options.brandText || '',
+    crossfadeDuration: options.crossfadeDuration ?? 0.5
+  });
   return response.data;
 };
 

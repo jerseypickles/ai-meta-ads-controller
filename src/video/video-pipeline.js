@@ -25,6 +25,19 @@ const { execFile } = require('child_process');
 const SHOTS_DIR = path.join(config.system.uploadsDir, 'video-shots');
 const VIDEOS_DIR = path.join(config.system.uploadsDir, 'video-clips');
 const FINALS_DIR = path.join(config.system.uploadsDir, 'video-finals');
+const MUSIC_DIR = path.join(__dirname, 'music');
+
+// ═══ MUSIC TRACKS — Local royalty-free background music catalog ═══
+// Replace placeholder .m4a files with real royalty-free tracks for production
+const MUSIC_TRACKS = [
+  { key: 'upbeat-energy', label: 'Energetico', file: 'upbeat-energy.m4a', mood: 'Upbeat, energetic, fun — great for snacks, party foods, youthful brands' },
+  { key: 'ambient-calm', label: 'Ambiente Calmo', file: 'ambient-calm.m4a', mood: 'Ambient, calm, peaceful — ideal for organic, natural, wellness products' },
+  { key: 'premium-elegant', label: 'Premium Elegante', file: 'premium-elegant.m4a', mood: 'Elegant, sophisticated, premium — luxury products, gourmet foods, high-end brands' },
+  { key: 'organic-natural', label: 'Organico Natural', file: 'organic-natural.m4a', mood: 'Warm, earthy, natural — farm-to-table, rustic, artisanal products' },
+  { key: 'party-fun', label: 'Fiesta', file: 'party-fun.m4a', mood: 'Festive, celebratory, bright — party snacks, beverages, social occasions' },
+  { key: 'cinematic-dramatic', label: 'Cinematico', file: 'cinematic-dramatic.m4a', mood: 'Cinematic, dramatic, powerful — hero product launches, bold brands, intense flavor profiles' },
+  { key: 'none', label: 'Sin Musica', file: null, mood: 'No background music' },
+];
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -107,6 +120,10 @@ async function analyzeProductAndRecommendScene(productImagePath, productDescript
     `${b.order}. ${b.key} — "${b.label}": ${b.narrative}`
   ).join('\n');
 
+  const musicListText = MUSIC_TRACKS.filter(m => m.file).map((m, i) =>
+    `${i + 1}. ${m.key} — "${m.label}": ${m.mood}`
+  ).join('\n');
+
   const content = [
     {
       type: 'image',
@@ -166,6 +183,15 @@ For each beat, write a 5-second video motion prompt that:
 
 The 12 clips will be concatenated into ONE 60-second commercial, so design the camera movements to create natural transitions between beats.
 
+STEP 5 — Choose background music:
+From the available music tracks below, pick the ONE that best matches the mood and energy of this product's commercial:
+
+Available music tracks:
+${musicListText}
+
+STEP 6 — Closing text:
+Suggest the text that should appear overlaid on the final frame (beat 12) of the commercial. This is the brand call-to-action. Keep it short (2-4 words max) — typically the brand name or a tagline.
+
 Return ONLY valid JSON:
 {
   "productName": "...",
@@ -176,6 +202,8 @@ Return ONLY valid JSON:
   "sceneLabel": "Scene Label",
   "sceneReason": "2-3 sentence explanation of why this scene is ideal for this product",
   "narrativeSummary": "One paragraph describing the commercial story arc from opening to closing",
+  "recommendedMusic": "music-track-key",
+  "closingText": "Brand Name",
   "shots": {
     "beat-01-scene-establish": {
       "imagePrompt": "Edit this product photograph. Change ONLY the background and surroundings. ...",
@@ -660,10 +688,19 @@ async function submitVideoBatch(shots, options = {}) {
 }
 
 // ═══ STEP 7: Stitch clips into ONE commercial video via FFmpeg ═══
+// Now with: crossfade transitions, background music, closing text overlay
 
 const stitchJobs = new Map();
 
-function startStitchJob(clipUrls) {
+/**
+ * Start a stitch job with optional production enhancements
+ * @param {string[]} clipUrls - Array of video clip URLs
+ * @param {Object} options - Production options
+ * @param {string} options.musicTrack - Key from MUSIC_TRACKS (default 'none')
+ * @param {string} options.brandText - Text overlay for closing frame (default '')
+ * @param {number} options.crossfadeDuration - Crossfade duration in seconds (default 0.5)
+ */
+function startStitchJob(clipUrls, options = {}) {
   const jobId = `stitch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const job = {
     jobId,
@@ -672,11 +709,13 @@ function startStitchJob(clipUrls) {
     downloaded: 0,
     error: null,
     outputUrl: null,
+    musicTrack: options.musicTrack || 'none',
+    brandText: options.brandText || '',
     startedAt: new Date().toISOString()
   };
   stitchJobs.set(jobId, job);
 
-  _stitchBackground(jobId, clipUrls).catch(err => {
+  _stitchBackground(jobId, clipUrls, options).catch(err => {
     logger.error(`[VIDEO-PIPE] Stitch job ${jobId} crashed: ${err.message}`);
     const j = stitchJobs.get(jobId);
     if (j) { j.status = 'failed'; j.error = err.message; }
@@ -691,13 +730,31 @@ function getStitchJobStatus(jobId) {
   return { ...job };
 }
 
-async function _stitchBackground(jobId, clipUrls) {
+function getAvailableMusicTracks() {
+  return MUSIC_TRACKS;
+}
+
+/** Get the FFmpeg binary path */
+function _getFFmpegPath() {
+  try {
+    const ffmpegStatic = require('ffmpeg-static');
+    if (ffmpegStatic) return ffmpegStatic;
+  } catch (_) {}
+  return 'ffmpeg';
+}
+
+async function _stitchBackground(jobId, clipUrls, options = {}) {
   ensureDir(FINALS_DIR);
   const job = stitchJobs.get(jobId);
   const tmpDir = path.join(FINALS_DIR, `tmp-${jobId}`);
   ensureDir(tmpDir);
 
-  // Step A: Download all clip videos
+  const crossfadeDuration = options.crossfadeDuration ?? 0.5;
+  const musicKey = options.musicTrack || 'none';
+  const brandText = options.brandText || '';
+  const ffmpegPath = _getFFmpegPath();
+
+  // ── Step A: Download all clip videos ──
   const localFiles = [];
   for (let i = 0; i < clipUrls.length; i++) {
     const url = clipUrls[i];
@@ -716,49 +773,107 @@ async function _stitchBackground(jobId, clipUrls) {
     }
   }
 
-  // Step B: Create FFmpeg concat list file
-  const concatListPath = path.join(tmpDir, 'concat.txt');
-  const concatContent = localFiles.map(f => `file '${f}'`).join('\n');
-  fs.writeFileSync(concatListPath, concatContent);
-
-  // Step C: Find ffmpeg binary — try system, then ffmpeg-static
-  let ffmpegPath = 'ffmpeg';
-  try {
-    const ffmpegStatic = require('ffmpeg-static');
-    if (ffmpegStatic) ffmpegPath = ffmpegStatic;
-  } catch (_) {
-    // ffmpeg-static not installed, use system ffmpeg
+  // ── Step B: Probe each clip to get exact duration ──
+  const clipDurations = [];
+  for (const f of localFiles) {
+    const dur = await _probeClipDuration(ffmpegPath, f);
+    clipDurations.push(dur);
   }
 
-  // Step D: Concatenate with FFmpeg
   const outputFilename = `commercial-${Date.now()}.mp4`;
   const outputPath = path.join(FINALS_DIR, outputFilename);
 
-  await new Promise((resolve, reject) => {
+  // ── Step C: Build FFmpeg filter graph with xfade crossfades ──
+  const n = localFiles.length;
+
+  if (n < 2) {
+    // Single clip — just copy it (no crossfade possible)
+    fs.copyFileSync(localFiles[0], outputPath);
+  } else {
+    // Build xfade chain for N clips
+    // Each xfade transition reduces total duration by crossfadeDuration
+    // Offsets: clip[0].dur - xfade, clip[0].dur + clip[1].dur - 2*xfade, etc.
+    const inputs = localFiles.map((f, i) => ['-i', f]).flat();
+    const filterParts = [];
+    let prevLabel = '[0:v]';
+    let cumulativeOffset = 0;
+
+    for (let i = 1; i < n; i++) {
+      const offset = cumulativeOffset + clipDurations[i - 1] - crossfadeDuration;
+      const outLabel = i < n - 1 ? `[v${i}]` : '[vout]';
+      filterParts.push(`${prevLabel}[${i}:v]xfade=transition=fade:duration=${crossfadeDuration}:offset=${offset.toFixed(3)}${outLabel}`);
+      prevLabel = outLabel;
+      cumulativeOffset = offset;
+    }
+
+    // Audio: concat all audio streams (no crossfade on audio — simpler and cleaner)
+    const audioInputs = localFiles.map((_, i) => `[${i}:a]`).join('');
+    filterParts.push(`${audioInputs}concat=n=${n}:v=0:a=1[aconcat]`);
+
+    // Calculate total video duration (accounting for crossfades)
+    const totalDuration = clipDurations.reduce((s, d) => s + d, 0) - (n - 1) * crossfadeDuration;
+
+    // ── Step D: Closing text overlay on last seconds ──
+    let videoFinal = '[vout]';
+    if (brandText) {
+      const textStart = Math.max(0, totalDuration - clipDurations[n - 1]);
+      const escapedText = brandText.replace(/'/g, "'\\''").replace(/:/g, '\\:');
+      filterParts.push(
+        `[vout]drawtext=text='${escapedText}':fontsize=72:fontcolor=white:borderw=3:bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2:enable='gte(t,${textStart.toFixed(2)})'` +
+        `:alpha='if(lt(t,${(textStart + 0.8).toFixed(2)}),(t-${textStart.toFixed(2)})/0.8,1)'[vtxt]`
+      );
+      videoFinal = '[vtxt]';
+    }
+
+    // ── Step E: Mix background music ──
+    let audioFinal = '[aconcat]';
+    const musicTrack = MUSIC_TRACKS.find(m => m.key === musicKey);
+    const musicFilePath = musicTrack?.file ? path.join(MUSIC_DIR, musicTrack.file) : null;
+    let extraInputs = [];
+
+    if (musicFilePath && fs.existsSync(musicFilePath)) {
+      const musicIdx = n; // next input index after all video clips
+      extraInputs = ['-i', musicFilePath];
+      // Trim music to total duration, lower volume, fade out at end, mix under clip audio
+      filterParts.push(
+        `[${musicIdx}:a]atrim=0:${totalDuration.toFixed(2)},asetpts=PTS-STARTPTS,volume=0.18,afade=t=out:st=${(totalDuration - 3).toFixed(2)}:d=3[bgm]`,
+        `[aconcat][bgm]amix=inputs=2:duration=shortest:dropout_transition=2[amixed]`
+      );
+      audioFinal = '[amixed]';
+    }
+
+    // ── Step F: Execute FFmpeg ──
+    const filterComplex = filterParts.join(';');
     const args = [
-      '-f', 'concat', '-safe', '0',
-      '-i', concatListPath,
-      '-c', 'copy',
+      ...inputs,
+      ...extraInputs,
+      '-filter_complex', filterComplex,
+      '-map', videoFinal, '-map', audioFinal,
+      '-c:v', 'libx264', '-preset', 'fast', '-crf', '22',
+      '-c:a', 'aac', '-b:a', '192k',
       '-movflags', '+faststart',
-      outputPath
+      '-y', outputPath
     ];
 
-    logger.info(`[VIDEO-PIPE] Stitch ${jobId}: Running FFmpeg concat...`);
-    execFile(ffmpegPath, args, { timeout: 120000 }, (err, stdout, stderr) => {
-      if (err) {
-        logger.error(`[VIDEO-PIPE] FFmpeg error: ${stderr || err.message}`);
-        reject(new Error(`FFmpeg failed: ${stderr || err.message}`));
-      } else {
-        resolve();
-      }
-    });
-  });
+    logger.info(`[VIDEO-PIPE] Stitch ${jobId}: Running FFmpeg with xfade crossfades + music + text...`);
+    logger.info(`[VIDEO-PIPE] Filter: ${filterComplex.substring(0, 200)}...`);
 
-  // Step E: Cleanup temp files
+    await new Promise((resolve, reject) => {
+      execFile(ffmpegPath, args, { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+        if (err) {
+          logger.error(`[VIDEO-PIPE] FFmpeg error: ${(stderr || err.message).substring(0, 500)}`);
+          reject(new Error(`FFmpeg failed: ${(stderr || err.message).substring(0, 300)}`));
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
+  // ── Step G: Cleanup temp files ──
   try {
     for (const f of localFiles) fs.unlinkSync(f);
-    fs.unlinkSync(concatListPath);
-    fs.rmdirSync(tmpDir);
+    fs.rmdirSync(tmpDir, { recursive: true });
   } catch (_) { /* ignore cleanup errors */ }
 
   job.status = 'done';
@@ -768,11 +883,34 @@ async function _stitchBackground(jobId, clipUrls) {
   logger.info(`[VIDEO-PIPE] Stitch ${jobId} completed: ${outputFilename}`);
 }
 
+/** Probe a video file's duration using ffprobe (via ffmpeg -i) */
+function _probeClipDuration(ffmpegPath, filePath) {
+  return new Promise((resolve) => {
+    // Use ffmpeg -i to get duration from stderr output
+    execFile(ffmpegPath, ['-i', filePath, '-f', 'null', '-'], { timeout: 15000 }, (err, stdout, stderr) => {
+      const combined = (stderr || '') + (stdout || '');
+      const match = combined.match(/Duration:\s*(\d+):(\d+):(\d+)\.(\d+)/);
+      if (match) {
+        const hours = parseInt(match[1]);
+        const mins = parseInt(match[2]);
+        const secs = parseInt(match[3]);
+        const frac = parseInt(match[4]) / 100;
+        resolve(hours * 3600 + mins * 60 + secs + frac);
+      } else {
+        // Fallback: assume 5 seconds per clip
+        logger.warn(`[VIDEO-PIPE] Could not probe duration of ${filePath}, defaulting to 5s`);
+        resolve(5);
+      }
+    });
+  });
+}
+
 module.exports = {
   AVAILABLE_SCENES,
   SHOT_TYPES,
   NARRATIVE_BEATS,
   CAMERA_MOTIONS,
+  MUSIC_TRACKS,
   analyzeProductAndRecommendScene,
   startShotGenerationJob,
   getShotJobStatus,
@@ -782,5 +920,6 @@ module.exports = {
   checkVideoStatus,
   submitVideoBatch,
   startStitchJob,
-  getStitchJobStatus
+  getStitchJobStatus,
+  getAvailableMusicTracks
 };
