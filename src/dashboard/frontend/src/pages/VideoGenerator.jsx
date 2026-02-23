@@ -467,7 +467,7 @@ export default function VideoGenerator() {
           Video AI — Product Commercials
         </h1>
         <p style={{ color: '#6b7280', fontSize: '13px' }}>
-          Foto → Angulos (OpenAI) → Analisis (Claude) → Storyboard → Videos (Kling 2.6)
+          Foto → Escenas (OpenAI) → Analisis (Claude) → Storyboard → Videos (Kling 2.6)
         </p>
       </div>
 
@@ -475,7 +475,7 @@ export default function VideoGenerator() {
       <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', flexWrap: 'wrap', alignItems: 'center' }}>
         <StepIndicator number={1} title="Subir Foto" subtitle="Producto" active={step === 1} done={!!productPhoto} />
         <ArrowRight size={16} color="#374151" style={{ flexShrink: 0 }} />
-        <StepIndicator number={2} title="Angulos" subtitle={`${numShots} shots`} active={step === 2} done={shots.length > 0 && !isGeneratingShots} />
+        <StepIndicator number={2} title="Escenas" subtitle={`${numShots} shots`} active={step === 2} done={shots.length > 0 && !isGeneratingShots} />
         <ArrowRight size={16} color="#374151" style={{ flexShrink: 0 }} />
         <StepIndicator number={3} title="Storyboard" subtitle="Claude + prompts" active={step === 3} done={storyboard.length > 0} />
         <ArrowRight size={16} color="#374151" style={{ flexShrink: 0 }} />
@@ -543,7 +543,7 @@ export default function VideoGenerator() {
               </div>
               <div style={{ marginBottom: '12px' }}>
                 <label style={{ color: '#9ca3af', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '6px' }}>
-                  Cantidad de angulos
+                  Cantidad de escenas
                 </label>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   {[6, 8, 12].map(n => (
@@ -566,7 +566,7 @@ export default function VideoGenerator() {
                     border: 'none', borderRadius: '8px', color: '#fff', fontSize: '13px', fontWeight: '600',
                     cursor: isGeneratingShots ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '6px'
                   }}>
-                  {isGeneratingShots ? <><Loader size={14} className="spin" /> Generando...</> : <><Zap size={14} /> Generar {numShots} Angulos</>}
+                  {isGeneratingShots ? <><Loader size={14} className="spin" /> Generando...</> : <><Zap size={14} /> Generar {numShots} Escenas</>}
                 </button>
                 <button onClick={() => { setProductPhoto(null); setShots([]); setSelectedShots(new Set()); setStoryboard([]); setProductAnalysis(null); }}
                   style={{ padding: '10px 14px', backgroundColor: '#1f2937', border: 'none', borderRadius: '8px', color: '#9ca3af', fontSize: '13px', cursor: 'pointer' }}>

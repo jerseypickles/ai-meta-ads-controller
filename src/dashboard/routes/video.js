@@ -13,7 +13,7 @@ const fs = require('fs');
 const config = require('../../../config');
 const logger = require('../../utils/logger');
 const {
-  PRODUCT_ANGLES, CAMERA_MOTIONS,
+  PRODUCT_SCENES, CAMERA_MOTIONS,
   startShotGenerationJob, getShotJobStatus,
   analyzeProductAndGeneratePrompts,
   submitVideoJob, checkVideoStatus, submitVideoBatch
@@ -47,7 +47,7 @@ const upload = multer({
 // ============ GET /api/video/angles ============
 
 router.get('/angles', (req, res) => {
-  res.json({ angles: PRODUCT_ANGLES, count: PRODUCT_ANGLES.length });
+  res.json({ angles: PRODUCT_SCENES, count: PRODUCT_SCENES.length });
 });
 
 // ============ GET /api/video/motions ============
@@ -87,7 +87,7 @@ router.get('/shots', (req, res) => {
       .map(f => {
         const stats = fs.statSync(path.join(shotsDir, f));
         const angle = f.match(/shot-([a-z-]+)-/)?.[1] || 'unknown';
-        const angleDef = PRODUCT_ANGLES.find(a => a.key === angle);
+        const angleDef = PRODUCT_SCENES.find(a => a.key === angle);
         return {
           filename: f, angle,
           label: angleDef?.label || angle,

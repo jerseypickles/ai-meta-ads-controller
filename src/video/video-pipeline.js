@@ -3,7 +3,7 @@
  *
  * Workflow:
  *   1. Upload 1 product photo
- *   2. OpenAI generates 12 shots from different angles (async, polled by frontend)
+ *   2. OpenAI generates 12 scene variations (async, polled by frontend)
  *   3. Claude Vision analyzes the product and generates smart prompts per shot
  *   4. Kling 2.6 converts each shot to a 5s video clip with camera motion + smart prompt
  *   5. Return video URLs for download/stitching
@@ -31,21 +31,22 @@ function getMimeType(filePath) {
   return types[ext] || 'image/png';
 }
 
-// ═══ ANGLE DEFINITIONS ═══
-// 12 product photography angles — prompts emphasize label/brand fidelity
-const PRODUCT_ANGLES = [
-  { key: 'hero-front', label: 'Hero Frontal', prompt: 'Hero front-facing product shot, centered. The camera is directly in front of the product at eye level. The product label, brand name, logo and all text must be perfectly readable, sharp, and undistorted. Clean studio lighting, neutral white background, commercial product photography.' },
-  { key: 'three-quarter-left', label: '3/4 Izquierda', prompt: 'Three-quarter angle from the left side, slight elevation. The product is rotated ~30 degrees to the left. All visible text, labels, and branding must remain sharp, legible and correctly spelled. Soft studio lighting, product photography.' },
-  { key: 'three-quarter-right', label: '3/4 Derecha', prompt: 'Three-quarter angle from the right side, slight elevation. The product is rotated ~30 degrees to the right. All visible text, labels, and branding must remain sharp, legible and correctly spelled. Soft studio lighting, product photography.' },
-  { key: 'side-left', label: 'Perfil Izquierdo', prompt: 'Clean side profile view from the left showing the side panel of the packaging. Any text on the side must be perfectly legible. Studio lighting, white background, product photography.' },
-  { key: 'side-right', label: 'Perfil Derecho', prompt: 'Clean side profile view from the right showing the side panel of the packaging. Any text on the side must be perfectly legible. Studio lighting, white background, product photography.' },
-  { key: 'top-down', label: 'Vista Superior', prompt: 'Top-down overhead flat lay view looking straight down at the product from above. If the top has branding or a lid label, it must be sharp and readable. Studio lighting, product photography.' },
-  { key: 'low-angle', label: 'Angulo Bajo', prompt: 'Low angle shot looking slightly upward at the product, making it appear larger and more impressive. The front label must still be fully visible, sharp, and all text legible. Studio lighting, commercial photography.' },
-  { key: 'close-up-detail', label: 'Detalle Close-Up', prompt: 'Close-up macro detail shot focusing on the product label texture, print quality, and fine details. Text must be razor sharp and perfectly readable. Shallow depth of field, studio lighting.' },
-  { key: 'close-up-logo', label: 'Logo Close-Up', prompt: 'Close-up shot focused tightly on the brand logo and product name. The logo, brand name, and any tagline must be perfectly sharp, correctly spelled, and in the exact original colors. Studio lighting.' },
-  { key: 'back-view', label: 'Vista Trasera', prompt: 'Back view showing the nutrition label, ingredients list, and back packaging. All text including small print must be readable and correctly reproduced. Studio lighting, product photography.' },
-  { key: 'tilted-dynamic', label: 'Angulo Dinamico', prompt: 'Dynamic tilted angle with slight dutch angle for energetic composition. The product label and brand name must remain fully legible despite the angle. Studio lighting, commercial photography.' },
-  { key: 'lifestyle-context', label: 'Lifestyle', prompt: 'Lifestyle shot with the product in a natural, appetizing setting appropriate for the product category. The front label and brand must remain clearly visible and sharp even in the lifestyle context. Warm lighting, food styling.' },
+// ═══ SCENE DEFINITIONS ═══
+// 12 commercial scenes — product stays identical, only background/context changes
+// Uses same approach as Banco Creativo: "Edit this product photograph. Change ONLY the background and surroundings."
+const PRODUCT_SCENES = [
+  { key: 'studio-hero', label: 'Estudio Hero', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Premium studio product photography. Place the product centered on a clean, elegant surface with a soft gradient background. Professional directional lighting with subtle rim light on the background only. High-end e-commerce hero shot feel.' },
+  { key: 'kitchen-warm', label: 'Cocina Calida', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Place the product on a warm wooden kitchen countertop. Blurred background showing a cozy home kitchen with warm ambient lighting, copper utensils, and soft morning sunlight streaming through a window. Appetizing food photography feel.' },
+  { key: 'picnic-outdoor', label: 'Picnic Exterior', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Place the product on a rustic picnic blanket outdoors. Background shows a sunny park or garden with soft bokeh greenery. Natural golden hour sunlight. Summer lifestyle photography, relaxed and inviting mood.' },
+  { key: 'party-table', label: 'Mesa de Fiesta', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Place the product on a festive party table with colorful decorations, confetti, and party snacks scattered around. Warm, vibrant lighting. Celebration mood, fun and social atmosphere.' },
+  { key: 'ingredients-splash', label: 'Splash Ingredientes', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Surround the product with its key ingredients floating and splashing dynamically around it — fresh vegetables, spices, herbs flying through the air. Dark dramatic background with spotlighting on the product. High-energy food commercial photography.' },
+  { key: 'rustic-wood', label: 'Rustico Madera', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Place the product on a weathered dark wood surface with rustic texture. Background shows an artisanal workshop or farmhouse setting, slightly blurred. Moody, warm directional lighting. Craft and authenticity feel.' },
+  { key: 'neon-modern', label: 'Neon Moderno', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Place the product on a sleek dark surface with vibrant neon color accents (purple, blue, pink) glowing in the background. Modern, trendy aesthetic. Urban nightlife commercial feel. Bold and eye-catching for social media.' },
+  { key: 'ice-fresh', label: 'Hielo Fresco', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Place the product surrounded by crushed ice, water droplets, and frost on a cold surface. Cool blue-tinted lighting. Condensation on surrounding surfaces. Refreshing, cold, and crisp commercial feel.' },
+  { key: 'marble-elegant', label: 'Marmol Elegante', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Place the product on a white marble surface with gold accent elements nearby. Soft, diffused premium lighting. Minimalist luxury aesthetic. High-end gourmet product photography.' },
+  { key: 'bbq-grill', label: 'BBQ Parrilla', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Place the product near a BBQ grill scene with visible smoke, charcoal glow, and grilled food in the blurred background. Warm orange firelight mixed with outdoor afternoon sun. Summer cookout atmosphere.' },
+  { key: 'colorful-flat', label: 'Flat Lay Color', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Top-down flat lay composition. Place the product on a vibrant solid color background with complementary props arranged aesthetically around it — utensils, napkins, garnishes. Bright, even lighting. Social media flat lay photography style.' },
+  { key: 'nature-green', label: 'Naturaleza Verde', prompt: 'Edit this product photograph. Change ONLY the background and surroundings. Place the product on a mossy natural stone surface surrounded by fresh green leaves and herbs. Dappled forest sunlight filtering through foliage. Organic, natural, and fresh feel. Farm-to-table aesthetic.' },
 ];
 
 // ═══ CAMERA MOTIONS for Kling ═══
@@ -116,28 +117,29 @@ async function _generateShotsBackground(jobId, productImagePath, options = {}) {
   const client = new OpenAI({ apiKey });
   const mimeType = getMimeType(productImagePath);
   const numShots = options.numShots || 12;
-  const angles = PRODUCT_ANGLES.slice(0, numShots);
+  const scenes = PRODUCT_SCENES.slice(0, numShots);
   const productDescription = options.productDescription || 'product';
   const job = shotJobs.get(jobId);
 
-  for (let i = 0; i < angles.length; i++) {
-    const angle = angles[i];
+  for (let i = 0; i < scenes.length; i++) {
+    const scene = scenes[i];
 
-    // Build a prompt that heavily enforces label fidelity
+    // Build prompt using Banco Creativo approach: preserve product, change only surroundings
     const fullPrompt = [
-      angle.prompt,
+      scene.prompt,
       `\nThe product is: ${productDescription}.`,
-      '\nCRITICAL REQUIREMENTS:',
-      '- Preserve the EXACT product identity: every letter, word, logo, color, and graphic on the label must be identical to the source image.',
-      '- All text on the packaging must be correctly spelled, properly aligned, and perfectly legible.',
-      '- Do NOT invent, change, blur, warp, or remove any text or branding.',
-      '- The product shape, size proportions, materials, and colors must match exactly.',
-      '- Photorealistic rendering, high-end commercial product photography quality.',
-      '- 9:16 vertical format, high resolution.'
+      '\nVertical 9:16 format (1080x1920).',
+      '\nThe product from the reference photo must remain EXACTLY as it appears — same shape, same label, same colors, same text, same proportions.',
+      ' Do NOT re-render, redraw, or generate a 3D version of the product.',
+      ' Keep it as the original flat photographic element.',
+      ' Do NOT add lighting effects (rim light, glow, highlights) ON the product.',
+      ' Do NOT alter, warp, or reshape the packaging.',
+      ' The product should look physically placed in the new scene.',
+      ' Photorealistic, high-end commercial product photography quality.'
     ].join('');
 
     try {
-      logger.info(`[VIDEO-PIPE] Job ${jobId}: Generating angle ${i + 1}/${angles.length}: ${angle.key}`);
+      logger.info(`[VIDEO-PIPE] Job ${jobId}: Generating scene ${i + 1}/${scenes.length}: ${scene.key}`);
 
       const imageFile = await toFile(fs.createReadStream(productImagePath), null, { type: mimeType });
 
@@ -146,7 +148,8 @@ async function _generateShotsBackground(jobId, productImagePath, options = {}) {
         image: imageFile,
         prompt: fullPrompt,
         size: '1024x1536',
-        n: 1
+        n: 1,
+        input_fidelity: 'high'
       });
 
       // Download and save
@@ -156,19 +159,19 @@ async function _generateShotsBackground(jobId, productImagePath, options = {}) {
       if (imageUrl && imageUrl.startsWith('http')) {
         const res = await fetch(imageUrl);
         const buffer = Buffer.from(await res.arrayBuffer());
-        filename = `shot-${angle.key}-${Date.now()}.png`;
+        filename = `shot-${scene.key}-${Date.now()}.png`;
         fs.writeFileSync(path.join(SHOTS_DIR, filename), buffer);
       } else if (result.data[0]?.b64_json) {
         const buffer = Buffer.from(result.data[0].b64_json, 'base64');
-        filename = `shot-${angle.key}-${Date.now()}.png`;
+        filename = `shot-${scene.key}-${Date.now()}.png`;
         fs.writeFileSync(path.join(SHOTS_DIR, filename), buffer);
       } else {
         throw new Error('No image data in response');
       }
 
       job.shots.push({
-        angle: angle.key,
-        label: angle.label,
+        angle: scene.key,
+        label: scene.label,
         filename,
         url: `/uploads/video-shots/${filename}`,
         status: 'completed'
@@ -176,11 +179,11 @@ async function _generateShotsBackground(jobId, productImagePath, options = {}) {
       job.completed++;
 
       // Rate limit: delay between calls
-      if (i < angles.length - 1) await new Promise(r => setTimeout(r, 2000));
+      if (i < scenes.length - 1) await new Promise(r => setTimeout(r, 2000));
 
     } catch (err) {
-      logger.error(`[VIDEO-PIPE] Job ${jobId}: Angle ${angle.key} failed: ${err.message}`);
-      job.shots.push({ angle: angle.key, label: angle.label, filename: null, url: null, status: 'failed', error: err.message });
+      logger.error(`[VIDEO-PIPE] Job ${jobId}: Scene ${scene.key} failed: ${err.message}`);
+      job.shots.push({ angle: scene.key, label: scene.label, filename: null, url: null, status: 'failed', error: err.message });
       job.failed++;
 
       // If rate limited, wait longer
@@ -241,28 +244,28 @@ Based on the images, identify:
 2. Product category (chips, salsa, pickles, beverage, snack, etc.)
 3. Key visual elements (colors, packaging type, distinguishing features)
 
-Then generate a video prompt for EACH of these 12 shot angles. Each prompt should be specific to THIS product and describe what happens in the 5-second video clip — camera movement, product interaction, atmosphere.
+Then generate a video prompt for EACH of these 12 scene variations. Each prompt should be specific to THIS product and describe what happens in the 5-second video clip — camera movement, environment interaction, atmosphere. The product itself stays the same in every scene, only the background and surroundings change.
 
-The 12 angles are:
-1. hero-front (Hero Frontal)
-2. three-quarter-left (3/4 Izquierda)
-3. three-quarter-right (3/4 Derecha)
-4. side-left (Perfil Izquierdo)
-5. side-right (Perfil Derecho)
-6. top-down (Vista Superior)
-7. low-angle (Angulo Bajo)
-8. close-up-detail (Detalle Close-Up)
-9. close-up-logo (Logo Close-Up)
-10. back-view (Vista Trasera)
-11. tilted-dynamic (Angulo Dinamico)
-12. lifestyle-context (Lifestyle)
+The 12 scenes are:
+1. studio-hero (Estudio Hero)
+2. kitchen-warm (Cocina Calida)
+3. picnic-outdoor (Picnic Exterior)
+4. party-table (Mesa de Fiesta)
+5. ingredients-splash (Splash Ingredientes)
+6. rustic-wood (Rustico Madera)
+7. neon-modern (Neon Moderno)
+8. ice-fresh (Hielo Fresco)
+9. marble-elegant (Marmol Elegante)
+10. bbq-grill (BBQ Parrilla)
+11. colorful-flat (Flat Lay Color)
+12. nature-green (Naturaleza Verde)
 
 For each prompt:
-- Describe a cinematic 5-second scene specific to this product
-- Include product-specific details (e.g. for pickles: brine splashing, for chips: crumbs falling)
+- Describe a cinematic 5-second scene specific to this product in that setting
+- Include product-specific interactions with the environment (e.g. for pickles: condensation dripping, brine splash; for chips: crumbs falling around the bag)
 - Include camera movement description
 - Keep prompts in English, 1-2 sentences each
-- Make them visually exciting for a social media ad
+- Make them visually exciting for a social media vertical video ad
 
 Return ONLY valid JSON in this exact format:
 {
@@ -270,9 +273,9 @@ Return ONLY valid JSON in this exact format:
   "brand": "...",
   "category": "...",
   "prompts": {
-    "hero-front": "Slow dolly in toward the jar of pickles as condensation drips down the glass, crisp studio lighting highlighting the green label",
-    "three-quarter-left": "...",
-    ...all 12 angles...
+    "studio-hero": "Slow cinematic dolly in toward the jar on a clean studio surface, soft rim lighting revealing the label details as subtle condensation forms",
+    "kitchen-warm": "...",
+    ...all 12 scenes...
   }
 }`
   });
@@ -403,7 +406,7 @@ async function submitVideoBatch(shots, options = {}) {
 }
 
 module.exports = {
-  PRODUCT_ANGLES,
+  PRODUCT_SCENES,
   CAMERA_MOTIONS,
   startShotGenerationJob,
   getShotJobStatus,
