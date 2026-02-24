@@ -704,7 +704,12 @@ async function regenerateSingleShot(productImagePath, shotKey, imagePrompt, prod
 
 function initFal() {
   const falKey = config.fal?.apiKey;
-  if (!falKey) throw new Error('FAL_KEY not configured');
+  if (!falKey) throw new Error('FAL_KEY not configured — set FAL_KEY env var');
+  // Log key diagnostics (masked) on first call
+  const masked = falKey.length > 8
+    ? `${falKey.substring(0, 4)}...${falKey.substring(falKey.length - 4)} (${falKey.length} chars)`
+    : `[too short: ${falKey.length} chars]`;
+  logger.info(`[VIDEO-PIPE] initFal: key=${masked}`);
   fal.config({ credentials: falKey });
 }
 
@@ -784,7 +789,8 @@ async function submitVideoBatch(shots, options = {}) {
         });
         return { shotAngle: shot.angle, imageUrl: shot.imageUrl, ...result };
       } catch (err) {
-        logger.error(`[VIDEO-PIPE] Clip submit FAILED for ${shot.angle}: ${err.message}`, { imageUrl: shot.imageUrl, stack: err.stack?.split('\n').slice(0, 3).join(' | ') });
+        const detail = err.body || err.data || err.detail || '';
+        logger.error(`[VIDEO-PIPE] Clip submit FAILED for ${shot.angle}: ${err.message} | status=${err.status || err.statusCode || 'N/A'} | detail=${JSON.stringify(detail)}`, { imageUrl: shot.imageUrl, stack: err.stack?.split('\n').slice(0, 3).join(' | ') });
         return { shotAngle: shot.angle, imageUrl: shot.imageUrl, requestId: null, status: 'error', error: err.message };
       }
     });
