@@ -1019,6 +1019,18 @@ export const getStitchStatus = async (jobId) => {
   return response.data;
 };
 
+// One-click auto-generate: full pipeline (Director → Shots → Clips → Stitch)
+export const autoGenerateCommercial = async (data) => {
+  const response = await api.post('/api/video/auto-generate', data);
+  return response.data;
+};
+
+// Poll auto-generate job status
+export const getAutoGenerateStatus = async (jobId) => {
+  const response = await api.get(`/api/video/auto-generate-status/${jobId}`);
+  return response.data;
+};
+
 // ============================================
 // EXPORT DEFAULT
 // ============================================

@@ -22,7 +22,8 @@ const {
   judgeShots, regenerateSingleShot,
   submitVideoJob, checkVideoStatus, submitVideoBatch,
   startStitchJob, getStitchJobStatus,
-  getAvailableMusicTracks
+  getAvailableMusicTracks,
+  startAutoGenerateJob, getAutoGenerateJobStatus
 } = require('../../video/video-pipeline');
 
 // ============ UPLOAD CONFIG ============
@@ -411,6 +412,57 @@ router.get('/stitch-status/:jobId', (req, res) => {
     res.json(status);
   } catch (err) {
     logger.error('[VIDEO] Stitch status error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============ POST /api/video/auto-generate ============
+// One-click: orchestrates full pipeline (Director → Shots → Clips → Stitch)
+
+router.post('/auto-generate', (req, res) => {
+  try {
+    const { productImagePath, productDescription, templateKey, musicTrack, brandText } = req.body;
+
+    if (!productImagePath) {
+      return res.status(400).json({ error: 'productImagePath is required' });
+    }
+
+    let fullPath = productImagePath;
+    if (productImagePath.startsWith('/uploads/')) {
+      fullPath = path.join(config.system.uploadsDir, productImagePath.replace('/uploads/', ''));
+    }
+
+    if (!fs.existsSync(fullPath)) {
+      return res.status(400).json({ error: 'Product image file not found' });
+    }
+
+    logger.info(`[VIDEO] Starting one-click auto-generate: ${fullPath} (template: ${templateKey || 'quick-cut-food'})`);
+
+    const result = startAutoGenerateJob(fullPath, {
+      productDescription: productDescription || 'packaged food product',
+      templateKey: templateKey || 'quick-cut-food',
+      musicTrack: musicTrack || 'none',
+      brandText: brandText || ''
+    });
+
+    res.json(result);
+  } catch (err) {
+    logger.error('[VIDEO] Auto-generate error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============ GET /api/video/auto-generate-status/:jobId ============
+
+router.get('/auto-generate-status/:jobId', (req, res) => {
+  try {
+    const status = getAutoGenerateJobStatus(req.params.jobId);
+    if (!status) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+    res.json(status);
+  } catch (err) {
+    logger.error('[VIDEO] Auto-generate status error:', err);
     res.status(500).json({ error: err.message });
   }
 });
