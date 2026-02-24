@@ -421,7 +421,7 @@ router.get('/stitch-status/:jobId', (req, res) => {
 
 router.post('/auto-generate', (req, res) => {
   try {
-    const { productImagePath, productDescription, templateKey, musicTrack, brandText } = req.body;
+    const { productImagePath, productDescription, templateKey, musicTrack, brandText, videoModel } = req.body;
 
     if (!productImagePath) {
       return res.status(400).json({ error: 'productImagePath is required' });
@@ -436,13 +436,14 @@ router.post('/auto-generate', (req, res) => {
       return res.status(400).json({ error: 'Product image file not found' });
     }
 
-    logger.info(`[VIDEO] Starting one-click auto-generate: ${fullPath} (template: ${templateKey || 'quick-cut-food'})`);
+    logger.info(`[VIDEO] Starting one-click auto-generate: ${fullPath} (template: ${templateKey || 'quick-cut-food'}, model: ${videoModel || 'default'})`);
 
     const result = startAutoGenerateJob(fullPath, {
       productDescription: productDescription || 'packaged food product',
       templateKey: templateKey || 'quick-cut-food',
       musicTrack: musicTrack || 'none',
-      brandText: brandText || ''
+      brandText: brandText || '',
+      videoModel: videoModel || DEFAULT_VIDEO_MODEL
     });
 
     res.json(result);

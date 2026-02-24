@@ -4,7 +4,7 @@ import {
   Camera, Download, Loader, Film, Zap, Music, Type, RefreshCw
 } from 'lucide-react';
 import {
-  uploadProductPhoto, getVideoTemplates, getMusicTracks,
+  uploadProductPhoto, getVideoTemplates, getMusicTracks, getVideoModels,
   autoGenerateCommercial, getAutoGenerateStatus
 } from '../api';
 
@@ -86,6 +86,8 @@ export default function VideoGenerator() {
   // Template + options
   const [templates, setTemplates] = useState([]);
   const [selectedTemplate, setSelectedTemplate] = useState('quick-cut-food');
+  const [videoModels, setVideoModels] = useState({});
+  const [selectedVideoModel, setSelectedVideoModel] = useState('sora-2-pro');
   const [musicTracks, setMusicTracks] = useState([]);
   const [selectedMusic, setSelectedMusic] = useState('none');
   const [brandText, setBrandText] = useState('');
@@ -100,10 +102,11 @@ export default function VideoGenerator() {
   const fileInputRef = useRef(null);
   const pollRef = useRef(null);
 
-  // Load templates + music on mount
+  // Load templates + music + video models on mount
   useEffect(() => {
     loadTemplates();
     loadMusicTracks();
+    loadVideoModels();
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
 
@@ -127,6 +130,14 @@ export default function VideoGenerator() {
       const data = await getMusicTracks();
       setMusicTracks(data.tracks || []);
     } catch (err) { console.error('Load music tracks error:', err); }
+  };
+
+  const loadVideoModels = async () => {
+    try {
+      const data = await getVideoModels();
+      setVideoModels(data.models || {});
+      if (data.default) setSelectedVideoModel(data.default);
+    } catch (err) { console.error('Load video models error:', err); }
   };
 
   // ═══ Upload ═══
@@ -158,6 +169,7 @@ export default function VideoGenerator() {
         productImagePath: productPhoto.path || productPhoto.url,
         productDescription,
         templateKey: selectedTemplate,
+        videoModel: selectedVideoModel,
         musicTrack: selectedMusic,
         brandText
       });
@@ -322,6 +334,50 @@ export default function VideoGenerator() {
                 </div>
               )}
 
+              {/* Video Model selector — Grok vs Sora */}
+              {Object.keys(videoModels).length > 0 && (
+                <div style={{ marginBottom: '20px' }}>
+                  <label style={{ color: '#9ca3af', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '8px' }}>
+                    Motor de Video
+                  </label>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    {Object.values(videoModels).map(m => {
+                      const isSelected = selectedVideoModel === m.key;
+                      const isOpenai = m.provider === 'openai';
+                      const accentColor = isOpenai ? '#22c55e' : '#f59e0b';
+                      return (
+                        <button key={m.key} onClick={() => setSelectedVideoModel(m.key)}
+                          style={{
+                            padding: '10px 16px', borderRadius: '10px', cursor: 'pointer',
+                            border: isSelected ? `2px solid ${accentColor}` : '1px solid #2a2d3a',
+                            backgroundColor: isSelected ? `${accentColor}15` : '#0d0f14',
+                            transition: 'all 0.15s ease', display: 'flex', alignItems: 'center', gap: '8px'
+                          }}>
+                          <span style={{ fontSize: '13px', fontWeight: '700', color: isSelected ? accentColor : '#e5e7eb' }}>
+                            {m.label}
+                          </span>
+                          <span style={{
+                            fontSize: '9px', fontWeight: '600', padding: '2px 6px', borderRadius: '4px',
+                            backgroundColor: isSelected ? `${accentColor}20` : '#1f2937',
+                            color: isSelected ? accentColor : '#6b7280'
+                          }}>
+                            {m.resolution} · ${m.costPerSec}/s
+                          </span>
+                          {m.recommended && (
+                            <span style={{
+                              fontSize: '8px', fontWeight: '700', padding: '2px 5px', borderRadius: '3px',
+                              backgroundColor: '#22c55e25', color: '#22c55e', textTransform: 'uppercase'
+                            }}>
+                              PRO
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Optional: Music + closing text toggle */}
               <div style={{ marginBottom: '20px' }}>
                 <button onClick={() => setShowOptions(!showOptions)}
@@ -394,7 +450,7 @@ export default function VideoGenerator() {
               </button>
 
               <p style={{ color: '#4b5563', fontSize: '11px', textAlign: 'center', marginTop: '8px' }}>
-                Claude Director analiza → Grok Imagine genera imagenes → Grok Video genera clips → FFmpeg ensambla el comercial final
+                Claude Director analiza → Grok Imagine genera imagenes → {videoModels[selectedVideoModel]?.label || 'AI'} genera clips → FFmpeg ensambla el comercial final
               </p>
             </div>
           )}

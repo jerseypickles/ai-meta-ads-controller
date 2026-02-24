@@ -68,13 +68,14 @@ const BEAT_TYPES = {
   product: { key: 'product', label: 'Producto', description: 'Generated via image edit using the product photo as reference.' }
 };
 
-// ═══ VIDEO MODEL OPTIONS — Grok Imagine Video via xAI API ═══
+// ═══ VIDEO MODEL OPTIONS — Grok Imagine (xAI) + Sora 2 Pro (OpenAI) ═══
 const VIDEO_MODELS = {
-  'grok-imagine-720p': { key: 'grok-imagine-720p', label: 'Grok Imagine 720p', resolution: '720p', costPerSec: 0.07, recommended: true },
-  'grok-imagine-480p': { key: 'grok-imagine-480p', label: 'Grok Imagine 480p', resolution: '480p', costPerSec: 0.05, recommended: false }
+  'grok-imagine-720p': { key: 'grok-imagine-720p', label: 'Grok Imagine 720p', provider: 'xai', resolution: '720p', soraSize: null, costPerSec: 0.07, recommended: false },
+  'sora-2-pro':        { key: 'sora-2-pro', label: 'Sora 2 Pro', provider: 'openai', resolution: '720p', soraSize: '720x1280', costPerSec: 0.21, recommended: true },
+  'sora-2':            { key: 'sora-2', label: 'Sora 2', provider: 'openai', resolution: '720p', soraSize: '720x1280', costPerSec: 0.10, recommended: false }
 };
 
-const DEFAULT_VIDEO_MODEL = 'grok-imagine-720p';
+const DEFAULT_VIDEO_MODEL = 'sora-2-pro';
 
 // ═══ 12 NARRATIVE BEATS — Hybrid CONTEXT + PRODUCT story arc ═══
 // CONTEXT beats: text-to-image (ingredients, lifestyle, process) — no product photo needed
@@ -822,7 +823,7 @@ async function regenerateSingleShot(productImagePath, shotKey, imagePrompt, prod
   };
 }
 
-// ═══ STEP 5: Generate Video from Shot via xAI Grok Imagine Video API ═══
+// ═══ STEP 5: Generate Video — Multi-provider: xAI Grok Imagine + OpenAI Sora 2 ═══
 
 function _getXaiKey() {
   const xaiKey = config.xai?.apiKey;
@@ -830,21 +831,58 @@ function _getXaiKey() {
   return xaiKey;
 }
 
+function _getOpenaiKey() {
+  const key = config.imageGen?.openai?.apiKey;
+  if (!key) throw new Error('OPENAI_API_KEY not configured — set OPENAI_API_KEY env var');
+  return key;
+}
+
+// Resolve local /uploads/ image URL to a local file path
+function _resolveLocalImage(imageUrl) {
+  const uploadsMatch = imageUrl?.match(/\/uploads\/video-shots\/(.+)$/);
+  if (uploadsMatch) {
+    const localPath = path.join(SHOTS_DIR, uploadsMatch[1]);
+    if (fs.existsSync(localPath)) return localPath;
+  }
+  return null;
+}
+
+// ── Router: picks provider based on videoModel ──
+
 async function submitVideoJob(imageUrl, options = {}) {
+  const videoModel = options.videoModel || DEFAULT_VIDEO_MODEL;
+  const modelConfig = VIDEO_MODELS[videoModel] || VIDEO_MODELS[DEFAULT_VIDEO_MODEL];
+
+  if (modelConfig.provider === 'openai') {
+    return _submitSoraVideoJob(imageUrl, options, modelConfig);
+  }
+  return _submitXaiVideoJob(imageUrl, options, modelConfig);
+}
+
+async function checkVideoStatus(requestId, videoModel) {
+  const modelKey = videoModel || DEFAULT_VIDEO_MODEL;
+  const modelConfig = VIDEO_MODELS[modelKey] || VIDEO_MODELS[DEFAULT_VIDEO_MODEL];
+
+  if (modelConfig.provider === 'openai') {
+    return _checkSoraVideoStatus(requestId);
+  }
+  return _checkXaiVideoStatus(requestId);
+}
+
+// ── xAI Grok Imagine Video ──
+
+async function _submitXaiVideoJob(imageUrl, options = {}, modelConfig) {
   const xaiKey = _getXaiKey();
 
   const {
     cameraMotion = 'slow-dolly-in',
     duration = 5,
-    aspectRatio = '9:16',
-    videoModel = DEFAULT_VIDEO_MODEL
+    aspectRatio = '9:16'
   } = options;
 
-  const modelConfig = VIDEO_MODELS[videoModel] || VIDEO_MODELS[DEFAULT_VIDEO_MODEL];
   const motion = CAMERA_MOTIONS.find(m => m.key === cameraMotion) || CAMERA_MOTIONS[0];
   const prompt = options.prompt || `${motion.prompt}, professional product commercial, cinematic quality, studio lighting, 4K`;
 
-  // xAI REST API uses "image": {"url": "..."} object format (NOT "image_url" string)
   const body = {
     model: 'grok-imagine-video',
     prompt,
@@ -856,24 +894,17 @@ async function submitVideoJob(imageUrl, options = {}) {
   // Add image for image-to-video — prefer base64 data URI for reliability
   if (imageUrl) {
     let resolvedImageUrl = imageUrl;
-
-    // If the URL points to our own server uploads, read the local file as base64 instead
-    // This avoids xAI needing to download from our Render server (which can be slow/sleeping)
-    const uploadsMatch = imageUrl.match(/\/uploads\/video-shots\/(.+)$/);
-    if (uploadsMatch) {
-      const localPath = path.join(SHOTS_DIR, uploadsMatch[1]);
-      if (fs.existsSync(localPath)) {
-        const imgBuffer = fs.readFileSync(localPath);
-        const mime = getMimeType(localPath);
-        resolvedImageUrl = `data:${mime};base64,${imgBuffer.toString('base64')}`;
-        logger.info(`[VIDEO-PIPE] Converted local image to base64 data URI (${(imgBuffer.length / 1024).toFixed(0)}KB)`);
-      }
+    const localPath = _resolveLocalImage(imageUrl);
+    if (localPath) {
+      const imgBuffer = fs.readFileSync(localPath);
+      const mime = getMimeType(localPath);
+      resolvedImageUrl = `data:${mime};base64,${imgBuffer.toString('base64')}`;
+      logger.info(`[VIDEO-PIPE] xAI: Converted local image to base64 (${(imgBuffer.length / 1024).toFixed(0)}KB)`);
     }
-
     body.image = { url: resolvedImageUrl };
   }
 
-  logger.info(`[VIDEO-PIPE] Submitting to xAI: imageType=${body.image?.url?.startsWith('data:') ? 'base64' : 'url'}, duration=${body.duration}, aspect=${body.aspect_ratio}, resolution=${body.resolution}`);
+  logger.info(`[VIDEO-PIPE] xAI submit: imageType=${body.image?.url?.startsWith('data:') ? 'base64' : 'url'}, duration=${body.duration}, resolution=${body.resolution}`);
 
   const res = await fetch('https://api.x.ai/v1/videos/generations', {
     method: 'POST',
@@ -889,12 +920,11 @@ async function submitVideoJob(imageUrl, options = {}) {
   const result = await res.json();
   const requestId = result.request_id || result.response_id || result.id;
 
-  logger.info(`[VIDEO-PIPE] ${modelConfig.label} job queued: ${requestId} (${body.duration}s, $${(body.duration * modelConfig.costPerSec).toFixed(3)})`);
-  logger.info(`[VIDEO-PIPE] xAI submit response: ${JSON.stringify(result)}`);
+  logger.info(`[VIDEO-PIPE] xAI job queued: ${requestId} (${body.duration}s, $${(body.duration * modelConfig.costPerSec).toFixed(3)})`);
   return { requestId, status: 'queued', cameraMotion: motion.key, videoModel: modelConfig.key };
 }
 
-async function checkVideoStatus(requestId, videoModel) {
+async function _checkXaiVideoStatus(requestId) {
   const xaiKey = _getXaiKey();
 
   let res;
@@ -904,14 +934,13 @@ async function checkVideoStatus(requestId, videoModel) {
       headers: { 'Authorization': `Bearer ${xaiKey}` }
     });
   } catch (err) {
-    logger.error(`[VIDEO-PIPE] Network error checking video status: ${err.message}`);
+    logger.error(`[VIDEO-PIPE] xAI network error: ${err.message}`);
     return { requestId, status: 'failed', error: `Network error: ${err.message}` };
   }
 
   if (!res.ok) {
     const errBody = await res.text().catch(() => '');
-    logger.warn(`[VIDEO-PIPE] Video status check failed (${res.status}) for ${requestId}: ${errBody.substring(0, 200)}`);
-    // Treat 404/410 as terminal — the request ID is invalid or from a different system
+    logger.warn(`[VIDEO-PIPE] xAI status check failed (${res.status}) for ${requestId}: ${errBody.substring(0, 200)}`);
     if (res.status === 404 || res.status === 410) {
       return { requestId, status: 'failed', error: `Request not found (${res.status})` };
     }
@@ -919,37 +948,151 @@ async function checkVideoStatus(requestId, videoModel) {
   }
 
   const result = await res.json();
+  logger.info(`[VIDEO-PIPE] xAI status for ${requestId}: ${JSON.stringify(result)}`);
 
-  // Log full response for debugging
-  logger.info(`[VIDEO-PIPE] Video status for ${requestId}: ${JSON.stringify(result)}`);
-
-  // xAI returns video.url directly when done (may or may not include status field)
-  // Check for video URL first, then fall back to status field
   if (result.video?.url) {
-    logger.info(`[VIDEO-PIPE] Video DONE for ${requestId}: ${result.video.url.substring(0, 100)}`);
-    return {
-      requestId,
-      status: 'completed',
-      videoUrl: result.video.url
-    };
+    return { requestId, status: 'completed', videoUrl: result.video.url };
   }
-
   if (result.status === 'done') {
-    logger.info(`[VIDEO-PIPE] Video DONE (status field) for ${requestId}`);
-    return {
-      requestId,
-      status: 'completed',
-      videoUrl: null
-    };
+    return { requestId, status: 'completed', videoUrl: null };
   }
-
   if (result.status === 'expired') {
-    logger.warn(`[VIDEO-PIPE] Video EXPIRED for ${requestId}`);
     return { requestId, status: 'failed', error: 'Video generation request expired' };
   }
-
-  // "pending" or any other status — keep polling
   return { requestId, status: 'processing' };
+}
+
+// ── OpenAI Sora 2 / Sora 2 Pro ──
+
+async function _submitSoraVideoJob(imageUrl, options = {}, modelConfig) {
+  const openaiKey = _getOpenaiKey();
+
+  const {
+    cameraMotion = 'slow-dolly-in',
+    duration = 5
+  } = options;
+
+  const motion = CAMERA_MOTIONS.find(m => m.key === cameraMotion) || CAMERA_MOTIONS[0];
+  const prompt = options.prompt || `${motion.prompt}, professional product commercial, cinematic quality, studio lighting, 4K`;
+
+  // Sora accepts seconds as string: "5", "8", "10", "12", "15", "20"
+  // Snap to nearest supported value
+  const validSeconds = [5, 8, 10, 12, 15, 20];
+  const sec = validSeconds.reduce((prev, curr) => Math.abs(curr - duration) < Math.abs(prev - duration) ? curr : prev);
+
+  // Sora uses 9:16 vertical: "720x1280" (width x height)
+  const soraSize = modelConfig.soraSize || '720x1280';
+
+  // Build multipart form data using Node's built-in FormData (Node 18+)
+  const { FormData, Blob } = await import('node:buffer').then(() => ({ FormData: globalThis.FormData, Blob: globalThis.Blob }));
+  const formData = new FormData();
+  formData.append('model', modelConfig.key); // 'sora-2-pro' or 'sora-2'
+  formData.append('prompt', prompt);
+  formData.append('size', soraSize);
+  formData.append('seconds', String(sec));
+
+  // Add image for image-to-video
+  if (imageUrl) {
+    const localPath = _resolveLocalImage(imageUrl);
+    if (localPath) {
+      const imgBuffer = fs.readFileSync(localPath);
+      const mime = getMimeType(localPath);
+      const ext = path.extname(localPath).replace('.', '') || 'png';
+      const blob = new Blob([imgBuffer], { type: mime });
+      formData.append('input_reference', blob, `image.${ext}`);
+      logger.info(`[VIDEO-PIPE] Sora: Attached local image (${(imgBuffer.length / 1024).toFixed(0)}KB, ${mime})`);
+    } else {
+      logger.warn(`[VIDEO-PIPE] Sora: Could not resolve local image for "${imageUrl}", sending text-only`);
+    }
+  }
+
+  logger.info(`[VIDEO-PIPE] Sora submit: model=${modelConfig.key}, size=${soraSize}, seconds=${sec}, hasImage=${!!imageUrl}`);
+
+  const res = await fetch('https://api.openai.com/v1/videos', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${openaiKey}` },
+    body: formData
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`Sora video gen failed (${res.status}): ${errBody.substring(0, 400)}`);
+  }
+
+  const result = await res.json();
+  const requestId = result.id;
+
+  logger.info(`[VIDEO-PIPE] Sora job queued: ${requestId} (${sec}s, $${(sec * modelConfig.costPerSec).toFixed(3)})`);
+  return { requestId, status: 'queued', cameraMotion: motion.key, videoModel: modelConfig.key };
+}
+
+async function _checkSoraVideoStatus(requestId) {
+  const openaiKey = _getOpenaiKey();
+
+  let res;
+  try {
+    res = await fetch(`https://api.openai.com/v1/videos/${requestId}`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${openaiKey}` }
+    });
+  } catch (err) {
+    logger.error(`[VIDEO-PIPE] Sora network error: ${err.message}`);
+    return { requestId, status: 'failed', error: `Network error: ${err.message}` };
+  }
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '');
+    logger.warn(`[VIDEO-PIPE] Sora status check failed (${res.status}) for ${requestId}: ${errBody.substring(0, 200)}`);
+    if (res.status === 404) {
+      return { requestId, status: 'failed', error: `Sora job not found (${res.status})` };
+    }
+    return { requestId, status: 'failed', error: `Sora status check failed (${res.status})` };
+  }
+
+  const result = await res.json();
+  logger.info(`[VIDEO-PIPE] Sora status for ${requestId}: status=${result.status}, progress=${result.progress || 0}`);
+
+  if (result.status === 'completed') {
+    // Download the actual video content from /videos/{id}/content
+    const videoUrl = await _downloadSoraVideo(requestId, openaiKey);
+    return { requestId, status: 'completed', videoUrl };
+  }
+
+  if (result.status === 'failed') {
+    return { requestId, status: 'failed', error: result.error?.message || 'Sora generation failed' };
+  }
+
+  // 'queued' or 'in_progress' — keep polling
+  return { requestId, status: 'processing' };
+}
+
+async function _downloadSoraVideo(videoId, openaiKey) {
+  ensureDir(VIDEOS_DIR);
+  const outputPath = path.join(VIDEOS_DIR, `sora-${videoId}.mp4`);
+
+  // If already downloaded, return cached
+  if (fs.existsSync(outputPath)) {
+    logger.info(`[VIDEO-PIPE] Sora: Using cached download for ${videoId}`);
+    return `/uploads/video-clips/sora-${videoId}.mp4`;
+  }
+
+  logger.info(`[VIDEO-PIPE] Sora: Downloading video ${videoId}...`);
+  const res = await fetch(`https://api.openai.com/v1/videos/${videoId}/content`, {
+    method: 'GET',
+    headers: { 'Authorization': `Bearer ${openaiKey}` },
+    redirect: 'follow'
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '');
+    throw new Error(`Sora download failed (${res.status}): ${errBody.substring(0, 200)}`);
+  }
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  fs.writeFileSync(outputPath, buffer);
+  logger.info(`[VIDEO-PIPE] Sora: Downloaded ${(buffer.length / 1024 / 1024).toFixed(1)}MB → ${outputPath}`);
+
+  return `/uploads/video-clips/sora-${videoId}.mp4`;
 }
 
 async function submitVideoBatch(shots, options = {}) {
@@ -1268,7 +1411,8 @@ async function _autoGenerateBackground(jobId, productImagePath, options = {}) {
     templateKey = 'quick-cut-food',
     musicTrack = 'none',
     brandText = '',
-    crossfadeDuration = 0.5
+    crossfadeDuration = 0.5,
+    videoModel = DEFAULT_VIDEO_MODEL
   } = options;
 
   try {
@@ -1341,9 +1485,12 @@ async function _autoGenerateBackground(jobId, productImagePath, options = {}) {
       prompt: directorPlan.shots?.[shot.angle]?.videoPrompt || `Cinematic food commercial shot, professional quality, ${clipDuration} seconds`
     }));
 
+    const selectedModel = VIDEO_MODELS[videoModel] || VIDEO_MODELS[DEFAULT_VIDEO_MODEL];
+    logger.info(`[VIDEO-PIPE] Auto ${jobId}: Using video model: ${selectedModel.label} (${selectedModel.provider})`);
+
     const batchResults = await submitVideoBatch(shotsForBatch, {
       duration: clipDuration,
-      videoModel: DEFAULT_VIDEO_MODEL
+      videoModel
     });
 
     job.clipsSubmitted = batchResults.filter(r => r.status === 'queued').length;
@@ -1377,7 +1524,7 @@ async function _autoGenerateBackground(jobId, productImagePath, options = {}) {
 
       for (const id of pendingIds) {
         try {
-          const status = await checkVideoStatus(id, DEFAULT_VIDEO_MODEL);
+          const status = await checkVideoStatus(id, videoModel);
           const idx = clipStatuses.findIndex(c => c.requestId === id);
           if (idx >= 0) clipStatuses[idx] = { ...clipStatuses[idx], ...status };
         } catch (err) {
