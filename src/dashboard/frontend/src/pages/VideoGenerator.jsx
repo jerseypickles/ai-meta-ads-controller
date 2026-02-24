@@ -15,7 +15,7 @@ const PHASE_CFG = {
   director:       { icon: '🧠', label: 'Director Creativo', color: '#c4b5fd' },
   shots:          { icon: '📸', label: 'Generando Imagenes', color: '#f59e0b' },
   clips:          { icon: '🎬', label: 'Enviando Video Clips', color: '#3b82f6' },
-  'clips-polling':{ icon: '⏳', label: 'Sora vs Grok', color: '#3b82f6' },
+  'clips-polling':{ icon: '⏳', label: 'Generando Clips (Sora)', color: '#3b82f6' },
   stitching:      { icon: '🎞️', label: 'Ensamblando', color: '#22c55e' },
   complete:       { icon: '✅', label: 'Listo', color: '#22c55e' }
 };
@@ -32,8 +32,7 @@ const STYLE_COLORS = {
 
 // ═══ MODEL COLORS ═══
 const MODEL_COLORS = {
-  'sora-2-pro':        { color: '#22c55e', bg: '#14532d', label: 'Sora 2 Pro', icon: '🟢' },
-  'grok-imagine-720p': { color: '#f59e0b', bg: '#78350f', label: 'Grok Imagine', icon: '🟡' }
+  'sora-2-pro': { color: '#22c55e', bg: '#14532d', label: 'Sora 2 Pro', icon: '🟢' }
 };
 
 // ═══ PROGRESS BAR ═══
@@ -129,70 +128,8 @@ const ModelProgressCard = ({ modelKey, modelData }) => {
   );
 };
 
-// ═══ VIDEO COMPARISON CARD (final result) ═══
-const VideoCompareCard = ({ modelKey, modelData }) => {
-  const mc = MODEL_COLORS[modelKey] || { color: '#9ca3af', bg: '#1f2937', label: modelKey, icon: '⚪' };
-  const isDone = modelData.status === 'done' && modelData.finalVideoUrl;
-  const isFailed = modelData.status === 'failed';
-
-  return (
-    <div style={{
-      flex: '1 1 300px', borderRadius: '12px', overflow: 'hidden',
-      border: `2px solid ${isDone ? mc.color : isFailed ? '#dc262640' : '#2a2d3a'}`,
-      backgroundColor: '#0d0f14'
-    }}>
-      {/* Header */}
-      <div style={{
-        padding: '10px 14px', backgroundColor: isDone ? `${mc.color}15` : '#141720',
-        display: 'flex', alignItems: 'center', gap: '8px', borderBottom: `1px solid ${isDone ? `${mc.color}40` : '#2a2d3a'}`
-      }}>
-        <span style={{ fontSize: '16px' }}>{mc.icon}</span>
-        <span style={{ fontSize: '14px', fontWeight: '700', color: isDone ? mc.color : '#6b7280' }}>
-          {mc.label}
-        </span>
-        {isDone && <CheckCircle size={14} color={mc.color} />}
-        {isFailed && <XCircle size={14} color="#ef4444" />}
-        <span style={{ fontSize: '10px', color: '#6b7280', marginLeft: 'auto' }}>
-          {modelData.clipsCompleted || 0} clips
-        </span>
-      </div>
-
-      {/* Video or error */}
-      {isDone ? (
-        <div>
-          <video
-            src={`${BASE_URL}${modelData.finalVideoUrl}`}
-            controls
-            style={{ width: '100%', display: 'block', maxHeight: '500px' }}
-          />
-          <div style={{ padding: '10px 14px', display: 'flex', gap: '8px', justifyContent: 'center' }}>
-            <a href={`${BASE_URL}${modelData.finalVideoUrl}`} download
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: '5px',
-                backgroundColor: mc.color, color: '#fff', padding: '8px 16px',
-                borderRadius: '8px', textDecoration: 'none', fontWeight: '600', fontSize: '12px'
-              }}>
-              <Download size={13} /> Descargar
-            </a>
-          </div>
-        </div>
-      ) : isFailed ? (
-        <div style={{ padding: '24px', textAlign: 'center' }}>
-          <XCircle size={24} color="#ef4444" style={{ margin: '0 auto 8px', display: 'block' }} />
-          <p style={{ color: '#fca5a5', fontSize: '12px' }}>{modelData.error || 'Error desconocido'}</p>
-        </div>
-      ) : (
-        <div style={{ padding: '24px', textAlign: 'center' }}>
-          <Loader size={20} color="#6b7280" className="spin" style={{ margin: '0 auto 8px', display: 'block' }} />
-          <p style={{ color: '#6b7280', fontSize: '12px' }}>Procesando...</p>
-        </div>
-      )}
-    </div>
-  );
-};
-
 // ═══════════════════════════════════════════════
-// MAIN COMPONENT — Dual Model Video Comparison
+// MAIN COMPONENT — Sora 2 Pro Video Generator
 // ═══════════════════════════════════════════════
 export default function VideoGenerator() {
   // Upload state
@@ -314,10 +251,10 @@ export default function VideoGenerator() {
       <div style={{ marginBottom: '24px' }}>
         <h1 style={{ color: '#fff', fontSize: '22px', fontWeight: '700', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <Video size={24} color="#8b5cf6" />
-          Video AI — Sora 2 Pro vs Grok
+          Video AI — Sora 2 Pro
         </h1>
         <p style={{ color: '#6b7280', fontSize: '13px' }}>
-          Sube la foto, elige un estilo — genera 2 comerciales en paralelo y compara calidad
+          Sube la foto, elige un estilo — genera un comercial con OpenAI Sora 2 Pro
         </p>
       </div>
 
@@ -407,17 +344,15 @@ export default function VideoGenerator() {
                 </div>
               )}
 
-              {/* Dual model info badge */}
+              {/* Model info badge */}
               <div style={{
                 marginBottom: '20px', padding: '10px 14px', borderRadius: '10px',
                 backgroundColor: '#0d0f14', border: '1px solid #2a2d3a',
                 display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap'
               }}>
                 <span style={{ fontSize: '12px', color: '#9ca3af', fontWeight: '600' }}>Motor de Video:</span>
-                <span style={{ fontSize: '12px', color: '#22c55e', fontWeight: '700' }}>🟢 Sora 2 Pro</span>
-                <span style={{ fontSize: '12px', color: '#6b7280' }}>vs</span>
-                <span style={{ fontSize: '12px', color: '#f59e0b', fontWeight: '700' }}>🟡 Grok Imagine</span>
-                <span style={{ fontSize: '10px', color: '#4b5563', marginLeft: 'auto' }}>Ambos corren en paralelo</span>
+                <span style={{ fontSize: '12px', color: '#22c55e', fontWeight: '700' }}>🟢 OpenAI Sora 2 Pro</span>
+                <span style={{ fontSize: '10px', color: '#4b5563', marginLeft: 'auto' }}>Image-to-Video AI</span>
               </div>
 
               {/* Optional music + text */}
@@ -461,10 +396,10 @@ export default function VideoGenerator() {
                 onMouseDown={(e) => e.target.style.transform = 'scale(0.98)'}
                 onMouseUp={(e) => e.target.style.transform = 'scale(1)'}>
                 <Zap size={20} />
-                Generar 2 Comerciales — Sora vs Grok
+                Generar Comercial — Sora 2 Pro
               </button>
               <p style={{ color: '#4b5563', fontSize: '11px', textAlign: 'center', marginTop: '8px' }}>
-                Claude Director analiza → Grok Imagine genera imagenes → Sora 2 Pro + Grok generan clips en paralelo → FFmpeg ensambla ambos comerciales
+                Claude Director analiza → Grok Imagine genera imagenes → Sora 2 Pro genera clips → FFmpeg ensambla el comercial
               </p>
             </div>
           )}
@@ -477,7 +412,7 @@ export default function VideoGenerator() {
         <div style={{ backgroundColor: '#111318', border: '1px solid #1f2937', borderRadius: '14px', padding: '24px', marginBottom: '20px' }}>
           <h2 style={{ color: '#fff', fontSize: '16px', fontWeight: '600', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Loader size={18} color="#8b5cf6" className="spin" />
-            Generando 2 Comerciales...
+            Generando Comercial...
           </h2>
 
           <PhaseTimeline currentPhase={jobStatus.phase} />
@@ -533,25 +468,48 @@ export default function VideoGenerator() {
         </div>
       )}
 
-      {/* ═══ DONE — Side-by-Side Comparison ═══ */}
+      {/* ═══ DONE — Single Video Result ═══ */}
       {isDone && (
         <div style={{ backgroundColor: '#111318', border: '2px solid #22c55e', borderRadius: '14px', padding: '24px', marginBottom: '20px' }}>
           <h2 style={{ color: '#fff', fontSize: '18px', fontWeight: '700', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <CheckCircle size={20} color="#22c55e" />
-            Comparacion: Sora 2 Pro vs Grok Imagine
+            Comercial Listo — Sora 2 Pro
           </h2>
           <p style={{ color: '#6b7280', fontSize: '12px', marginBottom: '20px' }}>
-            {doneModels.length === 2 ? 'Ambos videos listos — compara calidad, movimiento, y fidelidad del producto' :
-             doneModels.length === 1 ? `Solo ${MODEL_COLORS[doneModels[0]]?.label || doneModels[0]} genero video exitosamente` :
-             'Ningun modelo genero video exitosamente'}
+            {doneModels.length >= 1 ? 'Video generado exitosamente con OpenAI Sora 2 Pro' : 'No se pudo generar el video'}
           </p>
 
-          {/* Side-by-side videos */}
-          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '16px' }}>
-            {modelKeys.map(mk => (
-              <VideoCompareCard key={mk} modelKey={mk} modelData={models[mk]} />
-            ))}
-          </div>
+          {/* Single video player */}
+          {doneModels.length > 0 && (() => {
+            const mk = doneModels[0];
+            const md = models[mk];
+            return (
+              <div style={{ borderRadius: '12px', overflow: 'hidden', border: '2px solid #22c55e', marginBottom: '16px' }}>
+                <video
+                  src={`${BASE_URL}${md.finalVideoUrl}`}
+                  controls
+                  style={{ width: '100%', display: 'block', maxHeight: '600px' }}
+                />
+                <div style={{ padding: '12px 14px', display: 'flex', gap: '8px', justifyContent: 'center', backgroundColor: '#0d0f14' }}>
+                  <a href={`${BASE_URL}${md.finalVideoUrl}`} download
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '5px',
+                      backgroundColor: '#22c55e', color: '#fff', padding: '10px 20px',
+                      borderRadius: '8px', textDecoration: 'none', fontWeight: '600', fontSize: '13px'
+                    }}>
+                    <Download size={14} /> Descargar Video
+                  </a>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Failed model info */}
+          {modelKeys.filter(k => models[k].status === 'failed').map(mk => (
+            <div key={mk} style={{ backgroundColor: '#7f1d1d20', border: '1px solid #dc262640', borderRadius: '10px', padding: '12px 14px', marginBottom: '12px' }}>
+              <p style={{ color: '#fca5a5', fontSize: '12px' }}>{models[mk].error || 'Error desconocido'}</p>
+            </div>
+          ))}
 
           {/* Director info */}
           {jobStatus.directorPlan && (
@@ -573,7 +531,7 @@ export default function VideoGenerator() {
                 backgroundColor: '#7c3aed', color: '#fff', padding: '12px 20px',
                 borderRadius: '10px', border: 'none', fontWeight: '600', fontSize: '13px', cursor: 'pointer'
               }}>
-              <RefreshCw size={14} /> Generar Otra Comparacion
+              <RefreshCw size={14} /> Generar Otro Comercial
             </button>
             <button onClick={handleFullReset}
               style={{

@@ -1364,7 +1364,7 @@ function _probeClipDuration(ffmpegPath, filePath) {
 
 const autoGenerateJobs = new Map();
 
-const COMPETING_MODELS = ['sora-2-pro', 'grok-imagine-720p'];
+const COMPETING_MODELS = ['sora-2-pro'];
 
 function startAutoGenerateJob(productImagePath, options = {}) {
   const jobId = `auto-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
