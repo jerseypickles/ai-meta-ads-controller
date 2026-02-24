@@ -1240,9 +1240,10 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
     const inputs = localFiles.map((f) => ['-i', f]).flat();
     const filterParts = [];
 
-    // Normalize each clip: constant 30fps + yuv420p (xfade requires constant frame rate)
+    // Normalize each clip: scale to 720x1280, constant 30fps, yuv420p
+    // xfade requires ALL inputs to have identical resolution, frame rate, and pixel format
     for (let i = 0; i < n; i++) {
-      filterParts.push(`[${i}:v]fps=30,format=yuv420p,setpts=PTS-STARTPTS[vin${i}]`);
+      filterParts.push(`[${i}:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p,setpts=PTS-STARTPTS[vin${i}]`);
     }
 
     // Chain xfade transitions
