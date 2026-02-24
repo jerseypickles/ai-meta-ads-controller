@@ -1,19 +1,17 @@
 /**
- * Video Pipeline — "Director Creativo" Mode v6
+ * Video Pipeline — "Director Creativo" Mode v7 — Grok Imagine Edition
  *
  * Workflow:
  *   1. Upload 1 product photo
  *   2. Claude Vision analyzes product → detects ingredients → recommends best commercial scene → designs 12 NARRATIVE BEATS (hybrid CONTEXT + PRODUCT story arc)
- *   3. OpenAI gpt-image-1.5 generates shots: CONTEXT via text-to-image, PRODUCT via image edit (async, polled)
+ *   3. Grok Imagine generates shots via fal.ai: CONTEXT via text-to-image, PRODUCT via image edit (async, polled)
  *   4. Claude Vision judges each shot quality with type-specific criteria (1-10 score + feedback)
  *   5. User reviews storyboard with scores, can regenerate low-scoring shots
- *   6. Kling 3.0 Pro converts each approved shot to a 5-10s video clip
+ *   6. Grok Imagine Video converts each approved shot to a 6-15s video clip (720p, native audio)
  *   7. FFmpeg stitches all clips into ONE complete commercial video
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
-const OpenAI = require('openai');
-const { toFile } = require('openai');
 const { fal } = require('@fal-ai/client');
 const config = require('../../config');
 const logger = require('../utils/logger');
@@ -71,14 +69,13 @@ const BEAT_TYPES = {
   product: { key: 'product', label: 'Producto', description: 'Generated via image edit using the product photo as reference.' }
 };
 
-// ═══ VIDEO MODEL OPTIONS ═══
+// ═══ VIDEO MODEL OPTIONS — Grok Imagine Video via fal.ai ═══
 const VIDEO_MODELS = {
-  'kling-3.0-pro': { key: 'kling-3.0-pro', label: 'Kling 3.0 Pro', falModel: 'fal-ai/kling-video/v3/pro/image-to-video', costPerSec: 0.224, recommended: true },
-  'kling-3.0-standard': { key: 'kling-3.0-standard', label: 'Kling 3.0 Standard', falModel: 'fal-ai/kling-video/v3/standard/image-to-video', costPerSec: 0.168, recommended: false },
-  'kling-2.6-pro': { key: 'kling-2.6-pro', label: 'Kling 2.6 Pro (Legacy)', falModel: 'fal-ai/kling-video/v2.6/pro/image-to-video', costPerSec: 0.07, recommended: false }
+  'grok-imagine-720p': { key: 'grok-imagine-720p', label: 'Grok Imagine 720p', falModel: 'xai/grok-imagine-video/image-to-video', resolution: '720p', costPerSec: 0.07, recommended: true },
+  'grok-imagine-480p': { key: 'grok-imagine-480p', label: 'Grok Imagine 480p', falModel: 'xai/grok-imagine-video/image-to-video', resolution: '480p', costPerSec: 0.05, recommended: false }
 };
 
-const DEFAULT_VIDEO_MODEL = 'kling-3.0-pro';
+const DEFAULT_VIDEO_MODEL = 'grok-imagine-720p';
 
 // ═══ 12 NARRATIVE BEATS — Hybrid CONTEXT + PRODUCT story arc ═══
 // CONTEXT beats: text-to-image (ingredients, lifestyle, process) — no product photo needed
@@ -101,7 +98,7 @@ const NARRATIVE_BEATS = [
 // Keep backward compat alias
 const SHOT_TYPES = NARRATIVE_BEATS;
 
-// ═══ CAMERA MOTIONS for Kling ═══
+// ═══ CAMERA MOTIONS for video generation ═══
 const CAMERA_MOTIONS = [
   { key: 'slow-dolly-in', prompt: 'Slow cinematic dolly in toward the subject, smooth camera movement', label: 'Dolly In' },
   { key: 'slow-orbit', prompt: 'Slow 360 orbit around the subject, smooth circular camera movement', label: 'Orbit 360' },
@@ -200,8 +197,8 @@ Story arc flow:
 The 12 narrative beats are:
 ${beatsText}
 
-STEP 4 — Design 12 video prompts for Kling 3.0:
-For each beat, write a 5-second video motion prompt that:
+STEP 4 — Design 12 video prompts for Grok Imagine Video:
+For each beat, write a 6-second video motion prompt that:
 - Describes camera movement APPROPRIATE to this narrative moment
 - For CONTEXT shots: use cinematic movements like aerials, tracking, crane shots
 - For PRODUCT shots: use closer movements like dolly in, orbit, zoom
@@ -229,7 +226,7 @@ Return ONLY valid JSON:
   "sceneLabel": "Scene Label",
   "sceneReason": "2-3 sentence explanation of why this scene is ideal for this product",
   "narrativeSummary": "One paragraph describing the commercial story arc from opening to closing",
-  "videoModel": "kling-3.0-pro",
+  "videoModel": "grok-imagine-720p",
   "recommendedMusic": "music-track-key",
   "closingText": "Brand Name",
   "shots": {
@@ -318,18 +315,27 @@ function getShotJobStatus(jobId) {
 }
 
 async function _generateShotsBackground(jobId, productImagePath, options = {}) {
-  const apiKey = config.imageGen.openai.apiKey;
-  if (!apiKey) throw new Error('OPENAI_API_KEY not configured');
   if (!productImagePath || !fs.existsSync(productImagePath)) {
     throw new Error('Product image not found: ' + productImagePath);
   }
 
+  initFal();
   ensureDir(SHOTS_DIR);
-  const client = new OpenAI({ apiKey });
-  const mimeType = getMimeType(productImagePath);
   const productDescription = options.productDescription || 'product';
   const directorPlan = options.directorPlan;
   const job = shotJobs.get(jobId);
+
+  // Upload product image to fal.ai storage once (needed for PRODUCT beats)
+  let productImageUrl;
+  try {
+    const imageBuffer = fs.readFileSync(productImagePath);
+    const blob = new Blob([imageBuffer], { type: getMimeType(productImagePath) });
+    productImageUrl = await fal.storage.upload(blob);
+    logger.info(`[VIDEO-PIPE] Product image uploaded to fal storage: ${productImageUrl?.substring(0, 80)}`);
+  } catch (err) {
+    logger.error(`[VIDEO-PIPE] Failed to upload product image to fal storage: ${err.message}`);
+    throw new Error('Failed to upload product image for editing: ' + err.message);
+  }
 
   // Use director plan shots if available, otherwise fall back to default
   const numShots = options.numShots || 12;
@@ -347,34 +353,40 @@ async function _generateShotsBackground(jobId, productImagePath, options = {}) {
     const isContext = beatType === 'context';
 
     try {
-      logger.info(`[VIDEO-PIPE] Job ${jobId}: Generating shot ${i + 1}/${shotKeys.length}: ${shotKey} [${beatType.toUpperCase()}]`);
+      logger.info(`[VIDEO-PIPE] Job ${jobId}: Generating shot ${i + 1}/${shotKeys.length}: ${shotKey} [${beatType.toUpperCase()}] via Grok Imagine`);
 
-      let result;
+      let resultImageUrl;
 
       if (isContext) {
-        // ── CONTEXT shot: text-to-image (generate from scratch, no product photo) ──
+        // ── CONTEXT shot: Grok Imagine text-to-image (generate from scratch, no product photo) ──
         const contextPrompt = [
           directorPlan?.shots?.[shotKey]?.imagePrompt || `Beautiful ${productDescription} related scene.`,
-          '\nVertical 9:16 format (1080x1920).',
+          '\nVertical 9:16 format.',
           '\nPhotorealistic, high-end commercial photography quality.',
           ' Shot on professional cinema camera, shallow depth of field.',
           ' Natural lighting, rich colors, magazine-quality composition.'
         ].join('');
 
-        result = await client.images.generate({
-          model: 'gpt-image-1.5',
-          prompt: contextPrompt,
-          size: '1024x1536',
-          n: 1
+        const result = await fal.subscribe('xai/grok-imagine-image', {
+          input: {
+            prompt: contextPrompt,
+            aspect_ratio: '2:3',
+            output_format: 'png',
+            num_images: 1,
+            sync_mode: true
+          },
+          logs: false
         });
+
+        resultImageUrl = result.images?.[0]?.url || result.data?.images?.[0]?.url;
       } else {
-        // ── PRODUCT shot: image edit (uses product photo as reference) ──
+        // ── PRODUCT shot: Grok Imagine image edit (uses product photo as reference) ──
         let fullPrompt;
         if (directorPlan?.shots?.[shotKey]?.imagePrompt) {
           fullPrompt = [
             directorPlan.shots[shotKey].imagePrompt,
             `\nThe product is: ${productDescription}.`,
-            '\nVertical 9:16 format (1080x1920).',
+            '\nVertical 9:16 format.',
             '\nThe product from the reference photo must remain EXACTLY as it appears — same shape, same label, same colors, same text, same proportions.',
             ' Do NOT re-render, redraw, or generate a 3D version of the product.',
             ' Keep it as the original flat photographic element.',
@@ -388,7 +400,7 @@ async function _generateShotsBackground(jobId, productImagePath, options = {}) {
             'Edit this product photograph. Change ONLY the background and surroundings.',
             ` ${shotType?.composition || 'Product centered in frame.'}`,
             `\nThe product is: ${productDescription}.`,
-            '\nVertical 9:16 format (1080x1920).',
+            '\nVertical 9:16 format.',
             '\nThe product from the reference photo must remain EXACTLY as it appears — same shape, same label, same colors, same text, same proportions.',
             ' Do NOT re-render, redraw, or generate a 3D version of the product.',
             ' Keep it as the original flat photographic element.',
@@ -396,33 +408,30 @@ async function _generateShotsBackground(jobId, productImagePath, options = {}) {
           ].join('');
         }
 
-        const imageFile = await toFile(fs.createReadStream(productImagePath), null, { type: mimeType });
-
-        result = await client.images.edit({
-          model: 'gpt-image-1.5',
-          image: imageFile,
-          prompt: fullPrompt,
-          size: '1024x1536',
-          n: 1,
-          input_fidelity: 'high'
+        const result = await fal.subscribe('xai/grok-imagine-image/edit', {
+          input: {
+            prompt: fullPrompt,
+            image_url: productImageUrl,
+            output_format: 'png',
+            num_images: 1,
+            sync_mode: true
+          },
+          logs: false
         });
+
+        resultImageUrl = result.images?.[0]?.url || result.data?.images?.[0]?.url;
       }
 
-      const imageUrl = result.data[0]?.url || result.data[0]?.b64_json;
-      let filename;
-
-      if (imageUrl && imageUrl.startsWith('http')) {
-        const res = await fetch(imageUrl);
-        const buffer = Buffer.from(await res.arrayBuffer());
-        filename = `shot-${shotKey}-${Date.now()}.png`;
-        fs.writeFileSync(path.join(SHOTS_DIR, filename), buffer);
-      } else if (result.data[0]?.b64_json) {
-        const buffer = Buffer.from(result.data[0].b64_json, 'base64');
-        filename = `shot-${shotKey}-${Date.now()}.png`;
-        fs.writeFileSync(path.join(SHOTS_DIR, filename), buffer);
-      } else {
-        throw new Error('No image data in response');
+      if (!resultImageUrl) {
+        throw new Error('No image URL in Grok Imagine response');
       }
+
+      // Download the generated image and save locally
+      const res = await fetch(resultImageUrl);
+      if (!res.ok) throw new Error(`Failed to download generated image: HTTP ${res.status}`);
+      const buffer = Buffer.from(await res.arrayBuffer());
+      const filename = `shot-${shotKey}-${Date.now()}.png`;
+      fs.writeFileSync(path.join(SHOTS_DIR, filename), buffer);
 
       job.shots.push({
         angle: shotKey,
@@ -616,43 +625,50 @@ Return ONLY valid JSON:
 // ═══ STEP 4: Regenerate a single shot ═══
 
 async function regenerateSingleShot(productImagePath, shotKey, imagePrompt, productDescription, beatType) {
-  const apiKey = config.imageGen.openai.apiKey;
-  if (!apiKey) throw new Error('OPENAI_API_KEY not configured');
-
+  initFal();
   ensureDir(SHOTS_DIR);
-  const client = new OpenAI({ apiKey });
 
   // Determine beat type from param, or from NARRATIVE_BEATS definition
   const shotType = SHOT_TYPES.find(s => s.key === shotKey);
   const isContext = (beatType || shotType?.type || 'product') === 'context';
 
-  logger.info(`[VIDEO-PIPE] Regenerating shot: ${shotKey} [${isContext ? 'CONTEXT' : 'PRODUCT'}]`);
+  logger.info(`[VIDEO-PIPE] Regenerating shot: ${shotKey} [${isContext ? 'CONTEXT' : 'PRODUCT'}] via Grok Imagine`);
 
-  let result;
+  let resultImageUrl;
 
   if (isContext) {
-    // CONTEXT: text-to-image from scratch
+    // CONTEXT: Grok Imagine text-to-image from scratch
     const contextPrompt = [
       imagePrompt,
-      '\nVertical 9:16 format (1080x1920).',
+      '\nVertical 9:16 format.',
       '\nPhotorealistic, high-end commercial photography quality.',
       ' Shot on professional cinema camera, shallow depth of field.',
       ' Natural lighting, rich colors, magazine-quality composition.'
     ].join('');
 
-    result = await client.images.generate({
-      model: 'gpt-image-1.5',
-      prompt: contextPrompt,
-      size: '1024x1536',
-      n: 1
+    const result = await fal.subscribe('xai/grok-imagine-image', {
+      input: {
+        prompt: contextPrompt,
+        aspect_ratio: '2:3',
+        output_format: 'png',
+        num_images: 1,
+        sync_mode: true
+      },
+      logs: false
     });
+
+    resultImageUrl = result.images?.[0]?.url || result.data?.images?.[0]?.url;
   } else {
-    // PRODUCT: image edit with product photo
-    const mimeType = getMimeType(productImagePath);
+    // PRODUCT: Grok Imagine image edit with product photo
+    // Upload product image to fal.ai storage
+    const imageBuffer = fs.readFileSync(productImagePath);
+    const blob = new Blob([imageBuffer], { type: getMimeType(productImagePath) });
+    const productImageUrl = await fal.storage.upload(blob);
+
     const fullPrompt = [
       imagePrompt,
       `\nThe product is: ${productDescription}.`,
-      '\nVertical 9:16 format (1080x1920).',
+      '\nVertical 9:16 format.',
       '\nThe product from the reference photo must remain EXACTLY as it appears — same shape, same label, same colors, same text, same proportions.',
       ' Do NOT re-render, redraw, or generate a 3D version of the product.',
       ' Keep it as the original flat photographic element.',
@@ -662,33 +678,30 @@ async function regenerateSingleShot(productImagePath, shotKey, imagePrompt, prod
       ' Photorealistic, high-end commercial product photography quality.'
     ].join('');
 
-    const imageFile = await toFile(fs.createReadStream(productImagePath), null, { type: mimeType });
-
-    result = await client.images.edit({
-      model: 'gpt-image-1.5',
-      image: imageFile,
-      prompt: fullPrompt,
-      size: '1024x1536',
-      n: 1,
-      input_fidelity: 'high'
+    const result = await fal.subscribe('xai/grok-imagine-image/edit', {
+      input: {
+        prompt: fullPrompt,
+        image_url: productImageUrl,
+        output_format: 'png',
+        num_images: 1,
+        sync_mode: true
+      },
+      logs: false
     });
+
+    resultImageUrl = result.images?.[0]?.url || result.data?.images?.[0]?.url;
   }
 
-  const imageUrl = result.data[0]?.url || result.data[0]?.b64_json;
-  let filename;
-
-  if (imageUrl && imageUrl.startsWith('http')) {
-    const res = await fetch(imageUrl);
-    const buffer = Buffer.from(await res.arrayBuffer());
-    filename = `shot-${shotKey}-${Date.now()}.png`;
-    fs.writeFileSync(path.join(SHOTS_DIR, filename), buffer);
-  } else if (result.data[0]?.b64_json) {
-    const buffer = Buffer.from(result.data[0].b64_json, 'base64');
-    filename = `shot-${shotKey}-${Date.now()}.png`;
-    fs.writeFileSync(path.join(SHOTS_DIR, filename), buffer);
-  } else {
-    throw new Error('No image data in response');
+  if (!resultImageUrl) {
+    throw new Error('No image URL in Grok Imagine response');
   }
+
+  // Download the generated image and save locally
+  const res = await fetch(resultImageUrl);
+  if (!res.ok) throw new Error(`Failed to download generated image: HTTP ${res.status}`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const filename = `shot-${shotKey}-${Date.now()}.png`;
+  fs.writeFileSync(path.join(SHOTS_DIR, filename), buffer);
 
   return {
     angle: shotKey,
@@ -700,7 +713,7 @@ async function regenerateSingleShot(productImagePath, shotKey, imagePrompt, prod
   };
 }
 
-// ═══ STEP 5: Generate Video from Shot via fal.ai (Kling 3.0/2.6) ═══
+// ═══ STEP 5: Generate Video from Shot via fal.ai (Grok Imagine Video) ═══
 
 function initFal() {
   const falKey = config.fal?.apiKey;
@@ -727,14 +740,13 @@ async function submitVideoJob(imageUrl, options = {}) {
   const motion = CAMERA_MOTIONS.find(m => m.key === cameraMotion) || CAMERA_MOTIONS[0];
   const prompt = options.prompt || `${motion.prompt}, professional product commercial, cinematic quality, studio lighting, 4K`;
 
-  // All Kling models use start_image_url and duration as string
+  // Grok Imagine Video: image_url, integer duration (1-15s), resolution
   const input = {
     prompt,
-    start_image_url: imageUrl,
-    duration: String(duration),
+    image_url: imageUrl,
+    duration: Math.max(1, Math.min(15, Math.round(duration))),
     aspect_ratio: aspectRatio,
-    cfg_scale: 0.5,
-    generate_audio: false
+    resolution: modelConfig.resolution || '720p'
   };
 
   logger.info(`[VIDEO-PIPE] Submitting to fal.ai: model=${modelConfig.falModel}, image=${imageUrl?.substring(0, 80)}, duration=${input.duration}, aspect=${input.aspect_ratio}`);
@@ -912,7 +924,7 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
     const inputs = localFiles.map((f) => ['-i', f]).flat();
     const filterParts = [];
 
-    // Normalize each clip to yuv420p (Kling may output different pixel formats)
+    // Normalize each clip to yuv420p (video models may output different pixel formats)
     for (let i = 0; i < n; i++) {
       filterParts.push(`[${i}:v]format=yuv420p,setpts=PTS-STARTPTS[vin${i}]`);
     }
@@ -932,8 +944,8 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
     // Calculate total video duration (accounting for crossfades)
     const totalDuration = clipDurations.reduce((s, d) => s + d, 0) - (n - 1) * crossfadeDuration;
 
-    // NOTE: Kling 2.6 generates video-only clips (no audio stream).
-    // We use the music track as sole audio, or generate silence.
+    // NOTE: Grok Imagine Video can generate native audio, but we use our own
+    // music track as sole audio for consistency, or generate silence.
 
     // ── Step D: Closing text overlay on last seconds ──
     let videoFinal = '[vout]';
