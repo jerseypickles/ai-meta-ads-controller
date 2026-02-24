@@ -975,9 +975,9 @@ async function _submitSoraVideoJob(imageUrl, options = {}, modelConfig) {
   const motion = CAMERA_MOTIONS.find(m => m.key === cameraMotion) || CAMERA_MOTIONS[0];
   const prompt = options.prompt || `${motion.prompt}, professional product commercial, cinematic quality, studio lighting, 4K`;
 
-  // Sora accepts seconds as string: "5", "8", "10", "12", "15", "20"
+  // Sora accepts seconds as string: "4", "8", "12"
   // Snap to nearest supported value
-  const validSeconds = [5, 8, 10, 12, 15, 20];
+  const validSeconds = [4, 8, 12];
   const sec = validSeconds.reduce((prev, curr) => Math.abs(curr - duration) < Math.abs(prev - duration) ? curr : prev);
 
   // Sora uses 9:16 vertical: "720x1280" (width x height)
