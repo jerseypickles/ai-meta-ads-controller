@@ -781,14 +781,25 @@ async function submitVideoJob(imageUrl, options = {}) {
 async function checkVideoStatus(requestId, videoModel) {
   const xaiKey = _getXaiKey();
 
-  const res = await fetch(`https://api.x.ai/v1/videos/${requestId}`, {
-    method: 'GET',
-    headers: { 'Authorization': `Bearer ${xaiKey}` }
-  });
+  let res;
+  try {
+    res = await fetch(`https://api.x.ai/v1/videos/${requestId}`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${xaiKey}` }
+    });
+  } catch (err) {
+    logger.error(`[VIDEO-PIPE] Network error checking video status: ${err.message}`);
+    return { requestId, status: 'failed', error: `Network error: ${err.message}` };
+  }
 
   if (!res.ok) {
-    const errBody = await res.text();
-    throw new Error(`xAI video status check failed (${res.status}): ${errBody.substring(0, 300)}`);
+    const errBody = await res.text().catch(() => '');
+    logger.warn(`[VIDEO-PIPE] Video status check failed (${res.status}) for ${requestId}: ${errBody.substring(0, 200)}`);
+    // Treat 404/410 as terminal — the request ID is invalid or from a different system
+    if (res.status === 404 || res.status === 410) {
+      return { requestId, status: 'failed', error: `Request not found (${res.status})` };
+    }
+    return { requestId, status: 'failed', error: `Status check failed (${res.status})` };
   }
 
   const result = await res.json();
