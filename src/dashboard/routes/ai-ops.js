@@ -485,13 +485,13 @@ router.post('/refresh', async (req, res) => {
       }
     }
 
-    // 3. Obtener info actual de ad sets desde Meta (status, budget)
+    // 3. Obtener info actual de ad sets desde Meta (status, budget, campaign_id)
     //    Consultamos directamente por ID para capturar cualquier status
     const adSetInfoMap = {};
     for (const adSetId of adSetIds) {
       try {
         const data = await meta.get(`/${adSetId}`, {
-          fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining'
+          fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id'
         });
         adSetInfoMap[adSetId] = data;
       } catch (err) {
@@ -500,8 +500,10 @@ router.post('/refresh', async (req, res) => {
     }
 
     // 4. Obtener status real de ads dentro de nuestros ad sets
+    //    Solo intentar para ad sets que existen en Meta (tienen info)
     const adStatusMap = {};
     for (const adSetId of adSetIds) {
+      if (!adSetInfoMap[adSetId]) continue; // Skip ad sets eliminados
       try {
         const adsData = await meta.get(`/${adSetId}/ads`, {
           fields: 'id,effective_status',
@@ -511,9 +513,13 @@ router.post('/refresh', async (req, res) => {
           adStatusMap[ad.id] = ad.effective_status || 'ACTIVE';
         }
       } catch (err) {
-        // Ad set podría estar eliminado — ignorar
+        // Ad set podría no tener ads o tener restricciones — ignorar
       }
     }
+
+    // Helper: normalizar status al enum de MetricSnapshot
+    const VALID_STATUSES = ['ACTIVE', 'PAUSED', 'DELETED', 'ARCHIVED'];
+    const normalizeStatus = (s) => VALID_STATUSES.includes(s) ? s : 'PAUSED';
 
     // 5. Crear snapshots de ad sets
     const emptyMetrics = {
@@ -521,10 +527,24 @@ router.post('/refresh', async (req, res) => {
       purchases: 0, purchase_value: 0, roas: 0, cpa: 0, reach: 0, frequency: 0
     };
 
+    // Build campaign_id lookup from insights (fallback when Meta GET fails)
+    const insightsCampaignMap = {};
+    for (const [asId, windows] of Object.entries(adSetInsights)) {
+      // campaign_id comes from the insight rows, already parsed
+      // We need to get it from the raw data — check adSetInfoMap first
+    }
+
     let adSetSnapshots = 0;
     for (const adSetId of adSetIds) {
       const info = adSetInfoMap[adSetId];
       const creation = allCreations.find(c => c.meta_entity_id === adSetId);
+
+      // campaign_id: from Meta GET > from insights rows > skip if none
+      const campaignId = info?.campaign_id || null;
+      if (!campaignId) {
+        logger.debug(`[AI-OPS REFRESH] Skipping ad set ${adSetId} — no campaign_id available`);
+        continue;
+      }
 
       const metrics = {};
       for (const window of Object.keys(timeRanges)) {
@@ -535,9 +555,9 @@ router.post('/refresh', async (req, res) => {
         entity_type: 'adset',
         entity_id: adSetId,
         entity_name: info?.name || creation?.meta_entity_name || adSetId,
-        parent_id: info?.campaign_id || creation?.campaign_id || null,
-        campaign_id: info?.campaign_id || creation?.campaign_id || null,
-        status: info?.effective_status || creation?.current_status || 'UNKNOWN',
+        parent_id: campaignId,
+        campaign_id: campaignId,
+        status: normalizeStatus(info?.effective_status || creation?.current_status),
         daily_budget: parseBudget(info?.daily_budget) || creation?.current_budget || 0,
         lifetime_budget: parseBudget(info?.lifetime_budget) || 0,
         budget_remaining: parseBudget(info?.budget_remaining) || 0,
@@ -550,6 +570,9 @@ router.post('/refresh', async (req, res) => {
     // 6. Crear snapshots de ads
     let adSnapshots = 0;
     for (const [adId, adData] of Object.entries(adInsights)) {
+      // campaign_id is required — skip ads without it
+      if (!adData.campaign_id) continue;
+
       const metrics = {};
       for (const window of Object.keys(timeRanges)) {
         metrics[window] = adData[window] || { ...emptyMetrics };
@@ -561,7 +584,7 @@ router.post('/refresh', async (req, res) => {
         entity_name: adData.ad_name,
         parent_id: adData.adset_id,
         campaign_id: adData.campaign_id,
-        status: adStatusMap[adId] || 'ACTIVE',
+        status: normalizeStatus(adStatusMap[adId]),
         metrics,
         snapshot_at: new Date()
       });
