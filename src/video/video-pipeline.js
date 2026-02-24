@@ -1240,9 +1240,9 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
     const inputs = localFiles.map((f) => ['-i', f]).flat();
     const filterParts = [];
 
-    // Normalize each clip to yuv420p (video models may output different pixel formats)
+    // Normalize each clip: constant 30fps + yuv420p (xfade requires constant frame rate)
     for (let i = 0; i < n; i++) {
-      filterParts.push(`[${i}:v]format=yuv420p,setpts=PTS-STARTPTS[vin${i}]`);
+      filterParts.push(`[${i}:v]fps=30,format=yuv420p,setpts=PTS-STARTPTS[vin${i}]`);
     }
 
     // Chain xfade transitions
