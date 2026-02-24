@@ -7,7 +7,7 @@
  *   3. Grok Imagine generates shots via xAI API: CONTEXT via text-to-image, PRODUCT via image edit
  *   4. Claude Vision judges each shot quality with type-specific criteria (1-10 score + feedback)
  *   5. User reviews storyboard with scores, can regenerate low-scoring shots
- *   6. Grok Imagine Video converts each approved shot to a 6-15s video clip (720p, native audio) via xAI API
+ *   6. Grok Imagine Video converts each approved shot to a 5-10s video clip (720p, native audio) via xAI API
  *   7. FFmpeg stitches all clips into ONE complete commercial video
  */
 
@@ -749,16 +749,36 @@ async function submitVideoJob(imageUrl, options = {}) {
   const motion = CAMERA_MOTIONS.find(m => m.key === cameraMotion) || CAMERA_MOTIONS[0];
   const prompt = options.prompt || `${motion.prompt}, professional product commercial, cinematic quality, studio lighting, 4K`;
 
+  // xAI REST API uses "image": {"url": "..."} object format (NOT "image_url" string)
   const body = {
     model: 'grok-imagine-video',
     prompt,
-    image_url: imageUrl,
-    duration: Math.max(1, Math.min(15, Math.round(duration))),
+    duration: Math.max(1, Math.min(10, Math.round(duration))),
     aspect_ratio: aspectRatio,
     resolution: modelConfig.resolution || '720p'
   };
 
-  logger.info(`[VIDEO-PIPE] Submitting to xAI: image=${imageUrl?.substring(0, 80)}, duration=${body.duration}, aspect=${body.aspect_ratio}, resolution=${body.resolution}`);
+  // Add image for image-to-video — prefer base64 data URI for reliability
+  if (imageUrl) {
+    let resolvedImageUrl = imageUrl;
+
+    // If the URL points to our own server uploads, read the local file as base64 instead
+    // This avoids xAI needing to download from our Render server (which can be slow/sleeping)
+    const uploadsMatch = imageUrl.match(/\/uploads\/video-shots\/(.+)$/);
+    if (uploadsMatch) {
+      const localPath = path.join(SHOTS_DIR, uploadsMatch[1]);
+      if (fs.existsSync(localPath)) {
+        const imgBuffer = fs.readFileSync(localPath);
+        const mime = getMimeType(localPath);
+        resolvedImageUrl = `data:${mime};base64,${imgBuffer.toString('base64')}`;
+        logger.info(`[VIDEO-PIPE] Converted local image to base64 data URI (${(imgBuffer.length / 1024).toFixed(0)}KB)`);
+      }
+    }
+
+    body.image = { url: resolvedImageUrl };
+  }
+
+  logger.info(`[VIDEO-PIPE] Submitting to xAI: imageType=${body.image?.url?.startsWith('data:') ? 'base64' : 'url'}, duration=${body.duration}, aspect=${body.aspect_ratio}, resolution=${body.resolution}`);
 
   const res = await fetch('https://api.x.ai/v1/videos/generations', {
     method: 'POST',
@@ -774,7 +794,8 @@ async function submitVideoJob(imageUrl, options = {}) {
   const result = await res.json();
   const requestId = result.request_id || result.response_id || result.id;
 
-  logger.info(`[VIDEO-PIPE] ${modelConfig.label} job queued: ${requestId} (${duration}s, $${(duration * modelConfig.costPerSec).toFixed(3)})`);
+  logger.info(`[VIDEO-PIPE] ${modelConfig.label} job queued: ${requestId} (${body.duration}s, $${(body.duration * modelConfig.costPerSec).toFixed(3)})`);
+  logger.info(`[VIDEO-PIPE] xAI submit response: ${JSON.stringify(result)}`);
   return { requestId, status: 'queued', cameraMotion: motion.key, videoModel: modelConfig.key };
 }
 
@@ -804,19 +825,26 @@ async function checkVideoStatus(requestId, videoModel) {
 
   const result = await res.json();
 
+  // Log full response for debugging
+  logger.info(`[VIDEO-PIPE] Video status for ${requestId}: ${JSON.stringify(result)}`);
+
   // xAI status values: "done", "pending", "expired"
   if (result.status === 'done') {
+    const videoUrl = result.video?.url || null;
+    logger.info(`[VIDEO-PIPE] Video DONE for ${requestId}: ${videoUrl?.substring(0, 100)}`);
     return {
       requestId,
       status: 'completed',
-      videoUrl: result.video?.url || null
+      videoUrl
     };
   }
 
   if (result.status === 'expired') {
+    logger.warn(`[VIDEO-PIPE] Video EXPIRED for ${requestId}`);
     return { requestId, status: 'failed', error: 'Video generation request expired' };
   }
 
+  // "pending" or any other status — keep polling
   return { requestId, status: 'processing' };
 }
 
