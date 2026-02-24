@@ -828,14 +828,23 @@ async function checkVideoStatus(requestId, videoModel) {
   // Log full response for debugging
   logger.info(`[VIDEO-PIPE] Video status for ${requestId}: ${JSON.stringify(result)}`);
 
-  // xAI status values: "done", "pending", "expired"
-  if (result.status === 'done') {
-    const videoUrl = result.video?.url || null;
-    logger.info(`[VIDEO-PIPE] Video DONE for ${requestId}: ${videoUrl?.substring(0, 100)}`);
+  // xAI returns video.url directly when done (may or may not include status field)
+  // Check for video URL first, then fall back to status field
+  if (result.video?.url) {
+    logger.info(`[VIDEO-PIPE] Video DONE for ${requestId}: ${result.video.url.substring(0, 100)}`);
     return {
       requestId,
       status: 'completed',
-      videoUrl
+      videoUrl: result.video.url
+    };
+  }
+
+  if (result.status === 'done') {
+    logger.info(`[VIDEO-PIPE] Video DONE (status field) for ${requestId}`);
+    return {
+      requestId,
+      status: 'completed',
+      videoUrl: null
     };
   }
 
