@@ -1362,13 +1362,35 @@ function _probeClipDuration(ffmpegPath, filePath) {
   });
 }
 
-// ═══ ONE-CLICK AUTO-GENERATE — Full pipeline orchestration ═══
-// Orchestrates: Claude Director → Generate shots → Submit video clips → Poll → Auto-stitch
+// ═══ ONE-CLICK AUTO-GENERATE — Full pipeline orchestration (DUAL MODEL) ═══
+// Orchestrates: Claude Director → Generate shots → Submit clips to BOTH Sora + Grok in parallel → Poll → Stitch both → Compare
 
 const autoGenerateJobs = new Map();
 
+const COMPETING_MODELS = ['sora-2-pro', 'grok-imagine-720p'];
+
 function startAutoGenerateJob(productImagePath, options = {}) {
   const jobId = `auto-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  // Per-model tracking
+  const modelStatus = {};
+  for (const mk of COMPETING_MODELS) {
+    const m = VIDEO_MODELS[mk];
+    modelStatus[mk] = {
+      key: mk,
+      label: m?.label || mk,
+      provider: m?.provider || 'unknown',
+      clipsSubmitted: 0,
+      clipsCompleted: 0,
+      clipsTotal: 0,
+      clipsFailed: 0,
+      stitchStatus: null,
+      finalVideoUrl: null,
+      error: null,
+      status: 'pending' // pending → running → done → failed
+    };
+  }
+
   const job = {
     jobId,
     status: 'running',
@@ -1378,10 +1400,11 @@ function startAutoGenerateJob(productImagePath, options = {}) {
     directorPlan: null,
     shotsGenerated: 0,
     shotsTotal: 0,
+    models: modelStatus,
+    // Legacy compat fields (aggregate)
     clipsSubmitted: 0,
     clipsCompleted: 0,
     clipsTotal: 0,
-    stitchStatus: null,
     finalVideoUrl: null,
     error: null,
     startedAt: new Date().toISOString(),
@@ -1401,7 +1424,127 @@ function startAutoGenerateJob(productImagePath, options = {}) {
 function getAutoGenerateJobStatus(jobId) {
   const job = autoGenerateJobs.get(jobId);
   if (!job) return null;
-  return { ...job };
+  return { ...job, models: { ...job.models } };
+}
+
+// Run clips → poll → stitch for ONE model. Returns { videoUrl, error }
+async function _runModelPipeline(jobId, modelKey, shotsForBatch, clipDuration, musicOpts) {
+  const job = autoGenerateJobs.get(jobId);
+  const ms = job.models[modelKey];
+  const modelConfig = VIDEO_MODELS[modelKey];
+
+  try {
+    ms.status = 'running';
+    ms.clipsTotal = shotsForBatch.length;
+
+    // Submit clips
+    logger.info(`[VIDEO-PIPE] Auto ${jobId} [${modelConfig.label}]: Submitting ${shotsForBatch.length} clips (${clipDuration}s each)`);
+    const batchResults = await submitVideoBatch(shotsForBatch, {
+      duration: clipDuration,
+      videoModel: modelKey
+    });
+
+    ms.clipsSubmitted = batchResults.filter(r => r.status === 'queued').length;
+    const activeClips = batchResults.filter(r => r.requestId && r.status !== 'error');
+    const errors = batchResults.filter(r => r.status === 'error').length;
+    logger.info(`[VIDEO-PIPE] Auto ${jobId} [${modelConfig.label}]: ${ms.clipsSubmitted} queued, ${errors} errors`);
+
+    if (activeClips.length < 2) {
+      throw new Error(`Solo ${activeClips.length} clips enviados. Se necesitan al menos 2.`);
+    }
+
+    // Poll until all done
+    const maxPollTime = 15 * 60 * 1000; // 15 min (Sora can be slower)
+    const pollStart = Date.now();
+    let clipStatuses = activeClips.map(c => ({ ...c }));
+
+    while ((Date.now() - pollStart) < maxPollTime) {
+      await new Promise(r => setTimeout(r, 15000));
+
+      const pendingIds = clipStatuses
+        .filter(c => c.status === 'queued' || c.status === 'processing')
+        .map(c => c.requestId)
+        .filter(Boolean);
+
+      if (pendingIds.length === 0) break;
+
+      for (const id of pendingIds) {
+        try {
+          const status = await checkVideoStatus(id, modelKey);
+          const idx = clipStatuses.findIndex(c => c.requestId === id);
+          if (idx >= 0) clipStatuses[idx] = { ...clipStatuses[idx], ...status };
+        } catch (err) {
+          logger.warn(`[VIDEO-PIPE] Auto ${jobId} [${modelConfig.label}]: Status check error for ${id}: ${err.message}`);
+        }
+      }
+
+      ms.clipsCompleted = clipStatuses.filter(c => c.status === 'completed').length;
+      ms.clipsFailed = clipStatuses.filter(c => c.status === 'failed' || c.status === 'error').length;
+
+      // Update aggregate
+      _updateAggregateProgress(job);
+    }
+
+    const completedClipUrls = clipStatuses
+      .filter(c => c.status === 'completed' && c.videoUrl)
+      .map(c => c.videoUrl);
+
+    ms.clipsCompleted = completedClipUrls.length;
+    ms.clipsFailed = clipStatuses.filter(c => c.status === 'failed' || c.status === 'error').length;
+
+    if (completedClipUrls.length < 2) {
+      throw new Error(`Solo ${completedClipUrls.length} clips completados. Se necesitan al menos 2.`);
+    }
+
+    // Stitch
+    logger.info(`[VIDEO-PIPE] Auto ${jobId} [${modelConfig.label}]: Stitching ${completedClipUrls.length} clips`);
+    ms.stitchStatus = 'running';
+
+    const stitchResult = startStitchJob(completedClipUrls, musicOpts);
+
+    while (true) {
+      await new Promise(r => setTimeout(r, 5000));
+      const stitchData = getStitchJobStatus(stitchResult.jobId);
+      if (!stitchData) throw new Error('Stitch job disappeared');
+      ms.stitchStatus = stitchData.status;
+
+      if (stitchData.status === 'done') {
+        ms.finalVideoUrl = stitchData.outputUrl;
+        ms.status = 'done';
+        logger.info(`[VIDEO-PIPE] Auto ${jobId} [${modelConfig.label}]: DONE — ${ms.finalVideoUrl}`);
+        return { videoUrl: stitchData.outputUrl };
+      }
+      if (stitchData.status === 'failed') {
+        throw new Error(`Stitch failed: ${stitchData.error || 'unknown'}`);
+      }
+    }
+  } catch (err) {
+    ms.status = 'failed';
+    ms.error = err.message;
+    logger.error(`[VIDEO-PIPE] Auto ${jobId} [${modelConfig?.label || modelKey}]: FAILED — ${err.message}`);
+    return { videoUrl: null, error: err.message };
+  }
+}
+
+function _updateAggregateProgress(job) {
+  const models = Object.values(job.models);
+  const totalClips = models.reduce((s, m) => s + m.clipsTotal, 0);
+  const completedClips = models.reduce((s, m) => s + m.clipsCompleted, 0);
+  job.clipsTotal = totalClips;
+  job.clipsCompleted = completedClips;
+  job.clipsSubmitted = models.reduce((s, m) => s + m.clipsSubmitted, 0);
+
+  if (totalClips > 0) {
+    job.progress = 55 + Math.round((completedClips / totalClips) * 35); // 55-90%
+  }
+
+  // Phase label
+  const running = models.filter(m => m.status === 'running');
+  const done = models.filter(m => m.status === 'done');
+  if (running.length > 0) {
+    const labels = running.map(m => `${m.label}: ${m.clipsCompleted}/${m.clipsTotal}`).join(' | ');
+    job.phaseLabel = `Video clips: ${labels}${done.length > 0 ? ` | ${done[0].label} LISTO` : ''}`;
+  }
 }
 
 async function _autoGenerateBackground(jobId, productImagePath, options = {}) {
@@ -1411,8 +1554,7 @@ async function _autoGenerateBackground(jobId, productImagePath, options = {}) {
     templateKey = 'quick-cut-food',
     musicTrack = 'none',
     brandText = '',
-    crossfadeDuration = 0.5,
-    videoModel = DEFAULT_VIDEO_MODEL
+    crossfadeDuration = 0.5
   } = options;
 
   try {
@@ -1426,13 +1568,12 @@ async function _autoGenerateBackground(jobId, productImagePath, options = {}) {
     job.directorPlan = directorPlan;
     job.progress = 15;
 
-    // Use recommended music/text from director if not overridden
     const finalMusic = musicTrack !== 'none' ? musicTrack : (directorPlan.recommendedMusic || 'none');
     const finalBrandText = brandText || directorPlan.closingText || '';
 
     logger.info(`[VIDEO-PIPE] Auto ${jobId}: Director recommends scene="${directorPlan.chosenScene}", music="${finalMusic}", text="${finalBrandText}"`);
 
-    // ── PHASE 2: Generate static shots ──
+    // ── PHASE 2: Generate static shots (shared by both models) ──
     const template = COMMERCIAL_TEMPLATES.find(t => t.key === templateKey) || COMMERCIAL_TEMPLATES[0];
     const numShots = template.beats.length;
     job.phase = 'shots';
@@ -1447,7 +1588,6 @@ async function _autoGenerateBackground(jobId, productImagePath, options = {}) {
       directorPlan
     });
 
-    // Poll shot generation until done
     let shotsDone = false;
     let shotJobData = null;
     while (!shotsDone) {
@@ -1455,7 +1595,7 @@ async function _autoGenerateBackground(jobId, productImagePath, options = {}) {
       shotJobData = getShotJobStatus(shotResult.jobId);
       if (!shotJobData) throw new Error('Shot job disappeared');
       job.shotsGenerated = shotJobData.completed || 0;
-      job.progress = 20 + Math.round((job.shotsGenerated / numShots) * 30); // 20-50%
+      job.progress = 20 + Math.round((job.shotsGenerated / numShots) * 30);
       job.phaseLabel = `Generando imagenes: ${job.shotsGenerated}/${numShots}...`;
 
       if (shotJobData.status === 'done' || shotJobData.status === 'failed') {
@@ -1470,123 +1610,55 @@ async function _autoGenerateBackground(jobId, productImagePath, options = {}) {
 
     logger.info(`[VIDEO-PIPE] Auto ${jobId}: ${completedShots.length} shots generated successfully`);
 
-    // ── PHASE 3: Submit video clips ──
+    // ── PHASE 3-5: Run BOTH models in parallel ──
     const clipDuration = template.clipDuration || 3;
     job.phase = 'clips';
-    job.clipsTotal = completedShots.length;
-    job.phaseLabel = `Generando ${completedShots.length} video clips...`;
+    job.phaseLabel = `Generando clips con Sora 2 Pro + Grok Imagine en paralelo...`;
     job.progress = 55;
-    logger.info(`[VIDEO-PIPE] Auto ${jobId}: Phase 3 — Submitting ${completedShots.length} video clips (${clipDuration}s each)`);
 
     const shotsForBatch = completedShots.map(shot => ({
-      imageUrl: shot.url, // local /uploads/ URL — submitVideoJob will convert to base64
+      imageUrl: shot.url,
       angle: shot.angle,
       cameraMotion: 'slow-dolly-in',
       prompt: directorPlan.shots?.[shot.angle]?.videoPrompt || `Cinematic food commercial shot, professional quality, ${clipDuration} seconds`
     }));
 
-    const selectedModel = VIDEO_MODELS[videoModel] || VIDEO_MODELS[DEFAULT_VIDEO_MODEL];
-    logger.info(`[VIDEO-PIPE] Auto ${jobId}: Using video model: ${selectedModel.label} (${selectedModel.provider})`);
-
-    const batchResults = await submitVideoBatch(shotsForBatch, {
-      duration: clipDuration,
-      videoModel
-    });
-
-    job.clipsSubmitted = batchResults.filter(r => r.status === 'queued').length;
-    const activeClips = batchResults.filter(r => r.requestId && r.status !== 'error');
-    logger.info(`[VIDEO-PIPE] Auto ${jobId}: ${job.clipsSubmitted} clips submitted, ${batchResults.filter(r => r.status === 'error').length} errors`);
-
-    if (activeClips.length < 2) {
-      throw new Error(`Solo ${activeClips.length} clips fueron enviados exitosamente. Se necesitan al menos 2.`);
-    }
-
-    // ── PHASE 4: Poll video clips until all done ──
-    job.phase = 'clips-polling';
-    job.phaseLabel = `Esperando ${activeClips.length} video clips...`;
-    job.progress = 60;
-    logger.info(`[VIDEO-PIPE] Auto ${jobId}: Phase 4 — Polling ${activeClips.length} clips`);
-
-    const maxPollTime = 10 * 60 * 1000; // 10 minutes max
-    const pollStart = Date.now();
-    let allClipsDone = false;
-    let clipStatuses = activeClips.map(c => ({ ...c }));
-
-    while (!allClipsDone && (Date.now() - pollStart) < maxPollTime) {
-      await new Promise(r => setTimeout(r, 15000));
-
-      const pendingIds = clipStatuses
-        .filter(c => c.status === 'queued' || c.status === 'processing')
-        .map(c => c.requestId)
-        .filter(Boolean);
-
-      if (pendingIds.length === 0) { allClipsDone = true; break; }
-
-      for (const id of pendingIds) {
-        try {
-          const status = await checkVideoStatus(id, videoModel);
-          const idx = clipStatuses.findIndex(c => c.requestId === id);
-          if (idx >= 0) clipStatuses[idx] = { ...clipStatuses[idx], ...status };
-        } catch (err) {
-          logger.warn(`[VIDEO-PIPE] Auto ${jobId}: Clip status check error for ${id}: ${err.message}`);
-        }
-      }
-
-      const completed = clipStatuses.filter(c => c.status === 'completed').length;
-      const failed = clipStatuses.filter(c => c.status === 'failed' || c.status === 'error').length;
-      job.clipsCompleted = completed;
-      job.progress = 60 + Math.round((completed / activeClips.length) * 25); // 60-85%
-      job.phaseLabel = `Video clips: ${completed}/${activeClips.length} listos${failed > 0 ? `, ${failed} fallidos` : ''}...`;
-
-      const stillPending = clipStatuses.filter(c => c.status === 'queued' || c.status === 'processing');
-      if (stillPending.length === 0) allClipsDone = true;
-    }
-
-    const completedClipUrls = clipStatuses
-      .filter(c => c.status === 'completed' && c.videoUrl)
-      .map(c => c.videoUrl);
-
-    if (completedClipUrls.length < 2) {
-      throw new Error(`Solo ${completedClipUrls.length} video clips completados. Se necesitan al menos 2 para crear el comercial.`);
-    }
-
-    logger.info(`[VIDEO-PIPE] Auto ${jobId}: ${completedClipUrls.length} clips completed`);
-
-    // ── PHASE 5: Stitch into final commercial ──
-    job.phase = 'stitching';
-    job.phaseLabel = `Ensamblando video comercial (${completedClipUrls.length} clips)...`;
-    job.progress = 88;
-    logger.info(`[VIDEO-PIPE] Auto ${jobId}: Phase 5 — Stitching ${completedClipUrls.length} clips, music="${finalMusic}", text="${finalBrandText}"`);
-
-    const stitchResult = startStitchJob(completedClipUrls, {
+    const musicOpts = {
       musicTrack: finalMusic,
       brandText: finalBrandText,
       crossfadeDuration
-    });
+    };
 
-    // Poll stitch until done
-    let stitchDone = false;
-    while (!stitchDone) {
-      await new Promise(r => setTimeout(r, 5000));
-      const stitchData = getStitchJobStatus(stitchResult.jobId);
-      if (!stitchData) throw new Error('Stitch job disappeared');
-      job.stitchStatus = stitchData.status;
-      job.progress = 90;
+    logger.info(`[VIDEO-PIPE] Auto ${jobId}: Phase 3-5 — Running ${COMPETING_MODELS.length} models in parallel: ${COMPETING_MODELS.join(', ')}`);
 
-      if (stitchData.status === 'done') {
-        stitchDone = true;
-        job.finalVideoUrl = stitchData.outputUrl;
-        job.progress = 100;
-      } else if (stitchData.status === 'failed') {
-        throw new Error(`Stitch failed: ${stitchData.error || 'unknown error'}`);
-      }
+    job.phase = 'clips-polling';
+
+    // Run both model pipelines concurrently
+    const results = await Promise.allSettled(
+      COMPETING_MODELS.map(mk => _runModelPipeline(jobId, mk, shotsForBatch, clipDuration, musicOpts))
+    );
+
+    // Check results
+    const successModels = COMPETING_MODELS.filter(mk => job.models[mk].status === 'done' && job.models[mk].finalVideoUrl);
+    const failedModels = COMPETING_MODELS.filter(mk => job.models[mk].status === 'failed');
+
+    logger.info(`[VIDEO-PIPE] Auto ${jobId}: Results — ${successModels.length} succeeded (${successModels.join(', ')}), ${failedModels.length} failed (${failedModels.join(', ')})`);
+
+    if (successModels.length === 0) {
+      const errors = failedModels.map(mk => `${mk}: ${job.models[mk].error}`).join('; ');
+      throw new Error(`Ambos modelos fallaron. ${errors}`);
     }
 
+    // Use first successful model's video as primary (for backward compat)
+    job.finalVideoUrl = job.models[successModels[0]].finalVideoUrl;
+    job.progress = 100;
     job.status = 'done';
     job.phase = 'complete';
-    job.phaseLabel = 'Video comercial listo!';
+    job.phaseLabel = successModels.length === 2
+      ? 'Ambos videos listos — compara Sora vs Grok!'
+      : `Video listo (${job.models[successModels[0]].label})`;
     job.finishedAt = new Date().toISOString();
-    logger.info(`[VIDEO-PIPE] Auto ${jobId}: COMPLETE — Final video: ${job.finalVideoUrl}`);
+    logger.info(`[VIDEO-PIPE] Auto ${jobId}: COMPLETE — ${successModels.length} videos ready`);
 
   } catch (err) {
     job.status = 'failed';
