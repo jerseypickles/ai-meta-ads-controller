@@ -732,6 +732,8 @@ async function submitVideoJob(imageUrl, options = {}) {
     generate_audio: false
   };
 
+  logger.info(`[VIDEO-PIPE] Submitting to fal.ai: model=${modelConfig.falModel}, image=${imageUrl?.substring(0, 80)}, duration=${input.duration}, aspect=${input.aspect_ratio}`);
+
   const { request_id } = await fal.queue.submit(modelConfig.falModel, { input });
 
   logger.info(`[VIDEO-PIPE] ${modelConfig.label} job queued: ${request_id} (${duration}s, $${(duration * modelConfig.costPerSec).toFixed(3)})`);
@@ -772,6 +774,7 @@ async function submitVideoBatch(shots, options = {}) {
 
     const promises = batch.map(async (shot) => {
       try {
+        logger.info(`[VIDEO-PIPE] Submitting clip: ${shot.angle} → ${shot.imageUrl?.substring(0, 80)}...`);
         const result = await submitVideoJob(shot.imageUrl, {
           cameraMotion: shot.cameraMotion || options.cameraMotion,
           duration: shot.duration || options.duration,
@@ -781,6 +784,7 @@ async function submitVideoBatch(shots, options = {}) {
         });
         return { shotAngle: shot.angle, imageUrl: shot.imageUrl, ...result };
       } catch (err) {
+        logger.error(`[VIDEO-PIPE] Clip submit FAILED for ${shot.angle}: ${err.message}`, { imageUrl: shot.imageUrl, stack: err.stack?.split('\n').slice(0, 3).join(' | ') });
         return { shotAngle: shot.angle, imageUrl: shot.imageUrl, requestId: null, status: 'error', error: err.message };
       }
     });
