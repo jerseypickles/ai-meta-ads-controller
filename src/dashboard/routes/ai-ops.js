@@ -12,6 +12,7 @@ const logger = require('../../utils/logger');
 /**
  * GET /api/ai-ops/status
  * Complete operational visibility: AI Manager + Brain + Directives + Ads/Creatives + Timeline
+ * Optimized: batch queries, parallel execution, limits
  */
 router.get('/status', async (req, res) => {
   try {
@@ -20,71 +21,161 @@ router.get('/status', async (req, res) => {
     const last72h = new Date(now - 72 * 60 * 60 * 1000);
     const last7d = new Date(now - 7 * 24 * 60 * 60 * 1000);
 
-    // ═══ 1. AI Manager: managed ad sets with full detail ═══
-    const managedCreations = await AICreation.find({
-      creation_type: 'create_adset',
-      managed_by_ai: true
-    }).sort({ created_at: -1 }).lean();
+    // ═══ PHASE 1: All top-level queries in parallel ═══
+    const [
+      managedCreations,
+      recentDead,
+      latestBrainReport,
+      activeDirectives,
+      aiManagerActions,
+      safetyEvents
+    ] = await Promise.all([
+      AICreation.find({
+        creation_type: 'create_adset',
+        managed_by_ai: true
+      }).sort({ created_at: -1 }).lean(),
 
-    // Also get dead ones from last 7 days for history
-    const recentDead = await AICreation.find({
-      creation_type: 'create_adset',
-      lifecycle_phase: 'dead',
-      updated_at: { $gte: last7d }
-    }).sort({ updated_at: -1 }).limit(10).lean();
+      AICreation.find({
+        creation_type: 'create_adset',
+        lifecycle_phase: 'dead',
+        updated_at: { $gte: last7d }
+      }).sort({ updated_at: -1 }).limit(10).lean(),
 
+      AgentReport.findOne({
+        agent_type: 'brain'
+      }).sort({ created_at: -1 }).lean(),
+
+      StrategicDirective.find({
+        status: 'active',
+        expires_at: { $gt: now },
+        source_insight_type: 'brain_supervision'
+      }).sort({ created_at: -1 }).lean(),
+
+      ActionLog.find({
+        agent_type: 'ai_manager',
+        created_at: { $gte: last48h }
+      }).sort({ created_at: -1 }).limit(50).lean(),
+
+      SafetyEvent.find({
+        created_at: { $gte: last48h }
+      }).sort({ created_at: -1 }).limit(10).lean()
+    ]);
+
+    // Merge managed + recent dead (dedup)
     const allManaged = [...managedCreations, ...recentDead.filter(d =>
       !managedCreations.some(m => m.meta_entity_id === d.meta_entity_id)
     )];
 
-    // Enrich each ad set with live metrics + ads + creatives
-    const adSets = await Promise.all(allManaged.map(async (creation) => {
-      const adSetId = creation.meta_entity_id;
+    // Collect all adset IDs and all possible creative asset IDs
+    const allAdSetIds = allManaged.map(c => c.meta_entity_id).filter(Boolean);
+    const allCreativeAssetIds = [];
+    for (const c of allManaged) {
+      if (c.selected_creative_ids) {
+        allCreativeAssetIds.push(...c.selected_creative_ids.filter(Boolean));
+      }
+    }
 
-      // Get latest snapshot
-      const adSetSnap = await MetricSnapshot.findOne({
-        entity_type: 'adset', entity_id: adSetId
-      }).sort({ snapshot_at: -1 }).lean();
+    // ═══ PHASE 2: Batch queries for all ad sets at once ═══
+    const [
+      allAdSetSnaps,
+      allAdSnaps,
+      allCreativeAssets,
+      allDirectives,
+      allActions
+    ] = await Promise.all([
+      // One query for ALL adset snapshots (latest per adset)
+      MetricSnapshot.aggregate([
+        { $match: { entity_type: 'adset', entity_id: { $in: allAdSetIds } } },
+        { $sort: { snapshot_at: -1 } },
+        { $group: { _id: '$entity_id', doc: { $first: '$$ROOT' } } }
+      ]),
+
+      // One query for ALL ad snapshots (latest per ad, across all adsets)
+      MetricSnapshot.aggregate([
+        { $match: { entity_type: 'ad', parent_id: { $in: allAdSetIds } } },
+        { $sort: { snapshot_at: -1 } },
+        { $group: { _id: '$entity_id', doc: { $first: '$$ROOT' } } }
+      ]),
+
+      // One query for ALL creative assets
+      allCreativeAssetIds.length > 0
+        ? CreativeAsset.find({ _id: { $in: allCreativeAssetIds } }).lean()
+        : Promise.resolve([]),
+
+      // One query for ALL directives across all adsets
+      StrategicDirective.find({
+        entity_id: { $in: allAdSetIds },
+        source_insight_type: 'brain_supervision',
+        created_at: { $gte: last72h }
+      }).sort({ created_at: -1 }).lean(),
+
+      // One query for ALL actions across all adsets
+      ActionLog.find({
+        entity_id: { $in: allAdSetIds },
+        agent_type: 'ai_manager',
+        created_at: { $gte: last7d }
+      }).sort({ created_at: -1 }).lean()
+    ]);
+
+    // ═══ Build lookup maps for O(1) access ═══
+    const adSetSnapMap = new Map();
+    for (const row of allAdSetSnaps) {
+      adSetSnapMap.set(row._id, row.doc);
+    }
+
+    const adSnapsByParent = new Map();
+    for (const row of allAdSnaps) {
+      const ad = row.doc;
+      if (!adSnapsByParent.has(ad.parent_id)) adSnapsByParent.set(ad.parent_id, []);
+      adSnapsByParent.get(ad.parent_id).push(ad);
+    }
+
+    const creativeMap = new Map();
+    for (const asset of allCreativeAssets) {
+      creativeMap.set(asset._id.toString(), asset);
+    }
+
+    const directivesByEntity = new Map();
+    for (const d of allDirectives) {
+      if (!directivesByEntity.has(d.entity_id)) directivesByEntity.set(d.entity_id, []);
+      directivesByEntity.get(d.entity_id).push(d);
+    }
+
+    const actionsByEntity = new Map();
+    for (const a of allActions) {
+      if (!actionsByEntity.has(a.entity_id)) actionsByEntity.set(a.entity_id, []);
+      actionsByEntity.get(a.entity_id).push(a);
+    }
+
+    // ═══ PHASE 3: Build adsets response (no more DB queries) ═══
+    const adSets = allManaged.map(creation => {
+      const adSetId = creation.meta_entity_id;
+      const adSetSnap = adSetSnapMap.get(adSetId);
 
       const m7 = adSetSnap?.metrics?.last_7d || {};
       const m3 = adSetSnap?.metrics?.last_3d || {};
       const mToday = adSetSnap?.metrics?.today || {};
 
-      // Get ads (creatives) for this ad set
-      const adSnapshots = await MetricSnapshot.find({
-        entity_type: 'ad',
-        parent_id: adSetId
-      }).sort({ snapshot_at: -1 }).lean();
-
-      // Deduplicate by entity_id (get latest per ad)
-      const seenAds = new Set();
-      const uniqueAdSnaps = adSnapshots.filter(s => {
-        if (seenAds.has(s.entity_id)) return false;
-        seenAds.add(s.entity_id);
-        return true;
-      });
-
-      // Enrich ads with creative asset info
-      const ads = await Promise.all(uniqueAdSnaps.map(async (adSnap) => {
+      // Build ads from pre-fetched snapshots
+      const adSnaps = adSnapsByParent.get(adSetId) || [];
+      const ads = adSnaps.map(adSnap => {
         const am7 = adSnap.metrics?.last_7d || {};
 
-        // Match creative asset
+        // Match creative asset from pre-fetched map
         const adIndex = (creation.child_ad_ids || []).indexOf(adSnap.entity_id);
         const assetId = adIndex >= 0 ? (creation.selected_creative_ids || [])[adIndex] : null;
         let creative = null;
         if (assetId) {
-          try {
-            const asset = await CreativeAsset.findById(assetId).lean();
-            if (asset) {
-              creative = {
-                id: asset._id.toString(),
-                filename: asset.filename,
-                style: asset.style,
-                headline: asset.headline || asset.original_name,
-                ad_format: asset.ad_format || 'unknown'
-              };
-            }
-          } catch (_) { /* ok */ }
+          const asset = creativeMap.get(assetId.toString());
+          if (asset) {
+            creative = {
+              id: asset._id.toString(),
+              filename: asset.filename,
+              style: asset.style,
+              headline: asset.headline || asset.original_name,
+              ad_format: asset.ad_format || 'unknown'
+            };
+          }
         }
 
         return {
@@ -101,21 +192,11 @@ router.get('/status', async (req, res) => {
           },
           creative
         };
-      }));
+      });
 
-      // Get directives for this ad set
-      const directives = await StrategicDirective.find({
-        entity_id: adSetId,
-        source_insight_type: 'brain_supervision',
-        created_at: { $gte: last72h }
-      }).sort({ created_at: -1 }).lean();
-
-      // Get recent actions for this ad set
-      const actions = await ActionLog.find({
-        entity_id: adSetId,
-        agent_type: 'ai_manager',
-        created_at: { $gte: last7d }
-      }).sort({ created_at: -1 }).limit(10).lean();
+      // Get directives and actions from pre-fetched maps
+      const directives = (directivesByEntity.get(adSetId) || []).slice(0, 20);
+      const actions = (actionsByEntity.get(adSetId) || []).slice(0, 10);
 
       return {
         adset_id: adSetId,
@@ -176,13 +257,9 @@ router.get('/status', async (req, res) => {
           hours_ago: Math.round((now - new Date(a.created_at)) / (60 * 60 * 1000))
         }))
       };
-    }));
+    });
 
-    // ═══ 2. Brain: latest cycle info ═══
-    const latestBrainReport = await AgentReport.findOne({
-      agent_type: 'brain'
-    }).sort({ created_at: -1 }).lean();
-
+    // ═══ Brain info ═══
     const brainInfo = latestBrainReport ? {
       cycle_id: latestBrainReport.cycle_id,
       ran_at: latestBrainReport.created_at,
@@ -193,13 +270,7 @@ router.get('/status', async (req, res) => {
       summary: latestBrainReport.summary
     } : null;
 
-    // ═══ 3. Active directives summary ═══
-    const activeDirectives = await StrategicDirective.find({
-      status: 'active',
-      expires_at: { $gt: now },
-      source_insight_type: 'brain_supervision'
-    }).sort({ created_at: -1 }).lean();
-
+    // ═══ Directive summary ═══
     const directiveSummary = {
       total_active: activeDirectives.length,
       by_type: {},
@@ -213,20 +284,23 @@ router.get('/status', async (req, res) => {
       directiveSummary.by_category[cat] = (directiveSummary.by_category[cat] || 0) + 1;
     }
 
-    // ═══ 4. AI Manager actions last 48h ═══
-    const aiManagerActions = await ActionLog.find({
-      agent_type: 'ai_manager',
-      created_at: { $gte: last48h }
-    }).sort({ created_at: -1 }).limit(50).lean();
+    // ═══ Decision tree events (filter from already-fetched actions) ═══
+    const decisionTreeActions = aiManagerActions.filter(a =>
+      /DECISION-TREE/i.test(a.reasoning || '')
+    );
+    // Also check 7d actions
+    const dtFrom7d = allActions ? [...new Map([...allActions].filter(a =>
+      /DECISION-TREE/i.test(a.reasoning || '')
+    ).map(a => [a._id.toString(), a])).values()] : [];
+    const allDTActions = [...decisionTreeActions];
+    for (const dt of dtFrom7d) {
+      if (!allDTActions.some(a => a._id.toString() === dt._id.toString())) {
+        allDTActions.push(dt);
+      }
+    }
+    allDTActions.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-    // ═══ 5. Decision tree events (forced kills/scale-downs) ═══
-    const decisionTreeActions = await ActionLog.find({
-      agent_type: 'ai_manager',
-      reasoning: { $regex: /DECISION-TREE/i },
-      created_at: { $gte: last7d }
-    }).sort({ created_at: -1 }).lean();
-
-    // ═══ 6. Compliance calculation ═══
+    // ═══ Compliance ═══
     const directiveEntities = new Map();
     for (const d of activeDirectives) {
       if (!directiveEntities.has(d.entity_id)) directiveEntities.set(d.entity_id, []);
@@ -244,10 +318,9 @@ router.get('/status', async (req, res) => {
     const complianceRate = directiveEntities.size > 0
       ? Math.round((actedOn / directiveEntities.size) * 100) : 100;
 
-    // ═══ 7. Unified timeline ═══
+    // ═══ Timeline (built from already-fetched data, no extra queries) ═══
     const timeline = [];
 
-    // Add AI Manager actions
     for (const a of aiManagerActions.slice(0, 30)) {
       const isDecisionTree = /DECISION-TREE/i.test(a.reasoning || '');
       timeline.push({
@@ -264,7 +337,6 @@ router.get('/status', async (req, res) => {
       });
     }
 
-    // Add Brain directives created
     for (const d of activeDirectives.slice(0, 20)) {
       timeline.push({
         type: 'brain_directive',
@@ -279,11 +351,6 @@ router.get('/status', async (req, res) => {
       });
     }
 
-    // Add recent safety events
-    const safetyEvents = await SafetyEvent.find({
-      created_at: { $gte: last48h }
-    }).sort({ created_at: -1 }).limit(10).lean();
-
     for (const s of safetyEvents) {
       timeline.push({
         type: 'safety_event',
@@ -295,10 +362,9 @@ router.get('/status', async (req, res) => {
       });
     }
 
-    // Sort timeline by timestamp desc
     timeline.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
-    // ═══ 8. AI Manager last run info ═══
+    // ═══ AI Manager last run ═══
     const lastManagerRun = managedCreations.length > 0
       ? managedCreations.reduce((latest, c) => {
           const check = c.last_manager_check ? new Date(c.last_manager_check) : new Date(0);
@@ -313,7 +379,7 @@ router.get('/status', async (req, res) => {
           ? Math.round((now - lastManagerRun) / 60000) : null,
         managed_count: managedCreations.length,
         actions_48h: aiManagerActions.length,
-        decision_tree_events_7d: decisionTreeActions.length
+        decision_tree_events_7d: allDTActions.length
       },
       brain: brainInfo,
       compliance: {
@@ -324,7 +390,7 @@ router.get('/status', async (req, res) => {
       },
       directive_summary: directiveSummary,
       adsets: adSets,
-      decision_tree_events: decisionTreeActions.map(a => ({
+      decision_tree_events: allDTActions.slice(0, 20).map(a => ({
         action: a.action,
         entity_name: a.entity_name || a.entity_id,
         entity_id: a.entity_id,
