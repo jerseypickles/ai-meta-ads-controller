@@ -12,6 +12,7 @@
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
+const sharp = require('sharp');
 const config = require('../../config');
 const logger = require('../utils/logger');
 const fs = require('fs');
@@ -991,16 +992,18 @@ async function _submitSoraVideoJob(imageUrl, options = {}, modelConfig) {
   formData.append('size', soraSize);
   formData.append('seconds', String(sec));
 
-  // Add image for image-to-video
+  // Add image for image-to-video — resize to match Sora's required dimensions
   if (imageUrl) {
     const localPath = _resolveLocalImage(imageUrl);
     if (localPath) {
-      const imgBuffer = fs.readFileSync(localPath);
-      const mime = getMimeType(localPath);
-      const ext = path.extname(localPath).replace('.', '') || 'png';
-      const blob = new Blob([imgBuffer], { type: mime });
-      formData.append('input_reference', blob, `image.${ext}`);
-      logger.info(`[VIDEO-PIPE] Sora: Attached local image (${(imgBuffer.length / 1024).toFixed(0)}KB, ${mime})`);
+      const [targetW, targetH] = soraSize.split('x').map(Number); // e.g. "720x1280" → 720, 1280
+      const resizedBuffer = await sharp(localPath)
+        .resize(targetW, targetH, { fit: 'cover', position: 'center' })
+        .png()
+        .toBuffer();
+      const blob = new Blob([resizedBuffer], { type: 'image/png' });
+      formData.append('input_reference', blob, 'image.png');
+      logger.info(`[VIDEO-PIPE] Sora: Resized image to ${targetW}x${targetH} (${(resizedBuffer.length / 1024).toFixed(0)}KB)`);
     } else {
       logger.warn(`[VIDEO-PIPE] Sora: Could not resolve local image for "${imageUrl}", sending text-only`);
     }
@@ -1261,16 +1264,9 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
     // music track as sole audio for consistency, or generate silence.
 
     // ── Step D: Closing text overlay on last seconds ──
+    // NOTE: drawtext requires libfreetype which may not be available in static FFmpeg builds.
+    // We skip text overlay to avoid filter errors. Brand text is baked into the video prompt instead.
     let videoFinal = '[vout]';
-    if (brandText) {
-      const textStart = Math.max(0, totalDuration - clipDurations[n - 1]);
-      const escapedText = brandText.replace(/'/g, "'\\''").replace(/:/g, '\\:');
-      filterParts.push(
-        `[vout]drawtext=text='${escapedText}':fontsize=72:fontcolor=white:borderw=3:bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2:enable='gte(t\\,${textStart.toFixed(2)})'` +
-        `:alpha='if(lt(t\\,${(textStart + 0.8).toFixed(2)})\\,(t-${textStart.toFixed(2)})/0.8\\,1)'[vtxt]`
-      );
-      videoFinal = '[vtxt]';
-    }
 
     // ── Step E: Audio — music track or silence ──
     let audioFinal = null;
