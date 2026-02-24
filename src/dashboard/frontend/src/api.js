@@ -814,6 +814,11 @@ export const getAIOpsStatus = async () => {
   return response.data;
 };
 
+export const refreshAIOpsMetrics = async () => {
+  const response = await api.post('/api/ai-ops/refresh', {}, { timeout: 180000 });
+  return response.data;
+};
+
 // ============================================
 // AI CREATIONS
 // ============================================

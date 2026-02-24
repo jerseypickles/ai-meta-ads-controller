@@ -5,7 +5,7 @@ import {
   ChevronDown, ChevronRight, Image, Pause, Play, Target, Skull,
   ArrowDown, Shield, Timer, Power, Filter
 } from 'lucide-react';
-import { getAIOpsStatus, runAIManager, runAgents } from '../api';
+import { getAIOpsStatus, runAIManager, runAgents, refreshAIOpsMetrics } from '../api';
 
 // ═══ HELPERS ═══
 const fmt = (v, d = 2) => v != null ? Number(v).toFixed(d) : '0';
@@ -541,6 +541,18 @@ export default function AIOps() {
     }
   };
 
+  const handleRefreshMetrics = async () => {
+    setRunning('refresh');
+    try {
+      await refreshAIOpsMetrics();
+      await fetchData();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRunning(null);
+    }
+  };
+
   const mgr = data?.ai_manager || {};
   const brain = data?.brain || {};
   const compliance = data?.compliance || {};
@@ -645,6 +657,19 @@ export default function AIOps() {
           >
             {running === 'brain' ? <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Brain size={13} />}
             Run Brain
+          </button>
+          <button
+            onClick={handleRefreshMetrics}
+            disabled={running != null}
+            style={{
+              padding: '8px 16px', borderRadius: '8px', border: '1px solid #10b98144',
+              backgroundColor: running === 'refresh' ? '#064e3b' : '#12141d',
+              color: '#10b981', fontSize: '12px', fontWeight: '600', cursor: running ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', gap: '6px', opacity: running && running !== 'refresh' ? 0.5 : 1
+            }}
+          >
+            {running === 'refresh' ? <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Zap size={13} />}
+            Refresh Metrics
           </button>
           <button
             onClick={() => { setLoading(true); fetchData(); }}

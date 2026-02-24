@@ -1,6 +1,7 @@
 const { getMetaClient } = require('./client');
 const { parseInsightRow, calculateROASTrend, calculateSpendVelocity, parseBudget, getTimeRanges } = require('./helpers');
 const MetricSnapshot = require('../db/models/MetricSnapshot');
+const AICreation = require('../db/models/AICreation');
 const logger = require('../utils/logger');
 const kpiTargets = require('../../config/kpi-targets');
 
@@ -47,6 +48,41 @@ class DataCollector {
           const errMsg = err.response?.data?.error?.message || err.message || 'Error desconocido';
           logger.warn(`  Error obteniendo ad sets de campaña ${campaign.id}: ${errMsg}`);
         }
+      }
+
+      // 1.5. Inyectar ad sets AI-managed que no aparecieron en el listado
+      //       (pueden tener status DELETED, ARCHIVED, o campaña padre pausada)
+      try {
+        const aiCreations = await AICreation.find({
+          creation_type: 'create_adset',
+          managed_by_ai: true,
+          meta_entity_id: { $exists: true, $ne: null }
+        }).lean();
+
+        let injected = 0;
+        for (const creation of aiCreations) {
+          const asId = creation.meta_entity_id;
+          if (adSetMap[asId]) continue; // Ya capturado normalmente
+
+          try {
+            const info = await this.meta.get(`/${asId}`, {
+              fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id'
+            });
+            const campaignId = info.campaign_id;
+            const campaign = campaignMap[campaignId] || { id: campaignId, name: creation.campaign_name || 'Unknown' };
+            adSetMap[asId] = { ...info, campaign };
+            injected++;
+          } catch (err) {
+            // Ad set puede estar eliminado permanentemente — ignorar
+            logger.debug(`  Ad set AI ${asId} no accesible: ${err.message}`);
+          }
+        }
+        if (injected > 0) {
+          logger.info(`  ${injected} ad sets AI-managed inyectados (no estaban en listado ACTIVE/PAUSED)`);
+          totalAdSets += injected;
+        }
+      } catch (err) {
+        logger.warn(`  Error inyectando ad sets AI-managed: ${err.message}`);
       }
 
       // 2. Obtener insights a nivel de cuenta con level=campaign (5 llamadas)
