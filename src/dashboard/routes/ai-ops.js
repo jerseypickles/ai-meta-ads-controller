@@ -204,9 +204,9 @@ router.get('/status', async (req, res) => {
         adset_id: adSetId,
         adset_name: creation.meta_entity_name,
         phase: creation.lifecycle_phase,
-        status: creation.current_status,
+        status: adSetSnap?.status || creation.current_status,
         verdict: creation.verdict,
-        budget: creation.current_budget || creation.initial_budget,
+        budget: adSetSnap?.daily_budget || creation.current_budget || creation.initial_budget,
         initial_budget: creation.initial_budget,
         days_active: Math.round((now - new Date(creation.created_at)) / (1000 * 60 * 60 * 24) * 10) / 10,
         created_at: creation.created_at,
@@ -518,7 +518,22 @@ async function refreshAIOpsMetrics() {
     purchases: 0, purchase_value: 0, roas: 0, cpa: 0, reach: 0, frequency: 0
   };
 
-  // 5. Crear snapshots de ad sets
+  // 5. Sincronizar AICreation.current_status con el status real de Meta
+  for (const adSetId of adSetIds) {
+    const info = adSetInfoMap[adSetId];
+    if (!info?.effective_status) continue;
+
+    const creation = allCreations.find(c => c.meta_entity_id === adSetId);
+    if (creation && creation.current_status !== info.effective_status) {
+      await AICreation.updateOne(
+        { _id: creation._id },
+        { current_status: info.effective_status, updated_at: new Date() }
+      );
+      logger.debug(`[AI-OPS REFRESH] Status sync: ${adSetId} ${creation.current_status} → ${info.effective_status}`);
+    }
+  }
+
+  // 7. Crear snapshots de ad sets
   let adSetSnapshots = 0;
   for (const adSetId of adSetIds) {
     const info = adSetInfoMap[adSetId];
@@ -551,7 +566,7 @@ async function refreshAIOpsMetrics() {
     adSetSnapshots++;
   }
 
-  // 6. Crear snapshots de ads
+  // 8. Crear snapshots de ads
   let adSnapshots = 0;
   for (const [adId, adData] of Object.entries(adInsights)) {
     if (!adData.campaign_id) continue;
