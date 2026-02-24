@@ -700,7 +700,7 @@ async function regenerateSingleShot(productImagePath, shotKey, imagePrompt, prod
   };
 }
 
-// ═══ STEP 5: Generate Video from Shot with Kling 2.6 via fal.ai ═══
+// ═══ STEP 5: Generate Video from Shot via fal.ai (Kling 3.0/2.6) ═══
 
 function initFal() {
   const falKey = config.fal?.apiKey;
@@ -722,21 +722,15 @@ async function submitVideoJob(imageUrl, options = {}) {
   const motion = CAMERA_MOTIONS.find(m => m.key === cameraMotion) || CAMERA_MOTIONS[0];
   const prompt = options.prompt || `${motion.prompt}, professional product commercial, cinematic quality, studio lighting, 4K`;
 
-  // Kling 3.0 uses start_image_url; Kling 2.6 uses image_url
-  const isV3 = modelConfig.key.startsWith('kling-3.0');
+  // All Kling models use start_image_url and duration as string
   const input = {
     prompt,
-    duration,
+    start_image_url: imageUrl,
+    duration: String(duration),
     aspect_ratio: aspectRatio,
-    cfg_scale: isV3 ? 0.5 : 0.7
+    cfg_scale: 0.5,
+    generate_audio: false
   };
-
-  if (isV3) {
-    input.start_image_url = imageUrl;
-    input.generate_audio = false;
-  } else {
-    input.image_url = imageUrl;
-  }
 
   const { request_id } = await fal.queue.submit(modelConfig.falModel, { input });
 
