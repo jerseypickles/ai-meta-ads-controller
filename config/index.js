@@ -56,6 +56,13 @@ module.exports = {
     }
   },
 
+  xai: {
+    apiKey: process.env.XAI_API_KEY || '',
+    baseUrl: 'https://api.x.ai/v1',
+    imageModel: 'grok-imagine-image',
+    videoModel: 'grok-imagine-video'
+  },
+
   fal: {
     apiKey: process.env.FAL_KEY || ''
   },

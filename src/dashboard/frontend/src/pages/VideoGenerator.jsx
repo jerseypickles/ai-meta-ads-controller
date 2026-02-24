@@ -339,7 +339,7 @@ export default function VideoGenerator() {
 
   // Video model selection
   const [videoModels, setVideoModels] = useState({});
-  const [selectedVideoModel, setSelectedVideoModel] = useState('kling-3.0-pro');
+  const [selectedVideoModel, setSelectedVideoModel] = useState('grok-imagine-720p');
 
   // Step 6: Final commercial video (stitched)
   const [stitchJobId, setStitchJobId] = useState(null);
@@ -762,7 +762,7 @@ export default function VideoGenerator() {
           Video AI — Director Creativo
         </h1>
         <p style={{ color: '#6b7280', fontSize: '13px' }}>
-          Foto → Director → Beats Contexto+Producto → Jurado → Storyboard → Clips ({videoModels[selectedVideoModel]?.label || 'Kling 3.0'}) → Video Comercial Final
+          Foto → Director → Beats Contexto+Producto → Jurado → Storyboard → Clips ({videoModels[selectedVideoModel]?.label || 'Grok Imagine'}) → Video Comercial Final
         </p>
       </div>
 
@@ -776,7 +776,7 @@ export default function VideoGenerator() {
         <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
         <StepIndicator number={4} title="Storyboard" subtitle="Secuencia" active={step === 4} done={storyboard.length > 0} />
         <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
-        <StepIndicator number={5} title="Clips" subtitle={videoModels[selectedVideoModel]?.label || 'Kling 3.0'} active={step === 5} done={completedClips.length > 0} />
+        <StepIndicator number={5} title="Clips" subtitle={videoModels[selectedVideoModel]?.label || 'Grok Imagine'} active={step === 5} done={completedClips.length > 0} />
         <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
         <StepIndicator number={6} title="Comercial" subtitle="Video Final" active={step === 6} done={stitchStatus?.status === 'done'} />
       </div>
@@ -1228,8 +1228,8 @@ export default function VideoGenerator() {
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
             }}>
             {generatingClips
-              ? <><Loader size={18} className="spin" /> Enviando {storyboard.length} segmentos a {videoModels[selectedVideoModel]?.label || 'Kling 3.0'}...</>
-              : <><Play size={18} /> Generar {storyboard.length} Segmentos del Comercial ({videoModels[selectedVideoModel]?.label || 'Kling 3.0'})</>
+              ? <><Loader size={18} className="spin" /> Enviando {storyboard.length} segmentos a {videoModels[selectedVideoModel]?.label || 'Grok Imagine'}...</>
+              : <><Play size={18} /> Generar {storyboard.length} Segmentos del Comercial ({videoModels[selectedVideoModel]?.label || 'Grok Imagine'})</>
             }
           </button>
         </div>

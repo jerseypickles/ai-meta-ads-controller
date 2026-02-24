@@ -1,18 +1,17 @@
 /**
- * Video Pipeline — "Director Creativo" Mode v7 — Grok Imagine Edition
+ * Video Pipeline — "Director Creativo" Mode v8 — Grok Imagine Direct API
  *
  * Workflow:
  *   1. Upload 1 product photo
  *   2. Claude Vision analyzes product → detects ingredients → recommends best commercial scene → designs 12 NARRATIVE BEATS (hybrid CONTEXT + PRODUCT story arc)
- *   3. Grok Imagine generates shots via fal.ai: CONTEXT via text-to-image, PRODUCT via image edit (async, polled)
+ *   3. Grok Imagine generates shots via xAI API: CONTEXT via text-to-image, PRODUCT via image edit
  *   4. Claude Vision judges each shot quality with type-specific criteria (1-10 score + feedback)
  *   5. User reviews storyboard with scores, can regenerate low-scoring shots
- *   6. Grok Imagine Video converts each approved shot to a 6-15s video clip (720p, native audio)
+ *   6. Grok Imagine Video converts each approved shot to a 6-15s video clip (720p, native audio) via xAI API
  *   7. FFmpeg stitches all clips into ONE complete commercial video
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
-const { fal } = require('@fal-ai/client');
 const config = require('../../config');
 const logger = require('../utils/logger');
 const fs = require('fs');
@@ -69,10 +68,10 @@ const BEAT_TYPES = {
   product: { key: 'product', label: 'Producto', description: 'Generated via image edit using the product photo as reference.' }
 };
 
-// ═══ VIDEO MODEL OPTIONS — Grok Imagine Video via fal.ai ═══
+// ═══ VIDEO MODEL OPTIONS — Grok Imagine Video via xAI API ═══
 const VIDEO_MODELS = {
-  'grok-imagine-720p': { key: 'grok-imagine-720p', label: 'Grok Imagine 720p', falModel: 'xai/grok-imagine-video/image-to-video', resolution: '720p', costPerSec: 0.07, recommended: true },
-  'grok-imagine-480p': { key: 'grok-imagine-480p', label: 'Grok Imagine 480p', falModel: 'xai/grok-imagine-video/image-to-video', resolution: '480p', costPerSec: 0.05, recommended: false }
+  'grok-imagine-720p': { key: 'grok-imagine-720p', label: 'Grok Imagine 720p', resolution: '720p', costPerSec: 0.07, recommended: true },
+  'grok-imagine-480p': { key: 'grok-imagine-480p', label: 'Grok Imagine 480p', resolution: '480p', costPerSec: 0.05, recommended: false }
 };
 
 const DEFAULT_VIDEO_MODEL = 'grok-imagine-720p';
@@ -319,23 +318,19 @@ async function _generateShotsBackground(jobId, productImagePath, options = {}) {
     throw new Error('Product image not found: ' + productImagePath);
   }
 
-  initFal();
+  const xaiKey = config.xai?.apiKey;
+  if (!xaiKey) throw new Error('XAI_API_KEY not configured');
+
   ensureDir(SHOTS_DIR);
   const productDescription = options.productDescription || 'product';
   const directorPlan = options.directorPlan;
   const job = shotJobs.get(jobId);
 
-  // Upload product image to fal.ai storage once (needed for PRODUCT beats)
-  let productImageUrl;
-  try {
-    const imageBuffer = fs.readFileSync(productImagePath);
-    const blob = new Blob([imageBuffer], { type: getMimeType(productImagePath) });
-    productImageUrl = await fal.storage.upload(blob);
-    logger.info(`[VIDEO-PIPE] Product image uploaded to fal storage: ${productImageUrl?.substring(0, 80)}`);
-  } catch (err) {
-    logger.error(`[VIDEO-PIPE] Failed to upload product image to fal storage: ${err.message}`);
-    throw new Error('Failed to upload product image for editing: ' + err.message);
-  }
+  // Encode product image as base64 data URI once (needed for PRODUCT beats)
+  const productImageBuffer = fs.readFileSync(productImagePath);
+  const productBase64 = productImageBuffer.toString('base64');
+  const productMime = getMimeType(productImagePath);
+  const productDataUri = `data:${productMime};base64,${productBase64}`;
 
   // Use director plan shots if available, otherwise fall back to default
   const numShots = options.numShots || 12;
@@ -353,12 +348,12 @@ async function _generateShotsBackground(jobId, productImagePath, options = {}) {
     const isContext = beatType === 'context';
 
     try {
-      logger.info(`[VIDEO-PIPE] Job ${jobId}: Generating shot ${i + 1}/${shotKeys.length}: ${shotKey} [${beatType.toUpperCase()}] via Grok Imagine`);
+      logger.info(`[VIDEO-PIPE] Job ${jobId}: Generating shot ${i + 1}/${shotKeys.length}: ${shotKey} [${beatType.toUpperCase()}] via xAI Grok Imagine`);
 
       let resultImageUrl;
 
       if (isContext) {
-        // ── CONTEXT shot: Grok Imagine text-to-image (generate from scratch, no product photo) ──
+        // ── CONTEXT shot: xAI text-to-image (generate from scratch, no product photo) ──
         const contextPrompt = [
           directorPlan?.shots?.[shotKey]?.imagePrompt || `Beautiful ${productDescription} related scene.`,
           '\nVertical 9:16 format.',
@@ -367,20 +362,24 @@ async function _generateShotsBackground(jobId, productImagePath, options = {}) {
           ' Natural lighting, rich colors, magazine-quality composition.'
         ].join('');
 
-        const result = await fal.subscribe('xai/grok-imagine-image', {
-          input: {
+        const res = await fetch('https://api.x.ai/v1/images/generations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${xaiKey}` },
+          body: JSON.stringify({
+            model: 'grok-imagine-image',
             prompt: contextPrompt,
-            aspect_ratio: '2:3',
-            output_format: 'png',
-            num_images: 1,
-            sync_mode: true
-          },
-          logs: false
+            n: 1,
+            aspect_ratio: '2:3'
+          })
         });
-
-        resultImageUrl = result.images?.[0]?.url || result.data?.images?.[0]?.url;
+        if (!res.ok) {
+          const errBody = await res.text();
+          throw new Error(`xAI image gen failed (${res.status}): ${errBody.substring(0, 300)}`);
+        }
+        const result = await res.json();
+        resultImageUrl = result.data?.[0]?.url;
       } else {
-        // ── PRODUCT shot: Grok Imagine image edit (uses product photo as reference) ──
+        // ── PRODUCT shot: xAI image edit (uses product photo as reference via base64 data URI) ──
         let fullPrompt;
         if (directorPlan?.shots?.[shotKey]?.imagePrompt) {
           fullPrompt = [
@@ -408,28 +407,33 @@ async function _generateShotsBackground(jobId, productImagePath, options = {}) {
           ].join('');
         }
 
-        const result = await fal.subscribe('xai/grok-imagine-image/edit', {
-          input: {
+        // xAI image edit uses JSON body with image array (not multipart)
+        const res = await fetch('https://api.x.ai/v1/images/edits', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${xaiKey}` },
+          body: JSON.stringify({
+            model: 'grok-imagine-image',
             prompt: fullPrompt,
-            image_url: productImageUrl,
-            output_format: 'png',
-            num_images: 1,
-            sync_mode: true
-          },
-          logs: false
+            image: { url: productDataUri, type: 'image_url' },
+            n: 1
+          })
         });
-
-        resultImageUrl = result.images?.[0]?.url || result.data?.images?.[0]?.url;
+        if (!res.ok) {
+          const errBody = await res.text();
+          throw new Error(`xAI image edit failed (${res.status}): ${errBody.substring(0, 300)}`);
+        }
+        const result = await res.json();
+        resultImageUrl = result.data?.[0]?.url;
       }
 
       if (!resultImageUrl) {
-        throw new Error('No image URL in Grok Imagine response');
+        throw new Error('No image URL in xAI Grok Imagine response');
       }
 
       // Download the generated image and save locally
-      const res = await fetch(resultImageUrl);
-      if (!res.ok) throw new Error(`Failed to download generated image: HTTP ${res.status}`);
-      const buffer = Buffer.from(await res.arrayBuffer());
+      const dlRes = await fetch(resultImageUrl);
+      if (!dlRes.ok) throw new Error(`Failed to download generated image: HTTP ${dlRes.status}`);
+      const buffer = Buffer.from(await dlRes.arrayBuffer());
       const filename = `shot-${shotKey}-${Date.now()}.png`;
       fs.writeFileSync(path.join(SHOTS_DIR, filename), buffer);
 
@@ -451,7 +455,7 @@ async function _generateShotsBackground(jobId, productImagePath, options = {}) {
       job.shots.push({ angle: shotKey, label: shotLabel, type: beatType, filename: null, url: null, status: 'failed', error: err.message });
       job.failed++;
 
-      if (err.status === 429) {
+      if (err.status === 429 || err.message?.includes('429')) {
         logger.warn('[VIDEO-PIPE] Rate limited, waiting 30s...');
         await new Promise(r => setTimeout(r, 30000));
       }
@@ -625,19 +629,21 @@ Return ONLY valid JSON:
 // ═══ STEP 4: Regenerate a single shot ═══
 
 async function regenerateSingleShot(productImagePath, shotKey, imagePrompt, productDescription, beatType) {
-  initFal();
+  const xaiKey = config.xai?.apiKey;
+  if (!xaiKey) throw new Error('XAI_API_KEY not configured');
+
   ensureDir(SHOTS_DIR);
 
   // Determine beat type from param, or from NARRATIVE_BEATS definition
   const shotType = SHOT_TYPES.find(s => s.key === shotKey);
   const isContext = (beatType || shotType?.type || 'product') === 'context';
 
-  logger.info(`[VIDEO-PIPE] Regenerating shot: ${shotKey} [${isContext ? 'CONTEXT' : 'PRODUCT'}] via Grok Imagine`);
+  logger.info(`[VIDEO-PIPE] Regenerating shot: ${shotKey} [${isContext ? 'CONTEXT' : 'PRODUCT'}] via xAI Grok Imagine`);
 
   let resultImageUrl;
 
   if (isContext) {
-    // CONTEXT: Grok Imagine text-to-image from scratch
+    // CONTEXT: xAI text-to-image from scratch
     const contextPrompt = [
       imagePrompt,
       '\nVertical 9:16 format.',
@@ -646,24 +652,28 @@ async function regenerateSingleShot(productImagePath, shotKey, imagePrompt, prod
       ' Natural lighting, rich colors, magazine-quality composition.'
     ].join('');
 
-    const result = await fal.subscribe('xai/grok-imagine-image', {
-      input: {
+    const res = await fetch('https://api.x.ai/v1/images/generations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${xaiKey}` },
+      body: JSON.stringify({
+        model: 'grok-imagine-image',
         prompt: contextPrompt,
-        aspect_ratio: '2:3',
-        output_format: 'png',
-        num_images: 1,
-        sync_mode: true
-      },
-      logs: false
+        n: 1,
+        aspect_ratio: '2:3'
+      })
     });
-
-    resultImageUrl = result.images?.[0]?.url || result.data?.images?.[0]?.url;
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`xAI image gen failed (${res.status}): ${errBody.substring(0, 300)}`);
+    }
+    const result = await res.json();
+    resultImageUrl = result.data?.[0]?.url;
   } else {
-    // PRODUCT: Grok Imagine image edit with product photo
-    // Upload product image to fal.ai storage
+    // PRODUCT: xAI image edit with product photo (base64 data URI)
     const imageBuffer = fs.readFileSync(productImagePath);
-    const blob = new Blob([imageBuffer], { type: getMimeType(productImagePath) });
-    const productImageUrl = await fal.storage.upload(blob);
+    const base64 = imageBuffer.toString('base64');
+    const mime = getMimeType(productImagePath);
+    const dataUri = `data:${mime};base64,${base64}`;
 
     const fullPrompt = [
       imagePrompt,
@@ -678,28 +688,32 @@ async function regenerateSingleShot(productImagePath, shotKey, imagePrompt, prod
       ' Photorealistic, high-end commercial product photography quality.'
     ].join('');
 
-    const result = await fal.subscribe('xai/grok-imagine-image/edit', {
-      input: {
+    const res = await fetch('https://api.x.ai/v1/images/edits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${xaiKey}` },
+      body: JSON.stringify({
+        model: 'grok-imagine-image',
         prompt: fullPrompt,
-        image_url: productImageUrl,
-        output_format: 'png',
-        num_images: 1,
-        sync_mode: true
-      },
-      logs: false
+        image: { url: dataUri, type: 'image_url' },
+        n: 1
+      })
     });
-
-    resultImageUrl = result.images?.[0]?.url || result.data?.images?.[0]?.url;
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`xAI image edit failed (${res.status}): ${errBody.substring(0, 300)}`);
+    }
+    const result = await res.json();
+    resultImageUrl = result.data?.[0]?.url;
   }
 
   if (!resultImageUrl) {
-    throw new Error('No image URL in Grok Imagine response');
+    throw new Error('No image URL in xAI Grok Imagine response');
   }
 
   // Download the generated image and save locally
-  const res = await fetch(resultImageUrl);
-  if (!res.ok) throw new Error(`Failed to download generated image: HTTP ${res.status}`);
-  const buffer = Buffer.from(await res.arrayBuffer());
+  const dlRes = await fetch(resultImageUrl);
+  if (!dlRes.ok) throw new Error(`Failed to download generated image: HTTP ${dlRes.status}`);
+  const buffer = Buffer.from(await dlRes.arrayBuffer());
   const filename = `shot-${shotKey}-${Date.now()}.png`;
   fs.writeFileSync(path.join(SHOTS_DIR, filename), buffer);
 
@@ -713,21 +727,16 @@ async function regenerateSingleShot(productImagePath, shotKey, imagePrompt, prod
   };
 }
 
-// ═══ STEP 5: Generate Video from Shot via fal.ai (Grok Imagine Video) ═══
+// ═══ STEP 5: Generate Video from Shot via xAI Grok Imagine Video API ═══
 
-function initFal() {
-  const falKey = config.fal?.apiKey;
-  if (!falKey) throw new Error('FAL_KEY not configured — set FAL_KEY env var');
-  // Log key diagnostics (masked) on first call
-  const masked = falKey.length > 8
-    ? `${falKey.substring(0, 4)}...${falKey.substring(falKey.length - 4)} (${falKey.length} chars)`
-    : `[too short: ${falKey.length} chars]`;
-  logger.info(`[VIDEO-PIPE] initFal: key=${masked}`);
-  fal.config({ credentials: falKey });
+function _getXaiKey() {
+  const xaiKey = config.xai?.apiKey;
+  if (!xaiKey) throw new Error('XAI_API_KEY not configured — set XAI_API_KEY env var');
+  return xaiKey;
 }
 
 async function submitVideoJob(imageUrl, options = {}) {
-  initFal();
+  const xaiKey = _getXaiKey();
 
   const {
     cameraMotion = 'slow-dolly-in',
@@ -740,8 +749,8 @@ async function submitVideoJob(imageUrl, options = {}) {
   const motion = CAMERA_MOTIONS.find(m => m.key === cameraMotion) || CAMERA_MOTIONS[0];
   const prompt = options.prompt || `${motion.prompt}, professional product commercial, cinematic quality, studio lighting, 4K`;
 
-  // Grok Imagine Video: image_url, integer duration (1-15s), resolution
-  const input = {
+  const body = {
+    model: 'grok-imagine-video',
     prompt,
     image_url: imageUrl,
     duration: Math.max(1, Math.min(15, Math.round(duration))),
@@ -749,37 +758,55 @@ async function submitVideoJob(imageUrl, options = {}) {
     resolution: modelConfig.resolution || '720p'
   };
 
-  logger.info(`[VIDEO-PIPE] Submitting to fal.ai: model=${modelConfig.falModel}, image=${imageUrl?.substring(0, 80)}, duration=${input.duration}, aspect=${input.aspect_ratio}`);
+  logger.info(`[VIDEO-PIPE] Submitting to xAI: image=${imageUrl?.substring(0, 80)}, duration=${body.duration}, aspect=${body.aspect_ratio}, resolution=${body.resolution}`);
 
-  const { request_id } = await fal.queue.submit(modelConfig.falModel, { input });
+  const res = await fetch('https://api.x.ai/v1/videos/generations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${xaiKey}` },
+    body: JSON.stringify(body)
+  });
 
-  logger.info(`[VIDEO-PIPE] ${modelConfig.label} job queued: ${request_id} (${duration}s, $${(duration * modelConfig.costPerSec).toFixed(3)})`);
-  return { requestId: request_id, status: 'queued', cameraMotion: motion.key, videoModel: modelConfig.key };
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`xAI video gen failed (${res.status}): ${errBody.substring(0, 300)}`);
+  }
+
+  const result = await res.json();
+  const requestId = result.request_id || result.response_id || result.id;
+
+  logger.info(`[VIDEO-PIPE] ${modelConfig.label} job queued: ${requestId} (${duration}s, $${(duration * modelConfig.costPerSec).toFixed(3)})`);
+  return { requestId, status: 'queued', cameraMotion: motion.key, videoModel: modelConfig.key };
 }
 
 async function checkVideoStatus(requestId, videoModel) {
-  initFal();
+  const xaiKey = _getXaiKey();
 
-  const modelConfig = VIDEO_MODELS[videoModel] || VIDEO_MODELS[DEFAULT_VIDEO_MODEL];
-
-  const status = await fal.queue.status(modelConfig.falModel, {
-    requestId,
-    logs: false
+  const res = await fetch(`https://api.x.ai/v1/videos/${requestId}`, {
+    method: 'GET',
+    headers: { 'Authorization': `Bearer ${xaiKey}` }
   });
 
-  if (status.status === 'COMPLETED') {
-    const result = await fal.queue.result(modelConfig.falModel, { requestId });
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`xAI video status check failed (${res.status}): ${errBody.substring(0, 300)}`);
+  }
+
+  const result = await res.json();
+
+  // xAI status values: "done", "pending", "expired"
+  if (result.status === 'done') {
     return {
       requestId,
       status: 'completed',
-      videoUrl: result.video?.url || result.data?.video?.url || null
+      videoUrl: result.video?.url || null
     };
   }
 
-  return {
-    requestId,
-    status: status.status === 'IN_PROGRESS' ? 'processing' : status.status === 'IN_QUEUE' ? 'queued' : status.status?.toLowerCase() || 'unknown'
-  };
+  if (result.status === 'expired') {
+    return { requestId, status: 'failed', error: 'Video generation request expired' };
+  }
+
+  return { requestId, status: 'processing' };
 }
 
 async function submitVideoBatch(shots, options = {}) {

@@ -1,10 +1,10 @@
 /**
- * Video Generation Routes — "Director Creativo" Mode v6
+ * Video Generation Routes — "Director Creativo" Mode v8
  *
  * Pipeline: Upload photo → Claude recommends scene + detects ingredients + designs hybrid shots →
- *           OpenAI generates CONTEXT (text-to-image) + PRODUCT (image edit) shots (async) →
+ *           Grok Imagine generates CONTEXT (text-to-image) + PRODUCT (image edit) shots via xAI API →
  *           Claude judges quality with type-specific criteria →
- *           User reviews storyboard → Kling 3.0 Pro creates videos
+ *           User reviews storyboard → Grok Imagine Video creates videos via xAI API
  */
 
 const express = require('express');
