@@ -897,6 +897,11 @@ export const dismissInsight = async (insightId) => {
 // VIDEO GENERATION — Director Creativo Mode
 // ============================================
 
+export const getVideoTemplates = async () => {
+  const response = await api.get('/api/video/templates');
+  return response.data;
+};
+
 export const getVideoScenes = async () => {
   const response = await api.get('/api/video/scenes');
   return response.data;

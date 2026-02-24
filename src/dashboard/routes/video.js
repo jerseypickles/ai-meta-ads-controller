@@ -15,7 +15,7 @@ const fs = require('fs');
 const config = require('../../../config');
 const logger = require('../../utils/logger');
 const {
-  AVAILABLE_SCENES, SHOT_TYPES, NARRATIVE_BEATS, CAMERA_MOTIONS, MUSIC_TRACKS,
+  AVAILABLE_SCENES, SHOT_TYPES, NARRATIVE_BEATS, COMMERCIAL_TEMPLATES, CAMERA_MOTIONS, MUSIC_TRACKS,
   BEAT_TYPES, VIDEO_MODELS, DEFAULT_VIDEO_MODEL,
   analyzeProductAndRecommendScene,
   startShotGenerationJob, getShotJobStatus,
@@ -48,6 +48,21 @@ const upload = multer({
     cb(null, allowed.includes(file.mimetype));
   },
   limits: { fileSize: 20 * 1024 * 1024 }
+});
+
+// ============ GET /api/video/templates ============
+
+router.get('/templates', (req, res) => {
+  const templates = COMMERCIAL_TEMPLATES.map(t => ({
+    key: t.key,
+    label: t.label,
+    description: t.description,
+    beats: t.beats.length,
+    duration: t.duration,
+    style: t.style,
+    clipDuration: t.clipDuration
+  }));
+  res.json({ templates, count: templates.length });
 });
 
 // ============ GET /api/video/scenes ============
@@ -116,7 +131,7 @@ router.post('/upload-product', upload.single('photo'), (req, res) => {
 
 router.post('/analyze-scene', async (req, res) => {
   try {
-    const { productImagePath, productDescription } = req.body;
+    const { productImagePath, productDescription, templateKey } = req.body;
 
     if (!productImagePath) {
       return res.status(400).json({ error: 'productImagePath is required' });
@@ -131,8 +146,8 @@ router.post('/analyze-scene', async (req, res) => {
       return res.status(400).json({ error: 'Product image file not found' });
     }
 
-    logger.info(`[VIDEO] Claude Director analyzing product: ${fullPath}`);
-    const analysis = await analyzeProductAndRecommendScene(fullPath, productDescription || 'product');
+    logger.info(`[VIDEO] Claude Director analyzing product: ${fullPath} (template: ${templateKey || 'classic-12'})`);
+    const analysis = await analyzeProductAndRecommendScene(fullPath, productDescription || 'product', templateKey);
 
     res.json(analysis);
   } catch (err) {

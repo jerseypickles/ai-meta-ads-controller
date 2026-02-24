@@ -11,7 +11,7 @@ import {
   analyzeScene, judgeShots, regenerateShot,
   generateClipsBatch, getClipStatus, getClipStatusBatch,
   stitchClips, getStitchStatus, getMusicTracks,
-  getVideoModels
+  getVideoModels, getVideoTemplates
 } from '../api';
 
 const BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
@@ -309,10 +309,12 @@ const ProgressBar = ({ completed, total, failed }) => {
 // MAIN COMPONENT
 // ═══════════════════════════════════════════════
 export default function VideoGenerator() {
-  // Step 1: Product photo
+  // Step 1: Product photo + template
   const [productPhoto, setProductPhoto] = useState(null);
   const [productDescription, setProductDescription] = useState('Jersey Pickles product jar');
   const [uploading, setUploading] = useState(false);
+  const [templates, setTemplates] = useState([]);
+  const [selectedTemplate, setSelectedTemplate] = useState('quick-cut-food');
 
   // Step 2: Claude Director Creativo
   const [directorPlan, setDirectorPlan] = useState(null);
@@ -356,11 +358,12 @@ export default function VideoGenerator() {
   const clipPollRef = useRef(null);
   const stitchPollRef = useRef(null);
 
-  // Load motions + music tracks + video models + existing shots on mount
+  // Load motions + music tracks + video models + templates + existing shots on mount
   useEffect(() => {
     loadMotions();
     loadMusicTracks();
     loadVideoModels();
+    loadTemplates();
     loadShots();
     return () => {
       if (shotPollRef.current) clearInterval(shotPollRef.current);
@@ -418,6 +421,13 @@ export default function VideoGenerator() {
     } catch (err) { console.error('Load video models error:', err); }
   };
 
+  const loadTemplates = async () => {
+    try {
+      const data = await getVideoTemplates();
+      setTemplates(data.templates || []);
+    } catch (err) { console.error('Load templates error:', err); }
+  };
+
   const loadShots = async () => {
     try {
       const data = await getVideoShots();
@@ -457,9 +467,15 @@ export default function VideoGenerator() {
     try {
       const plan = await analyzeScene({
         productImagePath: productPhoto.path || productPhoto.url,
-        productDescription
+        productDescription,
+        templateKey: selectedTemplate
       });
       setDirectorPlan(plan);
+      // Set numShots from template beat count
+      const tpl = templates.find(t => t.key === selectedTemplate);
+      if (tpl) setNumShots(tpl.beats);
+      // Set clip duration from template
+      if (plan.templateClipDuration) setDuration(plan.templateClipDuration);
       // Pre-fill music, closing text, and video model from Director recommendation
       if (plan.recommendedMusic) setSelectedMusic(plan.recommendedMusic);
       if (plan.closingText) setBrandText(plan.closingText);
@@ -762,17 +778,17 @@ export default function VideoGenerator() {
           Video AI — Director Creativo
         </h1>
         <p style={{ color: '#6b7280', fontSize: '13px' }}>
-          Foto → Director → Beats Contexto+Producto → Jurado → Storyboard → Clips ({videoModels[selectedVideoModel]?.label || 'Grok Imagine'}) → Video Comercial Final
+          Foto + Template → Director → Beats → Jurado → Storyboard → Clips ({videoModels[selectedVideoModel]?.label || 'Grok Imagine'}) → Video Comercial Final
         </p>
       </div>
 
       {/* ═══ STEP INDICATORS ═══ */}
       <div style={{ display: 'flex', gap: '6px', marginBottom: '24px', flexWrap: 'wrap', alignItems: 'center' }}>
-        <StepIndicator number={1} title="Foto" subtitle="Producto" active={step === 1} done={!!productPhoto} />
+        <StepIndicator number={1} title="Foto" subtitle="+ Template" active={step === 1} done={!!productPhoto} />
         <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
         <StepIndicator number={2} title="Director" subtitle="Claude IA" active={step === 2} done={!!directorPlan} />
         <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
-        <StepIndicator number={3} title="Beats" subtitle={`${numShots} narrativos`} active={step === 3} done={shots.length > 0 && !isGeneratingShots && shotScores} />
+        <StepIndicator number={3} title="Beats" subtitle={`${numShots} tomas`} active={step === 3} done={shots.length > 0 && !isGeneratingShots && shotScores} />
         <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
         <StepIndicator number={4} title="Storyboard" subtitle="Secuencia" active={step === 4} done={storyboard.length > 0} />
         <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
@@ -840,6 +856,54 @@ export default function VideoGenerator() {
                   placeholder="ej: Jersey Pickles Spicy Garlic Dill jar"
                 />
               </div>
+              {/* Template selector */}
+              {templates.length > 0 && (
+                <div style={{ marginBottom: '12px' }}>
+                  <label style={{ color: '#9ca3af', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '8px' }}>
+                    Estilo de Comercial
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '8px' }}>
+                    {templates.map(t => {
+                      const isSelected = selectedTemplate === t.key;
+                      const styleColors = {
+                        'fast-paced': { color: '#f59e0b', bg: '#78350f', border: '#f59e0b' },
+                        'recipe': { color: '#22c55e', bg: '#14532d', border: '#22c55e' },
+                        'lifestyle': { color: '#ec4899', bg: '#831843', border: '#ec4899' },
+                        'asmr': { color: '#8b5cf6', bg: '#3b0764', border: '#8b5cf6' },
+                        'before-after': { color: '#3b82f6', bg: '#1e3a5f', border: '#3b82f6' },
+                        'cinematic': { color: '#9ca3af', bg: '#1f2937', border: '#6b7280' }
+                      };
+                      const sc = styleColors[t.style] || styleColors.cinematic;
+                      return (
+                        <button key={t.key} onClick={() => setSelectedTemplate(t.key)}
+                          style={{
+                            textAlign: 'left', padding: '10px 14px', borderRadius: '10px', cursor: 'pointer',
+                            border: isSelected ? `2px solid ${sc.border}` : '1px solid #2a2d3a',
+                            backgroundColor: isSelected ? sc.bg : '#0d0f14',
+                            transition: 'all 0.15s ease'
+                          }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                            <span style={{ fontSize: '13px', fontWeight: '700', color: isSelected ? sc.color : '#e5e7eb' }}>
+                              {t.label}
+                            </span>
+                            <span style={{
+                              fontSize: '9px', fontWeight: '600', padding: '2px 6px', borderRadius: '4px',
+                              backgroundColor: isSelected ? `${sc.color}20` : '#1f2937',
+                              color: isSelected ? sc.color : '#6b7280'
+                            }}>
+                              {t.beats} beats · {t.duration}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#6b7280', lineHeight: '1.4' }}>
+                            {t.description}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button onClick={handleAnalyzeScene} disabled={analyzingScene}
                   style={{
@@ -978,26 +1042,17 @@ export default function VideoGenerator() {
             </div>
           )}
 
-          {/* Shot count + generate */}
+          {/* Template info + generate */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-            <div>
-              <label style={{ color: '#9ca3af', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', marginRight: '8px' }}>
-                Tomas
-              </label>
-              <div style={{ display: 'inline-flex', gap: '6px' }}>
-                {[6, 8, 12].map(n => (
-                  <button key={n} onClick={() => setNumShots(n)}
-                    style={{
-                      padding: '6px 14px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '12px',
-                      border: numShots === n ? '2px solid #8b5cf6' : '1px solid #2a2d3a',
-                      backgroundColor: numShots === n ? '#2e1065' : '#141720',
-                      color: numShots === n ? '#c4b5fd' : '#9ca3af'
-                    }}>
-                    {n}
-                  </button>
-                ))}
+            {directorPlan.templateLabel && (
+              <div style={{
+                backgroundColor: '#1e293b', padding: '6px 12px', borderRadius: '8px',
+                fontSize: '12px', color: '#93c5fd', display: 'flex', alignItems: 'center', gap: '6px'
+              }}>
+                <Film size={13} />
+                Template: {directorPlan.templateLabel} ({numShots} beats)
               </div>
-            </div>
+            )}
             <button onClick={handleGenerateShots} disabled={isGeneratingShots}
               style={{
                 padding: '10px 20px', backgroundColor: isGeneratingShots ? '#374151' : '#7c3aed',

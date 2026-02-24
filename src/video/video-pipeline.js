@@ -97,6 +97,102 @@ const NARRATIVE_BEATS = [
 // Keep backward compat alias
 const SHOT_TYPES = NARRATIVE_BEATS;
 
+// ═══ COMMERCIAL TEMPLATES — Optimized vertical ad formats ═══
+// Each template has a different narrative style and beat count for vertical ads (Reels/TikTok/Stories)
+const COMMERCIAL_TEMPLATES = [
+  {
+    key: 'classic-12',
+    label: 'Clasico (12 Beats)',
+    description: 'Full 12-beat cinematic commercial — origin to closing hero. Best for longer ads (45-60s).',
+    beats: NARRATIVE_BEATS,
+    duration: '45-60s',
+    style: 'cinematic',
+    clipDuration: 5
+  },
+  {
+    key: 'quick-cut-food',
+    label: 'Quick-Cut Comida',
+    description: 'Fast-paced food commercial — macro ingredients, product glory, eating moment. Perfect for 15-20s vertical ads.',
+    beats: [
+      { key: 'qc-01-ingredient-macro', label: '1. Macro Ingrediente', order: 1, type: 'context', narrative: 'Extreme macro close-up of the KEY ingredient — glistening, wet, textured. Cucumber slice with water droplets, garlic clove being crushed, dill sprig with dew. Fill the ENTIRE frame. Food photography style, dramatic dark background, single spotlight.' },
+      { key: 'qc-02-splash-action', label: '2. Splash/Accion', order: 2, type: 'context', narrative: 'Dynamic action shot — ingredients falling into brine/liquid, a splash of vinegar, spices cascading, or vegetables being sliced. Frozen motion, dramatic lighting, high-speed photography style. Dark background, vivid colors.' },
+      { key: 'qc-03-product-hero', label: '3. Producto Hero', order: 3, type: 'product', narrative: 'The product jar/package revealed dramatically — centered, eye-level, with the key ingredients arranged around it. Professional product photography, clean and bold. The product must be THE star.' },
+      { key: 'qc-04-open-reveal', label: '4. Abierto/Revelado', order: 4, type: 'context', narrative: 'The product OPENED — close-up of the actual food contents. For pickles: glistening spears in brine, visible herbs and spices floating. For sauces: thick pour. Extreme close-up, appetizing, make the viewer salivate. Warm lighting.' },
+      { key: 'qc-05-eating-moment', label: '5. Momento de Comer', order: 5, type: 'context', narrative: 'The CRUNCH/BITE moment — a pickle being bitten with a visible snap, or the product being added to a burger/sandwich/plate. The satisfying moment of consumption. Close-up, lifestyle, warm tones.' },
+      { key: 'qc-06-final-pack', label: '6. Pack Final', order: 6, type: 'product', narrative: 'Final closing shot — product centered, clean background, brand clearly visible. Call-to-action composition. The last frame — strong, clean, memorable brand impression.' }
+    ],
+    duration: '15-20s',
+    style: 'fast-paced',
+    clipDuration: 3
+  },
+  {
+    key: 'recipe-pairing',
+    label: 'Receta/Pairing',
+    description: 'Shows the product as the star ingredient in a recipe or food pairing. Great for "how to use" ads (25-35s).',
+    beats: [
+      { key: 'rp-01-base-food', label: '1. Base Food', order: 1, type: 'context', narrative: 'Beautiful shot of the BASE food being prepared — a burger being assembled, a charcuterie board being arranged, a sandwich being built, a salad being tossed. The food looks good but is NOT YET complete. Warm kitchen lighting, overhead or 45-degree angle.' },
+      { key: 'rp-02-product-enters', label: '2. Producto Entra', order: 2, type: 'product', narrative: 'The product jar/package appears next to the base food — placed by a hand or revealed with a camera movement. The product is the missing ingredient. Side-by-side with the food, anticipation builds.' },
+      { key: 'rp-03-product-open', label: '3. Abriendo', order: 3, type: 'context', narrative: 'Hands opening the product — lid twisting off a jar, bag being opened, cap being removed. Close-up on the opening action. You can see the contents inside for the first time. Satisfying, tactile.' },
+      { key: 'rp-04-adding-product', label: '4. Agregando', order: 4, type: 'context', narrative: 'The MONEY SHOT — the product being ADDED to the food. Pickles being placed on a burger, sauce being drizzled, toppings being scattered. Close-up, slow-motion feel, the moment of transformation. Food goes from good to AMAZING.' },
+      { key: 'rp-05-finished-dish', label: '5. Plato Terminado', order: 5, type: 'context', narrative: 'The finished dish in its full glory — beautifully plated/assembled with the product as the visible star. Overhead shot or hero angle. Restaurant-quality food photography. The product has transformed the food.' },
+      { key: 'rp-06-bite-reaction', label: '6. Mordida/Reaccion', order: 6, type: 'context', narrative: 'Someone taking a bite or the finished dish being picked up. The enjoyment moment. Close-up of the bite, cross-section visible showing the product inside. Warm, inviting, makes you hungry.' },
+      { key: 'rp-07-product-final', label: '7. Producto Final', order: 7, type: 'product', narrative: 'Final product hero shot — jar/package alongside the finished dish. Brand clearly visible. This is "buy this product to make THIS food" composition. Clean, aspirational.' }
+    ],
+    duration: '25-35s',
+    style: 'recipe',
+    clipDuration: 5
+  },
+  {
+    key: 'lifestyle-party',
+    label: 'Lifestyle/Social',
+    description: 'Product in social contexts — picnics, BBQs, game night, parties. Emotional connection ads (25-35s).',
+    beats: [
+      { key: 'lp-01-setting-scene', label: '1. Escena Social', order: 1, type: 'context', narrative: 'Wide establishing shot of a social setting — a backyard BBQ with string lights, a game-night table with snacks, a beach picnic setup, a tailgate party. Warm golden hour lighting, inviting atmosphere. No product visible yet, just the mood.' },
+      { key: 'lp-02-people-gathering', label: '2. Reunion', order: 2, type: 'context', narrative: 'People gathering around food — hands reaching for snacks, friends laughing around a table, someone setting out plates. The anticipation of a shared meal. Lifestyle photography, candid feel, warm tones.' },
+      { key: 'lp-03-product-star', label: '3. Producto Estrella', order: 3, type: 'product', narrative: 'The product placed CENTER STAGE on the table/scene among other foods — it stands out, it is the star. Surrounded by complementary foods and props. Eye-level hero shot, the product draws your eye first.' },
+      { key: 'lp-04-serving-moment', label: '4. Sirviendo', order: 4, type: 'context', narrative: 'Someone serving or sharing the product — opening the jar at the table, placing pickles on a shared plate, passing the product to a friend. The social sharing moment. Warm, authentic, lifestyle.' },
+      { key: 'lp-05-enjoyment', label: '5. Disfrute', order: 5, type: 'context', narrative: 'Close-up of the product being enjoyed in context — a pickle on a plate next to a burger, the product as part of a full spread. Appetizing food composition showing the product as essential to the occasion.' },
+      { key: 'lp-06-atmosphere-joy', label: '6. Atmosfera', order: 6, type: 'context', narrative: 'Joy and atmosphere shot — golden light, happy gathering vibe, clinking drinks, sunset behind the scene. Emotional closing atmosphere that makes you want to BE there with this product. Cinematic, warm.' },
+      { key: 'lp-07-product-close', label: '7. Cierre Producto', order: 7, type: 'product', narrative: 'Final product shot — clean, beautiful, the jar/package in golden light. Brand visible, memorable. The emotional association: this product = great times with people you love.' }
+    ],
+    duration: '25-35s',
+    style: 'lifestyle',
+    clipDuration: 5
+  },
+  {
+    key: 'asmr-texture',
+    label: 'ASMR/Texturas',
+    description: 'Extreme close-ups, textures, satisfying visuals. Hypnotic food content for scroll-stopping ads (15-25s).',
+    beats: [
+      { key: 'as-01-texture-extreme', label: '1. Textura Extrema', order: 1, type: 'context', narrative: 'EXTREME macro close-up of a key ingredient texture — the bumpy skin of a pickle, seeds on a cucumber slice, crystallized salt, a garlic clove cross-section. So close you can almost feel it. Dark background, dramatic single-source lighting, every detail visible.' },
+      { key: 'as-02-liquid-flow', label: '2. Liquido/Flujo', order: 2, type: 'context', narrative: 'Satisfying liquid shot — brine pouring in slow-motion, vinegar dripping off a pickle, oil drizzling, condensation droplets rolling down a cold jar. Macro, mesmerizing, ASMR-visual. Dramatic lighting on dark background.' },
+      { key: 'as-03-crunch-snap', label: '3. Crunch/Snap', order: 3, type: 'context', narrative: 'The CRUNCH moment — a pickle being snapped in half showing the crisp interior, a chip breaking, something being sliced cleanly. Cross-section reveal. Frozen moment of breakage/crunch. Extreme close-up, you can almost HEAR it.' },
+      { key: 'as-04-product-drip', label: '4. Producto Brillante', order: 4, type: 'product', narrative: 'The product jar/package glistening — covered in condensation droplets, freshly pulled from the fridge, wet and cold. The packaging looks touchable, premium, irresistible. Close-up, dramatic lighting.' },
+      { key: 'as-05-contents-glory', label: '5. Contenido Gloria', order: 5, type: 'context', narrative: 'The product contents in GLORY — pickles piled up glistening with brine, sauce pooling beautifully, the food product arranged to show every texture and color. Overhead or close macro. Appetizing, satisfying, mouth-watering. Professional food styling.' },
+      { key: 'as-06-brand-close', label: '6. Cierre Marca', order: 6, type: 'product', narrative: 'Final brand shot — the product clean and centered, a single droplet of condensation running down the jar. Minimal, powerful, brand clearly visible. Dark premium background.' }
+    ],
+    duration: '15-25s',
+    style: 'asmr',
+    clipDuration: 4
+  },
+  {
+    key: 'before-after',
+    label: 'Antes/Despues',
+    description: 'Boring food → add product → AMAZING food. Problem-solution format that sells (20-30s).',
+    beats: [
+      { key: 'ba-01-boring-food', label: '1. Comida Aburrida', order: 1, type: 'context', narrative: 'A plain, boring-looking meal — a basic sandwich with just bread and meat, a plain burger, an empty salad, bland crackers on a plate. Intentionally dull lighting, flat composition. This food NEEDS something. Muted colors, flat angle.' },
+      { key: 'ba-02-something-missing', label: '2. Falta Algo', order: 2, type: 'context', narrative: 'Close-up showing the "gap" — the empty space on the plate, the boring side of the sandwich, the missing topping. A hand hovering as if thinking "what should I add?". The problem is clear: this food is incomplete.' },
+      { key: 'ba-03-product-solution', label: '3. La Solucion', order: 3, type: 'product', narrative: 'The product ENTERS as the SOLUTION — dramatically placed, well-lit, hero shot. The lighting changes from dull to warm/vibrant. The product is the answer. Centered, powerful, eye-level.' },
+      { key: 'ba-04-transformation', label: '4. Transformacion', order: 4, type: 'context', narrative: 'The TRANSFORMATION — the product being added to the food. Pickles placed on the burger, sauce drizzled on the plate, toppings scattered. Dynamic, appetizing, the moment everything changes. Close-up, warm vibrant lighting replaces the dull tone.' },
+      { key: 'ba-05-amazing-result', label: '5. Resultado Increible', order: 5, type: 'context', narrative: 'The AMAZING finished result — the same meal now looks STUNNING. Vibrant colors, professional food photography, appetizing angles. Hero shot of the transformed food. The contrast with Beat 1 is dramatic and obvious.' },
+      { key: 'ba-06-product-hero', label: '6. Producto Hero', order: 6, type: 'product', narrative: 'Final hero shot — the product next to the amazing finished food. "This product made THAT happen." Brand visible, clean composition, warm premium lighting. Buy this.' }
+    ],
+    duration: '20-30s',
+    style: 'before-after',
+    clipDuration: 5
+  }
+];
+
 // ═══ CAMERA MOTIONS for video generation ═══
 const CAMERA_MOTIONS = [
   { key: 'slow-dolly-in', prompt: 'Slow cinematic dolly in toward the subject, smooth camera movement', label: 'Dolly In' },
@@ -117,7 +213,7 @@ const shotJobs = new Map();
 
 // ═══ STEP 1: Claude "Director Creativo" — Analyze product + pick scene + design shots ═══
 
-async function analyzeProductAndRecommendScene(productImagePath, productDescription) {
+async function analyzeProductAndRecommendScene(productImagePath, productDescription, templateKey) {
   const apiKey = config.claude.apiKey;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
 
@@ -127,17 +223,30 @@ async function analyzeProductAndRecommendScene(productImagePath, productDescript
   const base64 = imageBuffer.toString('base64');
   const mediaType = getMimeType(productImagePath);
 
+  // Select template (default to classic-12 for backward compat)
+  const template = COMMERCIAL_TEMPLATES.find(t => t.key === templateKey) || COMMERCIAL_TEMPLATES[0];
+  const templateBeats = template.beats;
+  const numBeats = templateBeats.length;
+
   const scenesListText = AVAILABLE_SCENES.map((s, i) =>
     `${i + 1}. ${s.key} — "${s.label}": ${s.description}`
   ).join('\n');
 
-  const beatsText = NARRATIVE_BEATS.map((b) =>
+  const beatsText = templateBeats.map((b) =>
     `${b.order}. ${b.key} [${b.type.toUpperCase()}] — "${b.label}": ${b.narrative}`
   ).join('\n');
 
   const musicListText = MUSIC_TRACKS.filter(m => m.file).map((m, i) =>
     `${i + 1}. ${m.key} — "${m.label}": ${m.mood}`
   ).join('\n');
+
+  // Build the shot keys JSON example dynamically from the template beats
+  const shotsJsonExample = templateBeats.map(b => {
+    if (b.type === 'context') {
+      return `    "${b.key}": { "type": "context", "imagePrompt": "...", "videoPrompt": "..." }`;
+    }
+    return `    "${b.key}": { "type": "product", "imagePrompt": "Edit this product photograph. Change ONLY the background...", "videoPrompt": "..." }`;
+  }).join(',\n');
 
   const content = [
     {
@@ -146,67 +255,57 @@ async function analyzeProductAndRecommendScene(productImagePath, productDescript
     },
     {
       type: 'text',
-      text: `You are an expert commercial video director. You are creating a 60-second product commercial video with 12 sequential shots that tell a COMPLETE STORY using a hybrid approach: CONTEXT shots (ingredients, lifestyle, process) alternating with PRODUCT shots (hero, closeup, action).
+      text: `You are an expert commercial video director specializing in VERTICAL food product ads for social media (Reels, TikTok, Stories). You create scroll-stopping, appetite-inducing content.
 
 User's product description: "${productDescription}"
+Commercial template: "${template.label}" (${template.style} style, ${template.duration})
 
 STEP 1 — Identify the product:
-- Exact product name and brand
+- Exact product name and brand (read the label carefully)
 - Product category (pickles, chips, salsa, beverage, snack, sauce, etc.)
 - Key visual elements (colors, packaging type, distinguishing features)
 - Target audience and brand personality
 - IMPORTANT: Identify the main INGREDIENTS of this product by looking at the label, packaging, and product type. List 3-6 key ingredients (e.g., cucumber, dill, vinegar, garlic for pickles).
 
 STEP 2 — Choose the BEST commercial scene:
-From the available scenes below, pick the ONE scene that would create the most compelling, authentic commercial for THIS specific product. Consider:
+From the available scenes below, pick the ONE scene that would create the most compelling, authentic commercial for THIS specific product and the "${template.label}" template style. Consider:
 - What context would a real customer see this product in?
 - What setting makes the product look most appealing and authentic?
-- What scene creates the strongest emotional connection?
+- What scene matches the "${template.style}" mood?
 
 Available scenes:
 ${scenesListText}
 
-STEP 3 — Design 12 NARRATIVE BEATS (hybrid CONTEXT + PRODUCT story):
-This is a 12-beat STORY ARC with TWO types of shots:
+STEP 3 — Design ${numBeats} NARRATIVE BEATS for the "${template.label}" template:
+This is a ${numBeats}-beat story with TWO types of shots:
 
-**CONTEXT shots** (type: "context") — These are generated from SCRATCH using text-to-image (NO product photo).
-- Write a COMPLETE descriptive prompt for an entirely new image
-- Must relate to the product's actual ingredients, process, or lifestyle
-- Do NOT start with "Edit this product photograph" — instead describe the full scene
-- Be specific to THIS product's actual ingredients and category
-- Examples: "A sun-drenched cucumber field...", "Hands chopping fresh dill on a wooden board...", "A rustic farmhouse table set for summer lunch..."
+**CONTEXT shots** (type: "context") — Generated from SCRATCH using text-to-image (NO product photo).
+CRITICAL RULES for context shots:
+- Write a COMPLETE, DETAILED descriptive prompt (minimum 2-3 sentences) for an entirely new image
+- Be HYPER-SPECIFIC to THIS exact product: name actual ingredients, actual colors, actual textures
+- For food products: describe REAL food photography scenarios — actual dishes, actual ingredients, actual cooking steps
+- Do NOT be generic. "Beautiful food scene" is BAD. "A thick-cut dill pickle spear being placed on a sizzling Angus beef burger, melted cheddar dripping down, on a rustic wooden cutting board" is GOOD.
+- ALWAYS specify: lighting style, camera angle, background, composition, mood
+- The image must look like a REAL PHOTOGRAPH shot by a professional food photographer
+- Do NOT mention the product name/brand in context shots — just the food, ingredients, and scene
 
-**PRODUCT shots** (type: "product") — These use the product photo as reference.
+**PRODUCT shots** (type: "product") — Use the product photo as reference.
 - Start with "Edit this product photograph. Change ONLY the background and surroundings."
 - The product must remain EXACTLY as in the original photo
-- Describe the scene context specific to this product
+- Describe a specific, detailed scene around the product
 
-Story arc flow:
-- Beat 1-2 [CONTEXT]: ORIGIN — ingredients in nature, fresh harvest
-- Beat 3 [PRODUCT]: REVEAL — product appears dramatically
-- Beat 4 [CONTEXT]: PROCESS — artisanal craft/preparation
-- Beat 5 [PRODUCT]: BRAND — label hero close-up
-- Beat 6 [CONTEXT]: LIFESTYLE — where the product is enjoyed
-- Beat 7 [PRODUCT]: ACTION — product opened, being used
-- Beat 8 [CONTEXT]: BEAUTY — ingredient art composition
-- Beat 9 [PRODUCT]: GLORY — contents outside packaging, appetizing
-- Beat 10 [CONTEXT]: MOOD — artistic atmosphere shot
-- Beat 11-12 [PRODUCT]: CLIMAX & CLOSE — final composition + hero
-
-The 12 narrative beats are:
+The ${numBeats} beats are:
 ${beatsText}
 
-STEP 4 — Design 12 video prompts for Grok Imagine Video:
-For each beat, write a 6-second video motion prompt that:
-- Describes camera movement APPROPRIATE to this narrative moment
-- For CONTEXT shots: use cinematic movements like aerials, tracking, crane shots
-- For PRODUCT shots: use closer movements like dolly in, orbit, zoom
-- Includes environmental motion (wind through fields, steam rising, liquid dripping, etc.)
-- Creates FLOW between beats — each clip should connect naturally to the next
+STEP 4 — Design ${numBeats} video prompts:
+For each beat, write a ${template.clipDuration || 5}-second video motion prompt:
+- Describe specific camera movement (dolly in, orbit, crane down, tracking, etc.)
+- Include environmental motion specific to the shot (steam rising, liquid dripping, crumbs falling, leaves blowing, condensation forming, etc.)
+- For "${template.style}" style: ${template.style === 'fast-paced' ? 'use QUICK, DYNAMIC movements — fast pushes, snap zooms, quick cuts feel' : template.style === 'asmr' ? 'use SLOW, HYPNOTIC movements — very slow dollies, smooth orbits, gentle zooms' : template.style === 'recipe' ? 'use PRACTICAL movements — overhead tracking, close push-ins, hands-level angles' : template.style === 'before-after' ? 'use CONTRASTING movements — static/boring for "before", dynamic/cinematic for "after"' : 'use CINEMATIC movements appropriate to each narrative moment'}
 - Keep in English, 1-2 sentences each
 
 STEP 5 — Choose background music:
-From the available music tracks below, pick the ONE that best matches the mood:
+From the available music tracks below, pick the ONE that best matches the "${template.style}" mood:
 
 Available music tracks:
 ${musicListText}
@@ -223,34 +322,20 @@ Return ONLY valid JSON:
   "targetAudience": "...",
   "chosenScene": "scene-key",
   "sceneLabel": "Scene Label",
-  "sceneReason": "2-3 sentence explanation of why this scene is ideal for this product",
-  "narrativeSummary": "One paragraph describing the commercial story arc from opening to closing",
+  "sceneReason": "2-3 sentence explanation of why this scene is ideal",
+  "narrativeSummary": "One paragraph describing the commercial story arc",
+  "templateKey": "${template.key}",
   "videoModel": "grok-imagine-720p",
   "recommendedMusic": "music-track-key",
   "closingText": "Brand Name",
   "shots": {
-    "beat-01-ingredient-origin": {
-      "type": "context",
-      "imagePrompt": "A sun-drenched cucumber field in mid-summer, rows of green vines stretching to the horizon...",
-      "videoPrompt": "Slow cinematic aerial push over the field, golden hour light..."
-    },
-    "beat-02-fresh-harvest": { "type": "context", "imagePrompt": "...", "videoPrompt": "..." },
-    "beat-03-product-reveal": { "type": "product", "imagePrompt": "Edit this product photograph. Change ONLY the background...", "videoPrompt": "..." },
-    "beat-04-craft-process": { "type": "context", "imagePrompt": "...", "videoPrompt": "..." },
-    "beat-05-label-hero": { "type": "product", "imagePrompt": "Edit this product photograph...", "videoPrompt": "..." },
-    "beat-06-lifestyle-scene": { "type": "context", "imagePrompt": "...", "videoPrompt": "..." },
-    "beat-07-product-in-action": { "type": "product", "imagePrompt": "Edit this product photograph...", "videoPrompt": "..." },
-    "beat-08-ingredient-beauty": { "type": "context", "imagePrompt": "...", "videoPrompt": "..." },
-    "beat-09-contents-glory": { "type": "product", "imagePrompt": "Edit this product photograph...", "videoPrompt": "..." },
-    "beat-10-mood-atmosphere": { "type": "context", "imagePrompt": "...", "videoPrompt": "..." },
-    "beat-11-final-composition": { "type": "product", "imagePrompt": "Edit this product photograph...", "videoPrompt": "..." },
-    "beat-12-closing-hero": { "type": "product", "imagePrompt": "Edit this product photograph...", "videoPrompt": "..." }
+${shotsJsonExample}
   }
 }`
     }
   ];
 
-  logger.info('[VIDEO-PIPE] Calling Claude Director Creativo to analyze product and recommend scene...');
+  logger.info(`[VIDEO-PIPE] Calling Claude Director Creativo (template: ${template.key}) to analyze product and recommend scene...`);
 
   const response = await anthropic.messages.create({
     model: config.claude.model,
@@ -273,7 +358,12 @@ Return ONLY valid JSON:
   }
 
   const parsed = JSON.parse(cleaned);
-  logger.info(`[VIDEO-PIPE] Claude recommends scene "${parsed.chosenScene}" for ${parsed.brand} ${parsed.productName}: ${parsed.sceneReason}`);
+  // Attach template info for downstream use
+  parsed.templateKey = template.key;
+  parsed.templateLabel = template.label;
+  parsed.templateClipDuration = template.clipDuration;
+
+  logger.info(`[VIDEO-PIPE] Claude recommends scene "${parsed.chosenScene}" for ${parsed.brand} ${parsed.productName} (template: ${template.label}): ${parsed.sceneReason}`);
 
   return parsed;
 }
@@ -332,15 +422,20 @@ async function _generateShotsBackground(jobId, productImagePath, options = {}) {
   const productMime = getMimeType(productImagePath);
   const productDataUri = `data:${productMime};base64,${productBase64}`;
 
+  // Resolve template beats for label lookup
+  const templateKey = directorPlan?.templateKey;
+  const template = templateKey ? COMMERCIAL_TEMPLATES.find(t => t.key === templateKey) : null;
+  const allBeats = template ? template.beats : SHOT_TYPES;
+
   // Use director plan shots if available, otherwise fall back to default
-  const numShots = options.numShots || 12;
+  const numShots = options.numShots || allBeats.length;
   const shotKeys = directorPlan
     ? Object.keys(directorPlan.shots).slice(0, numShots)
-    : SHOT_TYPES.slice(0, numShots).map(s => s.key);
+    : allBeats.slice(0, numShots).map(s => s.key);
 
   for (let i = 0; i < shotKeys.length; i++) {
     const shotKey = shotKeys[i];
-    const shotType = SHOT_TYPES.find(s => s.key === shotKey);
+    const shotType = allBeats.find(s => s.key === shotKey) || SHOT_TYPES.find(s => s.key === shotKey);
     const shotLabel = shotType?.label || shotKey;
 
     // Determine beat type: context (text-to-image) or product (image edit)
@@ -1128,6 +1223,7 @@ module.exports = {
   AVAILABLE_SCENES,
   SHOT_TYPES,
   NARRATIVE_BEATS,
+  COMMERCIAL_TEMPLATES,
   CAMERA_MOTIONS,
   MUSIC_TRACKS,
   BEAT_TYPES,
