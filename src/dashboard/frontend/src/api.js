@@ -902,6 +902,16 @@ export const getVideoShotTypes = async () => {
   return response.data;
 };
 
+export const getBeatTypes = async () => {
+  const response = await api.get('/api/video/beat-types');
+  return response.data;
+};
+
+export const getVideoModels = async () => {
+  const response = await api.get('/api/video/video-models');
+  return response.data;
+};
+
 export const getVideoMotions = async () => {
   const response = await api.get('/api/video/motions');
   return response.data;
@@ -965,13 +975,14 @@ export const generateClipsBatch = async (data) => {
   return response.data;
 };
 
-export const getClipStatus = async (requestId) => {
-  const response = await api.get(`/api/video/clip-status/${requestId}`);
+export const getClipStatus = async (requestId, videoModel) => {
+  const params = videoModel ? { videoModel } : {};
+  const response = await api.get(`/api/video/clip-status/${requestId}`, { params });
   return response.data;
 };
 
-export const getClipStatusBatch = async (requestIds) => {
-  const response = await api.post('/api/video/clip-status-batch', { requestIds });
+export const getClipStatusBatch = async (requestIds, videoModel) => {
+  const response = await api.post('/api/video/clip-status-batch', { requestIds, videoModel });
   return response.data;
 };
 

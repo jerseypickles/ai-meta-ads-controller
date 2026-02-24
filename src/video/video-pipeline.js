@@ -1,13 +1,13 @@
 /**
- * Video Pipeline — "Director Creativo" Mode v5
+ * Video Pipeline — "Director Creativo" Mode v6
  *
  * Workflow:
  *   1. Upload 1 product photo
- *   2. Claude Vision analyzes product → recommends best commercial scene → designs 12 NARRATIVE BEATS (story arc)
- *   3. OpenAI gpt-image-1.5 generates 12 shots as a sequential narrative (async, polled)
- *   4. Claude Vision judges each shot quality (1-10 score + feedback)
+ *   2. Claude Vision analyzes product → detects ingredients → recommends best commercial scene → designs 12 NARRATIVE BEATS (hybrid CONTEXT + PRODUCT story arc)
+ *   3. OpenAI gpt-image-1.5 generates shots: CONTEXT via text-to-image, PRODUCT via image edit (async, polled)
+ *   4. Claude Vision judges each shot quality with type-specific criteria (1-10 score + feedback)
  *   5. User reviews storyboard with scores, can regenerate low-scoring shots
- *   6. Kling 2.6 converts each approved shot to a 5s video clip
+ *   6. Kling 3.0 Pro converts each approved shot to a 5-10s video clip
  *   7. FFmpeg stitches all clips into ONE complete commercial video
  */
 
@@ -65,21 +65,37 @@ const AVAILABLE_SCENES = [
   { key: 'nature-green', label: 'Naturaleza Verde', description: 'Mossy natural stone, fresh green leaves and herbs, dappled forest sunlight, farm-to-table' },
 ];
 
-// ═══ 12 NARRATIVE BEATS — Sequential story arc for ONE commercial ═══
-// These are ordered to tell a coherent story from opening to closing
+// ═══ BEAT TYPES ═══
+const BEAT_TYPES = {
+  context: { key: 'context', label: 'Contexto', description: 'Generated from scratch via text-to-image. No product photo needed.' },
+  product: { key: 'product', label: 'Producto', description: 'Generated via image edit using the product photo as reference.' }
+};
+
+// ═══ VIDEO MODEL OPTIONS ═══
+const VIDEO_MODELS = {
+  'kling-3.0-pro': { key: 'kling-3.0-pro', label: 'Kling 3.0 Pro', falModel: 'fal-ai/kling-video/v3/pro/image-to-video', costPerSec: 0.224, recommended: true },
+  'kling-3.0-standard': { key: 'kling-3.0-standard', label: 'Kling 3.0 Standard', falModel: 'fal-ai/kling-video/v3/standard/image-to-video', costPerSec: 0.168, recommended: false },
+  'kling-2.6-pro': { key: 'kling-2.6-pro', label: 'Kling 2.6 Pro (Legacy)', falModel: 'fal-ai/kling-video/v2.6/pro/image-to-video', costPerSec: 0.07, recommended: false }
+};
+
+const DEFAULT_VIDEO_MODEL = 'kling-3.0-pro';
+
+// ═══ 12 NARRATIVE BEATS — Hybrid CONTEXT + PRODUCT story arc ═══
+// CONTEXT beats: text-to-image (ingredients, lifestyle, process) — no product photo needed
+// PRODUCT beats: image edit (hero, closeup, action) — uses product photo as reference
 const NARRATIVE_BEATS = [
-  { key: 'beat-01-scene-establish', label: '1. Escena', order: 1, narrative: 'Opening wide shot establishing the scene/environment. No product visible yet — just the beautiful setting that creates mood and context. The audience sees WHERE the story takes place.' },
-  { key: 'beat-02-product-reveal', label: '2. Revelacion', order: 2, narrative: 'The product enters the scene or is revealed for the first time. Dramatic entrance — perhaps placed by a hand, or camera discovers it. Full product visible, centered, eye-level hero shot.' },
-  { key: 'beat-03-hero-closeup', label: '3. Hero Close', order: 3, narrative: 'Tight close-up on the product label and branding. Fill 70% of frame. This is the "money shot" for brand recognition — sharp focus on name, logo, key text.' },
-  { key: 'beat-04-detail-texture', label: '4. Detalle', order: 4, narrative: 'Extreme macro close-up on a distinctive product detail — the seal, cap, texture of the packaging, an ingredient visible through glass, condensation droplets on the surface.' },
-  { key: 'beat-05-context-lifestyle', label: '5. Contexto', order: 5, narrative: 'Wide three-quarter shot showing the product IN its natural context. Props, utensils, complementary foods around it. Lifestyle moment — someone WOULD use this product here.' },
-  { key: 'beat-06-product-open', label: '6. Abriendo', order: 6, narrative: 'The product is being OPENED or has just been opened. Show the contents — the inside, the real food/product revealed. If a jar: lid off, contents visible from above. If a bag: torn open, contents spilling slightly.' },
-  { key: 'beat-07-contents-glory', label: '7. Contenido', order: 7, narrative: 'Glory shot of the CONTENTS themselves — the actual food/product outside its packaging. Dripping, glistening, textured, appetizing. Close-up of the real product being served, poured, or displayed.' },
-  { key: 'beat-08-action-use', label: '8. Accion', order: 8, narrative: 'Action/interaction shot — the product being USED. A fork lifting food, liquid being poured, hands grabbing, product being applied. Dynamic movement, human interaction with the product.' },
-  { key: 'beat-09-ingredient-splash', label: '9. Ingredientes', order: 9, narrative: 'Key ingredients floating or arranged artistically around the product. Fresh herbs, spices, vegetables, elements that compose this product — suggesting quality and freshness.' },
-  { key: 'beat-10-mood-artistic', label: '10. Artistico', order: 10, narrative: 'Artistic/cinematic beauty shot — dramatic lighting, bokeh, tilted angle, or creative composition. This is the "Instagram-worthy" frame. Product visible but the mood and aesthetics take center stage.' },
-  { key: 'beat-11-group-arrangement', label: '11. Composicion', order: 11, narrative: 'Full arrangement shot — product with all props, ingredients, and scene elements beautifully composed. Like a magazine cover or catalog hero image. Everything comes together.' },
-  { key: 'beat-12-closing-hero', label: '12. Cierre', order: 12, narrative: 'Final closing hero shot — product centered, clean, powerful. This is the last frame the viewer sees. Brand clearly visible, call-to-action composition. Clean background, maximum impact.' },
+  { key: 'beat-01-ingredient-origin', label: '1. Origen', order: 1, type: 'context', narrative: 'Opening wide shot of the key ingredient in its natural environment — a sun-drenched field, a garden, an orchard. No product visible. Establishes origin, quality, and natural beauty.' },
+  { key: 'beat-02-fresh-harvest', label: '2. Cosecha', order: 2, type: 'context', narrative: 'Close-up of the key ingredient freshly harvested — texture, dewdrops, vibrant color. Macro shot that makes you almost taste the freshness. No product visible.' },
+  { key: 'beat-03-product-reveal', label: '3. Revelacion', order: 3, type: 'product', narrative: 'The product enters the scene or is revealed for the first time. Dramatic entrance — perhaps placed by a hand, or camera discovers it. Full product visible, centered, eye-level hero shot.' },
+  { key: 'beat-04-craft-process', label: '4. Proceso', order: 4, type: 'context', narrative: 'Artisanal preparation scene — hands crafting, kitchen process, traditional method. Shows the care and craft behind the product. No product visible, just the process.' },
+  { key: 'beat-05-label-hero', label: '5. Label Hero', order: 5, type: 'product', narrative: 'Tight close-up on the product label and branding. Fill 70% of frame. This is the "money shot" for brand recognition — sharp focus on name, logo, key text.' },
+  { key: 'beat-06-lifestyle-scene', label: '6. Lifestyle', order: 6, type: 'context', narrative: 'Beautiful lifestyle scene showing the context where this product is enjoyed — a set table, a picnic, a party, a kitchen gathering. No product visible, just the mood and occasion.' },
+  { key: 'beat-07-product-in-action', label: '7. Accion', order: 7, type: 'product', narrative: 'The product is being OPENED or USED. Show contents — the inside revealed. If a jar: lid off, contents visible. If a bag: torn open, contents spilling. Dynamic interaction.' },
+  { key: 'beat-08-ingredient-beauty', label: '8. Ingredientes', order: 8, type: 'context', narrative: 'Key ingredients artistically arranged — fresh herbs, spices, vegetables beautifully composed. Suggests quality and freshness. No product visible, pure ingredient beauty.' },
+  { key: 'beat-09-contents-glory', label: '9. Contenido', order: 9, type: 'product', narrative: 'Glory shot of the CONTENTS themselves — the actual food outside its packaging. Dripping, glistening, textured, appetizing. Close-up of the real product being served or displayed.' },
+  { key: 'beat-10-mood-atmosphere', label: '10. Atmosfera', order: 10, type: 'context', narrative: 'Artistic/cinematic beauty shot of the atmosphere — dramatic lighting, bokeh, steam, smoke, or creative composition. Sets the mood. No product visible.' },
+  { key: 'beat-11-final-composition', label: '11. Composicion', order: 11, type: 'product', narrative: 'Full arrangement shot — product with all props, ingredients, and scene elements beautifully composed. Like a magazine cover or catalog hero image. Everything comes together.' },
+  { key: 'beat-12-closing-hero', label: '12. Cierre', order: 12, type: 'product', narrative: 'Final closing hero shot — product centered, clean, powerful. This is the last frame the viewer sees. Brand clearly visible, call-to-action composition. Clean background, maximum impact.' },
 ];
 
 // Keep backward compat alias
@@ -87,14 +103,17 @@ const SHOT_TYPES = NARRATIVE_BEATS;
 
 // ═══ CAMERA MOTIONS for Kling ═══
 const CAMERA_MOTIONS = [
-  { key: 'slow-dolly-in', prompt: 'Slow cinematic dolly in toward the product, smooth camera movement', label: 'Dolly In' },
-  { key: 'slow-orbit', prompt: 'Slow 360 orbit around the product, smooth circular camera movement', label: 'Orbit 360' },
-  { key: 'slow-zoom', prompt: 'Slow zoom into product details, cinematic focus pull', label: 'Zoom In' },
-  { key: 'push-reveal', prompt: 'Slow push forward revealing the product, cinematic reveal shot', label: 'Push Reveal' },
-  { key: 'tilt-up', prompt: 'Slow tilt up from product base to top, cinematic vertical movement', label: 'Tilt Up' },
-  { key: 'dolly-out', prompt: 'Slow dolly out pulling back from product, cinematic wide reveal', label: 'Dolly Out' },
+  { key: 'slow-dolly-in', prompt: 'Slow cinematic dolly in toward the subject, smooth camera movement', label: 'Dolly In' },
+  { key: 'slow-orbit', prompt: 'Slow 360 orbit around the subject, smooth circular camera movement', label: 'Orbit 360' },
+  { key: 'slow-zoom', prompt: 'Slow zoom into details, cinematic focus pull', label: 'Zoom In' },
+  { key: 'push-reveal', prompt: 'Slow push forward revealing the subject, cinematic reveal shot', label: 'Push Reveal' },
+  { key: 'tilt-up', prompt: 'Slow tilt up from base to top, cinematic vertical movement', label: 'Tilt Up' },
+  { key: 'dolly-out', prompt: 'Slow dolly out pulling back from subject, cinematic wide reveal', label: 'Dolly Out' },
   { key: 'handheld', prompt: 'Subtle handheld camera movement, natural gentle sway, lifestyle feel', label: 'Handheld' },
-  { key: 'static', prompt: 'Static camera, product gently animating, studio lighting, subtle movement', label: 'Estatico' },
+  { key: 'static', prompt: 'Static camera, subtle environmental movement, studio lighting', label: 'Estatico' },
+  { key: 'aerial-push', prompt: 'Slow aerial push over landscape, cinematic drone-style movement', label: 'Aerial Push' },
+  { key: 'tracking-lateral', prompt: 'Slow lateral tracking shot, smooth sideways camera movement', label: 'Tracking Lateral' },
+  { key: 'crane-down', prompt: 'Slow crane movement descending from above, revealing the scene', label: 'Crane Down' },
 ];
 
 // ═══ IN-MEMORY JOB TRACKER ═══
@@ -117,7 +136,7 @@ async function analyzeProductAndRecommendScene(productImagePath, productDescript
   ).join('\n');
 
   const beatsText = NARRATIVE_BEATS.map((b) =>
-    `${b.order}. ${b.key} — "${b.label}": ${b.narrative}`
+    `${b.order}. ${b.key} [${b.type.toUpperCase()}] — "${b.label}": ${b.narrative}`
   ).join('\n');
 
   const musicListText = MUSIC_TRACKS.filter(m => m.file).map((m, i) =>
@@ -131,7 +150,7 @@ async function analyzeProductAndRecommendScene(productImagePath, productDescript
     },
     {
       type: 'text',
-      text: `You are an expert commercial video director. You are creating a 60-second product commercial video with 12 sequential shots that tell a COMPLETE STORY from opening to closing.
+      text: `You are an expert commercial video director. You are creating a 60-second product commercial video with 12 sequential shots that tell a COMPLETE STORY using a hybrid approach: CONTEXT shots (ingredients, lifestyle, process) alternating with PRODUCT shots (hero, closeup, action).
 
 User's product description: "${productDescription}"
 
@@ -140,6 +159,7 @@ STEP 1 — Identify the product:
 - Product category (pickles, chips, salsa, beverage, snack, sauce, etc.)
 - Key visual elements (colors, packaging type, distinguishing features)
 - Target audience and brand personality
+- IMPORTANT: Identify the main INGREDIENTS of this product by looking at the label, packaging, and product type. List 3-6 key ingredients (e.g., cucumber, dill, vinegar, garlic for pickles).
 
 STEP 2 — Choose the BEST commercial scene:
 From the available scenes below, pick the ONE scene that would create the most compelling, authentic commercial for THIS specific product. Consider:
@@ -150,76 +170,85 @@ From the available scenes below, pick the ONE scene that would create the most c
 Available scenes:
 ${scenesListText}
 
-STEP 3 — Design 12 NARRATIVE BEATS (sequential story):
-This is NOT 12 independent shots. This is a 12-beat STORY ARC that flows like a real commercial:
-- Beat 1-2: OPENING — establish the world, then reveal the product
-- Beat 3-5: DEVELOPMENT — show the product in detail, brand, and lifestyle context
-- Beat 6-8: CLIMAX — product opened, contents shown, action/interaction (the exciting part!)
-- Beat 9-11: RESOLUTION — ingredients, beauty shots, full composition
-- Beat 12: CLOSING — final hero frame, brand impact
+STEP 3 — Design 12 NARRATIVE BEATS (hybrid CONTEXT + PRODUCT story):
+This is a 12-beat STORY ARC with TWO types of shots:
 
-For EACH of the 12 narrative beats below, write a specific OpenAI image generation prompt. Each prompt MUST:
+**CONTEXT shots** (type: "context") — These are generated from SCRATCH using text-to-image (NO product photo).
+- Write a COMPLETE descriptive prompt for an entirely new image
+- Must relate to the product's actual ingredients, process, or lifestyle
+- Do NOT start with "Edit this product photograph" — instead describe the full scene
+- Be specific to THIS product's actual ingredients and category
+- Examples: "A sun-drenched cucumber field...", "Hands chopping fresh dill on a wooden board...", "A rustic farmhouse table set for summer lunch..."
+
+**PRODUCT shots** (type: "product") — These use the product photo as reference.
 - Start with "Edit this product photograph. Change ONLY the background and surroundings."
-- Describe the chosen scene context specifically for this product
-- Include the specific narrative moment and composition for that beat
-- Maintain VISUAL CONTINUITY — same scene, same lighting, same color palette, same props throughout all 12
-- For beats 6-8 (action shots): describe the product being opened, contents visible, food being served/used, hands interacting — even though the original photo shows a sealed product, describe the SCENE as if the product is open/in-use
-- Be 2-3 sentences, detailed and specific
+- The product must remain EXACTLY as in the original photo
+- Describe the scene context specific to this product
 
-IMPORTANT for action beats (6, 7, 8):
-- Beat 6: Show the product AS IF it's being opened — lid off, contents beginning to be revealed
-- Beat 7: Show the actual CONTENTS of the product — the food itself, outside the packaging, glistening, appetizing
-- Beat 8: Show HUMAN INTERACTION — hands, utensils, the product being served, poured, grabbed
+Story arc flow:
+- Beat 1-2 [CONTEXT]: ORIGIN — ingredients in nature, fresh harvest
+- Beat 3 [PRODUCT]: REVEAL — product appears dramatically
+- Beat 4 [CONTEXT]: PROCESS — artisanal craft/preparation
+- Beat 5 [PRODUCT]: BRAND — label hero close-up
+- Beat 6 [CONTEXT]: LIFESTYLE — where the product is enjoyed
+- Beat 7 [PRODUCT]: ACTION — product opened, being used
+- Beat 8 [CONTEXT]: BEAUTY — ingredient art composition
+- Beat 9 [PRODUCT]: GLORY — contents outside packaging, appetizing
+- Beat 10 [CONTEXT]: MOOD — artistic atmosphere shot
+- Beat 11-12 [PRODUCT]: CLIMAX & CLOSE — final composition + hero
 
 The 12 narrative beats are:
 ${beatsText}
 
-STEP 4 — Design 12 video prompts for Kling 2.6:
+STEP 4 — Design 12 video prompts for Kling 3.0:
 For each beat, write a 5-second video motion prompt that:
-- Describes camera movement APPROPRIATE to this narrative moment (slow reveal for opening, dynamic for action, steady for closing)
-- Includes product-specific environmental motion (condensation forming, steam rising, liquid dripping, crumbs falling, ice crackling, etc.)
-- Creates FLOW between beats — each video clip should feel like it connects to the next
+- Describes camera movement APPROPRIATE to this narrative moment
+- For CONTEXT shots: use cinematic movements like aerials, tracking, crane shots
+- For PRODUCT shots: use closer movements like dolly in, orbit, zoom
+- Includes environmental motion (wind through fields, steam rising, liquid dripping, etc.)
+- Creates FLOW between beats — each clip should connect naturally to the next
 - Keep in English, 1-2 sentences each
 
-The 12 clips will be concatenated into ONE 60-second commercial, so design the camera movements to create natural transitions between beats.
-
 STEP 5 — Choose background music:
-From the available music tracks below, pick the ONE that best matches the mood and energy of this product's commercial:
+From the available music tracks below, pick the ONE that best matches the mood:
 
 Available music tracks:
 ${musicListText}
 
 STEP 6 — Closing text:
-Suggest the text that should appear overlaid on the final frame (beat 12) of the commercial. This is the brand call-to-action. Keep it short (2-4 words max) — typically the brand name or a tagline.
+Suggest text for the final frame overlay (2-4 words max) — typically the brand name or tagline.
 
 Return ONLY valid JSON:
 {
   "productName": "...",
   "brand": "...",
   "category": "...",
+  "ingredients": ["ingredient1", "ingredient2", "ingredient3", "ingredient4"],
   "targetAudience": "...",
   "chosenScene": "scene-key",
   "sceneLabel": "Scene Label",
   "sceneReason": "2-3 sentence explanation of why this scene is ideal for this product",
   "narrativeSummary": "One paragraph describing the commercial story arc from opening to closing",
+  "videoModel": "kling-3.0-pro",
   "recommendedMusic": "music-track-key",
   "closingText": "Brand Name",
   "shots": {
-    "beat-01-scene-establish": {
-      "imagePrompt": "Edit this product photograph. Change ONLY the background and surroundings. ...",
-      "videoPrompt": "Slow cinematic establishing shot..."
+    "beat-01-ingredient-origin": {
+      "type": "context",
+      "imagePrompt": "A sun-drenched cucumber field in mid-summer, rows of green vines stretching to the horizon...",
+      "videoPrompt": "Slow cinematic aerial push over the field, golden hour light..."
     },
-    "beat-02-product-reveal": { "imagePrompt": "...", "videoPrompt": "..." },
-    "beat-03-hero-closeup": { "imagePrompt": "...", "videoPrompt": "..." },
-    "beat-04-detail-texture": { "imagePrompt": "...", "videoPrompt": "..." },
-    "beat-05-context-lifestyle": { "imagePrompt": "...", "videoPrompt": "..." },
-    "beat-06-product-open": { "imagePrompt": "...", "videoPrompt": "..." },
-    "beat-07-contents-glory": { "imagePrompt": "...", "videoPrompt": "..." },
-    "beat-08-action-use": { "imagePrompt": "...", "videoPrompt": "..." },
-    "beat-09-ingredient-splash": { "imagePrompt": "...", "videoPrompt": "..." },
-    "beat-10-mood-artistic": { "imagePrompt": "...", "videoPrompt": "..." },
-    "beat-11-group-arrangement": { "imagePrompt": "...", "videoPrompt": "..." },
-    "beat-12-closing-hero": { "imagePrompt": "...", "videoPrompt": "..." }
+    "beat-02-fresh-harvest": { "type": "context", "imagePrompt": "...", "videoPrompt": "..." },
+    "beat-03-product-reveal": { "type": "product", "imagePrompt": "Edit this product photograph. Change ONLY the background...", "videoPrompt": "..." },
+    "beat-04-craft-process": { "type": "context", "imagePrompt": "...", "videoPrompt": "..." },
+    "beat-05-label-hero": { "type": "product", "imagePrompt": "Edit this product photograph...", "videoPrompt": "..." },
+    "beat-06-lifestyle-scene": { "type": "context", "imagePrompt": "...", "videoPrompt": "..." },
+    "beat-07-product-in-action": { "type": "product", "imagePrompt": "Edit this product photograph...", "videoPrompt": "..." },
+    "beat-08-ingredient-beauty": { "type": "context", "imagePrompt": "...", "videoPrompt": "..." },
+    "beat-09-contents-glory": { "type": "product", "imagePrompt": "Edit this product photograph...", "videoPrompt": "..." },
+    "beat-10-mood-atmosphere": { "type": "context", "imagePrompt": "...", "videoPrompt": "..." },
+    "beat-11-final-composition": { "type": "product", "imagePrompt": "Edit this product photograph...", "videoPrompt": "..." },
+    "beat-12-closing-hero": { "type": "product", "imagePrompt": "Edit this product photograph...", "videoPrompt": "..." }
   }
 }`
     }
@@ -313,47 +342,71 @@ async function _generateShotsBackground(jobId, productImagePath, options = {}) {
     const shotType = SHOT_TYPES.find(s => s.key === shotKey);
     const shotLabel = shotType?.label || shotKey;
 
-    // Build prompt: use director plan's specific prompt or generate a default
-    let fullPrompt;
-    if (directorPlan?.shots?.[shotKey]?.imagePrompt) {
-      fullPrompt = [
-        directorPlan.shots[shotKey].imagePrompt,
-        `\nThe product is: ${productDescription}.`,
-        '\nVertical 9:16 format (1080x1920).',
-        '\nThe product from the reference photo must remain EXACTLY as it appears — same shape, same label, same colors, same text, same proportions.',
-        ' Do NOT re-render, redraw, or generate a 3D version of the product.',
-        ' Keep it as the original flat photographic element.',
-        ' Do NOT add lighting effects (rim light, glow, highlights) ON the product.',
-        ' Do NOT alter, warp, or reshape the packaging.',
-        ' The product should look physically placed in the new scene.',
-        ' Photorealistic, high-end commercial product photography quality.'
-      ].join('');
-    } else {
-      fullPrompt = [
-        'Edit this product photograph. Change ONLY the background and surroundings.',
-        ` ${shotType?.composition || 'Product centered in frame.'}`,
-        `\nThe product is: ${productDescription}.`,
-        '\nVertical 9:16 format (1080x1920).',
-        '\nThe product from the reference photo must remain EXACTLY as it appears — same shape, same label, same colors, same text, same proportions.',
-        ' Do NOT re-render, redraw, or generate a 3D version of the product.',
-        ' Keep it as the original flat photographic element.',
-        ' Photorealistic, high-end commercial product photography quality.'
-      ].join('');
-    }
+    // Determine beat type: context (text-to-image) or product (image edit)
+    const beatType = directorPlan?.shots?.[shotKey]?.type || shotType?.type || 'product';
+    const isContext = beatType === 'context';
 
     try {
-      logger.info(`[VIDEO-PIPE] Job ${jobId}: Generating shot ${i + 1}/${shotKeys.length}: ${shotKey}`);
+      logger.info(`[VIDEO-PIPE] Job ${jobId}: Generating shot ${i + 1}/${shotKeys.length}: ${shotKey} [${beatType.toUpperCase()}]`);
 
-      const imageFile = await toFile(fs.createReadStream(productImagePath), null, { type: mimeType });
+      let result;
 
-      const result = await client.images.edit({
-        model: 'gpt-image-1.5',
-        image: imageFile,
-        prompt: fullPrompt,
-        size: '1024x1536',
-        n: 1,
-        input_fidelity: 'high'
-      });
+      if (isContext) {
+        // ── CONTEXT shot: text-to-image (generate from scratch, no product photo) ──
+        const contextPrompt = [
+          directorPlan?.shots?.[shotKey]?.imagePrompt || `Beautiful ${productDescription} related scene.`,
+          '\nVertical 9:16 format (1080x1920).',
+          '\nPhotorealistic, high-end commercial photography quality.',
+          ' Shot on professional cinema camera, shallow depth of field.',
+          ' Natural lighting, rich colors, magazine-quality composition.'
+        ].join('');
+
+        result = await client.images.generate({
+          model: 'gpt-image-1.5',
+          prompt: contextPrompt,
+          size: '1024x1536',
+          n: 1
+        });
+      } else {
+        // ── PRODUCT shot: image edit (uses product photo as reference) ──
+        let fullPrompt;
+        if (directorPlan?.shots?.[shotKey]?.imagePrompt) {
+          fullPrompt = [
+            directorPlan.shots[shotKey].imagePrompt,
+            `\nThe product is: ${productDescription}.`,
+            '\nVertical 9:16 format (1080x1920).',
+            '\nThe product from the reference photo must remain EXACTLY as it appears — same shape, same label, same colors, same text, same proportions.',
+            ' Do NOT re-render, redraw, or generate a 3D version of the product.',
+            ' Keep it as the original flat photographic element.',
+            ' Do NOT add lighting effects (rim light, glow, highlights) ON the product.',
+            ' Do NOT alter, warp, or reshape the packaging.',
+            ' The product should look physically placed in the new scene.',
+            ' Photorealistic, high-end commercial product photography quality.'
+          ].join('');
+        } else {
+          fullPrompt = [
+            'Edit this product photograph. Change ONLY the background and surroundings.',
+            ` ${shotType?.composition || 'Product centered in frame.'}`,
+            `\nThe product is: ${productDescription}.`,
+            '\nVertical 9:16 format (1080x1920).',
+            '\nThe product from the reference photo must remain EXACTLY as it appears — same shape, same label, same colors, same text, same proportions.',
+            ' Do NOT re-render, redraw, or generate a 3D version of the product.',
+            ' Keep it as the original flat photographic element.',
+            ' Photorealistic, high-end commercial product photography quality.'
+          ].join('');
+        }
+
+        const imageFile = await toFile(fs.createReadStream(productImagePath), null, { type: mimeType });
+
+        result = await client.images.edit({
+          model: 'gpt-image-1.5',
+          image: imageFile,
+          prompt: fullPrompt,
+          size: '1024x1536',
+          n: 1,
+          input_fidelity: 'high'
+        });
+      }
 
       const imageUrl = result.data[0]?.url || result.data[0]?.b64_json;
       let filename;
@@ -374,6 +427,7 @@ async function _generateShotsBackground(jobId, productImagePath, options = {}) {
       job.shots.push({
         angle: shotKey,
         label: shotLabel,
+        type: beatType,
         filename,
         url: `/uploads/video-shots/${filename}`,
         videoPrompt: directorPlan?.shots?.[shotKey]?.videoPrompt || '',
@@ -384,8 +438,8 @@ async function _generateShotsBackground(jobId, productImagePath, options = {}) {
       if (i < shotKeys.length - 1) await new Promise(r => setTimeout(r, 2000));
 
     } catch (err) {
-      logger.error(`[VIDEO-PIPE] Job ${jobId}: Shot ${shotKey} failed: ${err.message}`);
-      job.shots.push({ angle: shotKey, label: shotLabel, filename: null, url: null, status: 'failed', error: err.message });
+      logger.error(`[VIDEO-PIPE] Job ${jobId}: Shot ${shotKey} [${beatType}] failed: ${err.message}`);
+      job.shots.push({ angle: shotKey, label: shotLabel, type: beatType, filename: null, url: null, status: 'failed', error: err.message });
       job.failed++;
 
       if (err.status === 429) {
@@ -403,13 +457,13 @@ async function _generateShotsBackground(jobId, productImagePath, options = {}) {
 // ═══ STEP 3: Claude "Quality Judge" — Score each generated shot ═══
 // Batches shots in groups of 4 to avoid 413 request_too_large errors
 
-async function judgeShots(shotUrls, productDescription, originalImagePath) {
+async function judgeShots(shotUrls, productDescription, originalImagePath, directorPlan) {
   const apiKey = config.claude.apiKey;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
 
   const anthropic = new Anthropic({ apiKey });
 
-  // Load original product photo once (for reference in each batch)
+  // Load original product photo once (for reference in PRODUCT shot batches)
   let origImageContent = null;
   if (originalImagePath && fs.existsSync(originalImagePath)) {
     const origBuffer = fs.readFileSync(originalImagePath);
@@ -439,18 +493,25 @@ async function judgeShots(shotUrls, productDescription, originalImagePath) {
     const batch = batches[b];
     const content = [];
 
-    // Include original product photo as reference
-    if (origImageContent) {
+    // Determine types in this batch
+    const batchHasProduct = batch.some(s => {
+      const beatType = directorPlan?.shots?.[s.angle]?.type || s.type || SHOT_TYPES.find(st => st.key === s.angle)?.type || 'product';
+      return beatType === 'product';
+    });
+
+    // Include original product photo as reference (only needed when batch has PRODUCT shots)
+    if (origImageContent && batchHasProduct) {
       content.push(origImageContent);
       content.push({
         type: 'text',
-        text: '↑ ORIGINAL product reference photo (this is what the product should look like)'
+        text: '↑ ORIGINAL product reference photo (for PRODUCT shots — this is what the product should look like)'
       });
     }
 
-    // Include each shot in this batch
+    // Include each shot in this batch with its type
     for (const shot of batch) {
       const filePath = path.join(config.system.uploadsDir, shot.url.replace('/uploads/', ''));
+      const beatType = directorPlan?.shots?.[shot.angle]?.type || shot.type || SHOT_TYPES.find(st => st.key === shot.angle)?.type || 'product';
       if (fs.existsSync(filePath)) {
         const imgBuffer = fs.readFileSync(filePath);
         const base64 = imgBuffer.toString('base64');
@@ -461,23 +522,37 @@ async function judgeShots(shotUrls, productDescription, originalImagePath) {
         });
         content.push({
           type: 'text',
-          text: `↑ Shot: "${shot.label}" (key: ${shot.angle})`
+          text: `↑ Shot: "${shot.label}" (key: ${shot.angle}) [TYPE: ${beatType.toUpperCase()}]`
         });
       }
     }
 
+    // Build type-specific criteria info
     const shotKeysInBatch = batch.map(s => s.angle).join(', ');
+    const shotTypesInfo = batch.map(s => {
+      const beatType = directorPlan?.shots?.[s.angle]?.type || s.type || SHOT_TYPES.find(st => st.key === s.angle)?.type || 'product';
+      return `${s.angle}: ${beatType.toUpperCase()}`;
+    }).join(', ');
+
     content.push({
       type: 'text',
       text: `You are a quality control judge for product commercial photography. The product is: "${productDescription}".
 
-Score EACH generated shot on a scale of 1-10 based on these criteria:
+Each shot has a TYPE that determines the scoring criteria:
+
+**For PRODUCT shots** (uses product photo as reference):
 1. **Label Fidelity (40%)**: Is the product label/text readable, undistorted, and matching the original? Any warping, blurring, or text alteration is a major penalty.
 2. **Product Integrity (25%)**: Does the product shape, color, and packaging match the original photo exactly? No reshaping, 3D rendering, or artistic reinterpretation.
-3. **Scene Quality (20%)**: Is the background/scene realistic, well-lit, and commercially appealing? Good composition and professional feel.
-4. **Commercial Value (15%)**: Would this image work as a frame in a real product commercial? Is it ad-quality?
+3. **Scene Quality (20%)**: Is the background/scene realistic, well-lit, and commercially appealing?
+4. **Commercial Value (15%)**: Would this image work as a frame in a real product commercial?
 
-You are judging these shots: ${shotKeysInBatch}
+**For CONTEXT shots** (generated from scratch, no product visible):
+1. **Realism (40%)**: Does this look like a real photograph? No AI artifacts, no uncanny elements, natural textures and lighting.
+2. **Relevance (30%)**: Is this clearly connected to the product/ingredients? Does it make sense in the commercial narrative?
+3. **Commercial Quality (20%)**: Would this work in a professional commercial? Magazine-quality composition and lighting.
+4. **Continuity (10%)**: Does this flow visually with the rest of the commercial? Consistent color palette and mood.
+
+Shot types in this batch: ${shotTypesInfo}
 
 For each shot, provide:
 - score: 1-10 integer
@@ -540,39 +615,64 @@ Return ONLY valid JSON:
 
 // ═══ STEP 4: Regenerate a single shot ═══
 
-async function regenerateSingleShot(productImagePath, shotKey, imagePrompt, productDescription) {
+async function regenerateSingleShot(productImagePath, shotKey, imagePrompt, productDescription, beatType) {
   const apiKey = config.imageGen.openai.apiKey;
   if (!apiKey) throw new Error('OPENAI_API_KEY not configured');
 
   ensureDir(SHOTS_DIR);
   const client = new OpenAI({ apiKey });
-  const mimeType = getMimeType(productImagePath);
 
-  const fullPrompt = [
-    imagePrompt,
-    `\nThe product is: ${productDescription}.`,
-    '\nVertical 9:16 format (1080x1920).',
-    '\nThe product from the reference photo must remain EXACTLY as it appears — same shape, same label, same colors, same text, same proportions.',
-    ' Do NOT re-render, redraw, or generate a 3D version of the product.',
-    ' Keep it as the original flat photographic element.',
-    ' Do NOT add lighting effects (rim light, glow, highlights) ON the product.',
-    ' Do NOT alter, warp, or reshape the packaging.',
-    ' The product should look physically placed in the new scene.',
-    ' Photorealistic, high-end commercial product photography quality.'
-  ].join('');
+  // Determine beat type from param, or from NARRATIVE_BEATS definition
+  const shotType = SHOT_TYPES.find(s => s.key === shotKey);
+  const isContext = (beatType || shotType?.type || 'product') === 'context';
 
-  logger.info(`[VIDEO-PIPE] Regenerating shot: ${shotKey}`);
+  logger.info(`[VIDEO-PIPE] Regenerating shot: ${shotKey} [${isContext ? 'CONTEXT' : 'PRODUCT'}]`);
 
-  const imageFile = await toFile(fs.createReadStream(productImagePath), null, { type: mimeType });
+  let result;
 
-  const result = await client.images.edit({
-    model: 'gpt-image-1.5',
-    image: imageFile,
-    prompt: fullPrompt,
-    size: '1024x1536',
-    n: 1,
-    input_fidelity: 'high'
-  });
+  if (isContext) {
+    // CONTEXT: text-to-image from scratch
+    const contextPrompt = [
+      imagePrompt,
+      '\nVertical 9:16 format (1080x1920).',
+      '\nPhotorealistic, high-end commercial photography quality.',
+      ' Shot on professional cinema camera, shallow depth of field.',
+      ' Natural lighting, rich colors, magazine-quality composition.'
+    ].join('');
+
+    result = await client.images.generate({
+      model: 'gpt-image-1.5',
+      prompt: contextPrompt,
+      size: '1024x1536',
+      n: 1
+    });
+  } else {
+    // PRODUCT: image edit with product photo
+    const mimeType = getMimeType(productImagePath);
+    const fullPrompt = [
+      imagePrompt,
+      `\nThe product is: ${productDescription}.`,
+      '\nVertical 9:16 format (1080x1920).',
+      '\nThe product from the reference photo must remain EXACTLY as it appears — same shape, same label, same colors, same text, same proportions.',
+      ' Do NOT re-render, redraw, or generate a 3D version of the product.',
+      ' Keep it as the original flat photographic element.',
+      ' Do NOT add lighting effects (rim light, glow, highlights) ON the product.',
+      ' Do NOT alter, warp, or reshape the packaging.',
+      ' The product should look physically placed in the new scene.',
+      ' Photorealistic, high-end commercial product photography quality.'
+    ].join('');
+
+    const imageFile = await toFile(fs.createReadStream(productImagePath), null, { type: mimeType });
+
+    result = await client.images.edit({
+      model: 'gpt-image-1.5',
+      image: imageFile,
+      prompt: fullPrompt,
+      size: '1024x1536',
+      n: 1,
+      input_fidelity: 'high'
+    });
+  }
 
   const imageUrl = result.data[0]?.url || result.data[0]?.b64_json;
   let filename;
@@ -590,10 +690,10 @@ async function regenerateSingleShot(productImagePath, shotKey, imagePrompt, prod
     throw new Error('No image data in response');
   }
 
-  const shotType = SHOT_TYPES.find(s => s.key === shotKey);
   return {
     angle: shotKey,
     label: shotType?.label || shotKey,
+    type: isContext ? 'context' : 'product',
     filename,
     url: `/uploads/video-shots/${filename}`,
     status: 'completed'
@@ -614,36 +714,48 @@ async function submitVideoJob(imageUrl, options = {}) {
   const {
     cameraMotion = 'slow-dolly-in',
     duration = 5,
-    aspectRatio = '9:16'
+    aspectRatio = '9:16',
+    videoModel = DEFAULT_VIDEO_MODEL
   } = options;
 
+  const modelConfig = VIDEO_MODELS[videoModel] || VIDEO_MODELS[DEFAULT_VIDEO_MODEL];
   const motion = CAMERA_MOTIONS.find(m => m.key === cameraMotion) || CAMERA_MOTIONS[0];
   const prompt = options.prompt || `${motion.prompt}, professional product commercial, cinematic quality, studio lighting, 4K`;
 
-  const { request_id } = await fal.queue.submit('fal-ai/kling-video/v2.6/pro/image-to-video', {
-    input: {
-      prompt,
-      image_url: imageUrl,
-      duration,
-      aspect_ratio: aspectRatio,
-      cfg_scale: 0.7
-    }
-  });
+  // Kling 3.0 uses start_image_url; Kling 2.6 uses image_url
+  const isV3 = modelConfig.key.startsWith('kling-3.0');
+  const input = {
+    prompt,
+    duration,
+    aspect_ratio: aspectRatio,
+    cfg_scale: isV3 ? 0.5 : 0.7
+  };
 
-  logger.info(`[VIDEO-PIPE] Kling job queued: ${request_id}`);
-  return { requestId: request_id, status: 'queued', cameraMotion: motion.key };
+  if (isV3) {
+    input.start_image_url = imageUrl;
+    input.generate_audio = false;
+  } else {
+    input.image_url = imageUrl;
+  }
+
+  const { request_id } = await fal.queue.submit(modelConfig.falModel, { input });
+
+  logger.info(`[VIDEO-PIPE] ${modelConfig.label} job queued: ${request_id} (${duration}s, $${(duration * modelConfig.costPerSec).toFixed(3)})`);
+  return { requestId: request_id, status: 'queued', cameraMotion: motion.key, videoModel: modelConfig.key };
 }
 
-async function checkVideoStatus(requestId) {
+async function checkVideoStatus(requestId, videoModel) {
   initFal();
 
-  const status = await fal.queue.status('fal-ai/kling-video/v2.6/pro/image-to-video', {
+  const modelConfig = VIDEO_MODELS[videoModel] || VIDEO_MODELS[DEFAULT_VIDEO_MODEL];
+
+  const status = await fal.queue.status(modelConfig.falModel, {
     requestId,
     logs: false
   });
 
   if (status.status === 'COMPLETED') {
-    const result = await fal.queue.result('fal-ai/kling-video/v2.6/pro/image-to-video', { requestId });
+    const result = await fal.queue.result(modelConfig.falModel, { requestId });
     return {
       requestId,
       status: 'completed',
@@ -670,7 +782,8 @@ async function submitVideoBatch(shots, options = {}) {
           cameraMotion: shot.cameraMotion || options.cameraMotion,
           duration: shot.duration || options.duration,
           aspectRatio: shot.aspectRatio || options.aspectRatio,
-          prompt: shot.prompt || options.prompt
+          prompt: shot.prompt || options.prompt,
+          videoModel: shot.videoModel || options.videoModel || DEFAULT_VIDEO_MODEL
         });
         return { shotAngle: shot.angle, imageUrl: shot.imageUrl, ...result };
       } catch (err) {
@@ -791,17 +904,23 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
     fs.copyFileSync(localFiles[0], outputPath);
   } else {
     // Build xfade chain for N clips
-    // Each xfade transition reduces total duration by crossfadeDuration
-    // Offsets: clip[0].dur - xfade, clip[0].dur + clip[1].dur - 2*xfade, etc.
-    const inputs = localFiles.map((f, i) => ['-i', f]).flat();
+    // First normalize all video streams to same pixel format for xfade compatibility
+    const inputs = localFiles.map((f) => ['-i', f]).flat();
     const filterParts = [];
-    let prevLabel = '[0:v]';
+
+    // Normalize each clip to yuv420p (Kling may output different pixel formats)
+    for (let i = 0; i < n; i++) {
+      filterParts.push(`[${i}:v]format=yuv420p,setpts=PTS-STARTPTS[vin${i}]`);
+    }
+
+    // Chain xfade transitions
+    let prevLabel = '[vin0]';
     let cumulativeOffset = 0;
 
     for (let i = 1; i < n; i++) {
       const offset = cumulativeOffset + clipDurations[i - 1] - crossfadeDuration;
       const outLabel = i < n - 1 ? `[v${i}]` : '[vout]';
-      filterParts.push(`${prevLabel}[${i}:v]xfade=transition=fade:duration=${crossfadeDuration}:offset=${offset.toFixed(3)}${outLabel}`);
+      filterParts.push(`${prevLabel}[vin${i}]xfade=transition=fade:duration=${crossfadeDuration}:offset=${offset.toFixed(3)}${outLabel}`);
       prevLabel = outLabel;
       cumulativeOffset = offset;
     }
@@ -810,7 +929,7 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
     const totalDuration = clipDurations.reduce((s, d) => s + d, 0) - (n - 1) * crossfadeDuration;
 
     // NOTE: Kling 2.6 generates video-only clips (no audio stream).
-    // We generate a silent audio base and only add music on top if selected.
+    // We use the music track as sole audio, or generate silence.
 
     // ── Step D: Closing text overlay on last seconds ──
     let videoFinal = '[vout]';
@@ -818,8 +937,8 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
       const textStart = Math.max(0, totalDuration - clipDurations[n - 1]);
       const escapedText = brandText.replace(/'/g, "'\\''").replace(/:/g, '\\:');
       filterParts.push(
-        `[vout]drawtext=text='${escapedText}':fontsize=72:fontcolor=white:borderw=3:bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2:enable='gte(t,${textStart.toFixed(2)})'` +
-        `:alpha='if(lt(t,${(textStart + 0.8).toFixed(2)}),(t-${textStart.toFixed(2)})/0.8,1)'[vtxt]`
+        `[vout]drawtext=text='${escapedText}':fontsize=72:fontcolor=white:borderw=3:bordercolor=black:x=(w-text_w)/2:y=(h-text_h)/2:enable='gte(t\\,${textStart.toFixed(2)})'` +
+        `:alpha='if(lt(t\\,${(textStart + 0.8).toFixed(2)})\\,(t-${textStart.toFixed(2)})/0.8\\,1)'[vtxt]`
       );
       videoFinal = '[vtxt]';
     }
@@ -839,13 +958,9 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
       );
       audioFinal = '[aout]';
     } else {
-      // No music selected — generate silent audio track matching video duration
-      extraInputs = ['-f', 'lavfi', '-i', `anullsrc=r=44100:cl=stereo`];
-      const silenceIdx = n;
-      filterParts.push(
-        `[${silenceIdx}:a]atrim=0:${totalDuration.toFixed(2)},asetpts=PTS-STARTPTS[aout]`
-      );
-      audioFinal = '[aout]';
+      // No music selected — generate silent audio track with fixed duration
+      extraInputs = ['-f', 'lavfi', '-t', totalDuration.toFixed(2), '-i', `anullsrc=r=44100:cl=stereo`];
+      audioFinal = `[${n}:a]`;
     }
 
     // ── Step F: Execute FFmpeg ──
@@ -856,20 +971,26 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
       '-filter_complex', filterComplex,
       '-map', videoFinal, '-map', audioFinal,
       '-c:v', 'libx264', '-preset', 'fast', '-crf', '22',
-      '-c:a', 'aac', '-b:a', '192k',
-      '-shortest',
+      '-c:a', 'aac', '-b:a', '128k',
       '-movflags', '+faststart',
       '-y', outputPath
     ];
 
     logger.info(`[VIDEO-PIPE] Stitch ${jobId}: Running FFmpeg with xfade crossfades + music + text...`);
-    logger.info(`[VIDEO-PIPE] Filter: ${filterComplex.substring(0, 200)}...`);
+    logger.info(`[VIDEO-PIPE] Stitch ${jobId}: Clip durations: [${clipDurations.map(d => d.toFixed(2)).join(', ')}], total=${totalDuration.toFixed(2)}s`);
+    logger.info(`[VIDEO-PIPE] Stitch ${jobId}: Filter graph: ${filterComplex}`);
 
     await new Promise((resolve, reject) => {
       execFile(ffmpegPath, args, { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
         if (err) {
-          logger.error(`[VIDEO-PIPE] FFmpeg error: ${(stderr || err.message).substring(0, 500)}`);
-          reject(new Error(`FFmpeg failed: ${(stderr || err.message).substring(0, 300)}`));
+          // Log the FULL stderr for debugging, send last meaningful part to client
+          const fullErr = stderr || err.message || '';
+          logger.error(`[VIDEO-PIPE] FFmpeg FULL stderr:\n${fullErr}`);
+          // Find the actual error line (usually after the last "Error" or at the end)
+          const lines = fullErr.split('\n').filter(l => l.trim());
+          const errorLines = lines.filter(l => /error|invalid|failed|no such/i.test(l));
+          const errMsg = errorLines.length > 0 ? errorLines.slice(-3).join(' | ') : lines.slice(-3).join(' | ');
+          reject(new Error(`FFmpeg error: ${errMsg.substring(0, 500)}`));
         } else {
           resolve();
         }
@@ -918,6 +1039,9 @@ module.exports = {
   NARRATIVE_BEATS,
   CAMERA_MOTIONS,
   MUSIC_TRACKS,
+  BEAT_TYPES,
+  VIDEO_MODELS,
+  DEFAULT_VIDEO_MODEL,
   analyzeProductAndRecommendScene,
   startShotGenerationJob,
   getShotJobStatus,

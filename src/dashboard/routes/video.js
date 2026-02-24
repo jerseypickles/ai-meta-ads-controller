@@ -1,9 +1,10 @@
 /**
- * Video Generation Routes — "Director Creativo" Mode
+ * Video Generation Routes — "Director Creativo" Mode v6
  *
- * Pipeline: Upload photo → Claude recommends scene + designs shots →
- *           OpenAI generates shots (async) → Claude judges quality →
- *           User reviews storyboard → Kling 2.6 creates videos
+ * Pipeline: Upload photo → Claude recommends scene + detects ingredients + designs hybrid shots →
+ *           OpenAI generates CONTEXT (text-to-image) + PRODUCT (image edit) shots (async) →
+ *           Claude judges quality with type-specific criteria →
+ *           User reviews storyboard → Kling 3.0 Pro creates videos
  */
 
 const express = require('express');
@@ -15,6 +16,7 @@ const config = require('../../../config');
 const logger = require('../../utils/logger');
 const {
   AVAILABLE_SCENES, SHOT_TYPES, NARRATIVE_BEATS, CAMERA_MOTIONS, MUSIC_TRACKS,
+  BEAT_TYPES, VIDEO_MODELS, DEFAULT_VIDEO_MODEL,
   analyzeProductAndRecommendScene,
   startShotGenerationJob, getShotJobStatus,
   judgeShots, regenerateSingleShot,
@@ -64,6 +66,18 @@ router.get('/shot-types', (req, res) => {
 
 router.get('/narrative-beats', (req, res) => {
   res.json({ beats: NARRATIVE_BEATS, count: NARRATIVE_BEATS.length });
+});
+
+// ============ GET /api/video/beat-types ============
+
+router.get('/beat-types', (req, res) => {
+  res.json({ beatTypes: BEAT_TYPES });
+});
+
+// ============ GET /api/video/video-models ============
+
+router.get('/video-models', (req, res) => {
+  res.json({ models: VIDEO_MODELS, default: DEFAULT_VIDEO_MODEL });
 });
 
 // ============ GET /api/video/motions ============
@@ -211,7 +225,7 @@ router.get('/shots-job/:jobId', (req, res) => {
 
 router.post('/judge-shots', async (req, res) => {
   try {
-    const { shots, productDescription, originalImagePath } = req.body;
+    const { shots, productDescription, originalImagePath, directorPlan } = req.body;
 
     if (!shots || !Array.isArray(shots) || shots.length === 0) {
       return res.status(400).json({ error: 'shots array is required' });
@@ -223,7 +237,7 @@ router.post('/judge-shots', async (req, res) => {
     }
 
     logger.info(`[VIDEO] Claude Quality Judge evaluating ${shots.length} shots`);
-    const scores = await judgeShots(shots, productDescription || '', fullOrigPath);
+    const scores = await judgeShots(shots, productDescription || '', fullOrigPath, directorPlan || null);
 
     res.json(scores);
   } catch (err) {
@@ -237,7 +251,7 @@ router.post('/judge-shots', async (req, res) => {
 
 router.post('/regenerate-shot', async (req, res) => {
   try {
-    const { productImagePath, shotKey, imagePrompt, productDescription } = req.body;
+    const { productImagePath, shotKey, imagePrompt, productDescription, beatType } = req.body;
 
     if (!productImagePath || !shotKey || !imagePrompt) {
       return res.status(400).json({ error: 'productImagePath, shotKey, and imagePrompt are required' });
@@ -252,8 +266,8 @@ router.post('/regenerate-shot', async (req, res) => {
       return res.status(400).json({ error: 'Product image file not found' });
     }
 
-    logger.info(`[VIDEO] Regenerating shot: ${shotKey}`);
-    const result = await regenerateSingleShot(fullPath, shotKey, imagePrompt, productDescription || 'product');
+    logger.info(`[VIDEO] Regenerating shot: ${shotKey} [${beatType || 'auto'}]`);
+    const result = await regenerateSingleShot(fullPath, shotKey, imagePrompt, productDescription || 'product', beatType);
 
     res.json(result);
   } catch (err) {
@@ -266,13 +280,13 @@ router.post('/regenerate-shot', async (req, res) => {
 
 router.post('/generate-clip', async (req, res) => {
   try {
-    const { imageUrl, cameraMotion, duration, prompt } = req.body;
+    const { imageUrl, cameraMotion, duration, prompt, videoModel } = req.body;
 
     if (!imageUrl) return res.status(400).json({ error: 'imageUrl is required' });
 
-    const result = await submitVideoJob(imageUrl, { cameraMotion, duration, prompt });
+    const result = await submitVideoJob(imageUrl, { cameraMotion, duration, prompt, videoModel });
 
-    logger.info(`[VIDEO] Clip job queued: ${result.requestId}`);
+    logger.info(`[VIDEO] Clip job queued: ${result.requestId} (model: ${result.videoModel})`);
     res.json(result);
   } catch (err) {
     logger.error('[VIDEO] Generate clip error:', err);
@@ -284,7 +298,7 @@ router.post('/generate-clip', async (req, res) => {
 
 router.post('/generate-clips-batch', async (req, res) => {
   try {
-    const { shots, cameraMotion, duration, prompt } = req.body;
+    const { shots, cameraMotion, duration, prompt, videoModel } = req.body;
 
     if (!shots || !Array.isArray(shots) || shots.length === 0) {
       return res.status(400).json({ error: 'shots array is required' });
@@ -293,12 +307,12 @@ router.post('/generate-clips-batch', async (req, res) => {
       return res.status(400).json({ error: 'Maximum 15 shots per batch' });
     }
 
-    const results = await submitVideoBatch(shots, { cameraMotion, duration, prompt });
+    const results = await submitVideoBatch(shots, { cameraMotion, duration, prompt, videoModel });
 
     const queued = results.filter(r => r.status === 'queued').length;
     const errors = results.filter(r => r.status === 'error').length;
 
-    logger.info(`[VIDEO] Batch clips: ${queued} queued, ${errors} errors`);
+    logger.info(`[VIDEO] Batch clips (${videoModel || DEFAULT_VIDEO_MODEL}): ${queued} queued, ${errors} errors`);
     res.json({ jobs: results, queued, errors });
   } catch (err) {
     logger.error('[VIDEO] Batch clips error:', err);
@@ -310,7 +324,7 @@ router.post('/generate-clips-batch', async (req, res) => {
 
 router.get('/clip-status/:requestId', async (req, res) => {
   try {
-    const result = await checkVideoStatus(req.params.requestId);
+    const result = await checkVideoStatus(req.params.requestId, req.query.videoModel);
     res.json(result);
   } catch (err) {
     logger.error('[VIDEO] Status check error:', err);
@@ -322,7 +336,7 @@ router.get('/clip-status/:requestId', async (req, res) => {
 
 router.post('/clip-status-batch', async (req, res) => {
   try {
-    const { requestIds } = req.body;
+    const { requestIds, videoModel } = req.body;
     if (!requestIds || !Array.isArray(requestIds)) {
       return res.status(400).json({ error: 'requestIds array required' });
     }
@@ -330,7 +344,7 @@ router.post('/clip-status-batch', async (req, res) => {
     const results = [];
     for (const id of requestIds) {
       try {
-        const status = await checkVideoStatus(id);
+        const status = await checkVideoStatus(id, videoModel);
         results.push(status);
       } catch (err) {
         results.push({ requestId: id, status: 'error', error: err.message });

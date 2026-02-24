@@ -10,7 +10,8 @@ import {
   deleteVideoShot, generateShots, getShotJobStatus,
   analyzeScene, judgeShots, regenerateShot,
   generateClipsBatch, getClipStatus, getClipStatusBatch,
-  stitchClips, getStitchStatus, getMusicTracks
+  stitchClips, getStitchStatus, getMusicTracks,
+  getVideoModels
 } from '../api';
 
 const BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
@@ -60,13 +61,20 @@ const StepIndicator = ({ number, title, subtitle, active, done }) => (
   </div>
 );
 
-// ═══ SHOT CARD with Score Badge ═══
-const ShotCard = ({ shot, score, selected, onToggle, onDelete, onRegenerate, regenerating }) => {
+// ═══ BEAT TYPE COLORS ═══
+const BEAT_TYPE_STYLES = {
+  context: { color: '#22c55e', bg: '#14532d', border: '#22c55e', label: 'CONTEXTO' },
+  product: { color: '#3b82f6', bg: '#1e3a5f', border: '#3b82f6', label: 'PRODUCTO' }
+};
+
+// ═══ SHOT CARD with Score Badge + Beat Type ═══
+const ShotCard = ({ shot, score, selected, onToggle, onDelete, onRegenerate, regenerating, beatType }) => {
   const scoreInfo = score ? getScoreColor(score.score) : null;
+  const typeStyle = BEAT_TYPE_STYLES[beatType] || BEAT_TYPE_STYLES.product;
   return (
     <div style={{
       position: 'relative', borderRadius: '10px', overflow: 'hidden',
-      border: selected ? '3px solid #3b82f6' : scoreInfo ? `2px solid ${scoreInfo.border}40` : '2px solid #2a2d3a',
+      border: selected ? '3px solid #3b82f6' : `2px solid ${typeStyle.border}40`,
       cursor: 'pointer', transition: 'all 0.15s ease', backgroundColor: '#111'
     }}>
       <img
@@ -84,6 +92,16 @@ const ShotCard = ({ shot, score, selected, onToggle, onDelete, onRegenerate, reg
           <CheckCircle size={14} color="#fff" />
         </div>
       )}
+
+      {/* Beat Type Badge */}
+      <div style={{
+        position: 'absolute', top: score ? '52px' : '6px', left: '6px',
+        backgroundColor: typeStyle.bg, border: `1px solid ${typeStyle.color}60`,
+        borderRadius: '6px', padding: '2px 6px', fontSize: '8px', fontWeight: '700',
+        color: typeStyle.color, letterSpacing: '0.05em'
+      }}>
+        {typeStyle.label}
+      </div>
 
       {/* Score Badge */}
       {score && (
@@ -146,22 +164,33 @@ const ShotCard = ({ shot, score, selected, onToggle, onDelete, onRegenerate, reg
 };
 
 // ═══ STORYBOARD CARD (step 4) ═══
-const StoryboardCard = ({ index, shot, prompt, cameraMotion, score, onPromptChange, onMotionChange, motions }) => {
+const StoryboardCard = ({ index, shot, prompt, cameraMotion, score, beatType, onPromptChange, onMotionChange, motions }) => {
   const scoreInfo = score ? getScoreColor(score.score) : null;
+  const typeStyle = BEAT_TYPE_STYLES[beatType] || BEAT_TYPE_STYLES.product;
   return (
     <div style={{
-      backgroundColor: '#0d0f14', border: '1px solid #2a2d3a', borderRadius: '12px',
+      backgroundColor: '#0d0f14', border: `1px solid ${typeStyle.border}30`, borderRadius: '12px',
       overflow: 'hidden', display: 'flex', flexDirection: 'column'
     }}>
       <div style={{ position: 'relative' }}>
         <img src={`${BASE_URL}${shot.url}`} alt={shot.angle}
           style={{ width: '100%', aspectRatio: '2/3', objectFit: 'cover' }} />
         <div style={{
-          position: 'absolute', top: '6px', left: '6px', backgroundColor: '#7c3aed',
-          borderRadius: '50%', width: '26px', height: '26px', display: 'flex',
-          alignItems: 'center', justifyContent: 'center', fontWeight: '700', fontSize: '12px', color: '#fff'
+          position: 'absolute', top: '6px', left: '6px', display: 'flex', alignItems: 'center', gap: '6px'
         }}>
-          {index + 1}
+          <div style={{
+            backgroundColor: '#7c3aed', borderRadius: '50%', width: '26px', height: '26px', display: 'flex',
+            alignItems: 'center', justifyContent: 'center', fontWeight: '700', fontSize: '12px', color: '#fff'
+          }}>
+            {index + 1}
+          </div>
+          <div style={{
+            backgroundColor: typeStyle.bg, border: `1px solid ${typeStyle.color}60`,
+            borderRadius: '6px', padding: '2px 6px', fontSize: '8px', fontWeight: '700',
+            color: typeStyle.color, letterSpacing: '0.05em'
+          }}>
+            {typeStyle.label}
+          </div>
         </div>
         {score && (
           <div style={{
@@ -308,6 +337,10 @@ export default function VideoGenerator() {
   const [clips, setClips] = useState([]);
   const [generatingClips, setGeneratingClips] = useState(false);
 
+  // Video model selection
+  const [videoModels, setVideoModels] = useState({});
+  const [selectedVideoModel, setSelectedVideoModel] = useState('kling-3.0-pro');
+
   // Step 6: Final commercial video (stitched)
   const [stitchJobId, setStitchJobId] = useState(null);
   const [stitchStatus, setStitchStatus] = useState(null);
@@ -323,10 +356,11 @@ export default function VideoGenerator() {
   const clipPollRef = useRef(null);
   const stitchPollRef = useRef(null);
 
-  // Load motions + music tracks + existing shots on mount
+  // Load motions + music tracks + video models + existing shots on mount
   useEffect(() => {
     loadMotions();
     loadMusicTracks();
+    loadVideoModels();
     loadShots();
     return () => {
       if (shotPollRef.current) clearInterval(shotPollRef.current);
@@ -376,6 +410,14 @@ export default function VideoGenerator() {
     } catch (err) { console.error('Load music tracks error:', err); }
   };
 
+  const loadVideoModels = async () => {
+    try {
+      const data = await getVideoModels();
+      setVideoModels(data.models || {});
+      if (data.default) setSelectedVideoModel(data.default);
+    } catch (err) { console.error('Load video models error:', err); }
+  };
+
   const loadShots = async () => {
     try {
       const data = await getVideoShots();
@@ -418,9 +460,10 @@ export default function VideoGenerator() {
         productDescription
       });
       setDirectorPlan(plan);
-      // Pre-fill music and closing text from Director recommendation
+      // Pre-fill music, closing text, and video model from Director recommendation
       if (plan.recommendedMusic) setSelectedMusic(plan.recommendedMusic);
       if (plan.closingText) setBrandText(plan.closingText);
+      if (plan.videoModel && videoModels[plan.videoModel]) setSelectedVideoModel(plan.videoModel);
     } catch (err) {
       setError(`Error en Director Creativo: ${err.response?.data?.error || err.message}`);
     } finally {
@@ -482,7 +525,8 @@ export default function VideoGenerator() {
       const result = await judgeShots({
         shots,
         productDescription,
-        originalImagePath: productPhoto?.path || productPhoto?.url
+        originalImagePath: productPhoto?.path || productPhoto?.url,
+        directorPlan
       });
       setShotScores(result);
       // Auto-select all approved shots
@@ -507,11 +551,13 @@ export default function VideoGenerator() {
     setRegeneratingShot(shot.angle);
     try {
       const imagePrompt = directorPlan.shots?.[shot.angle]?.imagePrompt || '';
+      const beatType = directorPlan.shots?.[shot.angle]?.type || shot.type || 'product';
       const result = await regenerateShot({
         productImagePath: productPhoto.path || productPhoto.url,
         shotKey: shot.angle,
         imagePrompt,
-        productDescription
+        productDescription,
+        beatType
       });
 
       // Replace the old shot with new one
@@ -544,7 +590,8 @@ export default function VideoGenerator() {
       shot,
       prompt: shot.videoPrompt || directorPlan?.shots?.[shot.angle]?.videoPrompt || '',
       cameraMotion: defaultMotion,
-      score: shotScores?.scores?.[shot.angle] || null
+      score: shotScores?.scores?.[shot.angle] || null,
+      beatType: directorPlan?.shots?.[shot.angle]?.type || shot.type || 'product'
     }));
     setStoryboard(sb);
   };
@@ -571,7 +618,7 @@ export default function VideoGenerator() {
         prompt: item.prompt
       }));
 
-      const data = await generateClipsBatch({ shots: shotsList, duration });
+      const data = await generateClipsBatch({ shots: shotsList, duration, videoModel: selectedVideoModel });
       setClips(prev => [...(data.jobs || []), ...prev]);
     } catch (err) {
       setError(`Error generando clips: ${err.response?.data?.error || err.message}`);
@@ -586,7 +633,7 @@ export default function VideoGenerator() {
     try {
       const ids = pending.map(c => c.requestId).filter(Boolean);
       if (ids.length === 0) return;
-      const data = await getClipStatusBatch(ids);
+      const data = await getClipStatusBatch(ids, selectedVideoModel);
       if (data.jobs) {
         const updatedClips = clips.map(c => {
           const updated = data.jobs.find(u => u.requestId === c.requestId);
@@ -614,11 +661,11 @@ export default function VideoGenerator() {
         }
       }
     } catch (err) { console.error('Poll error:', err); }
-  }, [clips, stitchJobId, stitchStatus, selectedMusic, brandText]);
+  }, [clips, stitchJobId, stitchStatus, selectedMusic, brandText, selectedVideoModel]);
 
   const refreshSingleClip = async (requestId) => {
     try {
-      const data = await getClipStatus(requestId);
+      const data = await getClipStatus(requestId, selectedVideoModel);
       setClips(prev => prev.map(c => c.requestId === requestId ? { ...c, ...data } : c));
     } catch (err) { console.error('Refresh error:', err); }
   };
@@ -715,7 +762,7 @@ export default function VideoGenerator() {
           Video AI — Director Creativo
         </h1>
         <p style={{ color: '#6b7280', fontSize: '13px' }}>
-          Foto → Director → 12 Beats Narrativos → Jurado → Storyboard → Clips (Kling 2.6) → Video Comercial Final
+          Foto → Director → Beats Contexto+Producto → Jurado → Storyboard → Clips ({videoModels[selectedVideoModel]?.label || 'Kling 3.0'}) → Video Comercial Final
         </p>
       </div>
 
@@ -729,7 +776,7 @@ export default function VideoGenerator() {
         <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
         <StepIndicator number={4} title="Storyboard" subtitle="Secuencia" active={step === 4} done={storyboard.length > 0} />
         <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
-        <StepIndicator number={5} title="Clips" subtitle="Kling 2.6" active={step === 5} done={completedClips.length > 0} />
+        <StepIndicator number={5} title="Clips" subtitle={videoModels[selectedVideoModel]?.label || 'Kling 3.0'} active={step === 5} done={completedClips.length > 0} />
         <ArrowRight size={14} color="#374151" style={{ flexShrink: 0 }} />
         <StepIndicator number={6} title="Comercial" subtitle="Video Final" active={step === 6} done={stitchStatus?.status === 'done'} />
       </div>
@@ -837,6 +884,40 @@ export default function VideoGenerator() {
                 {directorPlan.targetAudience}
               </div>
             )}
+          </div>
+
+          {/* Detected Ingredients */}
+          {directorPlan.ingredients && directorPlan.ingredients.length > 0 && (
+            <div style={{
+              backgroundColor: '#0d1f0d', border: '1px solid #22c55e30', borderRadius: '10px',
+              padding: '10px 14px', marginBottom: '16px'
+            }}>
+              <div style={{ fontSize: '11px', color: '#22c55e', fontWeight: '600', marginBottom: '6px' }}>
+                Ingredientes detectados
+              </div>
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                {directorPlan.ingredients.map((ing, i) => (
+                  <span key={i} style={{
+                    backgroundColor: '#14532d', border: '1px solid #22c55e40',
+                    padding: '3px 10px', borderRadius: '12px', fontSize: '11px', color: '#86efac'
+                  }}>{ing}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Shot Type Legend */}
+          <div style={{
+            display: 'flex', gap: '16px', marginBottom: '16px', fontSize: '11px', flexWrap: 'wrap'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <div style={{ width: '10px', height: '10px', borderRadius: '3px', backgroundColor: '#22c55e' }} />
+              <span style={{ color: '#9ca3af' }}>CONTEXTO — Ingredientes, lifestyle, proceso (text-to-image)</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <div style={{ width: '10px', height: '10px', borderRadius: '3px', backgroundColor: '#3b82f6' }} />
+              <span style={{ color: '#9ca3af' }}>PRODUCTO — Hero, label, accion (image edit)</span>
+            </div>
           </div>
 
           {/* Scene recommendation */}
@@ -1030,6 +1111,7 @@ export default function VideoGenerator() {
                 onDelete={() => handleDeleteShot(shot.filename)}
                 onRegenerate={() => handleRegenerateShot(shot)}
                 regenerating={regeneratingShot === shot.angle}
+                beatType={directorPlan?.shots?.[shot.angle]?.type || shot.type || 'product'}
               />
             ))}
           </div>
@@ -1062,13 +1144,36 @@ export default function VideoGenerator() {
             )}
           </div>
 
-          {/* Duration selector */}
-          <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+          {/* Model selector + Duration selector */}
+          <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'flex-end', gap: '16px', flexWrap: 'wrap' }}>
+            {/* Video Model */}
             <div>
-              <label style={{ color: '#9ca3af', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', marginRight: '8px' }}>
+              <label style={{ color: '#9ca3af', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '6px' }}>
+                Modelo de Video
+              </label>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {Object.values(videoModels).map(m => (
+                  <button key={m.key} onClick={() => setSelectedVideoModel(m.key)}
+                    style={{
+                      padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '11px',
+                      border: selectedVideoModel === m.key ? '2px solid #8b5cf6' : '1px solid #2a2d3a',
+                      backgroundColor: selectedVideoModel === m.key ? '#2e1065' : '#141720',
+                      color: selectedVideoModel === m.key ? '#c4b5fd' : '#9ca3af'
+                    }}>
+                    {m.label}
+                    <span style={{ fontSize: '9px', opacity: 0.7, marginLeft: '4px' }}>${m.costPerSec}/s</span>
+                    {m.recommended && <span style={{ fontSize: '8px', color: '#22c55e', marginLeft: '4px' }}>REC</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Duration */}
+            <div>
+              <label style={{ color: '#9ca3af', fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '6px' }}>
                 Duracion por clip
               </label>
-              <div style={{ display: 'inline-flex', gap: '6px' }}>
+              <div style={{ display: 'flex', gap: '6px' }}>
                 {[5, 10].map(d => (
                   <button key={d} onClick={() => setDuration(d)}
                     style={{
@@ -1082,8 +1187,10 @@ export default function VideoGenerator() {
                 ))}
               </div>
             </div>
-            <div style={{ fontSize: '12px', color: '#6b7280' }}>
-              Costo: ~${(storyboard.length * duration * 0.07).toFixed(2)} ({storyboard.length} clips x {duration}s x $0.07/s)
+
+            {/* Cost estimate */}
+            <div style={{ fontSize: '12px', color: '#6b7280', paddingBottom: '4px' }}>
+              Costo: ~${(storyboard.length * duration * (videoModels[selectedVideoModel]?.costPerSec || 0.224)).toFixed(2)} ({storyboard.length} clips x {duration}s x ${videoModels[selectedVideoModel]?.costPerSec || 0.224}/s)
             </div>
           </div>
 
@@ -1104,6 +1211,7 @@ export default function VideoGenerator() {
                 prompt={item.prompt}
                 cameraMotion={item.cameraMotion}
                 score={item.score}
+                beatType={item.beatType}
                 onPromptChange={(p) => updateStoryboardPrompt(i, p)}
                 onMotionChange={(m) => updateStoryboardMotion(i, m)}
                 motions={motions}
@@ -1120,8 +1228,8 @@ export default function VideoGenerator() {
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
             }}>
             {generatingClips
-              ? <><Loader size={18} className="spin" /> Enviando {storyboard.length} segmentos a Kling 2.6...</>
-              : <><Play size={18} /> Generar {storyboard.length} Segmentos del Comercial (Kling 2.6)</>
+              ? <><Loader size={18} className="spin" /> Enviando {storyboard.length} segmentos a {videoModels[selectedVideoModel]?.label || 'Kling 3.0'}...</>
+              : <><Play size={18} /> Generar {storyboard.length} Segmentos del Comercial ({videoModels[selectedVideoModel]?.label || 'Kling 3.0'})</>
             }
           </button>
         </div>
