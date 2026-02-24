@@ -412,194 +412,182 @@ router.get('/status', async (req, res) => {
 });
 
 /**
+ * Recolecta métricas de Meta API para todos los ad sets AI-managed,
+ * sin importar su status (ACTIVE, PAUSED, DELETED, ARCHIVED).
+ * Usada tanto por el endpoint POST /refresh como por el CRON job.
+ */
+async function refreshAIOpsMetrics() {
+  const startTime = Date.now();
+  const meta = getMetaClient();
+  const timeRanges = getTimeRanges();
+
+  // 1. Obtener todos los ad sets AI-managed (cualquier status)
+  const managedCreations = await AICreation.find({
+    creation_type: 'create_adset',
+    managed_by_ai: true,
+    meta_entity_id: { $exists: true, $ne: null }
+  }).lean();
+
+  // Incluir dead recientes (7 días)
+  const last7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const recentDead = await AICreation.find({
+    creation_type: 'create_adset',
+    lifecycle_phase: 'dead',
+    updated_at: { $gte: last7d },
+    meta_entity_id: { $exists: true, $ne: null }
+  }).lean();
+
+  // Dedup
+  const allCreations = [...managedCreations];
+  for (const d of recentDead) {
+    if (!allCreations.some(m => m.meta_entity_id === d.meta_entity_id)) {
+      allCreations.push(d);
+    }
+  }
+
+  const adSetIds = allCreations.map(c => c.meta_entity_id).filter(Boolean);
+
+  if (adSetIds.length === 0) {
+    return { success: true, message: 'No hay ad sets AI-managed', refreshed_adsets: 0, refreshed_ads: 0 };
+  }
+
+  logger.info(`[AI-OPS REFRESH] Refrescando métricas de ${adSetIds.length} ad sets AI-managed...`);
+
+  // 2. Obtener insights directamente desde Meta API
+  const adSetInsights = {};
+  const adInsights = {};
+
+  for (const [window, range] of Object.entries(timeRanges)) {
+    const adSetRows = await meta.getAccountInsights('adset', range);
+    for (const row of adSetRows) {
+      if (!adSetIds.includes(row.adset_id)) continue;
+      if (!adSetInsights[row.adset_id]) adSetInsights[row.adset_id] = {};
+      adSetInsights[row.adset_id][window] = parseInsightRow(row);
+    }
+
+    const adRows = await meta.getAccountInsights('ad', range);
+    for (const row of adRows) {
+      if (!row.ad_id || !adSetIds.includes(row.adset_id)) continue;
+      if (!adInsights[row.ad_id]) {
+        adInsights[row.ad_id] = {
+          ad_name: row.ad_name || 'Sin nombre',
+          adset_id: row.adset_id,
+          campaign_id: row.campaign_id
+        };
+      }
+      adInsights[row.ad_id][window] = parseInsightRow(row);
+    }
+  }
+
+  // 3. Obtener info actual de ad sets desde Meta (status, budget, campaign_id)
+  const adSetInfoMap = {};
+  for (const adSetId of adSetIds) {
+    try {
+      const data = await meta.get(`/${adSetId}`, {
+        fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id'
+      });
+      adSetInfoMap[adSetId] = data;
+    } catch (err) {
+      logger.debug(`[AI-OPS REFRESH] No se pudo obtener info de ad set ${adSetId}: ${err.message}`);
+    }
+  }
+
+  // 4. Obtener status real de ads (solo ad sets que existen en Meta)
+  const adStatusMap = {};
+  for (const adSetId of adSetIds) {
+    if (!adSetInfoMap[adSetId]) continue;
+    try {
+      const adsData = await meta.get(`/${adSetId}/ads`, {
+        fields: 'id,effective_status',
+        limit: 200
+      });
+      for (const ad of (adsData.data || [])) {
+        adStatusMap[ad.id] = ad.effective_status || 'ACTIVE';
+      }
+    } catch (err) {
+      // Ad set podría no tener ads — ignorar
+    }
+  }
+
+  // Helper: normalizar status al enum de MetricSnapshot
+  const VALID_STATUSES = ['ACTIVE', 'PAUSED', 'DELETED', 'ARCHIVED'];
+  const normalizeStatus = (s) => VALID_STATUSES.includes(s) ? s : 'PAUSED';
+
+  const emptyMetrics = {
+    spend: 0, impressions: 0, clicks: 0, ctr: 0, cpm: 0, cpc: 0,
+    purchases: 0, purchase_value: 0, roas: 0, cpa: 0, reach: 0, frequency: 0
+  };
+
+  // 5. Crear snapshots de ad sets
+  let adSetSnapshots = 0;
+  for (const adSetId of adSetIds) {
+    const info = adSetInfoMap[adSetId];
+    const creation = allCreations.find(c => c.meta_entity_id === adSetId);
+
+    const campaignId = info?.campaign_id || null;
+    if (!campaignId) {
+      logger.debug(`[AI-OPS REFRESH] Skipping ad set ${adSetId} — no campaign_id available`);
+      continue;
+    }
+
+    const metrics = {};
+    for (const window of Object.keys(timeRanges)) {
+      metrics[window] = adSetInsights[adSetId]?.[window] || { ...emptyMetrics };
+    }
+
+    await MetricSnapshot.create({
+      entity_type: 'adset',
+      entity_id: adSetId,
+      entity_name: info?.name || creation?.meta_entity_name || adSetId,
+      parent_id: campaignId,
+      campaign_id: campaignId,
+      status: normalizeStatus(info?.effective_status || creation?.current_status),
+      daily_budget: parseBudget(info?.daily_budget) || creation?.current_budget || 0,
+      lifetime_budget: parseBudget(info?.lifetime_budget) || 0,
+      budget_remaining: parseBudget(info?.budget_remaining) || 0,
+      metrics,
+      snapshot_at: new Date()
+    });
+    adSetSnapshots++;
+  }
+
+  // 6. Crear snapshots de ads
+  let adSnapshots = 0;
+  for (const [adId, adData] of Object.entries(adInsights)) {
+    if (!adData.campaign_id) continue;
+
+    const metrics = {};
+    for (const window of Object.keys(timeRanges)) {
+      metrics[window] = adData[window] || { ...emptyMetrics };
+    }
+
+    await MetricSnapshot.create({
+      entity_type: 'ad',
+      entity_id: adId,
+      entity_name: adData.ad_name,
+      parent_id: adData.adset_id,
+      campaign_id: adData.campaign_id,
+      status: normalizeStatus(adStatusMap[adId]),
+      metrics,
+      snapshot_at: new Date()
+    });
+    adSnapshots++;
+  }
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  logger.info(`[AI-OPS REFRESH] Completado en ${elapsed}s — ${adSetSnapshots} ad sets, ${adSnapshots} ads actualizados`);
+
+  return { success: true, refreshed_adsets: adSetSnapshots, refreshed_ads: adSnapshots, elapsed: `${elapsed}s` };
+}
+
+/**
  * POST /api/ai-ops/refresh
- * Fuerza la recolección de métricas directamente desde Meta API
- * para TODOS los ad sets gestionados por IA, sin importar su status.
- * Esto resuelve el problema de datos stale cuando ad sets tienen
- * status diferente a ACTIVE/PAUSED y el data-collector no los captura.
+ * Fuerza la recolección de métricas desde Meta API para ad sets AI-managed.
  */
 router.post('/refresh', async (req, res) => {
   try {
-    const startTime = Date.now();
-    const meta = getMetaClient();
-    const timeRanges = getTimeRanges();
-
-    // 1. Obtener todos los ad sets AI-managed (cualquier status)
-    const managedCreations = await AICreation.find({
-      creation_type: 'create_adset',
-      managed_by_ai: true,
-      meta_entity_id: { $exists: true, $ne: null }
-    }).lean();
-
-    // Incluir dead recientes (7 días)
-    const last7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const recentDead = await AICreation.find({
-      creation_type: 'create_adset',
-      lifecycle_phase: 'dead',
-      updated_at: { $gte: last7d },
-      meta_entity_id: { $exists: true, $ne: null }
-    }).lean();
-
-    // Dedup
-    const allCreations = [...managedCreations];
-    for (const d of recentDead) {
-      if (!allCreations.some(m => m.meta_entity_id === d.meta_entity_id)) {
-        allCreations.push(d);
-      }
-    }
-
-    const adSetIds = allCreations.map(c => c.meta_entity_id).filter(Boolean);
-
-    if (adSetIds.length === 0) {
-      return res.json({ success: true, message: 'No hay ad sets AI-managed', refreshed: 0 });
-    }
-
-    logger.info(`[AI-OPS REFRESH] Refrescando métricas de ${adSetIds.length} ad sets AI-managed...`);
-
-    // 2. Obtener insights directamente por ad set ID desde Meta API
-    //    Usamos getAccountInsights con level=adset y level=ad (captura todo)
-    const adSetInsights = {};
-    const adInsights = {};
-
-    for (const [window, range] of Object.entries(timeRanges)) {
-      // Ad set level insights
-      const adSetRows = await meta.getAccountInsights('adset', range);
-      for (const row of adSetRows) {
-        if (!adSetIds.includes(row.adset_id)) continue;
-        if (!adSetInsights[row.adset_id]) adSetInsights[row.adset_id] = {};
-        adSetInsights[row.adset_id][window] = parseInsightRow(row);
-      }
-
-      // Ad level insights (para ads dentro de nuestros ad sets)
-      const adRows = await meta.getAccountInsights('ad', range);
-      for (const row of adRows) {
-        if (!row.ad_id || !adSetIds.includes(row.adset_id)) continue;
-        if (!adInsights[row.ad_id]) {
-          adInsights[row.ad_id] = {
-            ad_name: row.ad_name || 'Sin nombre',
-            adset_id: row.adset_id,
-            campaign_id: row.campaign_id
-          };
-        }
-        adInsights[row.ad_id][window] = parseInsightRow(row);
-      }
-    }
-
-    // 3. Obtener info actual de ad sets desde Meta (status, budget, campaign_id)
-    //    Consultamos directamente por ID para capturar cualquier status
-    const adSetInfoMap = {};
-    for (const adSetId of adSetIds) {
-      try {
-        const data = await meta.get(`/${adSetId}`, {
-          fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id'
-        });
-        adSetInfoMap[adSetId] = data;
-      } catch (err) {
-        logger.debug(`[AI-OPS REFRESH] No se pudo obtener info de ad set ${adSetId}: ${err.message}`);
-      }
-    }
-
-    // 4. Obtener status real de ads dentro de nuestros ad sets
-    //    Solo intentar para ad sets que existen en Meta (tienen info)
-    const adStatusMap = {};
-    for (const adSetId of adSetIds) {
-      if (!adSetInfoMap[adSetId]) continue; // Skip ad sets eliminados
-      try {
-        const adsData = await meta.get(`/${adSetId}/ads`, {
-          fields: 'id,effective_status',
-          limit: 200
-        });
-        for (const ad of (adsData.data || [])) {
-          adStatusMap[ad.id] = ad.effective_status || 'ACTIVE';
-        }
-      } catch (err) {
-        // Ad set podría no tener ads o tener restricciones — ignorar
-      }
-    }
-
-    // Helper: normalizar status al enum de MetricSnapshot
-    const VALID_STATUSES = ['ACTIVE', 'PAUSED', 'DELETED', 'ARCHIVED'];
-    const normalizeStatus = (s) => VALID_STATUSES.includes(s) ? s : 'PAUSED';
-
-    // 5. Crear snapshots de ad sets
-    const emptyMetrics = {
-      spend: 0, impressions: 0, clicks: 0, ctr: 0, cpm: 0, cpc: 0,
-      purchases: 0, purchase_value: 0, roas: 0, cpa: 0, reach: 0, frequency: 0
-    };
-
-    // Build campaign_id lookup from insights (fallback when Meta GET fails)
-    const insightsCampaignMap = {};
-    for (const [asId, windows] of Object.entries(adSetInsights)) {
-      // campaign_id comes from the insight rows, already parsed
-      // We need to get it from the raw data — check adSetInfoMap first
-    }
-
-    let adSetSnapshots = 0;
-    for (const adSetId of adSetIds) {
-      const info = adSetInfoMap[adSetId];
-      const creation = allCreations.find(c => c.meta_entity_id === adSetId);
-
-      // campaign_id: from Meta GET > from insights rows > skip if none
-      const campaignId = info?.campaign_id || null;
-      if (!campaignId) {
-        logger.debug(`[AI-OPS REFRESH] Skipping ad set ${adSetId} — no campaign_id available`);
-        continue;
-      }
-
-      const metrics = {};
-      for (const window of Object.keys(timeRanges)) {
-        metrics[window] = adSetInsights[adSetId]?.[window] || { ...emptyMetrics };
-      }
-
-      await MetricSnapshot.create({
-        entity_type: 'adset',
-        entity_id: adSetId,
-        entity_name: info?.name || creation?.meta_entity_name || adSetId,
-        parent_id: campaignId,
-        campaign_id: campaignId,
-        status: normalizeStatus(info?.effective_status || creation?.current_status),
-        daily_budget: parseBudget(info?.daily_budget) || creation?.current_budget || 0,
-        lifetime_budget: parseBudget(info?.lifetime_budget) || 0,
-        budget_remaining: parseBudget(info?.budget_remaining) || 0,
-        metrics,
-        snapshot_at: new Date()
-      });
-      adSetSnapshots++;
-    }
-
-    // 6. Crear snapshots de ads
-    let adSnapshots = 0;
-    for (const [adId, adData] of Object.entries(adInsights)) {
-      // campaign_id is required — skip ads without it
-      if (!adData.campaign_id) continue;
-
-      const metrics = {};
-      for (const window of Object.keys(timeRanges)) {
-        metrics[window] = adData[window] || { ...emptyMetrics };
-      }
-
-      await MetricSnapshot.create({
-        entity_type: 'ad',
-        entity_id: adId,
-        entity_name: adData.ad_name,
-        parent_id: adData.adset_id,
-        campaign_id: adData.campaign_id,
-        status: normalizeStatus(adStatusMap[adId]),
-        metrics,
-        snapshot_at: new Date()
-      });
-      adSnapshots++;
-    }
-
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    logger.info(`[AI-OPS REFRESH] Completado en ${elapsed}s — ${adSetSnapshots} ad sets, ${adSnapshots} ads actualizados`);
-
-    res.json({
-      success: true,
-      refreshed_adsets: adSetSnapshots,
-      refreshed_ads: adSnapshots,
-      elapsed: `${elapsed}s`
-    });
+    const result = await refreshAIOpsMetrics();
+    res.json(result);
   } catch (error) {
     logger.error(`[AI-OPS REFRESH] Error: ${error.message}`);
     res.status(500).json({ error: error.message });
@@ -607,3 +595,4 @@ router.post('/refresh', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.refreshAIOpsMetrics = refreshAIOpsMetrics;

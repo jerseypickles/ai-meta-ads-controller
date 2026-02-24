@@ -18,6 +18,7 @@ const { runManager } = require('./ai/adset-creator/manager');
 const { startDashboard } = require('./dashboard/server');
 const { refreshMetaToken } = require('./dashboard/routes/meta-auth');
 const { syncCreativeMetrics } = require('./dashboard/routes/creatives');
+const { refreshAIOpsMetrics } = require('./dashboard/routes/ai-ops');
 const logger = require('./utils/logger');
 
 const TIMEZONE = config.system.timezone;
@@ -428,6 +429,25 @@ async function jobAIManager() {
 }
 
 /**
+ * Job: AI Ops Metrics Refresh — cada 15 minutos durante horas activas.
+ * Recolecta métricas de Meta API directamente para ad sets AI-managed,
+ * sin depender del filtro ACTIVE/PAUSED del data-collector general.
+ * Meta refresca insights cada ~15 min, así que este es el intervalo óptimo.
+ */
+async function jobAIOpsRefresh() {
+  if (!isActiveHours()) return;
+
+  try {
+    const result = await refreshAIOpsMetrics();
+    if (result.refreshed_adsets > 0) {
+      logger.info(`[CRON] AI Ops refresh: ${result.refreshed_adsets} ad sets, ${result.refreshed_ads} ads en ${result.elapsed}`);
+    }
+  } catch (error) {
+    logger.error('[CRON] Error en AI Ops refresh:', error.message);
+  }
+}
+
+/**
  * Job: Limpieza de snapshots antiguos — diario a las 2:00 AM.
  */
 async function jobCleanup() {
@@ -532,6 +552,14 @@ function initCronJobs() {
     name: 'ai-manager'
   });
   logger.info('  [*] AI Manager autónomo — 3x/día: 9am, 5pm, 10pm ET (horas activas)');
+
+  // Cada 15 minutos: AI Ops metrics refresh (ad sets AI-managed, cualquier status)
+  // Offset 5 min del data-collector general para no colisionar en API calls
+  cron.schedule('5,20,35,50 * * * *', jobAIOpsRefresh, {
+    timezone: TIMEZONE,
+    name: 'aiops-refresh'
+  });
+  logger.info('  [*] AI Ops metrics refresh — cada 15 min (horas activas)');
 
   // Cada 6 horas: Sync de métricas de creativos (después de data collection)
   cron.schedule('30 */6 * * *', jobCreativeMetricsSync, {
