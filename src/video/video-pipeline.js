@@ -1255,11 +1255,11 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
     const inputs = localFiles.map((f) => ['-i', f]).flat();
     const filterParts = [];
 
-    // Normalize each clip: scale to 720x1280, constant 30fps, yuv420p
-    // xfade requires ALL inputs to have identical resolution, frame rate, pixel format, AND timebase
-    // settb=1/30 forces the timebase to match the fps so xfade doesn't see 1/0
+    // Normalize each clip: settb=AVTB first to fix timebase, then fps=30 for constant CFR,
+    // then scale + pad + format. xfade requires identical resolution, frame rate, pixel format, and timebase.
+    // settb=AVTB normalizes the timebase across all inputs (fixes "current rate of 1/0 is invalid")
     for (let i = 0; i < n; i++) {
-      filterParts.push(`[${i}:v]fps=30,scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p,settb=1/30,setpts=PTS-STARTPTS[vin${i}]`);
+      filterParts.push(`[${i}:v]settb=AVTB,fps=30,scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p,setpts=PTS-STARTPTS[vin${i}]`);
     }
 
     // Chain xfade transitions
