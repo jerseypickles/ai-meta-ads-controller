@@ -399,7 +399,7 @@ export default function VideoGenerator() {
                 Generar Comercial — Sora 2 Pro
               </button>
               <p style={{ color: '#4b5563', fontSize: '11px', textAlign: 'center', marginTop: '8px' }}>
-                Claude Director analiza → Grok Imagine genera imagenes → Sora 2 Pro genera clips → FFmpeg ensambla el comercial
+                Claude Director analiza → genera imagenes → Sora 2 Pro genera clips → FFmpeg ensambla el comercial
               </p>
             </div>
           )}
