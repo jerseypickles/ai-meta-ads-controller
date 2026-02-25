@@ -1199,12 +1199,27 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
   const brandText = options.brandText || '';
   const ffmpegPath = _getFFmpegPath();
 
-  // ── Step A: Download all clip videos ──
+  // ── Step A: Resolve / download all clip videos ──
   const localFiles = [];
   for (let i = 0; i < clipUrls.length; i++) {
     const url = clipUrls[i];
     const localPath = path.join(tmpDir, `clip-${String(i).padStart(2, '0')}.mp4`);
     try {
+      // Check if this is a local /uploads/ path rather than a remote URL
+      const uploadsMatch = url?.match(/\/uploads\/video-clips\/(.+)$/);
+      if (uploadsMatch) {
+        const srcPath = path.join(VIDEOS_DIR, uploadsMatch[1]);
+        if (fs.existsSync(srcPath)) {
+          logger.info(`[VIDEO-PIPE] Stitch ${jobId}: Copying local clip ${i + 1}/${clipUrls.length}: ${uploadsMatch[1]}`);
+          fs.copyFileSync(srcPath, localPath);
+          localFiles.push(localPath);
+          job.downloaded++;
+          continue;
+        }
+        throw new Error(`Local clip not found: ${srcPath}`);
+      }
+
+      // Remote URL — download via fetch
       logger.info(`[VIDEO-PIPE] Stitch ${jobId}: Downloading clip ${i + 1}/${clipUrls.length}`);
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status} downloading ${url}`);
@@ -1213,7 +1228,7 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
       localFiles.push(localPath);
       job.downloaded++;
     } catch (err) {
-      logger.error(`[VIDEO-PIPE] Stitch ${jobId}: Failed to download clip ${i}: ${err.message}`);
+      logger.error(`[VIDEO-PIPE] Stitch ${jobId}: Failed to resolve clip ${i}: ${err.message}`);
       throw new Error(`Failed to download clip ${i + 1}: ${err.message}`);
     }
   }
