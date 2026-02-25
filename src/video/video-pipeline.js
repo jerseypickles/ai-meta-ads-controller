@@ -1194,7 +1194,6 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
   const tmpDir = path.join(FINALS_DIR, `tmp-${jobId}`);
   ensureDir(tmpDir);
 
-  const crossfadeDuration = options.crossfadeDuration ?? 0.5;
   const musicKey = options.musicTrack || 'none';
   const brandText = options.brandText || '';
   const ffmpegPath = _getFFmpegPath();
@@ -1243,92 +1242,96 @@ async function _stitchBackground(jobId, clipUrls, options = {}) {
   const outputFilename = `commercial-${Date.now()}.mp4`;
   const outputPath = path.join(FINALS_DIR, outputFilename);
 
-  // ── Step C: Build FFmpeg filter graph with xfade crossfades ──
+  // ── Step C: Normalize each clip individually (re-encode to consistent CFR) ──
+  // NOTE: We abandoned xfade because FFmpeg 7.0 has a known bug where xfade
+  // reports "current rate of 1/0 is invalid" with certain containers (including Sora output).
+  // Instead we use the concat demuxer which is much more reliable.
   const n = localFiles.length;
+  const normalizedFiles = [];
 
-  if (n < 2) {
-    // Single clip — just copy it (no crossfade possible)
-    fs.copyFileSync(localFiles[0], outputPath);
-  } else {
-    // Build xfade chain for N clips
-    // First normalize all video streams to same pixel format for xfade compatibility
-    const inputs = localFiles.map((f) => ['-i', f]).flat();
-    const filterParts = [];
-
-    // Normalize each clip: settb=AVTB first to fix timebase, then fps=30 for constant CFR,
-    // then scale + pad + format. xfade requires identical resolution, frame rate, pixel format, and timebase.
-    // settb=AVTB normalizes the timebase across all inputs (fixes "current rate of 1/0 is invalid")
-    for (let i = 0; i < n; i++) {
-      filterParts.push(`[${i}:v]settb=AVTB,fps=30,scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p,setpts=PTS-STARTPTS[vin${i}]`);
-    }
-
-    // Chain xfade transitions
-    let prevLabel = '[vin0]';
-    let cumulativeOffset = 0;
-
-    for (let i = 1; i < n; i++) {
-      const offset = cumulativeOffset + clipDurations[i - 1] - crossfadeDuration;
-      const outLabel = i < n - 1 ? `[v${i}]` : '[vout]';
-      filterParts.push(`${prevLabel}[vin${i}]xfade=transition=fade:duration=${crossfadeDuration}:offset=${offset.toFixed(3)}${outLabel}`);
-      prevLabel = outLabel;
-      cumulativeOffset = offset;
-    }
-
-    // Calculate total video duration (accounting for crossfades)
-    const totalDuration = clipDurations.reduce((s, d) => s + d, 0) - (n - 1) * crossfadeDuration;
-
-    // NOTE: Grok Imagine Video can generate native audio, but we use our own
-    // music track as sole audio for consistency, or generate silence.
-
-    // ── Step D: Closing text overlay on last seconds ──
-    // NOTE: drawtext requires libfreetype which may not be available in static FFmpeg builds.
-    // We skip text overlay to avoid filter errors. Brand text is baked into the video prompt instead.
-    let videoFinal = '[vout]';
-
-    // ── Step E: Audio — music track or silence ──
-    let audioFinal = null;
-    const musicTrack = MUSIC_TRACKS.find(m => m.key === musicKey);
-    const musicFilePath = musicTrack?.file ? path.join(MUSIC_DIR, musicTrack.file) : null;
-    let extraInputs = [];
-
-    if (musicFilePath && fs.existsSync(musicFilePath)) {
-      const musicIdx = n; // next input index after all video clips
-      extraInputs = ['-i', musicFilePath];
-      // Trim music to total duration, set volume, fade in at start, fade out at end
-      filterParts.push(
-        `[${musicIdx}:a]atrim=0:${totalDuration.toFixed(2)},asetpts=PTS-STARTPTS,volume=0.35,afade=t=in:ss=0:d=2,afade=t=out:st=${Math.max(0, totalDuration - 3).toFixed(2)}:d=3[aout]`
-      );
-      audioFinal = '[aout]';
-    } else {
-      // No music selected — generate silent audio track with fixed duration
-      extraInputs = ['-f', 'lavfi', '-t', totalDuration.toFixed(2), '-i', `anullsrc=r=44100:cl=stereo`];
-      audioFinal = `[${n}:a]`;
-    }
-
-    // ── Step F: Execute FFmpeg ──
-    const filterComplex = filterParts.join(';');
-    const args = [
-      ...inputs,
-      ...extraInputs,
-      '-filter_complex', filterComplex,
-      '-map', videoFinal, '-map', audioFinal,
+  for (let i = 0; i < n; i++) {
+    const normPath = path.join(tmpDir, `norm-${String(i).padStart(2, '0')}.mp4`);
+    const normArgs = [
+      '-i', localFiles[i],
+      '-vf', 'fps=30,scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2,format=yuv420p,setpts=PTS-STARTPTS',
       '-c:v', 'libx264', '-preset', 'fast', '-crf', '22',
-      '-c:a', 'aac', '-b:a', '128k',
+      '-an',  // strip audio — we'll add our own music track later
       '-movflags', '+faststart',
-      '-y', outputPath
+      '-y', normPath
     ];
 
-    logger.info(`[VIDEO-PIPE] Stitch ${jobId}: Running FFmpeg with xfade crossfades + music + text...`);
+    logger.info(`[VIDEO-PIPE] Stitch ${jobId}: Normalizing clip ${i + 1}/${n}...`);
+    await new Promise((resolve, reject) => {
+      execFile(ffmpegPath, normArgs, { timeout: 120000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+        if (err) {
+          const fullErr = stderr || err.message || '';
+          logger.error(`[VIDEO-PIPE] Normalize clip ${i} FULL stderr:\n${fullErr}`);
+          reject(new Error(`Failed to normalize clip ${i + 1}: ${fullErr.substring(0, 300)}`));
+        } else {
+          resolve();
+        }
+      });
+    });
+    normalizedFiles.push(normPath);
+  }
+
+  // ── Step D: Concat demuxer — join normalized clips ──
+  const totalDuration = clipDurations.reduce((s, d) => s + d, 0);
+
+  if (n < 2) {
+    // Single clip — just use the normalized version
+    fs.copyFileSync(normalizedFiles[0], outputPath);
+  } else {
+    // Write concat list file
+    const concatListPath = path.join(tmpDir, 'concat-list.txt');
+    const concatContent = normalizedFiles.map(f => `file '${f}'`).join('\n');
+    fs.writeFileSync(concatListPath, concatContent);
+
+    logger.info(`[VIDEO-PIPE] Stitch ${jobId}: Concat list:\n${concatContent}`);
+
+    // ── Step E: Audio — music track or silence ──
+    const musicTrack = MUSIC_TRACKS.find(m => m.key === musicKey);
+    const musicFilePath = musicTrack?.file ? path.join(MUSIC_DIR, musicTrack.file) : null;
+    const hasMusicFile = musicFilePath && fs.existsSync(musicFilePath);
+
+    // Concat video clips + add audio in a single FFmpeg pass
+    const args = [
+      '-f', 'concat', '-safe', '0', '-i', concatListPath,
+    ];
+
+    if (hasMusicFile) {
+      args.push('-i', musicFilePath);
+      // Map video from concat, audio from music file with trim + fade
+      args.push(
+        '-filter_complex',
+        `[1:a]atrim=0:${totalDuration.toFixed(2)},asetpts=PTS-STARTPTS,volume=0.35,afade=t=in:ss=0:d=2,afade=t=out:st=${Math.max(0, totalDuration - 3).toFixed(2)}:d=3[aout]`,
+        '-map', '0:v', '-map', '[aout]'
+      );
+    } else {
+      // Generate silent audio track
+      args.push(
+        '-f', 'lavfi', '-t', totalDuration.toFixed(2), '-i', 'anullsrc=r=44100:cl=stereo',
+        '-map', '0:v', '-map', '1:a'
+      );
+    }
+
+    args.push(
+      '-c:v', 'copy',  // video is already encoded from normalization step
+      '-c:a', 'aac', '-b:a', '128k',
+      '-shortest',
+      '-movflags', '+faststart',
+      '-y', outputPath
+    );
+
+    logger.info(`[VIDEO-PIPE] Stitch ${jobId}: Running FFmpeg concat demuxer + music...`);
     logger.info(`[VIDEO-PIPE] Stitch ${jobId}: Clip durations: [${clipDurations.map(d => d.toFixed(2)).join(', ')}], total=${totalDuration.toFixed(2)}s`);
-    logger.info(`[VIDEO-PIPE] Stitch ${jobId}: Filter graph: ${filterComplex}`);
+    logger.info(`[VIDEO-PIPE] Stitch ${jobId}: FFmpeg args: ${args.join(' ')}`);
 
     await new Promise((resolve, reject) => {
       execFile(ffmpegPath, args, { timeout: 300000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
         if (err) {
-          // Log the FULL stderr for debugging, send last meaningful part to client
           const fullErr = stderr || err.message || '';
-          logger.error(`[VIDEO-PIPE] FFmpeg FULL stderr:\n${fullErr}`);
-          // Find the actual error line (usually after the last "Error" or at the end)
+          logger.error(`[VIDEO-PIPE] FFmpeg concat FULL stderr:\n${fullErr}`);
           const lines = fullErr.split('\n').filter(l => l.trim());
           const errorLines = lines.filter(l => /error|invalid|failed|no such/i.test(l));
           const errMsg = errorLines.length > 0 ? errorLines.slice(-3).join(' | ') : lines.slice(-3).join(' | ');
