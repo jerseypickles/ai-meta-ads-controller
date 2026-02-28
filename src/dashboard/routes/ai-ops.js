@@ -667,5 +667,316 @@ router.get('/refresh-status/:jobId', async (req, res) => {
   return res.json({ status: 'failed', elapsed_seconds: elapsed, error: job.error });
 });
 
+// ═══ ADD AD TO EXISTING AD SET ═══
+
+/**
+ * GET /api/ai-ops/available-creatives/:adsetId
+ * Returns creative assets available to add to this ad set (same product, unused preferred)
+ */
+router.get('/available-creatives/:adsetId', async (req, res) => {
+  try {
+    const creation = await AICreation.findOne({ meta_entity_id: req.params.adsetId }).lean();
+    if (!creation) return res.status(404).json({ error: 'Ad set no encontrado' });
+
+    // Get all active ad-ready images
+    const allAssets = await CreativeAsset.find({
+      status: 'active',
+      purpose: 'ad-ready',
+      media_type: 'image',
+      ad_format: { $ne: 'stories' }
+    }).sort({ times_used: 1, created_at: -1 }).lean();
+
+    // Find assets already used in this ad set
+    const usedInThisAdSet = new Set(
+      (creation.selected_creative_ids || []).map(id => id.toString())
+    );
+
+    // Enrich assets with availability info
+    const enriched = allAssets.map(a => ({
+      _id: a._id,
+      filename: a.filename,
+      original_name: a.original_name,
+      file_path: a.file_path,
+      style: a.style,
+      product_name: a.product_name || '',
+      product_line: a.product_line || '',
+      flavor: a.flavor || '',
+      times_used: a.times_used || 0,
+      headline: a.headline || '',
+      body: a.body || '',
+      cta: a.cta || 'SHOP_NOW',
+      link_url: a.link_url || '',
+      meta_image_hash: a.meta_image_hash || null,
+      uploaded_to_meta: a.uploaded_to_meta || false,
+      paired_asset_id: a.paired_asset_id || null,
+      avg_roas: a.avg_roas || 0,
+      avg_ctr: a.avg_ctr || 0,
+      already_in_adset: usedInThisAdSet.has(a._id.toString()),
+      scene_label: a.scene_label || '',
+      tags: a.tags || []
+    }));
+
+    // Sort: not-in-adset first, then by times_used ascending
+    enriched.sort((a, b) => {
+      if (a.already_in_adset !== b.already_in_adset) return a.already_in_adset ? 1 : -1;
+      return (a.times_used || 0) - (b.times_used || 0);
+    });
+
+    res.json({
+      adset_id: req.params.adsetId,
+      adset_name: creation.meta_entity_name,
+      product_name: creation.product_name || '',
+      assets: enriched
+    });
+  } catch (err) {
+    logger.error(`[AI-OPS] Error fetching creatives for ${req.params.adsetId}: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/ai-ops/add-ad
+ * Creates an ad in an existing ad set:
+ *   1. If asset not uploaded to Meta, uploads it
+ *   2. Claude generates headline + primary_text
+ *   3. Creates ad creative + ad in Meta (ACTIVE)
+ *   4. Updates asset tracking + AICreation
+ */
+const addAdJobs = new Map();
+
+router.post('/add-ad', async (req, res) => {
+  const { adset_id, asset_id, custom_headline, custom_body } = req.body;
+  if (!adset_id || !asset_id) {
+    return res.status(400).json({ error: 'adset_id y asset_id requeridos' });
+  }
+
+  const jobId = `addad_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+  addAdJobs.set(jobId, { status: 'running', startedAt: Date.now() });
+
+  // Clean old jobs
+  for (const [id, job] of addAdJobs) {
+    if (Date.now() - job.startedAt > REFRESH_JOB_TTL) addAdJobs.delete(id);
+  }
+
+  res.json({ job_id: jobId, status: 'running' });
+
+  // Background execution
+  (async () => {
+    try {
+      const meta = getMetaClient();
+      const creation = await AICreation.findOne({ meta_entity_id: adset_id });
+      if (!creation) throw new Error('Ad set no encontrado en AICreation');
+
+      const asset = await CreativeAsset.findById(asset_id);
+      if (!asset) throw new Error('Creative asset no encontrado');
+
+      // Step 1: Upload to Meta if needed
+      if (!asset.uploaded_to_meta || !asset.meta_image_hash) {
+        logger.info(`[AI-OPS] Uploading asset ${asset.original_name} to Meta...`);
+        const upload = await meta.uploadImage(asset.file_path);
+        asset.meta_image_hash = upload.image_hash;
+        asset.uploaded_to_meta = true;
+        asset.uploaded_at = new Date();
+        await asset.save();
+      }
+
+      // Step 2: Generate copy with Claude (or use custom)
+      let headlines, bodies;
+      if (custom_headline && custom_body) {
+        headlines = [custom_headline];
+        bodies = [custom_body];
+      } else {
+        const generated = await _generateAdCopy(asset, creation);
+        headlines = generated.headlines;
+        bodies = generated.bodies;
+      }
+
+      // Step 3: Get page_id and website URL
+      const pageId = await meta.getPageId();
+      const websiteUrl = await meta.getWebsiteUrl();
+
+      // Step 4: Create ads (one per headline/body variant)
+      const createdAds = [];
+      const variantCount = Math.max(headlines.length, 1);
+      for (let v = 0; v < variantCount; v++) {
+        const headline = headlines[v] || headlines[0];
+        const body = bodies[v] || bodies[0] || '';
+        const variantLabel = variantCount > 1 ? ` v${v + 1}` : '';
+
+        try {
+          const creative = await meta.createAdCreative({
+            page_id: pageId,
+            image_hash: asset.meta_image_hash,
+            headline,
+            body,
+            description: '',
+            cta: asset.cta || 'SHOP_NOW',
+            link_url: asset.link_url || websiteUrl
+          });
+
+          const adName = `${headline} - ${asset.style || 'mix'}${variantLabel} [Feed]`;
+          const ad = await meta.createAd(adset_id, creative.creative_id, adName, 'ACTIVE');
+
+          createdAds.push({ ad_id: ad.ad_id, creative_id: creative.creative_id, name: adName, headline, body });
+          logger.info(`[AI-OPS] Created ad: ${adName} in ${adset_id}`);
+        } catch (adErr) {
+          logger.error(`[AI-OPS] Error creating ad variant ${v + 1}: ${adErr.message}`);
+        }
+
+        // Also create stories ad if paired asset exists
+        if (asset.paired_asset_id) {
+          try {
+            const pairedAsset = await CreativeAsset.findById(asset.paired_asset_id);
+            if (pairedAsset) {
+              if (!pairedAsset.uploaded_to_meta || !pairedAsset.meta_image_hash) {
+                const pairUpload = await meta.uploadImage(pairedAsset.file_path);
+                pairedAsset.meta_image_hash = pairUpload.image_hash;
+                pairedAsset.uploaded_to_meta = true;
+                pairedAsset.uploaded_at = new Date();
+                await pairedAsset.save();
+              }
+
+              const storiesCreative = await meta.createAdCreative({
+                page_id: pageId,
+                image_hash: pairedAsset.meta_image_hash,
+                headline,
+                body,
+                description: '',
+                cta: asset.cta || 'SHOP_NOW',
+                link_url: asset.link_url || pairedAsset.link_url || websiteUrl
+              });
+
+              const storiesAdName = `${headline} - ${asset.style || 'mix'}${variantLabel} [Stories]`;
+              const storiesAd = await meta.createAd(adset_id, storiesCreative.creative_id, storiesAdName, 'ACTIVE');
+              createdAds.push({ ad_id: storiesAd.ad_id, creative_id: storiesCreative.creative_id, name: storiesAdName, headline, body, placement: 'stories' });
+            }
+          } catch (pairErr) {
+            logger.error(`[AI-OPS] Error creating stories variant: ${pairErr.message}`);
+          }
+        }
+      }
+
+      if (createdAds.length === 0) throw new Error('No se pudo crear ningun ad');
+
+      // Step 5: Update asset tracking
+      asset.times_used = (asset.times_used || 0) + 1;
+      for (const ad of createdAds) {
+        if (!asset.used_in_ads.includes(ad.ad_id)) asset.used_in_ads.push(ad.ad_id);
+      }
+      if (!asset.used_in_adsets) asset.used_in_adsets = [];
+      if (!asset.used_in_adsets.includes(adset_id)) asset.used_in_adsets.push(adset_id);
+      await asset.save();
+
+      // Step 6: Update AICreation
+      if (!creation.selected_creative_ids) creation.selected_creative_ids = [];
+      if (!creation.selected_creative_ids.map(id => id.toString()).includes(asset._id.toString())) {
+        creation.selected_creative_ids.push(asset._id);
+      }
+      for (const ad of createdAds) {
+        if (!creation.child_ad_ids) creation.child_ad_ids = [];
+        if (!creation.child_ad_ids.includes(ad.ad_id)) creation.child_ad_ids.push(ad.ad_id);
+      }
+      creation.updated_at = new Date();
+      await creation.save();
+
+      // Log action
+      await ActionLog.create({
+        entity_type: 'adset',
+        entity_id: adset_id,
+        entity_name: creation.meta_entity_name,
+        action: 'add_ad',
+        after_value: JSON.stringify(createdAds.map(a => a.ad_id)),
+        reasoning: `Manual: added ${createdAds.length} ad(s) from asset "${asset.original_name}" (${asset.style})`,
+        agent_type: 'manual',
+        confidence: 'high',
+        success: true
+      });
+
+      addAdJobs.set(jobId, {
+        status: 'completed',
+        startedAt: addAdJobs.get(jobId).startedAt,
+        result: {
+          ads_created: createdAds.length,
+          ads: createdAds,
+          headlines,
+          bodies,
+          asset_name: asset.original_name
+        }
+      });
+    } catch (err) {
+      logger.error(`[AI-OPS] add-ad error: ${err.message}`);
+      addAdJobs.set(jobId, {
+        status: 'failed',
+        startedAt: addAdJobs.get(jobId).startedAt,
+        error: err.message
+      });
+    }
+  })();
+});
+
+router.get('/add-ad-status/:jobId', (req, res) => {
+  const job = addAdJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job no encontrado' });
+  const elapsed = Math.round((Date.now() - job.startedAt) / 1000);
+  if (job.status === 'running') return res.json({ status: 'running', elapsed_seconds: elapsed });
+  if (job.status === 'completed') return res.json({ status: 'completed', elapsed_seconds: elapsed, result: job.result });
+  return res.json({ status: 'failed', elapsed_seconds: elapsed, error: job.error });
+});
+
+/**
+ * Generate ad copy (headline + primary text) using Claude
+ */
+async function _generateAdCopy(asset, creation) {
+  const Anthropic = require('@anthropic-ai/sdk');
+  const config = require('../../../config');
+  const client = new Anthropic({ apiKey: config.claude.apiKey });
+
+  const prompt = `You are writing ad copy for a Meta (Facebook/Instagram) ad for the product "${asset.product_name || creation.product_name || 'food product'}".
+
+Creative style: ${asset.style || 'unknown'}
+Product: ${asset.product_name || creation.product_name || 'N/A'}
+Scene: ${asset.scene_label || 'N/A'}
+Tags: ${(asset.tags || []).join(', ') || 'none'}
+
+Generate 3 headline + body (primary text) variants for A/B testing.
+
+Rules:
+- Headlines: short, punchy, scroll-stopping. MAX 40 characters. In English for US audience.
+- Each headline must be a DIFFERENT angle: benefit, urgency, curiosity, social proof, humor, etc.
+- Bodies (primary_text): 2-3 sentences. Hook + benefit + CTA. In English. Different tones per variant.
+- This is a food/ecommerce brand — be casual, fun, crave-inducing.
+- Match the creative style: ${asset.style === 'ugly-ad' ? 'raw, unpolished, authentic tone' : asset.style === 'ugc' ? 'conversational, first-person, relatable' : asset.style === 'organic' ? 'natural, warm, friendly' : 'clear and direct'}
+
+Return ONLY valid JSON, no markdown:
+{
+  "headlines": ["Headline 1", "Headline 2", "Headline 3"],
+  "bodies": ["Body text 1", "Body text 2", "Body text 3"]
+}`;
+
+  try {
+    const response = await client.messages.create({
+      model: config.claude.model,
+      max_tokens: 800,
+      messages: [{ role: 'user', content: prompt }]
+    });
+
+    const text = response.content[0]?.text || '';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No JSON in Claude response');
+    const parsed = JSON.parse(jsonMatch[0]);
+    return {
+      headlines: parsed.headlines || ['Fresh & Delicious'],
+      bodies: parsed.bodies || ['Try our handcrafted products today!']
+    };
+  } catch (err) {
+    logger.error(`[AI-OPS] Claude copy generation error: ${err.message}`);
+    // Fallback
+    return {
+      headlines: [asset.headline || `Try ${asset.product_name || 'Our Products'}`],
+      bodies: [asset.body || 'Handcrafted with love. Shop now!']
+    };
+  }
+}
+
 module.exports = router;
 module.exports.refreshAIOpsMetrics = refreshAIOpsMetrics;

@@ -844,6 +844,30 @@ export const refreshAIOpsMetrics = async () => {
 };
 
 // ============================================
+// AI OPS — Add Ad to Existing Ad Set
+// ============================================
+
+export const getAvailableCreatives = async (adsetId) => {
+  const response = await api.get(`/api/ai-ops/available-creatives/${adsetId}`, { timeout: 30000 });
+  return response.data;
+};
+
+export const addAdToAdSet = async (adsetId, assetId, customHeadline, customBody) => {
+  const response = await api.post('/api/ai-ops/add-ad', {
+    adset_id: adsetId,
+    asset_id: assetId,
+    custom_headline: customHeadline || null,
+    custom_body: customBody || null
+  }, { timeout: 15000 });
+  const data = response.data;
+
+  if (data.job_id) {
+    return pollForCompletion(`/api/ai-ops/add-ad-status/${data.job_id}`, 3000, 300000);
+  }
+  return data;
+};
+
+// ============================================
 // AI CREATIONS
 // ============================================
 

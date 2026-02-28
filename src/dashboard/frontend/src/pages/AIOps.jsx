@@ -3,9 +3,9 @@ import {
   Activity, Brain, Bot, Clock, AlertTriangle, CheckCircle, XCircle,
   TrendingUp, TrendingDown, DollarSign, Eye, Zap, RefreshCw,
   ChevronDown, ChevronRight, Image, Pause, Play, Target, Skull,
-  ArrowDown, Shield, Timer, Power, Filter, Palette, BarChart3
+  ArrowDown, Shield, Timer, Power, Filter, Palette, BarChart3, Plus, Send, X
 } from 'lucide-react';
-import { getAIOpsStatus, runAIManager, runAgents, refreshAIOpsMetrics, pauseEntity } from '../api';
+import { getAIOpsStatus, runAIManager, runAgents, refreshAIOpsMetrics, pauseEntity, getAvailableCreatives, addAdToAdSet } from '../api';
 
 // ═══ HELPERS ═══
 const fmt = (v, d = 2) => v != null ? Number(v).toFixed(d) : '0';
@@ -270,9 +270,202 @@ const CreativeHealthCard = ({ adset }) => {
   );
 };
 
+// ═══ ADD CREATIVE PANEL ═══
+const AddCreativePanel = ({ adsetId, onClose, onSuccess }) => {
+  const [assets, setAssets] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [customHeadline, setCustomHeadline] = useState('');
+  const [customBody, setCustomBody] = useState('');
+  const [useCustom, setUseCustom] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await getAvailableCreatives(adsetId);
+        setAssets(data.assets || []);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [adsetId]);
+
+  const handleCreate = async () => {
+    if (!selected) return;
+    setCreating(true);
+    setError(null);
+    try {
+      const res = await addAdToAdSet(
+        adsetId, selected,
+        useCustom ? customHeadline : null,
+        useCustom ? customBody : null
+      );
+      setResult(res.result || res);
+      if (onSuccess) onSuccess();
+    } catch (err) {
+      setError(err.message || 'Error creando ad');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const selectedAsset = assets.find(a => a._id === selected);
+
+  return (
+    <div style={{
+      backgroundColor: '#0d0f17', border: '1px solid #22c55e33',
+      borderRadius: '8px', padding: '12px', marginBottom: '10px'
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <Plus size={13} color="#22c55e" />
+          <span style={{ fontSize: '11px', fontWeight: '700', color: '#22c55e', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Add Creative
+          </span>
+        </div>
+        <button onClick={onClose} style={{
+          background: 'none', border: 'none', color: '#4b5563', cursor: 'pointer', padding: '2px'
+        }}><X size={14} /></button>
+      </div>
+
+      {loading && <div style={{ fontSize: '11px', color: '#4b5563', padding: '8px 0' }}>Loading assets...</div>}
+      {error && <div style={{ fontSize: '11px', color: '#fca5a5', padding: '6px 8px', backgroundColor: '#7f1d1d44', borderRadius: '4px', marginBottom: '8px' }}>{error}</div>}
+
+      {result && (
+        <div style={{ fontSize: '11px', color: '#86efac', padding: '8px 10px', backgroundColor: '#14532d44', borderRadius: '6px' }}>
+          <CheckCircle size={12} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
+          {result.ads_created} ad(s) created!
+          {result.headlines && <div style={{ marginTop: '4px', color: '#6b7280' }}>Headlines: {result.headlines.join(' | ')}</div>}
+        </div>
+      )}
+
+      {!result && !loading && (
+        <>
+          {/* Asset grid */}
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+            gap: '6px', maxHeight: '250px', overflowY: 'auto', marginBottom: '10px'
+          }}>
+            {assets.filter(a => !a.already_in_adset).map(asset => (
+              <div
+                key={asset._id}
+                onClick={() => setSelected(asset._id)}
+                style={{
+                  padding: '8px 10px', borderRadius: '6px', cursor: 'pointer',
+                  backgroundColor: selected === asset._id ? '#14532d33' : '#111827',
+                  border: `1px solid ${selected === asset._id ? '#22c55e' : '#1f2937'}`,
+                  transition: 'all 0.1s ease'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
+                  <Image size={11} color="#6b7280" />
+                  <span style={{ fontSize: '11px', color: '#d1d5db', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {asset.original_name}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                  {asset.style && (
+                    <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#1f2937', color: '#9ca3af' }}>
+                      {asset.style}
+                    </span>
+                  )}
+                  {asset.product_name && (
+                    <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#1f2937', color: '#9ca3af' }}>
+                      {asset.product_name}
+                    </span>
+                  )}
+                  <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '3px', backgroundColor: asset.times_used === 0 ? '#14532d' : '#78350f', color: asset.times_used === 0 ? '#86efac' : '#fde68a' }}>
+                    {asset.times_used === 0 ? 'UNUSED' : `used ${asset.times_used}x`}
+                  </span>
+                  {asset.uploaded_to_meta && (
+                    <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#1e3a5f', color: '#93c5fd' }}>META</span>
+                  )}
+                </div>
+              </div>
+            ))}
+            {assets.filter(a => !a.already_in_adset).length === 0 && (
+              <div style={{ padding: '12px', textAlign: 'center', fontSize: '11px', color: '#374151', gridColumn: '1 / -1' }}>
+                No available assets
+              </div>
+            )}
+          </div>
+
+          {/* Custom copy toggle */}
+          {selected && (
+            <div style={{ marginBottom: '8px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '11px', color: '#6b7280', marginBottom: '6px' }}>
+                <input
+                  type="checkbox"
+                  checked={useCustom}
+                  onChange={(e) => setUseCustom(e.target.checked)}
+                  style={{ accentColor: '#22c55e' }}
+                />
+                Custom copy (skip Claude generation)
+              </label>
+              {useCustom && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                  <input
+                    type="text"
+                    placeholder="Headline (max 40 chars)"
+                    value={customHeadline}
+                    onChange={e => setCustomHeadline(e.target.value)}
+                    maxLength={40}
+                    style={{
+                      padding: '6px 10px', borderRadius: '5px', border: '1px solid #1f2937',
+                      backgroundColor: '#111827', color: '#d1d5db', fontSize: '12px', outline: 'none'
+                    }}
+                  />
+                  <textarea
+                    placeholder="Primary text (2-3 sentences)"
+                    value={customBody}
+                    onChange={e => setCustomBody(e.target.value)}
+                    rows={2}
+                    style={{
+                      padding: '6px 10px', borderRadius: '5px', border: '1px solid #1f2937',
+                      backgroundColor: '#111827', color: '#d1d5db', fontSize: '12px', outline: 'none', resize: 'vertical'
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Create button */}
+          {selected && (
+            <button
+              onClick={handleCreate}
+              disabled={creating || (useCustom && (!customHeadline || !customBody))}
+              style={{
+                width: '100%', padding: '8px 14px', borderRadius: '6px',
+                border: '1px solid #22c55e44',
+                backgroundColor: creating ? '#064e3b' : '#14532d',
+                color: '#86efac', fontSize: '11px', fontWeight: '700', cursor: creating ? 'wait' : 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                opacity: creating || (useCustom && (!customHeadline || !customBody)) ? 0.6 : 1
+              }}
+            >
+              {creating ? (
+                <><RefreshCw size={12} style={{ animation: 'spin 1s linear infinite' }} /> Creating ads{useCustom ? '' : ' (Claude generating copy)'}...</>
+              ) : (
+                <><Send size={12} /> Create Ad{useCustom ? '' : ' with Claude Copy'} — {selectedAsset?.original_name}</>
+              )}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
 // ═══ AD SET CARD ═══
-const AdSetCard = ({ adset }) => {
+const AdSetCard = ({ adset, onRefresh }) => {
   const [expanded, setExpanded] = useState(false);
+  const [showAddCreative, setShowAddCreative] = useState(false);
   const m7 = adset.metrics_7d || {};
   const phase = adset.phase || 'unknown';
   const phaseColor = PHASE_COLORS[phase] || '#6b7280';
@@ -496,7 +689,32 @@ const AdSetCard = ({ adset }) => {
                 +{totalAds - activeAds.length} paused/off ads hidden
               </div>
             )}
+
+            {/* Add Creative button */}
+            {isActive && !showAddCreative && (
+              <button
+                onClick={() => setShowAddCreative(true)}
+                style={{
+                  width: '100%', padding: '6px', marginTop: '4px', borderRadius: '5px',
+                  border: '1px dashed #22c55e44', backgroundColor: 'transparent',
+                  color: '#22c55e88', fontSize: '11px', fontWeight: '600', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <Plus size={12} /> Add Creative
+              </button>
+            )}
           </div>
+
+          {/* Add Creative Panel */}
+          {showAddCreative && (
+            <AddCreativePanel
+              adsetId={adset.adset_id}
+              onClose={() => setShowAddCreative(false)}
+              onSuccess={() => { if (onRefresh) onRefresh(); }}
+            />
+          )}
 
           {/* Directives */}
           {hasDirectives && (
@@ -946,7 +1164,7 @@ export default function AIOps() {
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          {filteredAdSets.map((as, i) => <AdSetCard key={as.adset_id || i} adset={as} />)}
+          {filteredAdSets.map((as, i) => <AdSetCard key={as.adset_id || i} adset={as} onRefresh={fetchData} />)}
           {filteredAdSets.length === 0 && (
             <div style={{
               padding: '30px', textAlign: 'center', color: '#374151', fontSize: '13px',
