@@ -217,6 +217,10 @@ router.get('/status', async (req, res) => {
         last_manager_check: creation.last_manager_check,
         last_assessment: creation.last_manager_assessment || '',
         creative_health: creation.last_manager_creative_health || '',
+        needs_new_creatives: creation.last_manager_needs_new_creatives || false,
+        creative_rotation_needed: creation.last_manager_creative_rotation_needed || false,
+        suggested_styles: creation.last_manager_suggested_styles || [],
+        frequency_detail: creation.last_manager_frequency_detail || '',
         frequency_status: creation.last_manager_frequency_status || 'unknown',
         metrics_7d: {
           spend: m7.spend || 0,

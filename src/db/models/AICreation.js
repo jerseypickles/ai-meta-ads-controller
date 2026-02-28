@@ -141,6 +141,10 @@ const aiCreationSchema = new mongoose.Schema({
   last_manager_assessment: { type: String, default: '' },
   last_manager_frequency_status: { type: String, default: 'unknown' },
   last_manager_creative_health: { type: String, default: '' },
+  last_manager_needs_new_creatives: { type: Boolean, default: false },
+  last_manager_creative_rotation_needed: { type: Boolean, default: false },
+  last_manager_suggested_styles: [{ type: String }],
+  last_manager_frequency_detail: { type: String, default: '' },
   last_manager_check: { type: Date, default: null },
 
   created_at: { type: Date, default: Date.now, index: true },

@@ -955,6 +955,10 @@ async function manageAdSet(creation) {
   creation.last_manager_assessment = decision.assessment || '';
   creation.last_manager_frequency_status = decision.frequency_status || 'unknown';
   creation.last_manager_creative_health = decision.creative_health || '';
+  creation.last_manager_needs_new_creatives = decision.needs_new_creatives || false;
+  creation.last_manager_creative_rotation_needed = decision.creative_rotation_needed || false;
+  creation.last_manager_suggested_styles = decision.suggested_creative_styles || [];
+  creation.last_manager_frequency_detail = decision.frequency_detail || '';
   creation.last_manager_check = new Date();
 
   creation.updated_at = new Date();

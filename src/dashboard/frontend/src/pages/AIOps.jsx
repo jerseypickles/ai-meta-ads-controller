@@ -5,7 +5,7 @@ import {
   ChevronDown, ChevronRight, Image, Pause, Play, Target, Skull,
   ArrowDown, Shield, Timer, Power, Filter, Palette, BarChart3
 } from 'lucide-react';
-import { getAIOpsStatus, runAIManager, runAgents, refreshAIOpsMetrics } from '../api';
+import { getAIOpsStatus, runAIManager, runAgents, refreshAIOpsMetrics, pauseEntity } from '../api';
 
 // ═══ HELPERS ═══
 const fmt = (v, d = 2) => v != null ? Number(v).toFixed(d) : '0';
@@ -79,12 +79,33 @@ const StatBadge = ({ icon: Icon, iconColor, label, value, subValue, subColor, ac
   </div>
 );
 
-// ═══ AD ROW (creative inside an ad set — only ACTIVE ads shown) ═══
-const AdRow = ({ ad }) => {
+// ═══ AD ROW (creative inside an ad set — with pause button) ═══
+const AdRow = ({ ad, onPause }) => {
+  const [pausing, setPausing] = useState(false);
+  const [paused, setPaused] = useState(false);
   const m = ad.metrics_7d || {};
+
+  const handlePause = async (e) => {
+    e.stopPropagation();
+    if (pausing || paused) return;
+    if (!confirm(`Pausar "${ad.ad_name || ad.ad_id}"?`)) return;
+    setPausing(true);
+    try {
+      await pauseEntity(ad.ad_id, { entity_type: 'ad', entity_name: ad.ad_name || ad.ad_id, reason: 'Pausado manualmente desde AI Ops' });
+      setPaused(true);
+      if (onPause) onPause(ad.ad_id);
+    } catch (err) {
+      alert('Error pausando: ' + (err.message || 'Unknown'));
+    } finally {
+      setPausing(false);
+    }
+  };
+
+  if (paused) return null; // Hide after pausing
+
   return (
     <div style={{
-      display: 'grid', gridTemplateColumns: '20px 1fr 70px 70px 55px 50px 55px',
+      display: 'grid', gridTemplateColumns: '20px 1fr 70px 70px 55px 50px 55px 32px',
       gap: '6px', alignItems: 'center', padding: '7px 12px',
       backgroundColor: '#0f1119',
       borderRadius: '6px', borderLeft: '2px solid #22c55e44'
@@ -113,6 +134,138 @@ const AdRow = ({ ad }) => {
         fontSize: '11px', textAlign: 'right',
         color: (m.frequency || 0) > 4 ? '#ef4444' : (m.frequency || 0) > 3 ? '#f59e0b' : '#6b7280'
       }}>{fmt(m.frequency, 1)}</span>
+      <button
+        onClick={handlePause}
+        disabled={pausing}
+        title="Pausar este ad"
+        style={{
+          width: '26px', height: '26px', borderRadius: '5px',
+          border: '1px solid #ef444444', backgroundColor: pausing ? '#7f1d1d' : '#1a0a0a',
+          color: '#ef4444', cursor: pausing ? 'wait' : 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          transition: 'all 0.15s ease', padding: 0
+        }}
+      >
+        {pausing ? <RefreshCw size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Pause size={10} />}
+      </button>
+    </div>
+  );
+};
+
+// ═══ CREATIVE HEALTH CARD (structured visual) ═══
+const CreativeHealthCard = ({ adset }) => {
+  const health = adset.creative_health;
+  const needsNew = adset.needs_new_creatives;
+  const rotationNeeded = adset.creative_rotation_needed;
+  const styles = adset.suggested_styles || [];
+  const freqDetail = adset.frequency_detail;
+  const freqStatus = adset.frequency_status;
+
+  // Nothing to show
+  if (!health && !needsNew && !rotationNeeded && !freqDetail) return null;
+
+  const freqColor = freqStatus === 'critical' ? '#ef4444' : freqStatus === 'high' ? '#f59e0b' : freqStatus === 'moderate' ? '#3b82f6' : '#22c55e';
+  const freqBg = freqStatus === 'critical' ? '#7f1d1d' : freqStatus === 'high' ? '#78350f' : freqStatus === 'moderate' ? '#1e3a5f' : '#14532d';
+
+  return (
+    <div style={{
+      backgroundColor: '#13101f', border: '1px solid #7c3aed22',
+      borderRadius: '8px', marginBottom: '10px', overflow: 'hidden'
+    }}>
+      {/* Header bar */}
+      <div style={{
+        padding: '8px 12px', display: 'flex', alignItems: 'center', gap: '8px',
+        borderBottom: '1px solid #7c3aed15',
+        background: 'linear-gradient(90deg, #1a0d2e 0%, #13101f 100%)'
+      }}>
+        <Palette size={13} color="#a78bfa" />
+        <span style={{ fontSize: '10px', fontWeight: '700', color: '#a78bfa', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Creative Health
+        </span>
+
+        {/* Status pills */}
+        {freqStatus && freqStatus !== 'unknown' && (
+          <span style={{
+            fontSize: '9px', fontWeight: '700', padding: '2px 6px', borderRadius: '3px',
+            backgroundColor: freqBg, color: freqColor, marginLeft: '4px'
+          }}>
+            FREQ: {freqStatus.toUpperCase()}
+          </span>
+        )}
+        {needsNew && (
+          <span style={{
+            fontSize: '9px', fontWeight: '700', padding: '2px 6px', borderRadius: '3px',
+            backgroundColor: '#7f1d1d', color: '#fca5a5'
+          }}>
+            NEEDS NEW CREATIVES
+          </span>
+        )}
+        {rotationNeeded && !needsNew && (
+          <span style={{
+            fontSize: '9px', fontWeight: '700', padding: '2px 6px', borderRadius: '3px',
+            backgroundColor: '#78350f', color: '#fde68a'
+          }}>
+            ROTATION NEEDED
+          </span>
+        )}
+      </div>
+
+      <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {/* Frequency detail */}
+        {freqDetail && (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+            <div style={{
+              width: '20px', height: '20px', borderRadius: '4px',
+              backgroundColor: freqBg + '88', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+            }}>
+              <Eye size={10} color={freqColor} />
+            </div>
+            <div>
+              <div style={{ fontSize: '9px', fontWeight: '700', color: '#4b5563', textTransform: 'uppercase', marginBottom: '2px' }}>Frequency</div>
+              <div style={{ fontSize: '11px', color: '#9ca3af', lineHeight: '1.4' }}>{freqDetail}</div>
+            </div>
+          </div>
+        )}
+
+        {/* Creative health analysis */}
+        {health && (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+            <div style={{
+              width: '20px', height: '20px', borderRadius: '4px',
+              backgroundColor: '#1a0d2e', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+            }}>
+              <Palette size={10} color="#a78bfa" />
+            </div>
+            <div>
+              <div style={{ fontSize: '9px', fontWeight: '700', color: '#4b5563', textTransform: 'uppercase', marginBottom: '2px' }}>Analysis</div>
+              <div style={{ fontSize: '11px', color: '#c4b5fd', lineHeight: '1.4' }}>{health}</div>
+            </div>
+          </div>
+        )}
+
+        {/* Suggested styles */}
+        {styles.length > 0 && (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+            <div style={{
+              width: '20px', height: '20px', borderRadius: '4px',
+              backgroundColor: '#14532d88', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+            }}>
+              <Zap size={10} color="#22c55e" />
+            </div>
+            <div>
+              <div style={{ fontSize: '9px', fontWeight: '700', color: '#4b5563', textTransform: 'uppercase', marginBottom: '3px' }}>Crear estos estilos</div>
+              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                {styles.map((s, i) => (
+                  <span key={i} style={{
+                    fontSize: '10px', fontWeight: '600', padding: '2px 8px', borderRadius: '4px',
+                    backgroundColor: '#14532d', color: '#86efac', border: '1px solid #22c55e44'
+                  }}>{s}</span>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
@@ -312,25 +465,13 @@ const AdSetCard = ({ adset }) => {
             </div>
           )}
 
-          {/* Creative Health */}
-          {adset.creative_health && (
-            <div style={{
-              padding: '8px 10px', backgroundColor: '#1a0d2e', border: '1px solid #7c3aed22',
-              borderRadius: '6px', fontSize: '11px', color: '#c4b5fd', marginBottom: '10px', lineHeight: '1.5',
-              borderLeft: '2px solid #a78bfa'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '3px' }}>
-                <Palette size={11} color="#a78bfa" />
-                <b style={{ color: '#a78bfa', fontSize: '9px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Creative Health</b>
-              </div>
-              {adset.creative_health}
-            </div>
-          )}
+          {/* Creative Health — structured */}
+          <CreativeHealthCard adset={adset} />
 
           {/* Active Ads */}
           <div style={{ marginBottom: '10px' }}>
             <div style={{
-              display: 'grid', gridTemplateColumns: '20px 1fr 70px 70px 55px 50px 55px',
+              display: 'grid', gridTemplateColumns: '20px 1fr 70px 70px 55px 50px 55px 32px',
               gap: '6px', padding: '3px 12px', fontSize: '9px', color: '#4b5563',
               fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.06em'
             }}>
@@ -340,9 +481,10 @@ const AdSetCard = ({ adset }) => {
               <span style={{ textAlign: 'right' }}>Purch</span>
               <span style={{ textAlign: 'right' }}>CTR</span>
               <span style={{ textAlign: 'right' }}>Freq</span>
+              <span></span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-              {activeAds.map((ad, i) => <AdRow key={ad.ad_id || i} ad={ad} />)}
+              {activeAds.map((ad, i) => <AdRow key={ad.ad_id || i} ad={ad} onPause={() => {}} />)}
             </div>
             {activeAds.length === 0 && (
               <div style={{ padding: '10px', textAlign: 'center', fontSize: '11px', color: '#374151' }}>
