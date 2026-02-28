@@ -112,7 +112,8 @@ const AdRow = ({ ad, onPause, onDelete }) => {
       setRemoved(true);
       if (onDelete) onDelete(ad.ad_id);
     } catch (err) {
-      alert('Error eliminando: ' + (err.message || 'Unknown'));
+      const msg = err.response?.data?.error || err.message || 'Unknown';
+      alert('Error eliminando: ' + msg);
     } finally {
       setDeleting(false);
     }

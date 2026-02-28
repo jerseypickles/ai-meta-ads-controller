@@ -419,26 +419,48 @@ class MetaClient {
   }
 
   /**
-   * Eliminar un objeto de Meta (ad, adset, campaign) via HTTP DELETE.
-   * Meta API: DELETE /{object_id}
+   * Eliminar un objeto de Meta (ad, adset, campaign).
+   * Intenta HTTP DELETE primero, si falla intenta POST con status=DELETED.
    */
   async deleteObject(objectId) {
     await this._ensureToken();
     logger.info(`Eliminando objeto ${objectId} de Meta`);
-    return this.limiter.schedule(() =>
+
+    // Approach 1: HTTP DELETE /{object_id}
+    try {
+      const res = await this.limiter.schedule(() =>
+        withRetry(
+          () => this.client.delete(`/${objectId}`, { params: { access_token: this.accessToken } }),
+          {
+            maxRetries: 1,
+            baseDelay: 2000,
+            shouldRetry: shouldRetryMetaError,
+            label: `META DELETE ${objectId}`
+          }
+        )
+      );
+      this._checkRateLimitHeaders(res);
+      logger.info(`Objeto ${objectId} eliminado via HTTP DELETE`);
+      return res.data;
+    } catch (deleteErr) {
+      logger.warn(`HTTP DELETE falló para ${objectId}: ${deleteErr.response?.data?.error?.message || deleteErr.message}. Intentando POST con status=DELETED...`);
+    }
+
+    // Approach 2: POST /{object_id} with status=DELETED
+    const res = await this.limiter.schedule(() =>
       withRetry(
-        () => this.client.delete(`/${objectId}`, { params: { access_token: this.accessToken } }),
+        () => this.client.post(`/${objectId}`, null, { params: { status: 'DELETED', access_token: this.accessToken } }),
         {
           maxRetries: 2,
           baseDelay: 2000,
           shouldRetry: shouldRetryMetaError,
-          label: `META DELETE ${objectId}`
+          label: `META POST-DELETE ${objectId}`
         }
       )
-    ).then(res => {
-      this._checkRateLimitHeaders(res);
-      return res.data;
-    });
+    );
+    this._checkRateLimitHeaders(res);
+    logger.info(`Objeto ${objectId} eliminado via POST status=DELETED`);
+    return res.data;
   }
 
   /**

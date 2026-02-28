@@ -253,7 +253,9 @@ router.post('/delete/:entityId', async (req, res) => {
     const { entityId } = req.params;
     const meta = getMetaClient();
 
+    logger.info(`[DELETE] Intentando eliminar ${entityId}`);
     await meta.deleteObject(entityId);
+    logger.info(`[DELETE] ${entityId} eliminado exitosamente`);
 
     await ActionLog.create({
       entity_type: req.body.entity_type || 'ad',
@@ -272,7 +274,12 @@ router.post('/delete/:entityId', async (req, res) => {
       message: `${entityId} eliminado`
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    const metaError = error.response?.data?.error;
+    const errorMsg = metaError
+      ? `Meta API: ${metaError.message} (code ${metaError.code}, subcode ${metaError.error_subcode || 'N/A'})`
+      : error.message;
+    logger.error(`[DELETE] Error eliminando ${req.params.entityId}: ${errorMsg}`);
+    res.status(500).json({ error: errorMsg });
   }
 });
 
