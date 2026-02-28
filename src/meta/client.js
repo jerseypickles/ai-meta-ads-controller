@@ -410,12 +410,35 @@ class MetaClient {
    * Actualizar status de un objeto (ACTIVE o PAUSED)
    */
   async updateStatus(objectId, status) {
-    if (!['ACTIVE', 'PAUSED', 'DELETED'].includes(status)) {
-      throw new Error(`Status inválido: ${status}. Debe ser ACTIVE, PAUSED o DELETED`);
+    if (!['ACTIVE', 'PAUSED'].includes(status)) {
+      throw new Error(`Status inválido: ${status}. Debe ser ACTIVE o PAUSED`);
     }
 
     logger.info(`Actualizando status de ${objectId} a ${status}`);
     return this.post(`/${objectId}`, { status });
+  }
+
+  /**
+   * Eliminar un objeto de Meta (ad, adset, campaign) via HTTP DELETE.
+   * Meta API: DELETE /{object_id}
+   */
+  async deleteObject(objectId) {
+    await this._ensureToken();
+    logger.info(`Eliminando objeto ${objectId} de Meta`);
+    return this.limiter.schedule(() =>
+      withRetry(
+        () => this.client.delete(`/${objectId}`, { params: { access_token: this.accessToken } }),
+        {
+          maxRetries: 2,
+          baseDelay: 2000,
+          shouldRetry: shouldRetryMetaError,
+          label: `META DELETE ${objectId}`
+        }
+      )
+    ).then(res => {
+      this._checkRateLimitHeaders(res);
+      return res.data;
+    });
   }
 
   /**

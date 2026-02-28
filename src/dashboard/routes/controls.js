@@ -247,13 +247,13 @@ router.post('/pause/:entityId', async (req, res) => {
   }
 });
 
-// POST /api/controls/delete/:entityId — Eliminar (status DELETED en Meta)
+// POST /api/controls/delete/:entityId — Eliminar via HTTP DELETE en Meta API
 router.post('/delete/:entityId', async (req, res) => {
   try {
     const { entityId } = req.params;
     const meta = getMetaClient();
 
-    await meta.updateStatus(entityId, 'DELETED');
+    await meta.deleteObject(entityId);
 
     await ActionLog.create({
       entity_type: req.body.entity_type || 'ad',
