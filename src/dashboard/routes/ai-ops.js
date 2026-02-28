@@ -914,6 +914,38 @@ router.post('/add-ad', async (req, res) => {
   })();
 });
 
+/**
+ * POST /api/ai-ops/generate-copy
+ * Generates ad copy with Claude for preview (does NOT create the ad).
+ * Returns headlines + bodies for user review before committing.
+ */
+router.post('/generate-copy', async (req, res) => {
+  const { adset_id, asset_id } = req.body;
+  if (!adset_id || !asset_id) {
+    return res.status(400).json({ error: 'adset_id and asset_id required' });
+  }
+
+  try {
+    const creation = await AICreation.findOne({ meta_entity_id: adset_id }).lean();
+    if (!creation) return res.status(404).json({ error: 'Ad set not found' });
+
+    const asset = await CreativeAsset.findById(asset_id).lean();
+    if (!asset) return res.status(404).json({ error: 'Asset not found' });
+
+    const generated = await _generateAdCopy(asset, creation);
+    res.json({
+      success: true,
+      headlines: generated.headlines,
+      bodies: generated.bodies,
+      asset_name: asset.original_name,
+      product_name: asset.product_name || creation.product_name || ''
+    });
+  } catch (err) {
+    logger.error(`[AI-OPS] generate-copy error: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/add-ad-status/:jobId', (req, res) => {
   const job = addAdJobs.get(req.params.jobId);
   if (!job) return res.status(404).json({ error: 'Job no encontrado' });
@@ -970,10 +1002,19 @@ Return ONLY valid JSON, no markdown:
     };
   } catch (err) {
     logger.error(`[AI-OPS] Claude copy generation error: ${err.message}`);
-    // Fallback
+    // Fallback — always English, never use bank copy (may be in Spanish)
+    const productName = asset.product_name || 'Our Products';
     return {
-      headlines: [asset.headline || `Try ${asset.product_name || 'Our Products'}`],
-      bodies: [asset.body || 'Handcrafted with love. Shop now!']
+      headlines: [
+        `Try ${productName} Today`,
+        `You Need ${productName}`,
+        `Discover ${productName}`
+      ],
+      bodies: [
+        `Handcrafted with love and the freshest ingredients. Order now and taste the difference!`,
+        `Once you try it, you won't go back. Shop our ${productName.toLowerCase()} today!`,
+        `Your new favorite snack is waiting. Get ${productName.toLowerCase()} delivered to your door.`
+      ]
     };
   }
 }

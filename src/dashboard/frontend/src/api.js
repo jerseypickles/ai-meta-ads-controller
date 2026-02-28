@@ -852,6 +852,14 @@ export const getAvailableCreatives = async (adsetId) => {
   return response.data;
 };
 
+export const generateAdCopy = async (adsetId, assetId) => {
+  const response = await api.post('/api/ai-ops/generate-copy', {
+    adset_id: adsetId,
+    asset_id: assetId
+  }, { timeout: 60000 });
+  return response.data;
+};
+
 export const addAdToAdSet = async (adsetId, assetId, customHeadline, customBody) => {
   const response = await api.post('/api/ai-ops/add-ad', {
     adset_id: adsetId,

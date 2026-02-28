@@ -5,7 +5,7 @@ import {
   ChevronDown, ChevronRight, Image, Pause, Play, Target, Skull,
   ArrowDown, Shield, Timer, Power, Filter, Palette, BarChart3, Plus, Send, X
 } from 'lucide-react';
-import { getAIOpsStatus, runAIManager, runAgents, refreshAIOpsMetrics, pauseEntity, getAvailableCreatives, addAdToAdSet } from '../api';
+import { getAIOpsStatus, runAIManager, runAgents, refreshAIOpsMetrics, pauseEntity, getAvailableCreatives, addAdToAdSet, generateAdCopy, getCreativePreviewUrl } from '../api';
 
 // ═══ HELPERS ═══
 const fmt = (v, d = 2) => v != null ? Number(v).toFixed(d) : '0';
@@ -270,17 +270,21 @@ const CreativeHealthCard = ({ adset }) => {
   );
 };
 
-// ═══ ADD CREATIVE PANEL ═══
+// ═══ ADD CREATIVE PANEL (2-step: select asset → generate copy → review → create) ═══
 const AddCreativePanel = ({ adsetId, onClose, onSuccess }) => {
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
+  const [error, setError] = useState(null);
+
+  // Step 2: generated copy preview
+  const [generatingCopy, setGeneratingCopy] = useState(false);
+  const [generatedCopy, setGeneratedCopy] = useState(null); // { headlines: [], bodies: [] }
+  const [selectedVariant, setSelectedVariant] = useState(0);
+
+  // Step 3: creating ad
   const [creating, setCreating] = useState(false);
   const [result, setResult] = useState(null);
-  const [error, setError] = useState(null);
-  const [customHeadline, setCustomHeadline] = useState('');
-  const [customBody, setCustomBody] = useState('');
-  const [useCustom, setUseCustom] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -295,38 +299,70 @@ const AddCreativePanel = ({ adsetId, onClose, onSuccess }) => {
     })();
   }, [adsetId]);
 
-  const handleCreate = async () => {
+  const selectedAsset = assets.find(a => a._id === selected);
+
+  // Step 1→2: Generate copy with Claude
+  const handleGenerateCopy = async () => {
     if (!selected) return;
+    setGeneratingCopy(true);
+    setError(null);
+    setGeneratedCopy(null);
+    try {
+      const res = await generateAdCopy(adsetId, selected);
+      setGeneratedCopy({ headlines: res.headlines, bodies: res.bodies });
+      setSelectedVariant(0);
+    } catch (err) {
+      setError(err.message || 'Error generating copy');
+    } finally {
+      setGeneratingCopy(false);
+    }
+  };
+
+  // Step 2→3: Create ad with chosen variant
+  const handleCreate = async () => {
+    if (!selected || !generatedCopy) return;
     setCreating(true);
     setError(null);
     try {
-      const res = await addAdToAdSet(
-        adsetId, selected,
-        useCustom ? customHeadline : null,
-        useCustom ? customBody : null
-      );
+      const headline = generatedCopy.headlines[selectedVariant] || generatedCopy.headlines[0];
+      const body = generatedCopy.bodies[selectedVariant] || generatedCopy.bodies[0];
+      const res = await addAdToAdSet(adsetId, selected, headline, body);
       setResult(res.result || res);
       if (onSuccess) onSuccess();
     } catch (err) {
-      setError(err.message || 'Error creando ad');
+      setError(err.message || 'Error creating ad');
     } finally {
       setCreating(false);
     }
   };
 
-  const selectedAsset = assets.find(a => a._id === selected);
+  // Go back to asset selection
+  const handleBack = () => {
+    setGeneratedCopy(null);
+    setSelectedVariant(0);
+    setError(null);
+  };
+
+  const availableAssets = assets.filter(a => !a.already_in_adset);
 
   return (
     <div style={{
       backgroundColor: '#0d0f17', border: '1px solid #22c55e33',
-      borderRadius: '8px', padding: '12px', marginBottom: '10px'
+      borderRadius: '8px', padding: '14px', marginBottom: '10px'
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <Plus size={13} color="#22c55e" />
           <span style={{ fontSize: '11px', fontWeight: '700', color: '#22c55e', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            Add Creative
+            {!generatedCopy ? 'Select Creative' : 'Review Copy'}
           </span>
+          {generatedCopy && (
+            <button onClick={handleBack} style={{
+              fontSize: '10px', color: '#6b7280', background: 'none', border: '1px solid #1f2937',
+              borderRadius: '4px', padding: '2px 6px', cursor: 'pointer', marginLeft: '6px'
+            }}>Back</button>
+          )}
         </div>
         <button onClick={onClose} style={{
           background: 'none', border: 'none', color: '#4b5563', cursor: 'pointer', padding: '2px'
@@ -336,126 +372,188 @@ const AddCreativePanel = ({ adsetId, onClose, onSuccess }) => {
       {loading && <div style={{ fontSize: '11px', color: '#4b5563', padding: '8px 0' }}>Loading assets...</div>}
       {error && <div style={{ fontSize: '11px', color: '#fca5a5', padding: '6px 8px', backgroundColor: '#7f1d1d44', borderRadius: '4px', marginBottom: '8px' }}>{error}</div>}
 
+      {/* ═══ RESULT ═══ */}
       {result && (
-        <div style={{ fontSize: '11px', color: '#86efac', padding: '8px 10px', backgroundColor: '#14532d44', borderRadius: '6px' }}>
+        <div style={{ fontSize: '11px', color: '#86efac', padding: '10px 12px', backgroundColor: '#14532d44', borderRadius: '6px' }}>
           <CheckCircle size={12} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
           {result.ads_created} ad(s) created!
           {result.headlines && <div style={{ marginTop: '4px', color: '#6b7280' }}>Headlines: {result.headlines.join(' | ')}</div>}
         </div>
       )}
 
-      {!result && !loading && (
+      {/* ═══ STEP 1: Asset selection with image preview ═══ */}
+      {!result && !loading && !generatedCopy && (
         <>
-          {/* Asset grid */}
           <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-            gap: '6px', maxHeight: '250px', overflowY: 'auto', marginBottom: '10px'
+            display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
+            gap: '8px', maxHeight: '320px', overflowY: 'auto', marginBottom: '10px'
           }}>
-            {assets.filter(a => !a.already_in_adset).map(asset => (
+            {availableAssets.map(asset => (
               <div
                 key={asset._id}
                 onClick={() => setSelected(asset._id)}
                 style={{
-                  padding: '8px 10px', borderRadius: '6px', cursor: 'pointer',
-                  backgroundColor: selected === asset._id ? '#14532d33' : '#111827',
-                  border: `1px solid ${selected === asset._id ? '#22c55e' : '#1f2937'}`,
-                  transition: 'all 0.1s ease'
+                  borderRadius: '8px', cursor: 'pointer', overflow: 'hidden',
+                  backgroundColor: selected === asset._id ? '#14532d22' : '#111827',
+                  border: `2px solid ${selected === asset._id ? '#22c55e' : '#1f2937'}`,
+                  transition: 'all 0.15s ease'
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
-                  <Image size={11} color="#6b7280" />
-                  <span style={{ fontSize: '11px', color: '#d1d5db', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {asset.original_name}
-                  </span>
+                {/* Image preview */}
+                <div style={{
+                  width: '100%', height: '120px', backgroundColor: '#0a0b0f',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden'
+                }}>
+                  <img
+                    src={getCreativePreviewUrl(asset.filename)}
+                    alt={asset.original_name}
+                    style={{
+                      width: '100%', height: '100%', objectFit: 'cover'
+                    }}
+                    onError={(e) => { e.target.style.display = 'none'; e.target.parentNode.innerHTML = '<div style="color: #374151; font-size: 10px;">No preview</div>'; }}
+                  />
                 </div>
-                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                  {asset.style && (
-                    <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#1f2937', color: '#9ca3af' }}>
-                      {asset.style}
+                {/* Info */}
+                <div style={{ padding: '6px 8px' }}>
+                  <div style={{
+                    fontSize: '10px', color: '#d1d5db', fontWeight: '500',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '4px'
+                  }}>
+                    {asset.original_name}
+                  </div>
+                  <div style={{ display: 'flex', gap: '3px', flexWrap: 'wrap' }}>
+                    {asset.style && (
+                      <span style={{ fontSize: '8px', padding: '1px 4px', borderRadius: '3px', backgroundColor: '#1f2937', color: '#9ca3af' }}>
+                        {asset.style}
+                      </span>
+                    )}
+                    {asset.product_name && (
+                      <span style={{ fontSize: '8px', padding: '1px 4px', borderRadius: '3px', backgroundColor: '#1f2937', color: '#9ca3af' }}>
+                        {asset.product_name}
+                      </span>
+                    )}
+                    <span style={{
+                      fontSize: '8px', padding: '1px 4px', borderRadius: '3px',
+                      backgroundColor: asset.times_used === 0 ? '#14532d' : '#78350f',
+                      color: asset.times_used === 0 ? '#86efac' : '#fde68a'
+                    }}>
+                      {asset.times_used === 0 ? 'NEW' : `${asset.times_used}x`}
                     </span>
-                  )}
-                  {asset.product_name && (
-                    <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#1f2937', color: '#9ca3af' }}>
-                      {asset.product_name}
-                    </span>
-                  )}
-                  <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '3px', backgroundColor: asset.times_used === 0 ? '#14532d' : '#78350f', color: asset.times_used === 0 ? '#86efac' : '#fde68a' }}>
-                    {asset.times_used === 0 ? 'UNUSED' : `used ${asset.times_used}x`}
-                  </span>
-                  {asset.uploaded_to_meta && (
-                    <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '3px', backgroundColor: '#1e3a5f', color: '#93c5fd' }}>META</span>
-                  )}
+                  </div>
                 </div>
               </div>
             ))}
-            {assets.filter(a => !a.already_in_adset).length === 0 && (
-              <div style={{ padding: '12px', textAlign: 'center', fontSize: '11px', color: '#374151', gridColumn: '1 / -1' }}>
+            {availableAssets.length === 0 && (
+              <div style={{ padding: '20px', textAlign: 'center', fontSize: '11px', color: '#374151', gridColumn: '1 / -1' }}>
                 No available assets
               </div>
             )}
           </div>
 
-          {/* Custom copy toggle */}
-          {selected && (
-            <div style={{ marginBottom: '8px' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '11px', color: '#6b7280', marginBottom: '6px' }}>
-                <input
-                  type="checkbox"
-                  checked={useCustom}
-                  onChange={(e) => setUseCustom(e.target.checked)}
-                  style={{ accentColor: '#22c55e' }}
-                />
-                Custom copy (skip Claude generation)
-              </label>
-              {useCustom && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                  <input
-                    type="text"
-                    placeholder="Headline (max 40 chars)"
-                    value={customHeadline}
-                    onChange={e => setCustomHeadline(e.target.value)}
-                    maxLength={40}
-                    style={{
-                      padding: '6px 10px', borderRadius: '5px', border: '1px solid #1f2937',
-                      backgroundColor: '#111827', color: '#d1d5db', fontSize: '12px', outline: 'none'
-                    }}
-                  />
-                  <textarea
-                    placeholder="Primary text (2-3 sentences)"
-                    value={customBody}
-                    onChange={e => setCustomBody(e.target.value)}
-                    rows={2}
-                    style={{
-                      padding: '6px 10px', borderRadius: '5px', border: '1px solid #1f2937',
-                      backgroundColor: '#111827', color: '#d1d5db', fontSize: '12px', outline: 'none', resize: 'vertical'
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Create button */}
+          {/* Generate Copy button */}
           {selected && (
             <button
-              onClick={handleCreate}
-              disabled={creating || (useCustom && (!customHeadline || !customBody))}
+              onClick={handleGenerateCopy}
+              disabled={generatingCopy}
               style={{
-                width: '100%', padding: '8px 14px', borderRadius: '6px',
-                border: '1px solid #22c55e44',
-                backgroundColor: creating ? '#064e3b' : '#14532d',
-                color: '#86efac', fontSize: '11px', fontWeight: '700', cursor: creating ? 'wait' : 'pointer',
+                width: '100%', padding: '10px 14px', borderRadius: '7px',
+                border: '1px solid #8b5cf633',
+                background: generatingCopy ? '#2e1065' : 'linear-gradient(135deg, #4c1d95 0%, #7c3aed 100%)',
+                color: '#e9d5ff', fontSize: '12px', fontWeight: '700', cursor: generatingCopy ? 'wait' : 'pointer',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                opacity: creating || (useCustom && (!customHeadline || !customBody)) ? 0.6 : 1
+                opacity: generatingCopy ? 0.7 : 1, transition: 'all 0.15s ease'
               }}
             >
-              {creating ? (
-                <><RefreshCw size={12} style={{ animation: 'spin 1s linear infinite' }} /> Creating ads{useCustom ? '' : ' (Claude generating copy)'}...</>
+              {generatingCopy ? (
+                <><RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> Claude is writing copy...</>
               ) : (
-                <><Send size={12} /> Create Ad{useCustom ? '' : ' with Claude Copy'} — {selectedAsset?.original_name}</>
+                <><Brain size={13} /> Generate Copy with Claude</>
               )}
             </button>
           )}
+        </>
+      )}
+
+      {/* ═══ STEP 2: Copy preview + variant selection ═══ */}
+      {!result && generatedCopy && (
+        <>
+          {/* Selected asset preview bar */}
+          {selectedAsset && (
+            <div style={{
+              display: 'flex', gap: '10px', alignItems: 'center', padding: '8px 10px',
+              backgroundColor: '#111827', borderRadius: '6px', marginBottom: '12px'
+            }}>
+              <img
+                src={getCreativePreviewUrl(selectedAsset.filename)}
+                alt={selectedAsset.original_name}
+                style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '4px' }}
+                onError={(e) => { e.target.style.display = 'none'; }}
+              />
+              <div>
+                <div style={{ fontSize: '11px', color: '#d1d5db', fontWeight: '600' }}>{selectedAsset.original_name}</div>
+                <div style={{ fontSize: '10px', color: '#6b7280' }}>{selectedAsset.style} {selectedAsset.product_name ? `- ${selectedAsset.product_name}` : ''}</div>
+              </div>
+            </div>
+          )}
+
+          {/* Variant cards */}
+          <div style={{ fontSize: '10px', fontWeight: '700', color: '#4b5563', textTransform: 'uppercase', marginBottom: '6px', letterSpacing: '0.06em' }}>
+            Select a variant ({generatedCopy.headlines.length} generated)
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
+            {generatedCopy.headlines.map((headline, i) => (
+              <div
+                key={i}
+                onClick={() => setSelectedVariant(i)}
+                style={{
+                  padding: '10px 12px', borderRadius: '7px', cursor: 'pointer',
+                  backgroundColor: selectedVariant === i ? '#14532d22' : '#0f1119',
+                  border: `2px solid ${selectedVariant === i ? '#22c55e' : '#1f293766'}`,
+                  transition: 'all 0.12s ease'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '5px' }}>
+                  <div style={{
+                    width: '18px', height: '18px', borderRadius: '50%',
+                    border: `2px solid ${selectedVariant === i ? '#22c55e' : '#374151'}`,
+                    backgroundColor: selectedVariant === i ? '#22c55e' : 'transparent',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                  }}>
+                    {selectedVariant === i && <CheckCircle size={10} color="#0d0f17" />}
+                  </div>
+                  <span style={{ fontSize: '9px', fontWeight: '700', color: '#4b5563', textTransform: 'uppercase' }}>
+                    Variant {i + 1}
+                  </span>
+                </div>
+                <div style={{ paddingLeft: '24px' }}>
+                  <div style={{ fontSize: '10px', color: '#6b7280', textTransform: 'uppercase', marginBottom: '2px', fontWeight: '600' }}>Headline</div>
+                  <div style={{ fontSize: '13px', color: '#f1f5f9', fontWeight: '700', marginBottom: '6px' }}>{headline}</div>
+                  <div style={{ fontSize: '10px', color: '#6b7280', textTransform: 'uppercase', marginBottom: '2px', fontWeight: '600' }}>Primary Text</div>
+                  <div style={{ fontSize: '11px', color: '#9ca3af', lineHeight: '1.5' }}>{generatedCopy.bodies[i] || ''}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Create Ad button */}
+          <button
+            onClick={handleCreate}
+            disabled={creating}
+            style={{
+              width: '100%', padding: '10px 14px', borderRadius: '7px',
+              border: '1px solid #22c55e44',
+              background: creating ? '#064e3b' : 'linear-gradient(135deg, #14532d 0%, #166534 100%)',
+              color: '#86efac', fontSize: '12px', fontWeight: '700', cursor: creating ? 'wait' : 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+              opacity: creating ? 0.7 : 1, transition: 'all 0.15s ease'
+            }}
+          >
+            {creating ? (
+              <><RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> Creating ad in Meta...</>
+            ) : (
+              <><Send size={13} /> Create Ad with Variant {selectedVariant + 1}</>
+            )}
+          </button>
         </>
       )}
     </div>
