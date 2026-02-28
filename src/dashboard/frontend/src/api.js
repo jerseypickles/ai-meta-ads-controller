@@ -425,6 +425,17 @@ export const pauseEntity = async (entityId, data) => {
 };
 
 /**
+ * Eliminar entidad (campaign, adset, ad) manualmente — status DELETED en Meta
+ * @param {string} entityId - ID de la entidad
+ * @param {Object} data - { entity_type: 'campaign'|'adset'|'ad', entity_name: string, reason: string }
+ * @returns {Promise<Object>} Resultado de la acción
+ */
+export const deleteEntity = async (entityId, data) => {
+  const response = await api.post(`/api/controls/delete/${entityId}`, data, { timeout: 60000 });
+  return response.data;
+};
+
+/**
  * Activar entidad (campaign, adset, ad) manualmente
  * @param {string} entityId - ID de la entidad
  * @param {Object} data - { entity_type: 'campaign'|'adset'|'ad', reason: string }

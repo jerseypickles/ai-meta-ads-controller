@@ -3,9 +3,9 @@ import {
   Activity, Brain, Bot, Clock, AlertTriangle, CheckCircle, XCircle,
   TrendingUp, TrendingDown, DollarSign, Eye, Zap, RefreshCw,
   ChevronDown, ChevronRight, Image, Pause, Play, Target, Skull,
-  ArrowDown, Shield, Timer, Power, Filter, Palette, BarChart3, Plus, Send, X
+  ArrowDown, Shield, Timer, Power, Filter, Palette, BarChart3, Plus, Send, X, Trash2
 } from 'lucide-react';
-import { getAIOpsStatus, runAIManager, runAgents, refreshAIOpsMetrics, pauseEntity, getAvailableCreatives, addAdToAdSet, generateAdCopy, getCreativePreviewUrl } from '../api';
+import { getAIOpsStatus, runAIManager, runAgents, refreshAIOpsMetrics, pauseEntity, deleteEntity, getAvailableCreatives, addAdToAdSet, generateAdCopy, getCreativePreviewUrl } from '../api';
 
 // ═══ HELPERS ═══
 const fmt = (v, d = 2) => v != null ? Number(v).toFixed(d) : '0';
@@ -79,20 +79,21 @@ const StatBadge = ({ icon: Icon, iconColor, label, value, subValue, subColor, ac
   </div>
 );
 
-// ═══ AD ROW (creative inside an ad set — with pause button) ═══
-const AdRow = ({ ad, onPause }) => {
+// ═══ AD ROW (creative inside an ad set — with pause + delete buttons) ═══
+const AdRow = ({ ad, onPause, onDelete }) => {
   const [pausing, setPausing] = useState(false);
-  const [paused, setPaused] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [removed, setRemoved] = useState(false);
   const m = ad.metrics_7d || {};
 
   const handlePause = async (e) => {
     e.stopPropagation();
-    if (pausing || paused) return;
+    if (pausing || deleting || removed) return;
     if (!confirm(`Pausar "${ad.ad_name || ad.ad_id}"?`)) return;
     setPausing(true);
     try {
       await pauseEntity(ad.ad_id, { entity_type: 'ad', entity_name: ad.ad_name || ad.ad_id, reason: 'Pausado manualmente desde AI Ops' });
-      setPaused(true);
+      setRemoved(true);
       if (onPause) onPause(ad.ad_id);
     } catch (err) {
       alert('Error pausando: ' + (err.message || 'Unknown'));
@@ -101,11 +102,27 @@ const AdRow = ({ ad, onPause }) => {
     }
   };
 
-  if (paused) return null; // Hide after pausing
+  const handleDelete = async (e) => {
+    e.stopPropagation();
+    if (pausing || deleting || removed) return;
+    if (!confirm(`ELIMINAR "${ad.ad_name || ad.ad_id}"? Esta accion no se puede deshacer.`)) return;
+    setDeleting(true);
+    try {
+      await deleteEntity(ad.ad_id, { entity_type: 'ad', entity_name: ad.ad_name || ad.ad_id, reason: 'Eliminado manualmente desde AI Ops' });
+      setRemoved(true);
+      if (onDelete) onDelete(ad.ad_id);
+    } catch (err) {
+      alert('Error eliminando: ' + (err.message || 'Unknown'));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  if (removed) return null;
 
   return (
     <div style={{
-      display: 'grid', gridTemplateColumns: '20px 1fr 70px 70px 55px 50px 55px 32px',
+      display: 'grid', gridTemplateColumns: '20px 1fr 70px 70px 55px 50px 55px 60px',
       gap: '6px', alignItems: 'center', padding: '7px 12px',
       backgroundColor: '#0f1119',
       borderRadius: '6px', borderLeft: '2px solid #22c55e44'
@@ -134,20 +151,36 @@ const AdRow = ({ ad, onPause }) => {
         fontSize: '11px', textAlign: 'right',
         color: (m.frequency || 0) > 4 ? '#ef4444' : (m.frequency || 0) > 3 ? '#f59e0b' : '#6b7280'
       }}>{fmt(m.frequency, 1)}</span>
-      <button
-        onClick={handlePause}
-        disabled={pausing}
-        title="Pausar este ad"
-        style={{
-          width: '26px', height: '26px', borderRadius: '5px',
-          border: '1px solid #ef444444', backgroundColor: pausing ? '#7f1d1d' : '#1a0a0a',
-          color: '#ef4444', cursor: pausing ? 'wait' : 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          transition: 'all 0.15s ease', padding: 0
-        }}
-      >
-        {pausing ? <RefreshCw size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Pause size={10} />}
-      </button>
+      <div style={{ display: 'flex', gap: '3px', justifyContent: 'flex-end' }}>
+        <button
+          onClick={handlePause}
+          disabled={pausing || deleting}
+          title="Pausar"
+          style={{
+            width: '26px', height: '26px', borderRadius: '5px',
+            border: '1px solid #f59e0b44', backgroundColor: pausing ? '#78350f' : '#1a1408',
+            color: '#f59e0b', cursor: pausing ? 'wait' : 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'all 0.15s ease', padding: 0
+          }}
+        >
+          {pausing ? <RefreshCw size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Pause size={10} />}
+        </button>
+        <button
+          onClick={handleDelete}
+          disabled={pausing || deleting}
+          title="Eliminar"
+          style={{
+            width: '26px', height: '26px', borderRadius: '5px',
+            border: '1px solid #ef444444', backgroundColor: deleting ? '#7f1d1d' : '#1a0a0a',
+            color: '#ef4444', cursor: deleting ? 'wait' : 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'all 0.15s ease', padding: 0
+          }}
+        >
+          {deleting ? <RefreshCw size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Trash2 size={10} />}
+        </button>
+      </div>
     </div>
   );
 };
@@ -762,7 +795,7 @@ const AdSetCard = ({ adset, onRefresh }) => {
           {/* Active Ads */}
           <div style={{ marginBottom: '10px' }}>
             <div style={{
-              display: 'grid', gridTemplateColumns: '20px 1fr 70px 70px 55px 50px 55px 32px',
+              display: 'grid', gridTemplateColumns: '20px 1fr 70px 70px 55px 50px 55px 60px',
               gap: '6px', padding: '3px 12px', fontSize: '9px', color: '#4b5563',
               fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.06em'
             }}>

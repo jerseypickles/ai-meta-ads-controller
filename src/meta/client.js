@@ -410,8 +410,8 @@ class MetaClient {
    * Actualizar status de un objeto (ACTIVE o PAUSED)
    */
   async updateStatus(objectId, status) {
-    if (!['ACTIVE', 'PAUSED'].includes(status)) {
-      throw new Error(`Status inválido: ${status}. Debe ser ACTIVE o PAUSED`);
+    if (!['ACTIVE', 'PAUSED', 'DELETED'].includes(status)) {
+      throw new Error(`Status inválido: ${status}. Debe ser ACTIVE, PAUSED o DELETED`);
     }
 
     logger.info(`Actualizando status de ${objectId} a ${status}`);

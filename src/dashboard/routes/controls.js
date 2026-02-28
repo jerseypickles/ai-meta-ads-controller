@@ -247,6 +247,35 @@ router.post('/pause/:entityId', async (req, res) => {
   }
 });
 
+// POST /api/controls/delete/:entityId — Eliminar (status DELETED en Meta)
+router.post('/delete/:entityId', async (req, res) => {
+  try {
+    const { entityId } = req.params;
+    const meta = getMetaClient();
+
+    await meta.updateStatus(entityId, 'DELETED');
+
+    await ActionLog.create({
+      entity_type: req.body.entity_type || 'ad',
+      entity_id: entityId,
+      entity_name: req.body.entity_name || entityId,
+      action: 'delete',
+      before_value: req.body.previous_status || 'ACTIVE',
+      after_value: 'DELETED',
+      reasoning: req.body.reason || 'Eliminado manualmente desde el dashboard',
+      confidence: 'high',
+      success: true
+    });
+
+    res.json({
+      success: true,
+      message: `${entityId} eliminado`
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // POST /api/controls/activate/:entityId — Activar manualmente
 router.post('/activate/:entityId', async (req, res) => {
   try {
