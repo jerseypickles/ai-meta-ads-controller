@@ -732,25 +732,49 @@ router.get('/impact', async (req, res) => {
   }
 });
 
-// POST /api/agents/run — Forzar ejecucion manual del Cerebro IA
+// POST /api/agents/run — Forzar ejecucion manual del Cerebro IA (background + polling)
 router.post('/run', async (req, res) => {
   try {
     logger.info('[MANUAL] Ejecucion del Cerebro IA solicitada desde dashboard');
-    const brain = new UnifiedBrain();
-    const result = await brain.runCycle();
-    const recommendations = result?.report?.recommendations?.length || result?.recommendations || 0;
-    res.json({
-      success: true,
-      result: {
-        cycleId: result?.cycleId,
-        elapsed: result?.elapsed,
-        recommendations,
-        autoExecuted: result?.autoExecuted || 0,
-        abortReason: result?.abortReason || null
-      }
+
+    const jobId = `brain_run_${Date.now()}`;
+    agentExecJobs.set(jobId, { status: 'running', startedAt: Date.now(), result: null, error: null });
+
+    // Respond immediately
+    res.json({ success: true, async: true, job_id: jobId, message: 'Cerebro IA iniciado en background' });
+
+    // Execute in background
+    (async () => {
+      const brain = new UnifiedBrain();
+      const result = await brain.runCycle();
+      const recommendations = result?.report?.recommendations?.length || result?.recommendations || 0;
+      agentExecJobs.set(jobId, {
+        status: 'completed',
+        startedAt: agentExecJobs.get(jobId)?.startedAt,
+        result: {
+          success: true,
+          cycleId: result?.cycleId,
+          elapsed: result?.elapsed,
+          recommendations,
+          autoExecuted: result?.autoExecuted || 0,
+          abortReason: result?.abortReason || null
+        },
+        error: null
+      });
+      logger.info(`[MANUAL] Cerebro IA completado — job ${jobId}`);
+    })().catch(error => {
+      logger.error('Error ejecutando Cerebro IA manualmente:', error);
+      agentExecJobs.set(jobId, {
+        status: 'failed',
+        startedAt: agentExecJobs.get(jobId)?.startedAt,
+        result: null,
+        error: error.message
+      });
+    }).finally(() => {
+      setTimeout(() => agentExecJobs.delete(jobId), AGENT_EXEC_JOB_TTL);
     });
   } catch (error) {
-    logger.error('Error ejecutando Cerebro IA manualmente:', error);
+    logger.error('Error iniciando Cerebro IA:', error);
     res.status(500).json({ error: error.message });
   }
 });

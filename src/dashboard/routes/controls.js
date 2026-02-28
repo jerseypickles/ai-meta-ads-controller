@@ -12,6 +12,10 @@ const logger = require('../../utils/logger');
 
 const SUPPORTED_ENGINE_MODES = ['unified_shadow', 'unified_live'];
 
+// In-memory store for background cycle run jobs
+const cycleRunJobs = new Map();
+const CYCLE_RUN_JOB_TTL = 10 * 60 * 1000; // 10 minutes
+
 function normalizeEngineMode(mode) {
   return SUPPORTED_ENGINE_MODES.includes(mode) ? mode : 'unified_shadow';
 }
@@ -118,7 +122,7 @@ router.put('/engine-mode', async (req, res) => {
   }
 });
 
-// POST /api/controls/run-cycle — Ejecutar un ciclo IA inmediato según modo activo
+// POST /api/controls/run-cycle — Ejecutar un ciclo IA inmediato (background + polling)
 router.post('/run-cycle', async (req, res) => {
   try {
     const aiEnabled = await isAIEnabled();
@@ -132,16 +136,57 @@ router.post('/run-cycle', async (req, res) => {
     );
     const normalizedMode = normalizeEngineMode(mode);
 
-    const result = await executeCycleForMode(normalizedMode);
+    const jobId = `cycle_run_${Date.now()}`;
+    cycleRunJobs.set(jobId, { status: 'running', startedAt: Date.now(), result: null, error: null });
 
-    return res.json({
-      success: true,
-      result
+    // Respond immediately
+    res.json({ success: true, async: true, job_id: jobId, message: `Ciclo IA (${normalizedMode}) iniciado en background` });
+
+    // Execute in background
+    (async () => {
+      const result = await executeCycleForMode(normalizedMode);
+      cycleRunJobs.set(jobId, {
+        status: 'completed',
+        startedAt: cycleRunJobs.get(jobId)?.startedAt,
+        result,
+        error: null
+      });
+      logger.info(`[MANUAL] Ciclo IA completado — job ${jobId}`);
+    })().catch(error => {
+      logger.error('Error ejecutando ciclo IA manual:', error);
+      cycleRunJobs.set(jobId, {
+        status: 'failed',
+        startedAt: cycleRunJobs.get(jobId)?.startedAt,
+        result: null,
+        error: error.message
+      });
+    }).finally(() => {
+      setTimeout(() => cycleRunJobs.delete(jobId), CYCLE_RUN_JOB_TTL);
     });
   } catch (error) {
-    logger.error('Error ejecutando ciclo IA manual:', error);
+    logger.error('Error iniciando ciclo IA:', error);
     res.status(500).json({ error: error.message });
   }
+});
+
+// GET /api/controls/run-cycle-status/:jobId — Poll status of background cycle run
+router.get('/run-cycle-status/:jobId', async (req, res) => {
+  const job = cycleRunJobs.get(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ error: 'Job no encontrado o expirado' });
+  }
+
+  const elapsed = Math.round((Date.now() - job.startedAt) / 1000);
+
+  if (job.status === 'running') {
+    return res.json({ status: 'running', elapsed_seconds: elapsed });
+  }
+
+  if (job.status === 'completed') {
+    return res.json({ status: 'completed', elapsed_seconds: elapsed, result: job.result });
+  }
+
+  return res.json({ status: 'failed', elapsed_seconds: elapsed, error: job.error });
 });
 
 // POST /api/controls/kill-switch — Activar/desactivar kill switch

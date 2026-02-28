@@ -11,6 +11,10 @@ const { getMetaClient } = require('../../meta/client');
 const { parseInsightRow, getTimeRanges, parseBudget } = require('../../meta/helpers');
 const logger = require('../../utils/logger');
 
+// In-memory store for background refresh jobs
+const refreshJobs = new Map();
+const REFRESH_JOB_TTL = 10 * 60 * 1000; // 10 minutes
+
 /**
  * GET /api/ai-ops/status
  * Complete operational visibility: AI Manager + Brain + Directives + Ads/Creatives + Timeline
@@ -597,16 +601,64 @@ async function refreshAIOpsMetrics() {
 
 /**
  * POST /api/ai-ops/refresh
- * Fuerza la recolección de métricas desde Meta API para ad sets AI-managed.
+ * Fuerza la recolección de métricas desde Meta API (background + polling).
  */
 router.post('/refresh', async (req, res) => {
   try {
-    const result = await refreshAIOpsMetrics();
-    res.json(result);
+    const jobId = `aiops_refresh_${Date.now()}`;
+    refreshJobs.set(jobId, { status: 'running', startedAt: Date.now(), result: null, error: null });
+
+    // Respond immediately
+    res.json({ success: true, async: true, job_id: jobId, message: 'Refresh de métricas iniciado en background' });
+
+    // Execute in background
+    (async () => {
+      const result = await refreshAIOpsMetrics();
+      refreshJobs.set(jobId, {
+        status: 'completed',
+        startedAt: refreshJobs.get(jobId)?.startedAt,
+        result,
+        error: null
+      });
+      logger.info(`[AI-OPS REFRESH] Completado — job ${jobId}`);
+    })().catch(error => {
+      logger.error(`[AI-OPS REFRESH] Error: ${error.message}`);
+      refreshJobs.set(jobId, {
+        status: 'failed',
+        startedAt: refreshJobs.get(jobId)?.startedAt,
+        result: null,
+        error: error.message
+      });
+    }).finally(() => {
+      setTimeout(() => refreshJobs.delete(jobId), REFRESH_JOB_TTL);
+    });
   } catch (error) {
-    logger.error(`[AI-OPS REFRESH] Error: ${error.message}`);
+    logger.error(`[AI-OPS REFRESH] Error iniciando refresh: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
+});
+
+/**
+ * GET /api/ai-ops/refresh-status/:jobId
+ * Poll status of background refresh job.
+ */
+router.get('/refresh-status/:jobId', async (req, res) => {
+  const job = refreshJobs.get(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ error: 'Job no encontrado o expirado' });
+  }
+
+  const elapsed = Math.round((Date.now() - job.startedAt) / 1000);
+
+  if (job.status === 'running') {
+    return res.json({ status: 'running', elapsed_seconds: elapsed });
+  }
+
+  if (job.status === 'completed') {
+    return res.json({ status: 'completed', elapsed_seconds: elapsed, result: job.result });
+  }
+
+  return res.json({ status: 'failed', elapsed_seconds: elapsed, error: job.error });
 });
 
 module.exports = router;

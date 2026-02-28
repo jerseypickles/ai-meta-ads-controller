@@ -14,6 +14,10 @@ const ActionLog = require('../../db/models/ActionLog');
 const approvalJobs = new Map();
 const APPROVAL_JOB_TTL = 10 * 60 * 1000; // 10 minutes
 
+// In-memory store for background manager run jobs
+const managerRunJobs = new Map();
+const MANAGER_RUN_JOB_TTL = 15 * 60 * 1000; // 15 minutes
+
 /**
  * POST /api/adset-creator/strategize
  * Claude analiza banco creativo + performance y propone 2-3 ad sets.
@@ -478,18 +482,66 @@ router.get('/manager/status/live', async (req, res) => {
 
 /**
  * POST /api/adset-creator/manager/run
- * Ejecuta el manager manualmente (analiza y toma acciones sobre todos los ad sets IA).
+ * Ejecuta el manager manualmente (background + polling).
  */
 router.post('/manager/run', async (req, res) => {
   try {
     logger.info('[AI-MANAGER] Ejecución manual del manager solicitada');
-    const result = await runManager();
-    logger.info(`[AI-MANAGER] Manager completado: ${result.managed} gestionados, ${result.actions_taken} acciones`);
-    res.json({ success: true, ...result });
+
+    const jobId = `manager_run_${Date.now()}`;
+    managerRunJobs.set(jobId, { status: 'running', startedAt: Date.now(), result: null, error: null });
+
+    // Respond immediately
+    res.json({ success: true, async: true, job_id: jobId, message: 'AI Manager iniciado en background' });
+
+    // Execute in background
+    (async () => {
+      const result = await runManager();
+      logger.info(`[AI-MANAGER] Manager completado: ${result.managed} gestionados, ${result.actions_taken} acciones`);
+      managerRunJobs.set(jobId, {
+        status: 'completed',
+        startedAt: managerRunJobs.get(jobId)?.startedAt,
+        result: { success: true, ...result },
+        error: null
+      });
+    })().catch(error => {
+      logger.error(`[ADSET-CREATOR] Error ejecutando manager: ${error.message}`);
+      managerRunJobs.set(jobId, {
+        status: 'failed',
+        startedAt: managerRunJobs.get(jobId)?.startedAt,
+        result: null,
+        error: error.message
+      });
+    }).finally(() => {
+      setTimeout(() => managerRunJobs.delete(jobId), MANAGER_RUN_JOB_TTL);
+    });
   } catch (error) {
-    logger.error(`[ADSET-CREATOR] Error ejecutando manager: ${error.message}`);
+    logger.error(`[ADSET-CREATOR] Error iniciando manager: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
+});
+
+/**
+ * GET /api/adset-creator/manager/run-status/:jobId
+ * Poll status of background manager run job.
+ */
+router.get('/manager/run-status/:jobId', async (req, res) => {
+  const job = managerRunJobs.get(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ error: 'Job no encontrado o expirado' });
+  }
+
+  const elapsed = Math.round((Date.now() - job.startedAt) / 1000);
+
+  if (job.status === 'running') {
+    return res.json({ status: 'running', elapsed_seconds: elapsed });
+  }
+
+  if (job.status === 'completed') {
+    return res.json({ status: 'completed', elapsed_seconds: elapsed, result: job.result });
+  }
+
+  return res.json({ status: 'failed', elapsed_seconds: elapsed, error: job.error });
 });
 
 /**

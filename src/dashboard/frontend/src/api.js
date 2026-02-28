@@ -403,8 +403,14 @@ export const updateDecisionEngineMode = async (mode) => {
  * @returns {Promise<Object>} Resultado de ejecución
  */
 export const runAICycle = async () => {
-  const response = await api.post('/api/controls/run-cycle', {}, { timeout: 180000 });
-  return response.data;
+  const response = await api.post('/api/controls/run-cycle', {}, { timeout: 30000 });
+  const data = response.data;
+
+  if (data.async && data.job_id) {
+    return pollForCompletion(`/api/controls/run-cycle-status/${data.job_id}`, 3000, 600000);
+  }
+
+  return data;
 };
 
 /**
@@ -627,8 +633,14 @@ export const executeRecommendation = async (reportId, recId, body = {}) => {
 };
 
 export const runAgents = async () => {
-  const response = await api.post('/api/agents/run', {}, { timeout: 180000 });
-  return response.data;
+  const response = await api.post('/api/agents/run', {}, { timeout: 30000 });
+  const data = response.data;
+
+  if (data.async && data.job_id) {
+    return pollForCompletion(`/api/agents/execute-status/${data.job_id}`, 3000, 600000);
+  }
+
+  return data;
 };
 
 export const getAdsForAdSet = async (adSetId) => {
@@ -796,8 +808,14 @@ export const getManagerStatusLive = async () => {
 };
 
 export const runAIManager = async () => {
-  const response = await api.post('/api/adset-creator/manager/run', {}, { timeout: 300000 });
-  return response.data;
+  const response = await api.post('/api/adset-creator/manager/run', {}, { timeout: 30000 });
+  const data = response.data;
+
+  if (data.async && data.job_id) {
+    return pollForCompletion(`/api/adset-creator/manager/run-status/${data.job_id}`, 3000, 600000);
+  }
+
+  return data;
 };
 
 export const getManagerControlPanel = async () => {
@@ -815,8 +833,14 @@ export const getAIOpsStatus = async () => {
 };
 
 export const refreshAIOpsMetrics = async () => {
-  const response = await api.post('/api/ai-ops/refresh', {}, { timeout: 180000 });
-  return response.data;
+  const response = await api.post('/api/ai-ops/refresh', {}, { timeout: 30000 });
+  const data = response.data;
+
+  if (data.async && data.job_id) {
+    return pollForCompletion(`/api/ai-ops/refresh-status/${data.job_id}`, 3000, 600000);
+  }
+
+  return data;
 };
 
 // ============================================
