@@ -140,6 +140,7 @@ const aiCreationSchema = new mongoose.Schema({
   // Manager assessment (ultimo check del AI manager)
   last_manager_assessment: { type: String, default: '' },
   last_manager_frequency_status: { type: String, default: 'unknown' },
+  last_manager_creative_health: { type: String, default: '' },
   last_manager_check: { type: Date, default: null },
 
   created_at: { type: Date, default: Date.now, index: true },

@@ -216,6 +216,8 @@ router.get('/status', async (req, res) => {
         created_at: creation.created_at,
         last_manager_check: creation.last_manager_check,
         last_assessment: creation.last_manager_assessment || '',
+        creative_health: creation.last_manager_creative_health || '',
+        frequency_status: creation.last_manager_frequency_status || 'unknown',
         metrics_7d: {
           spend: m7.spend || 0,
           roas: m7.roas || 0,

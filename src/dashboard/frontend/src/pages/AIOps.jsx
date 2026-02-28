@@ -3,7 +3,7 @@ import {
   Activity, Brain, Bot, Clock, AlertTriangle, CheckCircle, XCircle,
   TrendingUp, TrendingDown, DollarSign, Eye, Zap, RefreshCw,
   ChevronDown, ChevronRight, Image, Pause, Play, Target, Skull,
-  ArrowDown, Shield, Timer, Power, Filter
+  ArrowDown, Shield, Timer, Power, Filter, Palette
 } from 'lucide-react';
 import { getAIOpsStatus, runAIManager, runAgents, refreshAIOpsMetrics } from '../api';
 
@@ -225,6 +225,16 @@ const AdSetCard = ({ adset }) => {
           <span style={{ fontSize: '12px', color: '#6b7280' }}>
             {activeAds.length} ON / {pausedAds.length} OFF
           </span>
+          {adset.frequency_status && adset.frequency_status !== 'unknown' && adset.frequency_status !== 'ok' && (
+            <span style={{
+              fontSize: '10px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px',
+              backgroundColor: adset.frequency_status === 'critical' ? '#7f1d1d' : adset.frequency_status === 'high' ? '#78350f' : '#1e3a5f',
+              color: adset.frequency_status === 'critical' ? '#fca5a5' : adset.frequency_status === 'high' ? '#fde68a' : '#93c5fd',
+              border: `1px solid ${adset.frequency_status === 'critical' ? '#dc2626' : adset.frequency_status === 'high' ? '#f59e0b' : '#3b82f6'}`
+            }}>
+              FREQ {adset.frequency_status.toUpperCase()}
+            </span>
+          )}
           {hasDirectives && (
             <span style={{
               fontSize: '10px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px',
@@ -257,7 +267,7 @@ const AdSetCard = ({ adset }) => {
           {(adset.recent_actions || []).length > 0 && (() => {
             const lastAction = adset.recent_actions[0];
             const hoursAgo = lastAction.hours_ago || 0;
-            const isBreathing = hoursAgo < 24;
+            const isBreathing = hoursAgo < 12;
             return isBreathing ? (
               <div style={{
                 padding: '8px 12px', backgroundColor: '#1e3a5f22', border: '1px solid #3b82f633',
@@ -265,7 +275,7 @@ const AdSetCard = ({ adset }) => {
                 fontSize: '12px', color: '#93c5fd'
               }}>
                 <Timer size={14} color="#3b82f6" />
-                Respirando — ultima accion hace {hoursAgo}h ({lastAction.action}). Proximo cambio permitido en ~{Math.max(1, 24 - hoursAgo)}h.
+                Respirando — ultima accion hace {hoursAgo}h ({lastAction.action}). Proximo analisis de Claude en ~{Math.max(1, 12 - hoursAgo)}h. (Decision tree sigue activo)
               </div>
             ) : null;
           })()}
@@ -297,6 +307,20 @@ const AdSetCard = ({ adset }) => {
               fontSize: '12px', color: '#9ca3af', marginBottom: '12px', lineHeight: '1.5'
             }}>
               <b style={{ color: '#6b7280' }}>AI Assessment:</b> {adset.last_assessment.substring(0, 300)}
+            </div>
+          )}
+
+          {/* Creative Health */}
+          {adset.creative_health && (
+            <div style={{
+              padding: '8px 12px', backgroundColor: '#1a0d2e', border: '1px solid #7c3aed33',
+              borderRadius: '6px', fontSize: '12px', color: '#c4b5fd', marginBottom: '12px', lineHeight: '1.5'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                <Palette size={13} color="#a78bfa" />
+                <b style={{ color: '#a78bfa' }}>Creative Health:</b>
+              </div>
+              {adset.creative_health}
             </div>
           )}
 

@@ -954,6 +954,7 @@ async function manageAdSet(creation) {
   // Store last manager assessment
   creation.last_manager_assessment = decision.assessment || '';
   creation.last_manager_frequency_status = decision.frequency_status || 'unknown';
+  creation.last_manager_creative_health = decision.creative_health || '';
   creation.last_manager_check = new Date();
 
   creation.updated_at = new Date();
