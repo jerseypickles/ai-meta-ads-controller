@@ -243,47 +243,8 @@ async function manageAdSet(creation) {
   const now = new Date();
   const daysSinceCreation = (now - new Date(creation.created_at)) / (1000 * 60 * 60 * 24);
 
-  // ═══ BREATHING CHECK: no actuar si alguien ya tocó este ad set en las últimas 24h ═══
-  // Meta Ads necesita mínimo 24h para atribuir conversiones y estabilizar delivery.
-  // Si el Brain o este Manager ya actuó recientemente, esperar.
-  const cooldownManager = new CooldownManager();
-  const recentCheck = await cooldownManager.hasRecentAction(adSetId);
-  if (recentCheck.hasRecent) {
-    logger.info(`[AI-MANAGER] Saltando ${creation.meta_entity_name} — acción reciente hace ${recentCheck.hoursAgo}h por ${recentCheck.lastAgent} (${recentCheck.lastAction}). Esperando respiración 24h.`);
-    return {
-      actionsExecuted: 0,
-      assessment: `Esperando respiración: última acción hace ${recentCheck.hoursAgo}h por ${recentCheck.lastAgent}`,
-      frequency_status: 'unknown',
-      performance_trend: 'unknown',
-      needs_new_creatives: false
-    };
-  }
-
-  // ═══ PENDING IMPACT CHECK: no actuar si hay acciones pendientes de medición ═══
-  // Si ejecutamos algo en los últimos 3 días que aún no se midió, esperar resultado.
-  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
-  const pendingAction = await ActionLog.findOne({
-    entity_id: adSetId,
-    success: true,
-    impact_measured: { $ne: true },
-    executed_at: { $gte: threeDaysAgo }
-  }).sort({ executed_at: -1 }).lean();
-
-  if (pendingAction) {
-    const hoursAgo = Math.round((Date.now() - new Date(pendingAction.executed_at).getTime()) / (1000 * 60 * 60));
-    logger.info(`[AI-MANAGER] Saltando ${creation.meta_entity_name} — acción pendiente de medición: ${pendingAction.action} hace ${hoursAgo}h. Esperando resultado.`);
-    return {
-      actionsExecuted: 0,
-      assessment: `Esperando medición de impacto: ${pendingAction.action} hace ${hoursAgo}h`,
-      frequency_status: 'unknown',
-      performance_trend: 'unknown',
-      needs_new_creatives: false
-    };
-  }
-
-  // ═══ READ ALL METRICS FROM MONGODB (no Meta API calls for reads) ═══
+  // ═══ READ METRICS FIRST — needed for urgent decision tree before any cooldown checks ═══
   // DataCollector already fetches all metrics every 10 min and stores in MetricSnapshot.
-  // This eliminates ~80 API calls per AI Manager cycle.
 
   // 1. Get ad set snapshot from MongoDB
   const allAdSetSnapshots = await getLatestSnapshots('adset');
@@ -676,6 +637,44 @@ async function manageAdSet(creation) {
       assessment: `[HARDCODED] ${preDecision.reason}`,
       frequency_status: adSetFrequency > 4 ? 'critical' : adSetFrequency > 3 ? 'high' : 'ok',
       performance_trend: preDecision.action === 'kill' ? 'declining' : 'mixed',
+      needs_new_creatives: false
+    };
+  }
+
+  // ═══ BREATHING CHECK: Only blocks Claude analysis, NOT the decision tree above ═══
+  // Reduced from 24h to 12h — Meta needs some time for attribution but 24h was too conservative
+  const cooldownMgr = new CooldownManager();
+  const AI_MANAGER_BREATHING_HOURS = 12;
+  const recentAction = await cooldownMgr.hasRecentAction(adSetId, AI_MANAGER_BREATHING_HOURS);
+  if (recentAction.hasRecent) {
+    logger.info(`[AI-MANAGER] ${creation.meta_entity_name}: breathing — última acción hace ${recentAction.hoursAgo}h (${recentAction.lastAction} by ${recentAction.lastAgent}). Esperando ${AI_MANAGER_BREATHING_HOURS}h entre acciones de Claude.`);
+    return {
+      actionsExecuted: 0,
+      assessment: `Breathing: acción "${recentAction.lastAction}" hace ${recentAction.hoursAgo}h. Esperando ${AI_MANAGER_BREATHING_HOURS - recentAction.hoursAgo}h más para analizar.`,
+      frequency_status: adSetFrequency > 4 ? 'critical' : adSetFrequency > 3 ? 'high' : 'ok',
+      performance_trend: 'unknown',
+      needs_new_creatives: false
+    };
+  }
+
+  // ═══ PENDING IMPACT CHECK: Wait for recent actions to be measured ═══
+  // Reduced from 3 days to 24h — gives Meta enough time for basic attribution
+  const PENDING_IMPACT_HOURS = 24;
+  const pendingActions = await ActionLog.find({
+    entity_id: adSetId,
+    success: true,
+    impact_measured: false,
+    executed_at: { $gte: new Date(Date.now() - PENDING_IMPACT_HOURS * 60 * 60 * 1000) }
+  }).sort({ executed_at: -1 }).limit(1).lean();
+
+  if (pendingActions.length > 0) {
+    const hoursAgo = Math.round((Date.now() - new Date(pendingActions[0].executed_at).getTime()) / (1000 * 60 * 60));
+    logger.info(`[AI-MANAGER] ${creation.meta_entity_name}: pending impact — acción "${pendingActions[0].action}" hace ${hoursAgo}h aún no medida. Esperando hasta ${PENDING_IMPACT_HOURS}h.`);
+    return {
+      actionsExecuted: 0,
+      assessment: `Pending impact: "${pendingActions[0].action}" hace ${hoursAgo}h pendiente de medición.`,
+      frequency_status: adSetFrequency > 4 ? 'critical' : adSetFrequency > 3 ? 'high' : 'ok',
+      performance_trend: 'unknown',
       needs_new_creatives: false
     };
   }
@@ -1104,8 +1103,10 @@ async function manageAdSet(creation) {
  * 1. KILL: 7+ days, $50+ spent, 0 purchases → dead weight, kill immediately
  * 2. KILL: 5+ days, $40+ spent, ROAS < 0.5x → hemorrhaging money
  * 3. KILL: 10+ days, ROAS < roas_minimum consistently, 5+ Brain suppress directives
- * 4. FORCE SCALE DOWN: 4+ days, ROAS < 1.0x, $30+ spent → cut losses 50%
+ * 4. FORCE SCALE DOWN: 4+ days, ROAS <= 1.0x, $30+ spent → breakeven/losing, cut 50%
  * 5. FORCE SCALE DOWN: frequency > 4.0 (critical), ROAS < roas_target → audience saturated
+ * 6. KILL: 2+ critical Brain directives, ROAS < roas_minimum → Brain says critical
+ * 7. FORCE SCALE DOWN: 5+ days, $100+ spent, ROAS < roas_minimum (1.5x) → sustained underperformance, cut 40%
  */
 async function _hardcodedDecisionTree({
   creation, adSetId, adSetRoas, adSetSpend, adSetPurchases, adSetFrequency,
@@ -1137,14 +1138,14 @@ async function _hardcodedDecisionTree({
       `RULE 3: ${daysSinceCreation.toFixed(0)}d, ROAS ${adSetRoas.toFixed(2)}x < ${kpi.roas_minimum}x, ${suppressDirectives.length} suppress directives`);
   }
 
-  // ─── RULE 4: Below 1.0x ROAS with enough data → FORCE 50% SCALE DOWN ───
-  if (daysSinceCreation >= 4 && adSetSpend >= 30 && adSetRoas < 1.0 && adSetRoas > 0 && adSetPurchases > 0) {
+  // ─── RULE 4: At or below 1.0x ROAS (breakeven/losing) with enough data → FORCE 50% SCALE DOWN ───
+  if (daysSinceCreation >= 4 && adSetSpend >= 30 && adSetRoas <= 1.0 && adSetRoas > 0 && adSetPurchases > 0) {
     // Only if not already at minimum budget
     const minBudget = require('../../../config/safety-guards').min_adset_budget || 10;
     if (currentBudget > minBudget) {
       const newBudget = Math.max(Math.round(currentBudget * 0.5 * 100) / 100, minBudget);
       return await _forceScaleDown(creation, adSetId, meta, metricsAtExecution, currentBudget, newBudget,
-        `RULE 4: ROAS ${adSetRoas.toFixed(2)}x < 1.0x con $${adSetSpend.toFixed(0)} gastado — forzando 50% corte`);
+        `RULE 4: ROAS ${adSetRoas.toFixed(2)}x <= 1.0x con $${adSetSpend.toFixed(0)} gastado en ${daysSinceCreation.toFixed(0)}d — breakeven/perdiendo, forzando 50% corte`);
     }
   }
 
@@ -1162,6 +1163,17 @@ async function _hardcodedDecisionTree({
   if (criticalDirectives.length >= 2 && adSetRoas < kpi.roas_minimum && adSetSpend >= 20) {
     return await _forceKill(creation, adSetId, meta, metricsAtExecution,
       `RULE 6: ${criticalDirectives.length} critical directives + ROAS ${adSetRoas.toFixed(2)}x < ${kpi.roas_minimum}x`);
+  }
+
+  // ─── RULE 7: Below roas_minimum (1.5x) with significant spend and time → FORCE 40% SCALE DOWN ───
+  // Catches the "gray zone" between 1.0x and 1.5x that previous rules missed
+  if (daysSinceCreation >= 5 && adSetSpend >= 100 && adSetRoas < kpi.roas_minimum && adSetRoas > 0 && adSetPurchases > 0) {
+    const minBudget = require('../../../config/safety-guards').min_adset_budget || 10;
+    if (currentBudget > minBudget) {
+      const newBudget = Math.max(Math.round(currentBudget * 0.6 * 100) / 100, minBudget);
+      return await _forceScaleDown(creation, adSetId, meta, metricsAtExecution, currentBudget, newBudget,
+        `RULE 7: ROAS ${adSetRoas.toFixed(2)}x < ${kpi.roas_minimum}x (mínimo) con $${adSetSpend.toFixed(0)} gastado en ${daysSinceCreation.toFixed(0)}d — bajo rendimiento sostenido, forzando 40% corte`);
+    }
   }
 
   // No hardcoded rule triggered — let Claude decide
