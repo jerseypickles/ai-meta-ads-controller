@@ -13,7 +13,7 @@ const actionLogSchema = new mongoose.Schema({
     enum: [
       'scale_up', 'scale_down', 'pause', 'reactivate', 'kill_switch',
       'duplicate_adset', 'create_ad', 'update_bid_strategy',
-      'update_ad_status', 'move_budget', 'update_ad_creative'
+      'update_ad_status', 'move_budget', 'update_ad_creative', 'delete'
     ],
     required: true
   },
