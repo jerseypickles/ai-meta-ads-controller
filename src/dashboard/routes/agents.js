@@ -20,6 +20,7 @@ const DEFAULT_AUTONOMY = {
 // In-memory store for background agent execution jobs
 const agentExecJobs = new Map();
 const AGENT_EXEC_JOB_TTL = 10 * 60 * 1000; // 10 minutes
+const AGENT_EXEC_TIMEOUT = 5 * 60 * 1000; // 5 min max per job — force fail if stuck
 
 // GET /api/agents/latest — Ultimo reporte del Cerebro IA + historial de impacto por entidad
 router.get('/latest', async (req, res) => {
@@ -275,6 +276,20 @@ router.post('/execute/:reportId/:recId', async (req, res) => {
     // Launch Meta API execution in background
     const jobId = `agent_exec_${reportId}_${recId}_${Date.now()}`;
     agentExecJobs.set(jobId, { status: 'running', startedAt: Date.now(), result: null, error: null });
+
+    // Safety timeout: force-fail job if stuck running too long
+    const safetyTimer = setTimeout(() => {
+      const job = agentExecJobs.get(jobId);
+      if (job && job.status === 'running') {
+        logger.error(`[EXECUTE-BG] Job ${jobId} forzado a failed por timeout (${AGENT_EXEC_TIMEOUT / 1000}s)`);
+        agentExecJobs.set(jobId, {
+          status: 'failed',
+          startedAt: job.startedAt,
+          result: null,
+          error: 'Timeout: la ejecución tardó demasiado. Revisa los logs del servidor.'
+        });
+      }
+    }, AGENT_EXEC_TIMEOUT);
 
     // Respond immediately after validation passes
     res.json({ success: true, async: true, job_id: jobId, message: 'Ejecución iniciada en background' });
@@ -553,6 +568,7 @@ router.post('/execute/:reportId/:recId', async (req, res) => {
         error: error.message
       });
     }).finally(() => {
+      clearTimeout(safetyTimer);
       setTimeout(() => agentExecJobs.delete(jobId), AGENT_EXEC_JOB_TTL);
     });
   } catch (error) {

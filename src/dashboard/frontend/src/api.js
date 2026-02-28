@@ -320,9 +320,9 @@ export const executeDecisionRecommendation = async (decisionId, itemId) => {
   const response = await api.post(`/api/decisions/${decisionId}/items/${itemId}/execute`, {}, { timeout: 30000 });
   const data = response.data;
 
-  // If async execution, poll for result
+  // If async execution, poll for result (3s interval, 7 min max)
   if (data.async && data.job_id) {
-    return pollForCompletion(`/api/decisions/execute-status/${data.job_id}`);
+    return pollForCompletion(`/api/decisions/execute-status/${data.job_id}`, 3000, 420000);
   }
 
   // Fallback: direct response (shouldn't happen, but safe)
@@ -624,9 +624,9 @@ export const executeRecommendation = async (reportId, recId, body = {}) => {
   const response = await api.post(`/api/agents/execute/${reportId}/${recId}`, body, { timeout: 30000 });
   const data = response.data;
 
-  // If async execution, poll for result
+  // If async execution, poll for result (3s interval, 7 min max — backend has 5 min safety timeout)
   if (data.async && data.job_id) {
-    return pollForCompletion(`/api/agents/execute-status/${data.job_id}`);
+    return pollForCompletion(`/api/agents/execute-status/${data.job_id}`, 3000, 420000);
   }
 
   return data;
