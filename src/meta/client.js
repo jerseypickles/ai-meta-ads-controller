@@ -16,17 +16,20 @@ class MetaClient {
     this.baseUrl = `https://graph.facebook.com/${this.apiVersion}`;
     this._tokenLoaded = false;
 
-    // In-memory cache for insights (TTL 5 min) to avoid redundant API calls
+    // In-memory cache for insights (TTL 90s) — Meta refreshes insights ~every 15 min
+    // but we use a shorter TTL so data feels fresh when user force-refreshes
     this._insightsCache = new Map();
-    this._insightsCacheTTL = 5 * 60 * 1000; // 5 minutes
+    this._insightsCacheTTL = 90 * 1000; // 90 seconds
 
-    // Rate limiter: 200 llamadas/hora = ~3.3/min — usamos 3/min con margen
+    // Rate limiter: Standard tier allows 190,000 + 400*active_ads per hour.
+    // We cap at 1,000/hour locally (very safe), with adaptive throttling via headers.
+    // minTime starts at 500ms (2 calls/sec) — adjusted dynamically by _checkRateLimitHeaders.
     this.limiter = new Bottleneck({
-      reservoir: 200,
-      reservoirRefreshAmount: 200,
-      reservoirRefreshInterval: 60 * 60 * 1000, // 1 hora
-      maxConcurrent: 2,
-      minTime: 1000 // mínimo 1s entre llamadas (conservador para evitar rate limit)
+      reservoir: 1000,
+      reservoirRefreshAmount: 1000,
+      reservoirRefreshInterval: 60 * 60 * 1000, // 1 hour
+      maxConcurrent: 3,
+      minTime: 500 // 500ms between calls — adaptive throttling adjusts this up if needed
     });
 
     this.client = axios.create({
@@ -88,7 +91,8 @@ class MetaClient {
 
   /**
    * Parse rate limit headers from Meta API responses.
-   * Adjusts limiter speed when approaching limits.
+   * Monitors all 3 fields: call_count, total_cputime, total_time (each 0-100%).
+   * Any field hitting 100 triggers throttling. We back off starting at 75%.
    */
   _checkRateLimitHeaders(response) {
     try {
@@ -96,27 +100,47 @@ class MetaClient {
       if (!bucHeader) return;
 
       const usage = JSON.parse(bucHeader);
-      // Header format: { "account_id": [{ "type": "...", "call_count": N, "total_cputime": N, "total_time": N }] }
       for (const [, entries] of Object.entries(usage)) {
         for (const entry of (Array.isArray(entries) ? entries : [])) {
-          const callCount = entry.call_count || 0;
-          if (callCount > 80) {
-            logger.warn(`[META-RATE] API usage at ${callCount}% — throttling requests`);
-            this.limiter.updateSettings({ minTime: 3000 }); // Slow to 1 call per 3s
-          } else if (callCount > 50 && this.limiter.minTime < 2000) {
-            this.limiter.updateSettings({ minTime: 2000 }); // Moderate: 1 per 2s
-          } else if (callCount < 30) {
-            this.limiter.updateSettings({ minTime: 1000 }); // Normal speed
+          const maxUsage = Math.max(
+            entry.call_count || 0,
+            entry.total_cputime || 0,
+            entry.total_time || 0
+          );
+
+          // Store latest usage for external monitoring
+          this._lastUsage = { ...entry, max: maxUsage, ts: Date.now() };
+
+          if (maxUsage > 90) {
+            logger.warn(`[META-RATE] Usage critical at ${maxUsage}% — heavy throttle`);
+            this.limiter.updateSettings({ minTime: 5000 });
+          } else if (maxUsage > 75) {
+            logger.warn(`[META-RATE] Usage high at ${maxUsage}% — throttling`);
+            this.limiter.updateSettings({ minTime: 3000 });
+          } else if (maxUsage > 50) {
+            this.limiter.updateSettings({ minTime: 1500 });
+          } else {
+            this.limiter.updateSettings({ minTime: 500 }); // Faster when headroom available
           }
 
           if (entry.estimated_time_to_regain_access > 0) {
-            logger.warn(`[META-RATE] Rate limited. Regain access in ${entry.estimated_time_to_regain_access} min`);
+            logger.warn(`[META-RATE] Rate limited. Regain access in ${entry.estimated_time_to_regain_access}s`);
           }
         }
       }
     } catch (e) {
       // Non-critical — don't break the call if header parsing fails
     }
+  }
+
+  /**
+   * Returns current rate limit usage (0-100) or null if not yet known.
+   */
+  getRateLimitUsage() {
+    if (!this._lastUsage) return null;
+    const age = Date.now() - this._lastUsage.ts;
+    if (age > 5 * 60 * 1000) return null; // Stale after 5 min
+    return this._lastUsage;
   }
 
   /**
@@ -263,6 +287,47 @@ class MetaClient {
 
     const data = await this.get(`/${campaignId}/adsets`, params);
     return data.data || [];
+  }
+
+  /**
+   * Obtener TODOS los ad sets de la cuenta directamente (avoids N+1 campaign queries).
+   * Uses /{ad_account_id}/adsets endpoint. Much faster than campaign→adsets loop.
+   */
+  async getAllAdSets(fields = null, filters = null) {
+    const defaultFields = [
+      'id', 'name', 'status', 'effective_status',
+      'daily_budget', 'lifetime_budget', 'budget_remaining',
+      'bid_strategy', 'optimization_goal',
+      'campaign_id', 'created_time', 'updated_time'
+    ].join(',');
+
+    const defaultFilters = JSON.stringify([
+      { field: 'effective_status', operator: 'IN', value: ['ACTIVE', 'PAUSED'] }
+    ]);
+
+    const params = {
+      fields: fields || defaultFields,
+      filtering: filters || defaultFilters,
+      limit: 200
+    };
+
+    const data = await this.get(`/${this.adAccountId}/adsets`, params);
+    let results = data.data || [];
+
+    // Handle pagination
+    let paging = data.paging;
+    while (paging?.next) {
+      const nextData = await this.limiter.schedule(() =>
+        withRetry(
+          () => axios.get(paging.next),
+          { maxRetries: 2, baseDelay: 2000, shouldRetry: shouldRetryMetaError, label: 'META PAGINATION adsets' }
+        )
+      ).then(res => res.data);
+      results = results.concat(nextData.data || []);
+      paging = nextData.paging;
+    }
+
+    return results;
   }
 
   /**

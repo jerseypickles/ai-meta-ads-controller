@@ -41,7 +41,8 @@ function authMiddleware(req, res, next) {
   if (req.path === '/auth/login') return next();
   if (req.path.startsWith('/auth/meta/callback')) return next();
 
-  const token = req.headers.authorization?.replace('Bearer ', '');
+  // Support token from header or query param (needed for SSE/EventSource which can't set headers)
+  const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token;
   if (!token) {
     return res.status(401).json({ error: 'Token requerido' });
   }

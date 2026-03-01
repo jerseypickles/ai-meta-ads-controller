@@ -125,6 +125,42 @@ export const refreshLiveCache = async () => {
   await api.post('/api/metrics/refresh-cache', {}, { timeout: 5000 });
 };
 
+export const getRateLimitStatus = async () => {
+  const response = await api.get('/api/metrics/rate-limit', { timeout: 5000 });
+  return response.data;
+};
+
+// ═══ SSE — Server-Sent Events for real-time push updates ═══
+
+/**
+ * Connect to the SSE stream for real-time ad set updates.
+ * Returns an EventSource instance. Call .close() to disconnect.
+ *
+ * @param {Function} onData - callback(data) when new adsets data arrives
+ * @param {Function} onError - callback(error) on connection error
+ * @returns {EventSource}
+ */
+export const connectSSE = (onData, onError) => {
+  const token = getToken();
+  const url = `${BASE_URL}/api/metrics/stream${token ? `?token=${token}` : ''}`;
+  const es = new EventSource(url);
+
+  es.addEventListener('adsets', (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      onData(data);
+    } catch (e) {
+      console.error('SSE parse error:', e);
+    }
+  });
+
+  es.onerror = (err) => {
+    if (onError) onError(err);
+  };
+
+  return es;
+};
+
 // ═══ AI OPS (refresh, auto-refresh) ═══
 
 export const refreshAIOpsMetrics = async () => {

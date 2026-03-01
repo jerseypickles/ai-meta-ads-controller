@@ -53,11 +53,206 @@ router.get('/campaigns', async (req, res) => {
   }
 });
 
-// ═══ LIVE ENDPOINTS (fetch directly from Meta API) ═══
+// ═══ LIVE ENDPOINTS — fetch directly from Meta API with smart caching ═══
 
-// In-memory cache for live data (avoids hammering Meta API on every page refresh)
-let _liveCache = { adsets: null, ts: 0 };
-const LIVE_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+// Shared live cache with configurable TTL
+let _liveCache = { adsets: null, ts: 0, refreshing: false };
+const LIVE_CACHE_TTL = 60 * 1000; // 60 seconds — Meta refreshes insights every ~15 min
+                                    // but structural changes (status, budget) are instant
+
+// SSE clients list for real-time push
+const _sseClients = new Set();
+
+// Broadcast data to all SSE clients
+function _broadcastSSE(event, data) {
+  const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const client of _sseClients) {
+    try { client.write(payload); } catch (e) { _sseClients.delete(client); }
+  }
+}
+
+// ── Core fetch function (used by both HTTP endpoint and background refresh) ──
+async function _fetchLiveAdSets() {
+  const meta = getMetaClient();
+  const timeRanges = getTimeRanges();
+
+  // 1. Get ALL ad sets at account level (single API call, avoids N+1 campaign queries)
+  const allAdSets = await meta.getAllAdSets();
+
+  // Also get campaigns for names (single call)
+  const campaigns = await meta.getCampaigns();
+  const campaignMap = {};
+  for (const c of campaigns) campaignMap[c.id] = c;
+
+  const adSetMap = {};
+  for (const as of allAdSets) {
+    const campaign = campaignMap[as.campaign_id] || { name: 'Unknown', id: as.campaign_id };
+    adSetMap[as.id] = { ...as, campaign_name: campaign.name };
+  }
+
+  // 2. Get insights for ALL ad sets in bulk (5 API calls, one per time window)
+  const adSetInsights = {};
+  for (const [window, range] of Object.entries(timeRanges)) {
+    try {
+      const rows = await meta.getAccountInsights('adset', range);
+      for (const row of rows) {
+        const asid = row.adset_id;
+        if (!adSetInsights[asid]) adSetInsights[asid] = {};
+        adSetInsights[asid][window] = parseInsightRow(row);
+      }
+    } catch (err) {
+      logger.warn(`[LIVE] Error fetching adset insights for ${window}: ${err.message}`);
+    }
+  }
+
+  // 3. Build response array
+  const emptyMetrics = {
+    spend: 0, impressions: 0, clicks: 0, ctr: 0, cpm: 0, cpc: 0,
+    purchases: 0, purchase_value: 0, roas: 0, cpa: 0, reach: 0, frequency: 0
+  };
+
+  const adsets = Object.entries(adSetMap).map(([id, as]) => {
+    const metrics = {};
+    for (const window of Object.keys(timeRanges)) {
+      metrics[window] = adSetInsights[id]?.[window] || { ...emptyMetrics };
+    }
+
+    const roas3d = metrics.last_3d?.roas || 0;
+    const roas7d = metrics.last_7d?.roas || 0;
+    const todaySpend = metrics.today?.spend || 0;
+    const avgCTR = metrics.last_7d?.ctr || 0;
+    const todayCTR = metrics.today?.ctr || 0;
+
+    const analysis = {
+      roas_trend: calculateROASTrend(roas3d, roas7d),
+      roas_3d_vs_7d: roas7d > 0 ? roas3d / roas7d : 0,
+      spend_velocity: calculateSpendVelocity(todaySpend, kpiTargets.daily_spend_target),
+      frequency_alert: (metrics.last_7d?.frequency || 0) > kpiTargets.frequency_warning,
+      ctr_vs_average: avgCTR > 0 ? ((todayCTR - avgCTR) / avgCTR) * 100 : 0
+    };
+
+    return {
+      entity_id: id,
+      entity_name: as.name,
+      status: as.effective_status,
+      campaign_id: as.campaign_id,
+      campaign_name: as.campaign_name,
+      daily_budget: parseBudget(as.daily_budget),
+      lifetime_budget: parseBudget(as.lifetime_budget),
+      budget_remaining: parseBudget(as.budget_remaining),
+      bid_strategy: as.bid_strategy || null,
+      optimization_goal: as.optimization_goal || null,
+      metrics,
+      analysis,
+      id: id,
+      name: as.name
+    };
+  });
+
+  // Sort by 7d spend descending
+  adsets.sort((a, b) => (b.metrics?.last_7d?.spend || 0) - (a.metrics?.last_7d?.spend || 0));
+
+  return adsets;
+}
+
+// ── Background refresh loop — proactively keeps cache fresh and pushes to SSE clients ──
+let _bgRefreshTimer = null;
+const BG_REFRESH_INTERVAL = 60 * 1000; // 60 seconds
+
+async function _backgroundRefresh() {
+  if (_liveCache.refreshing) return; // Skip if already refreshing
+  _liveCache.refreshing = true;
+
+  try {
+    // Check rate limit before refreshing — skip if > 75% usage
+    const meta = getMetaClient();
+    const usage = meta.getRateLimitUsage();
+    if (usage && usage.max > 75) {
+      logger.info(`[LIVE-BG] Skipping refresh — API usage at ${usage.max}%`);
+      return;
+    }
+
+    const adsets = await _fetchLiveAdSets();
+    _liveCache = { adsets, ts: Date.now(), refreshing: false };
+
+    // Push to all connected SSE clients
+    if (_sseClients.size > 0) {
+      _broadcastSSE('adsets', {
+        adsets,
+        cached: false,
+        fetched_at: new Date().toISOString(),
+        age_seconds: 0
+      });
+      logger.debug(`[LIVE-BG] Pushed fresh data to ${_sseClients.size} SSE client(s)`);
+    }
+  } catch (err) {
+    logger.warn(`[LIVE-BG] Background refresh failed: ${err.message}`);
+    _liveCache.refreshing = false;
+  }
+}
+
+function _startBackgroundRefresh() {
+  if (_bgRefreshTimer) return;
+  logger.info(`[LIVE-BG] Starting background refresh every ${BG_REFRESH_INTERVAL / 1000}s`);
+  // Initial fetch after 2s (let server boot first)
+  setTimeout(() => _backgroundRefresh(), 2000);
+  _bgRefreshTimer = setInterval(_backgroundRefresh, BG_REFRESH_INTERVAL);
+}
+
+function _stopBackgroundRefresh() {
+  if (_bgRefreshTimer) {
+    clearInterval(_bgRefreshTimer);
+    _bgRefreshTimer = null;
+  }
+}
+
+// Start background refresh when first client connects (lazy)
+let _bgStarted = false;
+
+// GET /api/metrics/stream — Server-Sent Events for real-time push updates
+router.get('/stream', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no' // Disable nginx buffering
+  });
+
+  // Send initial data if available
+  if (_liveCache.adsets) {
+    const payload = `event: adsets\ndata: ${JSON.stringify({
+      adsets: _liveCache.adsets,
+      cached: true,
+      fetched_at: new Date(_liveCache.ts).toISOString(),
+      age_seconds: Math.round((Date.now() - _liveCache.ts) / 1000)
+    })}\n\n`;
+    res.write(payload);
+  }
+
+  // Send heartbeat every 30s to keep connection alive
+  const heartbeat = setInterval(() => {
+    try { res.write(': heartbeat\n\n'); } catch (e) { /* client gone */ }
+  }, 30000);
+
+  _sseClients.add(res);
+
+  // Start background refresh if not started
+  if (!_bgStarted) {
+    _bgStarted = true;
+    _startBackgroundRefresh();
+  }
+
+  req.on('close', () => {
+    _sseClients.delete(res);
+    clearInterval(heartbeat);
+    // Stop background refresh if no clients connected
+    if (_sseClients.size === 0) {
+      _stopBackgroundRefresh();
+      _bgStarted = false;
+      logger.info('[LIVE-BG] No SSE clients — pausing background refresh');
+    }
+  });
+});
 
 // GET /api/metrics/adsets/live — All ad sets with metrics fetched LIVE from Meta API
 router.get('/adsets/live', async (req, res) => {
@@ -75,90 +270,20 @@ router.get('/adsets/live', async (req, res) => {
       });
     }
 
-    const meta = getMetaClient();
-    const timeRanges = getTimeRanges();
-
-    // 1. Get all campaigns and their ad sets
-    const campaigns = await meta.getCampaigns();
-    const adSetMap = {};
-    const campaignMap = {};
-
-    for (const c of campaigns) {
-      campaignMap[c.id] = c;
-      try {
-        const adSets = await meta.getAdSets(c.id);
-        for (const as of adSets) {
-          adSetMap[as.id] = { ...as, campaign_name: c.name, campaign_id: c.id };
-        }
-      } catch (err) {
-        logger.warn(`[LIVE] Error fetching ad sets for campaign ${c.id}: ${err.message}`);
-      }
-    }
-
-    // 2. Get insights for ALL ad sets in bulk (5 API calls total, one per time window)
-    const adSetInsights = {};
-    for (const [window, range] of Object.entries(timeRanges)) {
-      try {
-        const rows = await meta.getAccountInsights('adset', range);
-        for (const row of rows) {
-          const asid = row.adset_id;
-          if (!adSetInsights[asid]) adSetInsights[asid] = {};
-          adSetInsights[asid][window] = parseInsightRow(row);
-        }
-      } catch (err) {
-        logger.warn(`[LIVE] Error fetching adset insights for ${window}: ${err.message}`);
-      }
-    }
-
-    // 3. Build response array
-    const emptyMetrics = {
-      spend: 0, impressions: 0, clicks: 0, ctr: 0, cpm: 0, cpc: 0,
-      purchases: 0, purchase_value: 0, roas: 0, cpa: 0, reach: 0, frequency: 0
-    };
-
-    const adsets = Object.entries(adSetMap).map(([id, as]) => {
-      const metrics = {};
-      for (const window of Object.keys(timeRanges)) {
-        metrics[window] = adSetInsights[id]?.[window] || { ...emptyMetrics };
-      }
-
-      const roas3d = metrics.last_3d?.roas || 0;
-      const roas7d = metrics.last_7d?.roas || 0;
-      const todaySpend = metrics.today?.spend || 0;
-      const avgCTR = metrics.last_7d?.ctr || 0;
-      const todayCTR = metrics.today?.ctr || 0;
-
-      const analysis = {
-        roas_trend: calculateROASTrend(roas3d, roas7d),
-        roas_3d_vs_7d: roas7d > 0 ? roas3d / roas7d : 0,
-        spend_velocity: calculateSpendVelocity(todaySpend, kpiTargets.daily_spend_target),
-        frequency_alert: (metrics.last_7d?.frequency || 0) > kpiTargets.frequency_warning,
-        ctr_vs_average: avgCTR > 0 ? ((todayCTR - avgCTR) / avgCTR) * 100 : 0
-      };
-
-      return {
-        entity_id: id,
-        entity_name: as.name,
-        status: as.effective_status,
-        campaign_id: as.campaign_id,
-        campaign_name: as.campaign_name,
-        daily_budget: parseBudget(as.daily_budget),
-        lifetime_budget: parseBudget(as.lifetime_budget),
-        budget_remaining: parseBudget(as.budget_remaining),
-        bid_strategy: as.bid_strategy || null,
-        optimization_goal: as.optimization_goal || null,
-        metrics,
-        analysis,
-        id: id,
-        name: as.name
-      };
-    });
-
-    // Sort by 7d spend descending
-    adsets.sort((a, b) => (b.metrics?.last_7d?.spend || 0) - (a.metrics?.last_7d?.spend || 0));
+    const adsets = await _fetchLiveAdSets();
 
     // Cache result
-    _liveCache = { adsets, ts: Date.now() };
+    _liveCache = { adsets, ts: Date.now(), refreshing: false };
+
+    // Also push to SSE clients
+    if (_sseClients.size > 0) {
+      _broadcastSSE('adsets', {
+        adsets,
+        cached: false,
+        fetched_at: new Date().toISOString(),
+        age_seconds: 0
+      });
+    }
 
     res.json({
       adsets,
@@ -203,15 +328,13 @@ router.get('/ads/live/:adSetId', async (req, res) => {
       return res.json([]);
     }
 
-    // 2. Get insights at ad level for this ad set's campaign
-    // We use account-level insights with ad level which is efficient
+    // 2. Get insights at ad level — uses MetaClient's 90s cache so this is cheap
     const adInsights = {};
     for (const [window, range] of Object.entries(timeRanges)) {
       try {
         const rows = await meta.getAccountInsights('ad', range);
         for (const row of rows) {
           if (!row.ad_id) continue;
-          // Only keep ads that belong to this ad set
           if (row.adset_id !== adSetId) continue;
           if (!adInsights[row.ad_id]) adInsights[row.ad_id] = { ad_name: row.ad_name };
           adInsights[row.ad_id][window] = parseInsightRow(row);
@@ -246,7 +369,6 @@ router.get('/ads/live/:adSetId', async (req, res) => {
     res.json(ads);
   } catch (error) {
     logger.error(`[LIVE] Error fetching live ads: ${error.message}`);
-    // Fallback to snapshot ads
     try {
       const ads = await getAdsForAdSet(req.params.adSetId);
       res.json(ads);
@@ -256,10 +378,25 @@ router.get('/ads/live/:adSetId', async (req, res) => {
   }
 });
 
-// POST /api/metrics/refresh-cache — Force clear the live cache
-router.post('/refresh-cache', (req, res) => {
-  _liveCache = { adsets: null, ts: 0 };
-  res.json({ success: true, message: 'Live cache cleared' });
+// POST /api/metrics/refresh-cache — Force clear the live cache and trigger immediate refresh
+router.post('/refresh-cache', async (req, res) => {
+  _liveCache = { adsets: null, ts: 0, refreshing: false };
+  // Clear MetaClient insights cache too
+  const meta = getMetaClient();
+  meta._insightsCache.clear();
+  res.json({ success: true, message: 'All caches cleared' });
+});
+
+// GET /api/metrics/rate-limit — Current Meta API rate limit usage
+router.get('/rate-limit', (req, res) => {
+  const meta = getMetaClient();
+  const usage = meta.getRateLimitUsage();
+  res.json({
+    usage: usage || { call_count: 0, total_cputime: 0, total_time: 0, max: 0 },
+    sse_clients: _sseClients.size,
+    cache_age_seconds: _liveCache.ts ? Math.round((Date.now() - _liveCache.ts) / 1000) : null,
+    bg_refresh_active: !!_bgRefreshTimer
+  });
 });
 
 // GET /api/metrics/adsets/actions — Acciones recientes de agentes por ad set (con cooldown)

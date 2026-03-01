@@ -11,7 +11,7 @@ import {
 import {
   getAllAdSets, getAdsForAdSet, getAccountOverview,
   runAIManager, runAgents, refreshAIOpsMetrics,
-  refreshLiveCache,
+  refreshLiveCache, connectSSE,
   pauseEntity, deleteEntity, getAvailableCreatives,
   addAdToAdSet, generateAdCopy, getCreativePreviewUrl, logout
 } from '../api';
@@ -445,6 +445,8 @@ export default function AdSetsManager() {
   const [sortBy, setSortBy] = useState('spend_7d');
   const [sortAsc, setSortAsc] = useState(false);
   const [fetchMeta, setFetchMeta] = useState(null); // { cached, fetched_at, age_seconds }
+  const [sseConnected, setSseConnected] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState(null);
 
   const fetchData = useCallback(async (force = false) => {
     try {
@@ -452,15 +454,46 @@ export default function AdSetsManager() {
       const result = await getAllAdSets(force);
       setAdSets(result.adsets || result || []);
       setFetchMeta({ cached: result.cached, fetched_at: result.fetched_at, age_seconds: result.age_seconds, fallback: result.fallback });
+      setLastUpdate(new Date());
     } catch (err) {
       setError(err?.response?.data?.error || err.message || 'Failed to fetch data');
     } finally { setLoading(false); }
   }, []);
 
+  // SSE connection for real-time push updates
   useEffect(() => {
+    // Initial HTTP fetch (fast — may hit cache)
     fetchData();
-    const interval = setInterval(() => fetchData(), 120000); // Auto-refresh every 2 min
-    return () => clearInterval(interval);
+
+    // Connect to SSE stream for live push updates
+    const es = connectSSE(
+      (data) => {
+        // Received push update from server
+        setAdSets(data.adsets || []);
+        setFetchMeta({ cached: data.cached, fetched_at: data.fetched_at, age_seconds: data.age_seconds });
+        setLastUpdate(new Date());
+        setLoading(false);
+        setSseConnected(true);
+      },
+      () => {
+        // SSE error — will auto-reconnect (browser default)
+        setSseConnected(false);
+      }
+    );
+
+    // SSE connected
+    es.onopen = () => setSseConnected(true);
+
+    // Fallback: if SSE drops, poll every 60s
+    const fallbackInterval = setInterval(() => {
+      if (!sseConnected) fetchData();
+    }, 60000);
+
+    return () => {
+      es.close();
+      clearInterval(fallbackInterval);
+      setSseConnected(false);
+    };
   }, [fetchData]);
 
   const handleForceRefresh = async () => {
@@ -585,12 +618,14 @@ export default function AdSetsManager() {
             <h1 className="mb-0" style={{ fontSize: '1.125rem' }}>Ad Sets Manager</h1>
             <span className="text-muted text-xs">
               {counts.total} ad sets &middot; {counts.active} active &middot; {counts.paused} paused
-              {fetchMeta && (
-                <span className="fetch-meta">
-                  {fetchMeta.cached ? ` · cached (${fetchMeta.age_seconds}s ago)` : ' · live'}
-                  {fetchMeta.fallback && ' · snapshot fallback'}
-                </span>
-              )}
+              <span className="fetch-meta">
+                {sseConnected ? (
+                  <span className="sse-live"> &middot; <span className="live-dot" /> LIVE</span>
+                ) : (
+                  <span> &middot; polling</span>
+                )}
+                {fetchMeta?.fallback && ' · snapshot fallback'}
+              </span>
             </span>
           </div>
         </div>
@@ -735,6 +770,20 @@ export default function AdSetsManager() {
           margin: 0 4px;
         }
         .fetch-meta { opacity: 0.6; }
+        .sse-live { color: var(--green); font-weight: 600; opacity: 1; }
+        .live-dot {
+          display: inline-block;
+          width: 7px; height: 7px;
+          background: var(--green);
+          border-radius: 50%;
+          margin-right: 3px;
+          vertical-align: middle;
+          animation: pulse-dot 2s ease-in-out infinite;
+        }
+        @keyframes pulse-dot {
+          0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16,185,129,0.4); }
+          50% { opacity: 0.7; box-shadow: 0 0 0 4px rgba(16,185,129,0); }
+        }
 
         /* Content */
         .manager-content {
