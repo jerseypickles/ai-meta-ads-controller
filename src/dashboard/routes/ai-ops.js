@@ -102,11 +102,12 @@ router.get('/status', async (req, res) => {
         { $group: { _id: '$entity_id', doc: { $first: '$$ROOT' } } }
       ]),
 
-      // One query for ALL ad snapshots (latest per ad, across all adsets)
+      // One query for ALL ad snapshots (latest per ad, only ACTIVE/PAUSED — exclude DELETED/ARCHIVED)
       MetricSnapshot.aggregate([
         { $match: { entity_type: 'ad', parent_id: { $in: allAdSetIds } } },
         { $sort: { snapshot_at: -1 } },
-        { $group: { _id: '$entity_id', doc: { $first: '$$ROOT' } } }
+        { $group: { _id: '$entity_id', doc: { $first: '$$ROOT' } } },
+        { $match: { 'doc.status': { $in: ['ACTIVE', 'PAUSED'] } } }
       ]),
 
       // One query for ALL creative assets
@@ -543,7 +544,7 @@ async function refreshAIOpsMetrics() {
 
   // Helper: normalizar status al enum de MetricSnapshot
   const VALID_STATUSES = ['ACTIVE', 'PAUSED', 'DELETED', 'ARCHIVED'];
-  const normalizeStatus = (s) => VALID_STATUSES.includes(s) ? s : 'PAUSED';
+  const normalizeStatus = (s) => VALID_STATUSES.includes(s) ? s : 'DELETED';
 
   const emptyMetrics = {
     spend: 0, impressions: 0, clicks: 0, ctr: 0, cpm: 0, cpc: 0,
@@ -599,9 +600,14 @@ async function refreshAIOpsMetrics() {
   }
 
   // 8. Crear snapshots de ads
+  // Ads que NO aparecen en adStatusMap fueron borrados en Meta.
+  // Creamos un snapshot DELETED para que la aggregation los filtre.
   let adSnapshots = 0;
   for (const [adId, adData] of Object.entries(adInsights)) {
     if (!adData.campaign_id) continue;
+
+    // Si el ad no aparece en adStatusMap, fue borrado en Meta
+    const adStatus = adStatusMap[adId] || 'DELETED';
 
     const metrics = {};
     for (const window of Object.keys(timeRanges)) {
@@ -614,11 +620,41 @@ async function refreshAIOpsMetrics() {
       entity_name: adData.ad_name,
       parent_id: adData.adset_id,
       campaign_id: adData.campaign_id,
-      status: normalizeStatus(adStatusMap[adId]),
+      status: normalizeStatus(adStatus),
       metrics,
       snapshot_at: new Date()
     });
-    adSnapshots++;
+    if (adStatus !== 'DELETED' && adStatus !== 'ARCHIVED') adSnapshots++;
+  }
+
+  // También crear snapshots DELETED para ads conocidos que no tienen insights
+  // (ads que fueron borrados y ya no generan insights)
+  for (const adSetId of adSetIds) {
+    const creation = allCreations.find(c => c.meta_entity_id === adSetId);
+    if (!creation?.child_ad_ids) continue;
+    for (const childAdId of creation.child_ad_ids) {
+      // Si ya tiene insights, ya se procesó arriba
+      if (adInsights[childAdId]) continue;
+      // Si existe en Meta (tiene status), no está borrado
+      if (adStatusMap[childAdId]) continue;
+      // Este ad fue borrado y ya no genera insights — crear snapshot DELETED
+      const existingSnap = await MetricSnapshot.findOne({
+        entity_type: 'ad', entity_id: childAdId
+      }).sort({ snapshot_at: -1 }).lean();
+      if (existingSnap && existingSnap.status !== 'DELETED') {
+        await MetricSnapshot.create({
+          entity_type: 'ad',
+          entity_id: childAdId,
+          entity_name: existingSnap.entity_name || childAdId,
+          parent_id: adSetId,
+          campaign_id: existingSnap.campaign_id || '',
+          status: 'DELETED',
+          metrics: { today: { ...emptyMetrics }, last_3d: { ...emptyMetrics }, last_7d: { ...emptyMetrics } },
+          snapshot_at: new Date()
+        });
+        logger.debug(`[AI-OPS REFRESH] Marked ad ${childAdId} as DELETED (no longer in Meta)`);
+      }
+    }
   }
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
