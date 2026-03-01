@@ -23,13 +23,13 @@ class MetaClient {
 
     // Rate limiter: Standard tier allows 190,000 + 400*active_ads per hour.
     // We cap at 1,000/hour locally (very safe), with adaptive throttling via headers.
-    // minTime starts at 500ms (2 calls/sec) — adjusted dynamically by _checkRateLimitHeaders.
+    // minTime starts at 1000ms — _checkRateLimitHeaders speeds up to 500ms when headroom available.
     this.limiter = new Bottleneck({
       reservoir: 1000,
       reservoirRefreshAmount: 1000,
       reservoirRefreshInterval: 60 * 60 * 1000, // 1 hour
-      maxConcurrent: 3,
-      minTime: 500 // 500ms between calls — adaptive throttling adjusts this up if needed
+      maxConcurrent: 2,
+      minTime: 1000 // 1s between calls — adaptive throttling adjusts dynamically
     });
 
     this.client = axios.create({
@@ -311,23 +311,31 @@ class MetaClient {
       limit: 200
     };
 
-    const data = await this.get(`/${this.adAccountId}/adsets`, params);
-    let results = data.data || [];
+    try {
+      const data = await this.get(`/${this.adAccountId}/adsets`, params);
+      let results = data.data || [];
 
-    // Handle pagination
-    let paging = data.paging;
-    while (paging?.next) {
-      const nextData = await this.limiter.schedule(() =>
-        withRetry(
-          () => axios.get(paging.next),
-          { maxRetries: 2, baseDelay: 2000, shouldRetry: shouldRetryMetaError, label: 'META PAGINATION adsets' }
-        )
-      ).then(res => res.data);
-      results = results.concat(nextData.data || []);
-      paging = nextData.paging;
+      // Handle pagination
+      let paging = data.paging;
+      while (paging?.next) {
+        const nextData = await this.limiter.schedule(() =>
+          withRetry(
+            () => axios.get(paging.next),
+            { maxRetries: 2, baseDelay: 2000, shouldRetry: shouldRetryMetaError, label: 'META PAGINATION adsets' }
+          )
+        ).then(res => res.data);
+        results = results.concat(nextData.data || []);
+        paging = nextData.paging;
+      }
+
+      return results;
+    } catch (error) {
+      const metaError = error.response?.data?.error;
+      if (metaError) {
+        logger.error(`[getAllAdSets] Meta API error: code=${metaError.code} type=${metaError.type} msg=${metaError.message}`);
+      }
+      throw error;
     }
-
-    return results;
   }
 
   /**

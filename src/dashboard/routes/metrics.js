@@ -76,18 +76,33 @@ async function _fetchLiveAdSets() {
   const meta = getMetaClient();
   const timeRanges = getTimeRanges();
 
-  // 1. Get ALL ad sets at account level (single API call, avoids N+1 campaign queries)
-  const allAdSets = await meta.getAllAdSets();
-
-  // Also get campaigns for names (single call)
+  // 1. Get all ad sets — try account-level first (1 call), fall back to campaign→adsets (N+1)
   const campaigns = await meta.getCampaigns();
   const campaignMap = {};
   for (const c of campaigns) campaignMap[c.id] = c;
 
   const adSetMap = {};
-  for (const as of allAdSets) {
-    const campaign = campaignMap[as.campaign_id] || { name: 'Unknown', id: as.campaign_id };
-    adSetMap[as.id] = { ...as, campaign_name: campaign.name };
+
+  try {
+    // Fast path: single account-level query
+    const allAdSets = await meta.getAllAdSets();
+    for (const as of allAdSets) {
+      const campaign = campaignMap[as.campaign_id] || { name: 'Unknown', id: as.campaign_id };
+      adSetMap[as.id] = { ...as, campaign_name: campaign.name };
+    }
+  } catch (err) {
+    // Fallback: campaign-by-campaign (works on all account types)
+    logger.warn(`[LIVE] getAllAdSets() failed (${err.message}), falling back to campaign-based fetch`);
+    for (const c of campaigns) {
+      try {
+        const adSets = await meta.getAdSets(c.id);
+        for (const as of adSets) {
+          adSetMap[as.id] = { ...as, campaign_name: c.name, campaign_id: c.id };
+        }
+      } catch (e) {
+        logger.warn(`[LIVE] Error fetching ad sets for campaign ${c.id}: ${e.message}`);
+      }
+    }
   }
 
   // 2. Get insights for ALL ad sets in bulk (5 API calls, one per time window)
@@ -161,6 +176,22 @@ const BG_REFRESH_INTERVAL = 60 * 1000; // 60 seconds
 
 async function _backgroundRefresh() {
   if (_liveCache.refreshing) return; // Skip if already refreshing
+
+  // Skip if cache is still fresh (avoid double-fetching after an HTTP request)
+  const cacheAge = Date.now() - _liveCache.ts;
+  if (_liveCache.adsets && cacheAge < LIVE_CACHE_TTL) {
+    // Cache is fresh — just re-broadcast to SSE clients (they may have connected after last fetch)
+    if (_sseClients.size > 0) {
+      _broadcastSSE('adsets', {
+        adsets: _liveCache.adsets,
+        cached: true,
+        fetched_at: new Date(_liveCache.ts).toISOString(),
+        age_seconds: Math.round(cacheAge / 1000)
+      });
+    }
+    return;
+  }
+
   _liveCache.refreshing = true;
 
   try {
@@ -169,6 +200,7 @@ async function _backgroundRefresh() {
     const usage = meta.getRateLimitUsage();
     if (usage && usage.max > 75) {
       logger.info(`[LIVE-BG] Skipping refresh — API usage at ${usage.max}%`);
+      _liveCache.refreshing = false;
       return;
     }
 
