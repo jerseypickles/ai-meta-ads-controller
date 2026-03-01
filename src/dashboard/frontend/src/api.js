@@ -103,12 +103,24 @@ export const runAIManager = async () => {
   return data;
 };
 
-// ═══ AI OPS (Ad Sets data) ═══
+// ═══ METRICS (All ad sets / ads from data-collector) ═══
 
-export const getAIOpsStatus = async () => {
-  const response = await api.get('/api/ai-ops/status', { timeout: 60000 });
+export const getAllAdSets = async () => {
+  const response = await api.get('/api/metrics/adsets', { timeout: 60000 });
   return response.data;
 };
+
+export const getAdsForAdSet = async (adsetId) => {
+  const response = await api.get('/api/metrics/ads', { params: { adset_id: adsetId }, timeout: 30000 });
+  return response.data;
+};
+
+export const getAccountOverview = async () => {
+  const response = await api.get('/api/metrics/overview', { timeout: 30000 });
+  return response.data;
+};
+
+// ═══ AI OPS (refresh, auto-refresh) ═══
 
 export const refreshAIOpsMetrics = async () => {
   const response = await api.post('/api/ai-ops/refresh', {}, { timeout: 30000 });
