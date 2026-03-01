@@ -168,8 +168,10 @@ router.get('/status', async (req, res) => {
       const m3 = adSetSnap?.metrics?.last_3d || {};
       const mToday = adSetSnap?.metrics?.today || {};
 
-      // Build ads from pre-fetched snapshots
-      const adSnaps = adSnapsByParent.get(adSetId) || [];
+      // Build ads from pre-fetched snapshots (only operational — exclude DELETED/ARCHIVED)
+      const adSnaps = (adSnapsByParent.get(adSetId) || []).filter(adSnap =>
+        adSnap.status === 'ACTIVE' || adSnap.status === 'PAUSED'
+      );
       const ads = adSnaps.map(adSnap => {
         const am7 = adSnap.metrics?.last_7d || {};
 

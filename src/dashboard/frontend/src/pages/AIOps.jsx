@@ -602,7 +602,8 @@ const AdSetCard = ({ adset, onRefresh }) => {
   const phase = adset.phase || 'unknown';
   const phaseColor = PHASE_COLORS[phase] || '#6b7280';
   const activeAds = (adset.ads || []).filter(a => a.status === 'ACTIVE');
-  const totalAds = (adset.ads || []).length;
+  const pausedAds = (adset.ads || []).filter(a => a.status === 'PAUSED');
+  const totalAds = (adset.ads || []).length; // Only operational (ACTIVE + PAUSED), backend filters out DELETED/ARCHIVED
   const hasDirectives = (adset.directives || []).length > 0;
   const criticalDirectives = (adset.directives || []).filter(d => d.urgency === 'critical');
 
