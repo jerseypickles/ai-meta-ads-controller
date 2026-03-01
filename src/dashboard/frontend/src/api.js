@@ -854,6 +854,23 @@ export const refreshAIOpsMetrics = async () => {
   return data;
 };
 
+export const getAIOpsRefreshInfo = async () => {
+  const response = await api.get('/api/ai-ops/refresh-info');
+  return response.data;
+};
+
+export const autoRefreshAIOps = async () => {
+  const response = await api.post('/api/ai-ops/auto-refresh', {}, { timeout: 30000 });
+  const data = response.data;
+
+  // Si se disparó un refresh, hacer polling
+  if (data.action === 'refreshing' && data.job_id) {
+    return pollForCompletion(`/api/ai-ops/refresh-status/${data.job_id}`, 3000, 600000);
+  }
+
+  return data;
+};
+
 // ============================================
 // AI OPS — Add Ad to Existing Ad Set
 // ============================================

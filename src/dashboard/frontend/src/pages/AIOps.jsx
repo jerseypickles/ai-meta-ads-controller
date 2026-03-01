@@ -5,7 +5,7 @@ import {
   ChevronDown, ChevronRight, Image, Pause, Play, Target, Skull,
   ArrowDown, Shield, Timer, Power, Filter, Palette, BarChart3, Plus, Send, X, Trash2
 } from 'lucide-react';
-import { getAIOpsStatus, runAIManager, runAgents, refreshAIOpsMetrics, pauseEntity, deleteEntity, getAvailableCreatives, addAdToAdSet, generateAdCopy, getCreativePreviewUrl } from '../api';
+import { getAIOpsStatus, runAIManager, runAgents, refreshAIOpsMetrics, autoRefreshAIOps, pauseEntity, deleteEntity, getAvailableCreatives, addAdToAdSet, generateAdCopy, getCreativePreviewUrl } from '../api';
 
 // ═══ HELPERS ═══
 const fmt = (v, d = 2) => v != null ? Number(v).toFixed(d) : '0';
@@ -1022,6 +1022,7 @@ export default function AIOps() {
   const [error, setError] = useState(null);
   const [running, setRunning] = useState(null);
   const [statusFilter, setStatusFilter] = useState('active'); // Default: only active
+  const [autoRefreshStatus, setAutoRefreshStatus] = useState(null); // null | 'checking' | 'refreshing' | 'fresh' | 'done'
 
   const fetchData = useCallback(async () => {
     try {
@@ -1046,6 +1047,33 @@ export default function AIOps() {
     const interval = setInterval(fetchData, 60000);
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  // Auto-refresh: al cargar la página, verificar si los datos están stale y refrescar
+  useEffect(() => {
+    let cancelled = false;
+    const doAutoRefresh = async () => {
+      setAutoRefreshStatus('checking');
+      try {
+        const result = await autoRefreshAIOps();
+        if (cancelled) return;
+        if (result.action === 'refreshing' || result.status === 'completed') {
+          setAutoRefreshStatus('done');
+          // Recargar datos del dashboard después del refresh
+          await fetchData();
+        } else {
+          setAutoRefreshStatus('fresh');
+        }
+      } catch (err) {
+        if (!cancelled) setAutoRefreshStatus(null);
+      }
+      // Limpiar el status después de 5 segundos
+      if (!cancelled) {
+        setTimeout(() => { if (!cancelled) setAutoRefreshStatus(null); }, 5000);
+      }
+    };
+    doAutoRefresh();
+    return () => { cancelled = true; };
+  }, []); // Solo al montar
 
   const handleRunManager = async () => {
     setRunning('manager');
@@ -1170,9 +1198,39 @@ export default function AIOps() {
             </div>
             AI Operations
           </h1>
-          <p style={{ fontSize: '12px', color: '#374151', margin: '4px 0 0', paddingLeft: '40px' }}>
-            Brain + AI Manager — live monitoring
-          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '4px 0 0', paddingLeft: '40px' }}>
+            <p style={{ fontSize: '12px', color: '#374151', margin: 0 }}>
+              Brain + AI Manager — live monitoring
+            </p>
+            {/* Data freshness indicator */}
+            {data?.data_freshness && (() => {
+              const df = data.data_freshness;
+              const age = df.oldest_snapshot_age_min;
+              const isStale = df.is_stale;
+              const refreshing = df.refresh_in_progress || autoRefreshStatus === 'checking';
+              const color = refreshing ? '#3b82f6' : isStale ? '#ef4444' : '#22c55e';
+              const label = refreshing ? 'Refreshing...'
+                : autoRefreshStatus === 'done' ? 'Updated'
+                : autoRefreshStatus === 'fresh' ? `Fresh (${age}m)`
+                : age != null ? `${age}m ago` : 'No data';
+              return (
+                <span style={{
+                  fontSize: '10px', fontWeight: '600', color,
+                  padding: '2px 8px', borderRadius: '10px',
+                  border: `1px solid ${color}44`,
+                  backgroundColor: `${color}11`,
+                  display: 'flex', alignItems: 'center', gap: '4px'
+                }}>
+                  {refreshing && <RefreshCw size={9} style={{ animation: 'spin 1s linear infinite' }} />}
+                  {!refreshing && <span style={{
+                    width: '6px', height: '6px', borderRadius: '50%', backgroundColor: color,
+                    display: 'inline-block', animation: isStale ? 'none' : 'none'
+                  }} />}
+                  {label}
+                </span>
+              );
+            })()}
+          </div>
         </div>
         <div style={{ display: 'flex', gap: '6px' }}>
           {[

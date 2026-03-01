@@ -15,6 +15,12 @@ const logger = require('../../utils/logger');
 const refreshJobs = new Map();
 const REFRESH_JOB_TTL = 10 * 60 * 1000; // 10 minutes
 
+// Tracking del último refresh exitoso (in-memory, se pierde al reiniciar)
+let _lastRefreshInfo = { at: null, adsets: 0, ads: 0, elapsed: null, source: null };
+// Mutex para evitar refresh concurrentes
+let _refreshInProgress = false;
+const STALE_THRESHOLD_MIN = 20; // Datos se consideran stale después de 20 minutos
+
 /**
  * GET /api/ai-ops/status
  * Complete operational visibility: AI Manager + Brain + Directives + Ads/Creatives + Timeline
@@ -384,6 +390,11 @@ router.get('/status', async (req, res) => {
         }, new Date(0))
       : null;
 
+    // Calcular edad del snapshot más viejo entre todos los ad sets
+    const oldestSnapshotAge = adSets.reduce((max, as) => {
+      return as.snapshot_age_min !== null && as.snapshot_age_min > max ? as.snapshot_age_min : max;
+    }, 0);
+
     res.json({
       ai_manager: {
         last_run: lastManagerRun && lastManagerRun.getTime() > 0 ? lastManagerRun : null,
@@ -392,6 +403,15 @@ router.get('/status', async (req, res) => {
         managed_count: managedCreations.length,
         actions_48h: aiManagerActions.length,
         decision_tree_events_7d: allDTActions.length
+      },
+      data_freshness: {
+        last_refresh: _lastRefreshInfo.at,
+        minutes_since_refresh: _lastRefreshInfo.at
+          ? Math.round((now - new Date(_lastRefreshInfo.at)) / 60000) : null,
+        oldest_snapshot_age_min: oldestSnapshotAge,
+        is_stale: oldestSnapshotAge > STALE_THRESHOLD_MIN,
+        refresh_in_progress: _refreshInProgress,
+        source: _lastRefreshInfo.source
       },
       brain: brainInfo,
       compliance: {
@@ -602,8 +622,128 @@ async function refreshAIOpsMetrics() {
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
   logger.info(`[AI-OPS REFRESH] Completado en ${elapsed}s — ${adSetSnapshots} ad sets, ${adSnapshots} ads actualizados`);
 
+  // Actualizar tracking del último refresh exitoso
+  _lastRefreshInfo = {
+    at: new Date(),
+    adsets: adSetSnapshots,
+    ads: adSnapshots,
+    elapsed: `${elapsed}s`,
+    source: 'cron'
+  };
+
   return { success: true, refreshed_adsets: adSetSnapshots, refreshed_ads: adSnapshots, elapsed: `${elapsed}s` };
 }
+
+/**
+ * GET /api/ai-ops/refresh-info
+ * Devuelve info del último refresh exitoso y si los datos están stale.
+ */
+router.get('/refresh-info', async (req, res) => {
+  try {
+    // Buscar el snapshot más reciente de ad sets AI-managed
+    const latestSnap = await MetricSnapshot.findOne({ entity_type: 'adset' })
+      .sort({ snapshot_at: -1 })
+      .select('snapshot_at')
+      .lean();
+
+    const now = new Date();
+    const snapAge = latestSnap ? Math.round((now - new Date(latestSnap.snapshot_at)) / 60000) : null;
+
+    res.json({
+      last_refresh: _lastRefreshInfo.at,
+      minutes_since_refresh: _lastRefreshInfo.at
+        ? Math.round((now - new Date(_lastRefreshInfo.at)) / 60000) : null,
+      last_adsets: _lastRefreshInfo.adsets,
+      last_ads: _lastRefreshInfo.ads,
+      last_elapsed: _lastRefreshInfo.elapsed,
+      last_source: _lastRefreshInfo.source,
+      latest_snapshot_age_min: snapAge,
+      is_stale: snapAge === null || snapAge > STALE_THRESHOLD_MIN,
+      refresh_in_progress: _refreshInProgress
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/ai-ops/auto-refresh
+ * Refresh inteligente: solo ejecuta si los datos tienen más de STALE_THRESHOLD_MIN.
+ * Evita refresh concurrentes con mutex.
+ * Diseñado para ser llamado por el frontend al cargar la página.
+ */
+router.post('/auto-refresh', async (req, res) => {
+  try {
+    // Si ya hay un refresh en progreso, retornar sin duplicar
+    if (_refreshInProgress) {
+      return res.json({
+        success: true,
+        action: 'skipped',
+        reason: 'Refresh ya en progreso'
+      });
+    }
+
+    // Verificar si los datos están stale
+    const latestSnap = await MetricSnapshot.findOne({ entity_type: 'adset' })
+      .sort({ snapshot_at: -1 })
+      .select('snapshot_at')
+      .lean();
+
+    const now = new Date();
+    const snapAge = latestSnap ? Math.round((now - new Date(latestSnap.snapshot_at)) / 60000) : Infinity;
+
+    if (snapAge <= STALE_THRESHOLD_MIN) {
+      return res.json({
+        success: true,
+        action: 'skipped',
+        reason: `Datos frescos (${snapAge} min)`,
+        snapshot_age_min: snapAge
+      });
+    }
+
+    // Datos stale — ejecutar refresh en background
+    _refreshInProgress = true;
+    const jobId = `aiops_auto_${Date.now()}`;
+    refreshJobs.set(jobId, { status: 'running', startedAt: Date.now(), result: null, error: null });
+
+    res.json({
+      success: true,
+      action: 'refreshing',
+      async: true,
+      job_id: jobId,
+      reason: `Datos stale (${snapAge === Infinity ? '∞' : snapAge} min)`,
+      snapshot_age_min: snapAge
+    });
+
+    // Ejecutar en background
+    (async () => {
+      const result = await refreshAIOpsMetrics();
+      _lastRefreshInfo.source = 'auto-refresh';
+      refreshJobs.set(jobId, {
+        status: 'completed',
+        startedAt: refreshJobs.get(jobId)?.startedAt,
+        result,
+        error: null
+      });
+      logger.info(`[AI-OPS AUTO-REFRESH] Completado — ${result.refreshed_adsets} ad sets, ${result.refreshed_ads} ads`);
+    })().catch(error => {
+      logger.error(`[AI-OPS AUTO-REFRESH] Error: ${error.message}`);
+      refreshJobs.set(jobId, {
+        status: 'failed',
+        startedAt: refreshJobs.get(jobId)?.startedAt,
+        result: null,
+        error: error.message
+      });
+    }).finally(() => {
+      _refreshInProgress = false;
+      setTimeout(() => refreshJobs.delete(jobId), REFRESH_JOB_TTL);
+    });
+  } catch (error) {
+    _refreshInProgress = false;
+    logger.error(`[AI-OPS AUTO-REFRESH] Error: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 /**
  * POST /api/ai-ops/refresh
@@ -611,6 +751,11 @@ async function refreshAIOpsMetrics() {
  */
 router.post('/refresh', async (req, res) => {
   try {
+    if (_refreshInProgress) {
+      return res.json({ success: true, async: false, message: 'Refresh ya en progreso, espera a que termine' });
+    }
+
+    _refreshInProgress = true;
     const jobId = `aiops_refresh_${Date.now()}`;
     refreshJobs.set(jobId, { status: 'running', startedAt: Date.now(), result: null, error: null });
 
@@ -620,6 +765,7 @@ router.post('/refresh', async (req, res) => {
     // Execute in background
     (async () => {
       const result = await refreshAIOpsMetrics();
+      _lastRefreshInfo.source = 'manual';
       refreshJobs.set(jobId, {
         status: 'completed',
         startedAt: refreshJobs.get(jobId)?.startedAt,
@@ -636,6 +782,7 @@ router.post('/refresh', async (req, res) => {
         error: error.message
       });
     }).finally(() => {
+      _refreshInProgress = false;
       setTimeout(() => refreshJobs.delete(jobId), REFRESH_JOB_TTL);
     });
   } catch (error) {

@@ -429,14 +429,13 @@ async function jobAIManager() {
 }
 
 /**
- * Job: AI Ops Metrics Refresh — cada 15 minutos durante horas activas.
- * Recolecta métricas de Meta API directamente para ad sets AI-managed,
- * sin depender del filtro ACTIVE/PAUSED del data-collector general.
- * Meta refresca insights cada ~15 min, así que este es el intervalo óptimo.
+ * Job: AI Ops Metrics Refresh — 24/7 con frecuencia adaptativa.
+ * Horas activas: cada 15 min (Meta refresca insights cada ~15 min).
+ * Fuera de horas: cada 30 min (mantener datos razonablemente frescos).
+ * Si falla, reintenta una vez después de 5 minutos.
  */
+let _aIOpsRetryTimer = null;
 async function jobAIOpsRefresh() {
-  if (!isActiveHours()) return;
-
   try {
     const result = await refreshAIOpsMetrics();
     if (result.refreshed_adsets > 0) {
@@ -444,6 +443,21 @@ async function jobAIOpsRefresh() {
     }
   } catch (error) {
     logger.error('[CRON] Error en AI Ops refresh:', error.message);
+    // Reintentar una vez en 5 minutos si falló
+    if (!_aIOpsRetryTimer) {
+      _aIOpsRetryTimer = setTimeout(async () => {
+        _aIOpsRetryTimer = null;
+        try {
+          logger.info('[CRON] AI Ops refresh — reintento tras fallo...');
+          const retryResult = await refreshAIOpsMetrics();
+          if (retryResult.refreshed_adsets > 0) {
+            logger.info(`[CRON] AI Ops refresh (reintento): ${retryResult.refreshed_adsets} ad sets, ${retryResult.refreshed_ads} ads`);
+          }
+        } catch (retryErr) {
+          logger.error('[CRON] AI Ops refresh reintento también falló:', retryErr.message);
+        }
+      }, 5 * 60 * 1000);
+    }
   }
 }
 
@@ -553,13 +567,22 @@ function initCronJobs() {
   });
   logger.info('  [*] AI Manager autónomo — 3x/día: 9am, 5pm, 10pm ET (horas activas)');
 
-  // Cada 15 minutos: AI Ops metrics refresh (ad sets AI-managed, cualquier status)
+  // AI Ops metrics refresh — 24/7 con frecuencia adaptativa
+  // Horas activas (cada 15 min): minutos 5, 20, 35, 50
+  // Fuera de horas (cada 30 min): minutos 5, 35
   // Offset 5 min del data-collector general para no colisionar en API calls
-  cron.schedule('5,20,35,50 * * * *', jobAIOpsRefresh, {
+  cron.schedule('5,20,35,50 * * * *', () => {
+    // Fuera de horas activas: solo correr en minutos 5 y 35 (cada 30 min)
+    if (!isActiveHours()) {
+      const minute = moment().tz(TIMEZONE).minutes();
+      if (minute !== 5 && minute !== 35) return;
+    }
+    jobAIOpsRefresh();
+  }, {
     timezone: TIMEZONE,
     name: 'aiops-refresh'
   });
-  logger.info('  [*] AI Ops metrics refresh — cada 15 min (horas activas)');
+  logger.info('  [*] AI Ops metrics refresh — cada 15 min (activo) / cada 30 min (fuera de horario)');
 
   // Cada 6 horas: Sync de métricas de creativos (después de data collection)
   cron.schedule('30 */6 * * *', jobCreativeMetricsSync, {
