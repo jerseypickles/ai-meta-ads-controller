@@ -168,20 +168,22 @@ class DataCollector {
       }
       logger.info(`  ${adSetSnapshots} snapshots de ad sets guardados`);
 
-      // 6. Obtener status real de todos los ads (1 sola llamada API)
+      // 6. Obtener status real de todos los ads
       logger.info('Recolectando status de ads...');
       const adStatusMap = {}; // { adId: 'ACTIVE' | 'PAUSED' | ... }
-      try {
-        for (const [adSetId] of Object.entries(adSetMap)) {
+      const adSetsFetchedOk = new Set(); // Track successful API calls
+      for (const [adSetId] of Object.entries(adSetMap)) {
+        try {
           const ads = await this.meta.getAds(adSetId, 'id,effective_status');
+          adSetsFetchedOk.add(adSetId);
           for (const ad of ads) {
             adStatusMap[ad.id] = ad.effective_status || 'ACTIVE';
           }
+        } catch (err) {
+          logger.warn(`  Error obteniendo status de ads para ad set ${adSetId}: ${err.message} — preservando status existente`);
         }
-        logger.info(`  ${Object.keys(adStatusMap).length} ads con status real obtenido`);
-      } catch (err) {
-        logger.warn(`  Error obteniendo status de ads: ${err.message} — usando fallback`);
       }
+      logger.info(`  ${Object.keys(adStatusMap).length} ads con status real obtenido (${adSetsFetchedOk.size}/${Object.keys(adSetMap).length} ad sets OK)`);
 
       // 7. Obtener insights a nivel de cuenta con level=ad (5 llamadas)
       logger.info('Recolectando insights de ads/creativos (level=ad)...');
@@ -206,6 +208,22 @@ class DataCollector {
       // 8. Guardar snapshots de ads
       let adSnapshots = 0;
       for (const [adId, adData] of Object.entries(adInsights)) {
+        // Determine ad status:
+        // - If we have it from the API, use it
+        // - If the API call failed for this ad's ad set, look up existing status from DB
+        // - Only default to ACTIVE if no prior data exists
+        let adStatus = adStatusMap[adId];
+        if (!adStatus && !adSetsFetchedOk.has(adData.adset_id)) {
+          // API call failed — preserve existing status from DB
+          const existingSnap = await MetricSnapshot.findOne({
+            entity_type: 'ad', entity_id: adId
+          }).sort({ snapshot_at: -1 }).select('status').lean();
+          adStatus = existingSnap?.status || 'ACTIVE';
+        } else if (!adStatus) {
+          // API succeeded but ad not in response — it's deleted
+          adStatus = 'DELETED';
+        }
+
         const metrics = {};
         for (const window of Object.keys(timeRanges)) {
           metrics[window] = adData[window] || this._emptyMetrics();
@@ -218,7 +236,7 @@ class DataCollector {
           entity_name: adData.ad_name,
           parent_id: adData.adset_id,
           campaign_id: adData.campaign_id,
-          status: adStatusMap[adId] || 'ACTIVE',
+          status: adStatus,
           metrics,
           analysis,
           snapshot_at: new Date()

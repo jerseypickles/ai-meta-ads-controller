@@ -527,6 +527,7 @@ async function refreshAIOpsMetrics() {
 
   // 4. Obtener status real de ads (solo ad sets que existen en Meta)
   const adStatusMap = {};
+  const adSetsFetchedOk = new Set(); // Track which ad sets had successful API calls
   for (const adSetId of adSetIds) {
     if (!adSetInfoMap[adSetId]) continue;
     try {
@@ -534,11 +535,13 @@ async function refreshAIOpsMetrics() {
         fields: 'id,effective_status',
         limit: 200
       });
+      adSetsFetchedOk.add(adSetId); // Mark this ad set as successfully fetched
       for (const ad of (adsData.data || [])) {
         adStatusMap[ad.id] = ad.effective_status || 'ACTIVE';
       }
     } catch (err) {
-      // Ad set podría no tener ads — ignorar
+      // API call failed — do NOT mark ads as DELETED, keep existing status
+      logger.warn(`[AI-OPS REFRESH] GET /${adSetId}/ads failed: ${err.message} — preserving existing status`);
     }
   }
 
@@ -600,14 +603,24 @@ async function refreshAIOpsMetrics() {
   }
 
   // 8. Crear snapshots de ads
-  // Ads que NO aparecen en adStatusMap fueron borrados en Meta.
-  // Creamos un snapshot DELETED para que la aggregation los filtre.
+  // Only mark ads as DELETED when we SUCCESSFULLY fetched ads for their ad set
+  // and the ad was missing from the response. If the API call failed, keep existing status.
   let adSnapshots = 0;
   for (const [adId, adData] of Object.entries(adInsights)) {
     if (!adData.campaign_id) continue;
 
-    // Si el ad no aparece en adStatusMap, fue borrado en Meta
-    const adStatus = adStatusMap[adId] || 'DELETED';
+    let adStatus;
+    if (adStatusMap[adId]) {
+      // Ad found in Meta — use real status
+      adStatus = adStatusMap[adId];
+    } else if (adSetsFetchedOk.has(adData.adset_id)) {
+      // API call succeeded for this ad set but ad was NOT in the response — it's deleted
+      adStatus = 'DELETED';
+    } else {
+      // API call failed for this ad set — we don't know the real status, skip snapshot
+      // (let the existing snapshot remain as-is)
+      continue;
+    }
 
     const metrics = {};
     for (const window of Object.keys(timeRanges)) {
@@ -629,7 +642,10 @@ async function refreshAIOpsMetrics() {
 
   // También crear snapshots DELETED para ads conocidos que no tienen insights
   // (ads que fueron borrados y ya no generan insights)
+  // ONLY for ad sets where we successfully fetched ads from Meta
   for (const adSetId of adSetIds) {
+    // Skip if we couldn't fetch ads for this ad set — we don't know what's deleted
+    if (!adSetsFetchedOk.has(adSetId)) continue;
     const creation = allCreations.find(c => c.meta_entity_id === adSetId);
     if (!creation?.child_ad_ids) continue;
     for (const childAdId of creation.child_ad_ids) {
@@ -637,7 +653,7 @@ async function refreshAIOpsMetrics() {
       if (adInsights[childAdId]) continue;
       // Si existe en Meta (tiene status), no está borrado
       if (adStatusMap[childAdId]) continue;
-      // Este ad fue borrado y ya no genera insights — crear snapshot DELETED
+      // API call succeeded AND ad is missing — it's genuinely deleted
       const existingSnap = await MetricSnapshot.findOne({
         entity_type: 'ad', entity_id: childAdId
       }).sort({ snapshot_at: -1 }).lean();
