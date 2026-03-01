@@ -103,21 +103,26 @@ export const runAIManager = async () => {
   return data;
 };
 
-// ═══ METRICS (All ad sets / ads from data-collector) ═══
+// ═══ METRICS — LIVE from Meta API ═══
 
-export const getAllAdSets = async () => {
-  const response = await api.get('/api/metrics/adsets', { timeout: 60000 });
-  return response.data;
+export const getAllAdSets = async (force = false) => {
+  const params = force ? { force: 'true' } : {};
+  const response = await api.get('/api/metrics/adsets/live', { params, timeout: 120000 });
+  return response.data; // { adsets: [...], cached, fetched_at, age_seconds }
 };
 
 export const getAdsForAdSet = async (adsetId) => {
-  const response = await api.get('/api/metrics/ads', { params: { adset_id: adsetId }, timeout: 30000 });
+  const response = await api.get(`/api/metrics/ads/live/${adsetId}`, { timeout: 120000 });
   return response.data;
 };
 
 export const getAccountOverview = async () => {
   const response = await api.get('/api/metrics/overview', { timeout: 30000 });
   return response.data;
+};
+
+export const refreshLiveCache = async () => {
+  await api.post('/api/metrics/refresh-cache', {}, { timeout: 5000 });
 };
 
 // ═══ AI OPS (refresh, auto-refresh) ═══

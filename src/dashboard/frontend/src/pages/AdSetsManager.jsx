@@ -1,111 +1,127 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Brain, Bot, CheckCircle, XCircle,
-  TrendingUp, DollarSign, Eye, RefreshCw,
-  ChevronDown, ChevronRight, Image, Pause, Play,
+  Brain, Bot, CheckCircle,
+  TrendingUp, TrendingDown, Minus,
+  DollarSign, Eye, RefreshCw,
+  ChevronDown, ChevronRight, Pause, Play,
   Power, Plus, Send, X, Trash2,
-  LogOut, Search, ShoppingCart, BarChart2
+  LogOut, Search, ShoppingCart, BarChart3,
+  Clock, Zap, AlertTriangle, ArrowUpDown
 } from 'lucide-react';
 import {
   getAllAdSets, getAdsForAdSet, getAccountOverview,
-  runAIManager, runAgents, refreshAIOpsMetrics, autoRefreshAIOps,
+  runAIManager, runAgents, refreshAIOpsMetrics,
+  refreshLiveCache,
   pauseEntity, deleteEntity, getAvailableCreatives,
   addAdToAdSet, generateAdCopy, getCreativePreviewUrl, logout
 } from '../api';
 
-// ═══ HELPERS ═══
-const fmt = (v, d = 2) => v != null ? Number(v).toFixed(d) : '0';
-const fmtK = (v) => {
+/* ══════════════════════════════════════════
+   HELPERS
+   ══════════════════════════════════════════ */
+
+const fmt = (v, d = 2) => (v != null && !isNaN(v)) ? Number(v).toFixed(d) : '—';
+const fmtMoney = (v) => {
+  if (v == null || isNaN(v)) return '—';
+  if (v >= 10000) return `$${(v / 1000).toFixed(1)}k`;
   if (v >= 1000) return `$${(v / 1000).toFixed(1)}k`;
-  return `$${fmt(v, 0)}`;
+  return `$${Number(v).toFixed(0)}`;
 };
-const roasColor = (roas) => {
-  const v = roas || 0;
-  if (v >= 3) return '#22c55e';
-  if (v >= 1.5) return '#eab308';
-  return '#ef4444';
-};
-const freqColor = (f) => {
-  if (f > 4) return '#ef4444';
-  if (f > 3) return '#eab308';
-  return '#71717a';
+const fmtPct = (v) => (v != null && !isNaN(v)) ? `${Number(v).toFixed(2)}%` : '—';
+
+const statusClass = (status) => {
+  if (status === 'ACTIVE') return 'status-active';
+  if (status === 'PAUSED') return 'status-paused';
+  if (status === 'DELETED' || status === 'ARCHIVED') return 'status-archived';
+  return 'status-paused';
 };
 
-// ═══ AD ROW ═══
+const roasClass = (roas) => {
+  const v = roas || 0;
+  if (v >= 3) return 'text-success';
+  if (v >= 1.5) return 'text-warning';
+  return 'text-danger';
+};
+
+const TrendIcon = ({ trend }) => {
+  if (trend === 'improving') return <TrendingUp size={13} className="text-success" />;
+  if (trend === 'declining') return <TrendingDown size={13} className="text-danger" />;
+  return <Minus size={13} className="text-muted" />;
+};
+
+/* ══════════════════════════════════════════
+   AD ROW (inside expanded ad set)
+   ══════════════════════════════════════════ */
+
 const AdRow = ({ ad, onAction }) => {
-  const [pausing, setPausing] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [busy, setBusy] = useState(null);
   const [removed, setRemoved] = useState(false);
   const m = ad.metrics?.last_7d || {};
 
   const handlePause = async (e) => {
     e.stopPropagation();
-    if (!confirm(`Pause "${ad.entity_name || ad.entity_id}"?`)) return;
-    setPausing(true);
+    if (!confirm(`Pause ad "${ad.entity_name}"?`)) return;
+    setBusy('pause');
     try {
-      await pauseEntity(ad.entity_id, { entity_type: 'ad', entity_name: ad.entity_name || ad.entity_id, reason: 'Manual pause' });
-      setRemoved(true); if (onAction) onAction();
-    } catch (err) { alert('Error: ' + (err.message || 'Unknown')); }
-    finally { setPausing(false); }
+      await pauseEntity(ad.entity_id, { entity_type: 'ad', entity_name: ad.entity_name, reason: 'Manual pause' });
+      setRemoved(true);
+      onAction?.();
+    } catch (err) { alert(err.response?.data?.error || err.message); }
+    finally { setBusy(null); }
   };
 
   const handleDelete = async (e) => {
     e.stopPropagation();
-    if (!confirm(`DELETE "${ad.entity_name || ad.entity_id}"? Cannot be undone.`)) return;
-    setDeleting(true);
+    if (!confirm(`DELETE "${ad.entity_name}"? This cannot be undone.`)) return;
+    setBusy('delete');
     try {
-      await deleteEntity(ad.entity_id, { entity_type: 'ad', entity_name: ad.entity_name || ad.entity_id, reason: 'Manual delete' });
-      setRemoved(true); if (onAction) onAction();
-    } catch (err) { alert('Error: ' + (err.response?.data?.error || err.message)); }
-    finally { setDeleting(false); }
+      await deleteEntity(ad.entity_id, { entity_type: 'ad', entity_name: ad.entity_name, reason: 'Manual delete' });
+      setRemoved(true);
+      onAction?.();
+    } catch (err) { alert(err.response?.data?.error || err.message); }
+    finally { setBusy(null); }
   };
 
   if (removed) return null;
   const isActive = ad.status === 'ACTIVE';
 
   return (
-    <div style={{
-      display: 'grid', gridTemplateColumns: '1fr 72px 72px 56px 56px 56px 64px',
-      gap: '8px', alignItems: 'center', padding: '8px 12px',
-      backgroundColor: '#18181b', borderRadius: '8px', border: '1px solid #27272a',
-      opacity: isActive ? 1 : 0.5
-    }}>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          {isActive ? <Play size={9} color="#22c55e" fill="#22c55e" /> : <Pause size={9} color="#ef4444" />}
-          <span style={{ fontSize: '12px', color: '#d4d4d8', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {ad.entity_name || ad.entity_id}
-          </span>
-        </div>
-      </div>
-      <span style={{ fontSize: '11px', color: '#a1a1aa', textAlign: 'right' }}>${fmt(m.spend, 0)}</span>
-      <span style={{ fontSize: '12px', fontWeight: '700', textAlign: 'right', color: roasColor(m.roas) }}>{fmt(m.roas)}x</span>
-      <span style={{ fontSize: '11px', color: '#a1a1aa', textAlign: 'right' }}>{m.purchases || 0}</span>
-      <span style={{ fontSize: '11px', color: '#a1a1aa', textAlign: 'right' }}>{fmt(m.ctr, 1)}%</span>
-      <span style={{ fontSize: '11px', textAlign: 'right', color: freqColor(m.frequency || 0) }}>{fmt(m.frequency, 1)}</span>
-      <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
-        {isActive && (
-          <button onClick={handlePause} disabled={pausing || deleting} title="Pause" style={{
-            width: '26px', height: '26px', borderRadius: '6px',
-            border: '1px solid #eab30833', backgroundColor: '#18181b',
-            color: '#eab308', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0
-          }}>
-            {pausing ? <RefreshCw size={10} className="spin" /> : <Pause size={10} />}
+    <tr className={!isActive ? 'opacity-50' : ''}>
+      <td className="primary">
+        <span className="d-inline-flex align-center gap-2">
+          {isActive
+            ? <Play size={10} style={{ color: 'var(--green)', fill: 'var(--green)' }} />
+            : <Pause size={10} style={{ color: 'var(--red)' }} />}
+          <span className="ad-name-cell">{ad.entity_name || ad.entity_id}</span>
+        </span>
+      </td>
+      <td className="numeric">{fmtMoney(m.spend)}</td>
+      <td className={`numeric font-bold ${roasClass(m.roas)}`}>{fmt(m.roas)}x</td>
+      <td className="numeric">{m.purchases || 0}</td>
+      <td className="numeric">{fmtPct(m.ctr)}</td>
+      <td className="numeric">{fmt(m.frequency, 1)}</td>
+      <td className="numeric">
+        <span className="d-inline-flex gap-1">
+          {isActive && (
+            <button onClick={handlePause} disabled={busy} className="btn btn-ghost btn-icon btn-sm"
+              title="Pause" style={{ color: 'var(--yellow)' }}>
+              {busy === 'pause' ? <RefreshCw size={12} className="loading-spin" /> : <Pause size={12} />}
+            </button>
+          )}
+          <button onClick={handleDelete} disabled={busy} className="btn btn-ghost btn-icon btn-sm"
+            title="Delete" style={{ color: 'var(--red)' }}>
+            {busy === 'delete' ? <RefreshCw size={12} className="loading-spin" /> : <Trash2 size={12} />}
           </button>
-        )}
-        <button onClick={handleDelete} disabled={pausing || deleting} title="Delete" style={{
-          width: '26px', height: '26px', borderRadius: '6px',
-          border: '1px solid #ef444433', backgroundColor: '#18181b',
-          color: '#ef4444', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0
-        }}>
-          {deleting ? <RefreshCw size={10} className="spin" /> : <Trash2 size={10} />}
-        </button>
-      </div>
-    </div>
+        </span>
+      </td>
+    </tr>
   );
 };
 
-// ═══ ADD CREATIVE PANEL ═══
+/* ══════════════════════════════════════════
+   ADD CREATIVE PANEL
+   ══════════════════════════════════════════ */
+
 const AddCreativePanel = ({ adsetId, onClose, onSuccess }) => {
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -122,7 +138,8 @@ const AddCreativePanel = ({ adsetId, onClose, onSuccess }) => {
       try {
         const data = await getAvailableCreatives(adsetId);
         setAssets(data.assets || []);
-      } catch (err) { setError(err.message); } finally { setLoading(false); }
+      } catch (err) { setError(err.message); }
+      finally { setLoading(false); }
     })();
   }, [adsetId]);
 
@@ -136,70 +153,60 @@ const AddCreativePanel = ({ adsetId, onClose, onSuccess }) => {
       const res = await generateAdCopy(adsetId, selected);
       setGeneratedCopy({ headlines: res.headlines, bodies: res.bodies });
       setSelectedVariant(0);
-    } catch (err) { setError(err.message); } finally { setGeneratingCopy(false); }
+    } catch (err) { setError(err.message); }
+    finally { setGeneratingCopy(false); }
   };
 
   const handleCreate = async () => {
     if (!selected || !generatedCopy) return;
     setCreating(true); setError(null);
     try {
-      const headline = generatedCopy.headlines[selectedVariant];
-      const body = generatedCopy.bodies[selectedVariant];
-      const res = await addAdToAdSet(adsetId, selected, headline, body);
+      const hl = generatedCopy.headlines[selectedVariant];
+      const bd = generatedCopy.bodies[selectedVariant];
+      const res = await addAdToAdSet(adsetId, selected, hl, bd);
       setResult(res.result || res);
-      if (onSuccess) onSuccess();
-    } catch (err) { setError(err.message); } finally { setCreating(false); }
+      onSuccess?.();
+    } catch (err) { setError(err.message); }
+    finally { setCreating(false); }
   };
 
   return (
-    <div style={{ backgroundColor: '#09090b', border: '1px solid #22c55e33', borderRadius: '10px', padding: '16px', marginTop: '8px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <Plus size={13} color="#22c55e" />
-          <span style={{ fontSize: '11px', fontWeight: '700', color: '#22c55e', textTransform: 'uppercase' }}>
-            {!generatedCopy ? 'Select Creative' : 'Review Copy'}
+    <div className="card" style={{ borderColor: 'rgba(16,185,129,0.2)', marginTop: '12px' }}>
+      <div className="card-header" style={{ paddingBottom: '8px', marginBottom: '12px' }}>
+        <div className="d-flex align-center gap-2">
+          <Plus size={14} style={{ color: 'var(--green)' }} />
+          <span className="font-bold text-sm" style={{ color: 'var(--green)' }}>
+            {!generatedCopy ? 'SELECT CREATIVE' : 'REVIEW COPY'}
           </span>
           {generatedCopy && (
-            <button onClick={() => { setGeneratedCopy(null); setError(null); }} style={{
-              fontSize: '10px', color: '#71717a', background: 'none', border: '1px solid #27272a', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer'
-            }}>Back</button>
+            <button onClick={() => { setGeneratedCopy(null); setError(null); }} className="btn btn-secondary btn-sm">Back</button>
           )}
         </div>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#52525b', cursor: 'pointer', padding: '2px' }}><X size={14} /></button>
+        <button onClick={onClose} className="btn btn-ghost btn-icon"><X size={16} /></button>
       </div>
 
-      {loading && <div style={{ fontSize: '11px', color: '#52525b', padding: '8px 0' }}>Loading...</div>}
-      {error && <div style={{ fontSize: '11px', color: '#fca5a5', padding: '6px 8px', backgroundColor: '#450a0a', borderRadius: '6px', marginBottom: '8px' }}>{error}</div>}
-      {result && <div style={{ fontSize: '11px', color: '#86efac', padding: '10px 12px', backgroundColor: '#052e1688', borderRadius: '6px' }}><CheckCircle size={12} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />{result.ads_created} ad(s) created!</div>}
+      {loading && <p className="text-muted text-sm">Loading creatives...</p>}
+      {error && <div className="alert alert-danger" style={{ padding: '8px 12px', fontSize: '13px' }}>{error}</div>}
+      {result && <div className="alert alert-success" style={{ padding: '8px 12px', fontSize: '13px' }}><CheckCircle size={14} style={{ marginRight: '6px' }} />{result.ads_created} ad(s) created</div>}
 
       {!result && !loading && !generatedCopy && (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '8px', maxHeight: '300px', overflowY: 'auto', marginBottom: '10px' }}>
+          <div className="creative-grid">
             {availableAssets.map(asset => (
-              <div key={asset._id} onClick={() => setSelected(asset._id)} style={{
-                borderRadius: '8px', cursor: 'pointer', overflow: 'hidden',
-                backgroundColor: selected === asset._id ? '#052e1622' : '#18181b',
-                border: `2px solid ${selected === asset._id ? '#22c55e' : '#27272a'}`,
-              }}>
-                <div style={{ width: '100%', height: '110px', backgroundColor: '#09090b', overflow: 'hidden' }}>
-                  <img src={getCreativePreviewUrl(asset.filename)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              <div key={asset._id} onClick={() => setSelected(asset._id)}
+                className={`creative-thumb ${selected === asset._id ? 'selected' : ''}`}>
+                <div className="creative-thumb-img">
+                  <img src={getCreativePreviewUrl(asset.filename)} alt=""
                     onError={(e) => { e.target.style.display = 'none'; }} />
                 </div>
-                <div style={{ padding: '6px 8px' }}>
-                  <div style={{ fontSize: '10px', color: '#d4d4d8', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{asset.original_name}</div>
-                </div>
+                <div className="creative-thumb-name">{asset.original_name}</div>
               </div>
             ))}
-            {availableAssets.length === 0 && <div style={{ padding: '20px', textAlign: 'center', fontSize: '11px', color: '#3f3f46', gridColumn: '1 / -1' }}>No available assets</div>}
+            {availableAssets.length === 0 && <p className="text-muted text-sm" style={{ gridColumn: '1/-1', textAlign: 'center', padding: '20px 0' }}>No available creatives</p>}
           </div>
           {selected && (
-            <button onClick={handleGenerateCopy} disabled={generatingCopy} style={{
-              width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #7c3aed33',
-              background: generatingCopy ? '#2e1065' : 'linear-gradient(135deg, #4c1d95, #7c3aed)',
-              color: '#e9d5ff', fontSize: '12px', fontWeight: '700', cursor: generatingCopy ? 'wait' : 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
-            }}>
-              {generatingCopy ? <><RefreshCw size={13} className="spin" /> Generating...</> : <><Brain size={13} /> Generate Copy</>}
+            <button onClick={handleGenerateCopy} disabled={generatingCopy} className="btn btn-primary w-full" style={{ marginTop: '12px' }}>
+              {generatingCopy ? <><RefreshCw size={14} className="loading-spin" /> Generating...</> : <><Brain size={14} /> Generate Ad Copy</>}
             </button>
           )}
         </>
@@ -208,30 +215,23 @@ const AddCreativePanel = ({ adsetId, onClose, onSuccess }) => {
       {!result && generatedCopy && (
         <>
           {selectedAsset && (
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', padding: '8px 10px', backgroundColor: '#18181b', borderRadius: '8px', marginBottom: '10px' }}>
-              <img src={getCreativePreviewUrl(selectedAsset.filename)} alt="" style={{ width: '44px', height: '44px', objectFit: 'cover', borderRadius: '6px' }} onError={(e) => { e.target.style.display = 'none'; }} />
-              <div style={{ fontSize: '11px', color: '#d4d4d8', fontWeight: '600' }}>{selectedAsset.original_name}</div>
+            <div className="d-flex align-center gap-3 mb-3" style={{ padding: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)' }}>
+              <img src={getCreativePreviewUrl(selectedAsset.filename)} alt="" style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '6px' }}
+                onError={(e) => { e.target.style.display = 'none'; }} />
+              <span className="font-semibold text-sm">{selectedAsset.original_name}</span>
             </div>
           )}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
+          <div className="d-flex flex-column gap-2 mb-3">
             {generatedCopy.headlines.map((headline, i) => (
-              <div key={i} onClick={() => setSelectedVariant(i)} style={{
-                padding: '10px 12px', borderRadius: '8px', cursor: 'pointer',
-                backgroundColor: selectedVariant === i ? '#052e1616' : '#18181b',
-                border: `2px solid ${selectedVariant === i ? '#22c55e' : '#27272a44'}`
-              }}>
-                <div style={{ fontSize: '13px', color: '#f4f4f5', fontWeight: '700', marginBottom: '4px' }}>{headline}</div>
-                <div style={{ fontSize: '11px', color: '#a1a1aa', lineHeight: '1.5' }}>{generatedCopy.bodies[i] || ''}</div>
+              <div key={i} onClick={() => setSelectedVariant(i)}
+                className={`copy-variant ${selectedVariant === i ? 'selected' : ''}`}>
+                <div className="font-bold text-sm">{headline}</div>
+                <div className="text-sm text-tertiary" style={{ marginTop: '4px' }}>{generatedCopy.bodies[i] || ''}</div>
               </div>
             ))}
           </div>
-          <button onClick={handleCreate} disabled={creating} style={{
-            width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #22c55e33',
-            background: creating ? '#064e3b' : 'linear-gradient(135deg, #14532d, #166534)',
-            color: '#86efac', fontSize: '12px', fontWeight: '700', cursor: creating ? 'wait' : 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
-          }}>
-            {creating ? <><RefreshCw size={13} className="spin" /> Creating...</> : <><Send size={13} /> Create Ad</>}
+          <button onClick={handleCreate} disabled={creating} className="btn btn-success w-full">
+            {creating ? <><RefreshCw size={14} className="loading-spin" /> Creating...</> : <><Send size={14} /> Create Ad</>}
           </button>
         </>
       )}
@@ -239,32 +239,33 @@ const AddCreativePanel = ({ adsetId, onClose, onSuccess }) => {
   );
 };
 
-// ═══ AD SET CARD ═══
-const AdSetCard = ({ adset, onRefresh }) => {
-  const [expanded, setExpanded] = useState(false);
+/* ══════════════════════════════════════════
+   EXPANDED AD SET DETAIL
+   ══════════════════════════════════════════ */
+
+const AdSetDetail = ({ adset, onRefresh }) => {
   const [ads, setAds] = useState(null);
-  const [loadingAds, setLoadingAds] = useState(false);
+  const [loadingAds, setLoadingAds] = useState(true);
   const [showAddCreative, setShowAddCreative] = useState(false);
 
   const m7 = adset.metrics?.last_7d || {};
   const m3 = adset.metrics?.last_3d || {};
   const mT = adset.metrics?.today || {};
+  const m14 = adset.metrics?.last_14d || {};
   const isActive = adset.status === 'ACTIVE';
-  const roas7d = m7.roas || 0;
   const analysis = adset.analysis || {};
 
-  const handleExpand = async () => {
-    const next = !expanded;
-    setExpanded(next);
-    if (next && ads === null) {
-      setLoadingAds(true);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
       try {
         const data = await getAdsForAdSet(adset.entity_id);
-        setAds((data || []).filter(a => a.status === 'ACTIVE' || a.status === 'PAUSED'));
-      } catch { setAds([]); }
-      finally { setLoadingAds(false); }
-    }
-  };
+        if (!cancelled) setAds((data || []).filter(a => a.status === 'ACTIVE' || a.status === 'PAUSED'));
+      } catch { if (!cancelled) setAds([]); }
+      finally { if (!cancelled) setLoadingAds(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [adset.entity_id]);
 
   const reloadAds = async () => {
     setLoadingAds(true);
@@ -273,197 +274,217 @@ const AdSetCard = ({ adset, onRefresh }) => {
       setAds((data || []).filter(a => a.status === 'ACTIVE' || a.status === 'PAUSED'));
     } catch { /* ignore */ }
     finally { setLoadingAds(false); }
-    if (onRefresh) onRefresh();
+    onRefresh?.();
   };
 
-  const activeAds = (ads || []).filter(a => a.status === 'ACTIVE');
+  const activeAds = (ads || []).filter(a => a.status === 'ACTIVE').length;
   const totalAds = (ads || []).length;
-  const trendIcon = analysis.roas_trend === 'improving' ? '\u2191' : analysis.roas_trend === 'declining' ? '\u2193' : '\u2192';
-  const trendColor = analysis.roas_trend === 'improving' ? '#22c55e' : analysis.roas_trend === 'declining' ? '#ef4444' : '#71717a';
+
+  const kpis = [
+    { label: 'Budget/day', value: fmtMoney(adset.daily_budget) },
+    { label: 'Today Spend', value: fmtMoney(mT.spend) },
+    { label: 'Today ROAS', value: `${fmt(mT.roas)}x`, cls: roasClass(mT.roas) },
+    { label: 'Spend 3d', value: fmtMoney(m3.spend) },
+    { label: 'ROAS 3d', value: `${fmt(m3.roas)}x`, cls: roasClass(m3.roas) },
+    { label: 'Spend 7d', value: fmtMoney(m7.spend) },
+    { label: 'ROAS 7d', value: `${fmt(m7.roas)}x`, cls: roasClass(m7.roas) },
+    { label: 'Spend 14d', value: fmtMoney(m14.spend) },
+    { label: 'ROAS 14d', value: `${fmt(m14.roas)}x`, cls: roasClass(m14.roas) },
+    { label: 'Purchases 7d', value: m7.purchases || 0 },
+    { label: 'CPA 7d', value: fmtMoney(m7.cpa) },
+    { label: 'CTR 7d', value: fmtPct(m7.ctr) },
+    { label: 'CPM 7d', value: fmtMoney(m7.cpm) },
+    { label: 'CPC 7d', value: fmtMoney(m7.cpc) },
+    { label: 'Frequency', value: fmt(m7.frequency, 2), cls: (m7.frequency || 0) > 4 ? 'text-danger' : (m7.frequency || 0) > 3 ? 'text-warning' : '' },
+    { label: 'Reach 7d', value: (m7.reach || 0).toLocaleString() },
+  ];
 
   return (
-    <div style={{
-      backgroundColor: '#18181b', border: '1px solid #27272a',
-      borderRadius: '12px', overflow: 'hidden', opacity: isActive ? 1 : 0.6
-    }}>
-      {!isActive && (
-        <div style={{
-          padding: '4px 16px', display: 'flex', alignItems: 'center', gap: '6px',
-          backgroundColor: adset.status === 'DELETED' ? '#27272a' : '#450a0a',
-          borderBottom: '1px solid #27272a'
-        }}>
-          <Power size={10} color={adset.status === 'DELETED' ? '#71717a' : '#fca5a5'} />
-          <span style={{ fontSize: '10px', fontWeight: '700', color: adset.status === 'DELETED' ? '#71717a' : '#fca5a5', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            {adset.status}
+    <div className="adset-detail animate-fade-in">
+      {/* KPI Grid */}
+      <div className="kpi-grid">
+        {kpis.map((k, i) => (
+          <div key={i} className="kpi-cell">
+            <div className="kpi-label">{k.label}</div>
+            <div className={`kpi-value ${k.cls || ''}`}>{k.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Analysis bar */}
+      {(analysis.roas_trend || analysis.frequency_alert) && (
+        <div className="analysis-bar">
+          <span className="d-inline-flex align-center gap-1">
+            <TrendIcon trend={analysis.roas_trend} />
+            <span className="font-semibold">{analysis.roas_trend || 'stable'}</span>
           </span>
+          {analysis.roas_3d_vs_7d ? (
+            <span className="text-tertiary">3d/7d ratio: {fmt(analysis.roas_3d_vs_7d, 2)}</span>
+          ) : null}
+          {analysis.frequency_alert && (
+            <span className="d-inline-flex align-center gap-1 text-warning">
+              <AlertTriangle size={12} /> High frequency
+            </span>
+          )}
         </div>
       )}
 
-      <div onClick={handleExpand} style={{
-        padding: '14px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px',
-        borderBottom: expanded ? '1px solid #27272a' : 'none'
-      }}>
-        {expanded ? <ChevronDown size={14} color="#52525b" /> : <ChevronRight size={14} color="#52525b" />}
-        <div style={{
-          width: '8px', height: '8px', borderRadius: '50%',
-          backgroundColor: isActive ? '#22c55e' : adset.status === 'PAUSED' ? '#eab308' : '#71717a', flexShrink: 0
-        }} />
-        <span style={{
-          fontSize: '13px', fontWeight: '600', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          color: isActive ? '#e4e4e7' : '#71717a'
-        }}>
-          {adset.entity_name || adset.entity_id}
-        </span>
-        <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flexShrink: 0 }}>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: '9px', color: '#52525b', fontWeight: '600' }}>SPEND</div>
-            <div style={{ fontSize: '12px', color: '#a1a1aa', fontWeight: '600' }}>{fmtK(m7.spend)}</div>
-          </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: '9px', color: '#52525b', fontWeight: '600' }}>ROAS</div>
-            <div style={{ fontSize: '13px', color: roasColor(roas7d), fontWeight: '800' }}>{fmt(roas7d)}x</div>
-          </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: '9px', color: '#52525b', fontWeight: '600' }}>PURCH</div>
-            <div style={{ fontSize: '12px', color: '#a1a1aa', fontWeight: '600' }}>{m7.purchases || 0}</div>
-          </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: '9px', color: '#52525b', fontWeight: '600' }}>BUDGET</div>
-            <div style={{ fontSize: '12px', color: '#a1a1aa', fontWeight: '600' }}>${fmt(adset.daily_budget, 0)}/d</div>
-          </div>
-          <span style={{ fontSize: '14px', color: trendColor, fontWeight: '700' }}>{trendIcon}</span>
-          {analysis.frequency_alert && <span style={{ fontSize: '9px', fontWeight: '700', padding: '2px 6px', borderRadius: '4px', backgroundColor: '#451a03', color: '#fde68a' }}>FREQ</span>}
+      {/* Ads Table */}
+      <div className="ads-section">
+        <div className="d-flex align-center justify-between mb-2">
+          <h6 className="text-tertiary text-xs font-bold mb-0" style={{ letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+            Ads {ads !== null && <span className="text-muted">({activeAds} active / {totalAds} total)</span>}
+          </h6>
         </div>
+
+        {loadingAds && (
+          <div className="d-flex align-center justify-center gap-2 p-4 text-muted text-sm">
+            <div className="loading" /> Loading ads from Meta...
+          </div>
+        )}
+
+        {!loadingAds && ads !== null && ads.length > 0 && (
+          <div className="table-container" style={{ marginBottom: '8px' }}>
+            <div className="table-wrapper">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Ad Name</th>
+                    <th style={{ textAlign: 'right' }}>Spend 7d</th>
+                    <th style={{ textAlign: 'right' }}>ROAS 7d</th>
+                    <th style={{ textAlign: 'right' }}>Purch</th>
+                    <th style={{ textAlign: 'right' }}>CTR</th>
+                    <th style={{ textAlign: 'right' }}>Freq</th>
+                    <th style={{ textAlign: 'right', width: '80px' }}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ads.map((ad, i) => <AdRow key={ad.entity_id || i} ad={ad} onAction={reloadAds} />)}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {!loadingAds && ads !== null && ads.length === 0 && (
+          <p className="text-muted text-sm text-center p-3">No ads in this ad set</p>
+        )}
+
+        {isActive && !showAddCreative && (
+          <button onClick={() => setShowAddCreative(true)} className="btn btn-secondary w-full btn-sm" style={{ borderStyle: 'dashed' }}>
+            <Plus size={14} /> Add Creative
+          </button>
+        )}
       </div>
 
-      {expanded && (
-        <div style={{ padding: '16px' }}>
-          <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))',
-            gap: '12px', padding: '14px 16px', marginBottom: '12px',
-            backgroundColor: '#09090b', borderRadius: '10px', border: '1px solid #27272a'
-          }}>
-            {[
-              { label: 'Budget/day', value: `$${fmt(adset.daily_budget, 0)}` },
-              { label: 'Spend 7d', value: `$${fmt(m7.spend, 0)}` },
-              { label: 'ROAS 7d', value: `${fmt(m7.roas)}x`, color: roasColor(m7.roas) },
-              { label: 'ROAS 3d', value: `${fmt(m3.roas)}x`, color: roasColor(m3.roas) },
-              { label: 'Today Spend', value: `$${fmt(mT.spend, 0)}` },
-              { label: 'Today ROAS', value: `${fmt(mT.roas)}x`, color: roasColor(mT.roas) },
-              { label: 'Purchases 7d', value: m7.purchases || 0 },
-              { label: 'CPA 7d', value: `$${fmt(m7.cpa, 2)}` },
-              { label: 'CTR 7d', value: `${fmt(m7.ctr, 2)}%` },
-              { label: 'Frequency', value: fmt(m7.frequency, 2), color: freqColor(m7.frequency || 0) },
-              { label: 'CPM', value: `$${fmt(m7.cpm, 2)}` },
-              { label: 'CPC', value: `$${fmt(m7.cpc, 2)}` },
-            ].map((item, i) => (
-              <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                <span style={{ fontSize: '9px', color: '#52525b', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{item.label}</span>
-                <span style={{ fontSize: '14px', color: item.color || '#d4d4d8', fontWeight: '700' }}>{item.value}</span>
-              </div>
-            ))}
-          </div>
-
-          {(analysis.roas_trend || analysis.frequency_alert) && (
-            <div style={{ padding: '8px 12px', backgroundColor: '#09090b', borderRadius: '8px', borderLeft: '3px solid #3b82f644', marginBottom: '10px', fontSize: '11px', color: '#a1a1aa' }}>
-              <span style={{ color: trendColor, fontWeight: '700' }}>Trend: {analysis.roas_trend || 'stable'}</span>
-              {analysis.roas_3d_vs_7d ? <span style={{ marginLeft: '12px' }}>3d vs 7d: {analysis.roas_3d_vs_7d > 0 ? '+' : ''}{fmt(analysis.roas_3d_vs_7d, 1)}%</span> : null}
-              {analysis.frequency_alert && <span style={{ marginLeft: '12px', color: '#eab308' }}>Frequency alert</span>}
-            </div>
-          )}
-
-          <div style={{ marginBottom: '10px' }}>
-            <div style={{ fontSize: '10px', fontWeight: '700', color: '#52525b', textTransform: 'uppercase', marginBottom: '6px', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              Ads {ads !== null && <span style={{ color: '#3f3f46' }}>({activeAds.length} active / {totalAds} total)</span>}
-            </div>
-
-            {loadingAds && <div style={{ padding: '12px', textAlign: 'center', fontSize: '11px', color: '#52525b' }}><RefreshCw size={12} className="spin" style={{ display: 'inline', marginRight: '6px', verticalAlign: 'middle' }} />Loading ads...</div>}
-
-            {!loadingAds && ads !== null && (
-              <>
-                <div style={{
-                  display: 'grid', gridTemplateColumns: '1fr 72px 72px 56px 56px 56px 64px',
-                  gap: '8px', padding: '4px 12px', fontSize: '9px', color: '#52525b',
-                  fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em'
-                }}>
-                  <span>Ad</span>
-                  <span style={{ textAlign: 'right' }}>Spend</span>
-                  <span style={{ textAlign: 'right' }}>ROAS</span>
-                  <span style={{ textAlign: 'right' }}>Purch</span>
-                  <span style={{ textAlign: 'right' }}>CTR</span>
-                  <span style={{ textAlign: 'right' }}>Freq</span>
-                  <span></span>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  {ads.map((ad, i) => <AdRow key={ad.entity_id || i} ad={ad} onAction={reloadAds} />)}
-                </div>
-                {ads.length === 0 && <div style={{ padding: '12px', textAlign: 'center', fontSize: '11px', color: '#3f3f46' }}>No ads</div>}
-              </>
-            )}
-
-            {isActive && !showAddCreative && (
-              <button onClick={() => setShowAddCreative(true)} style={{
-                width: '100%', padding: '7px', marginTop: '6px', borderRadius: '8px',
-                border: '1px dashed #22c55e44', backgroundColor: 'transparent',
-                color: '#22c55e88', fontSize: '11px', fontWeight: '600', cursor: 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px'
-              }}>
-                <Plus size={12} /> Add Creative
-              </button>
-            )}
-          </div>
-
-          {showAddCreative && (
-            <AddCreativePanel adsetId={adset.entity_id} onClose={() => setShowAddCreative(false)} onSuccess={reloadAds} />
-          )}
-        </div>
+      {showAddCreative && (
+        <AddCreativePanel adsetId={adset.entity_id} onClose={() => setShowAddCreative(false)} onSuccess={reloadAds} />
       )}
     </div>
   );
 };
 
-// ═══ MAIN PAGE ═══
+/* ══════════════════════════════════════════
+   MAIN AD SET ROW (in the table)
+   ══════════════════════════════════════════ */
+
+const AdSetRow = ({ adset, onRefresh }) => {
+  const [expanded, setExpanded] = useState(false);
+
+  const m7 = adset.metrics?.last_7d || {};
+  const mT = adset.metrics?.today || {};
+  const isActive = adset.status === 'ACTIVE';
+  const analysis = adset.analysis || {};
+
+  return (
+    <>
+      <tr onClick={() => setExpanded(!expanded)} className={`adset-row ${expanded ? 'expanded' : ''} ${!isActive ? 'opacity-50' : ''}`}>
+        <td>
+          <span className="d-inline-flex align-center gap-2">
+            {expanded ? <ChevronDown size={14} className="text-muted" /> : <ChevronRight size={14} className="text-muted" />}
+            <span className={`badge badge-sm badge-dot badge-pill ${statusClass(adset.status)}`}>{adset.status}</span>
+          </span>
+        </td>
+        <td className="primary">
+          <span className="adset-name-cell">{adset.entity_name || adset.entity_id}</span>
+        </td>
+        <td className="numeric">{fmtMoney(adset.daily_budget)}/d</td>
+        <td className="numeric">{fmtMoney(mT.spend)}</td>
+        <td className={`numeric font-bold ${roasClass(mT.roas)}`}>{fmt(mT.roas)}x</td>
+        <td className="numeric">{fmtMoney(m7.spend)}</td>
+        <td className={`numeric font-bold ${roasClass(m7.roas)}`}>{fmt(m7.roas)}x</td>
+        <td className="numeric">{m7.purchases || 0}</td>
+        <td className="numeric">{fmtPct(m7.ctr)}</td>
+        <td className="numeric">{fmt(m7.frequency, 1)}</td>
+        <td className="text-center">
+          <TrendIcon trend={analysis.roas_trend} />
+        </td>
+      </tr>
+      {expanded && (
+        <tr className="adset-detail-row">
+          <td colSpan="11" style={{ padding: 0 }}>
+            <AdSetDetail adset={adset} onRefresh={onRefresh} />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+};
+
+/* ══════════════════════════════════════════
+   MAIN PAGE
+   ══════════════════════════════════════════ */
+
 export default function AdSetsManager() {
   const [adSets, setAdSets] = useState([]);
-  const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [running, setRunning] = useState(null);
   const [filter, setFilter] = useState('active');
   const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState('spend_7d');
+  const [sortAsc, setSortAsc] = useState(false);
+  const [fetchMeta, setFetchMeta] = useState(null); // { cached, fetched_at, age_seconds }
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (force = false) => {
     try {
       setError(null);
-      const [adsetData, overviewData] = await Promise.all([
-        getAllAdSets(),
-        getAccountOverview().catch(() => null)
-      ]);
-      setAdSets(adsetData || []);
-      setOverview(overviewData);
+      const result = await getAllAdSets(force);
+      setAdSets(result.adsets || result || []);
+      setFetchMeta({ cached: result.cached, fetched_at: result.fetched_at, age_seconds: result.age_seconds, fallback: result.fallback });
     } catch (err) {
-      setError(err?.response?.data?.error || err.message || 'Error');
+      setError(err?.response?.data?.error || err.message || 'Failed to fetch data');
     } finally { setLoading(false); }
   }, []);
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 60000);
+    const interval = setInterval(() => fetchData(), 120000); // Auto-refresh every 2 min
     return () => clearInterval(interval);
   }, [fetchData]);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try { await autoRefreshAIOps(); if (!cancelled) fetchData(); } catch { /* ignore */ }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+  const handleForceRefresh = async () => {
+    setRunning('refresh');
+    try {
+      await refreshLiveCache();
+      await fetchData(true);
+    } catch (err) { setError(err.message); }
+    finally { setRunning(null); }
+  };
 
   const handleAction = async (key, fn) => {
     setRunning(key);
-    try { await fn(); await fetchData(); } catch (err) { setError(err.message); } finally { setRunning(null); }
+    try { await fn(); await fetchData(true); }
+    catch (err) { setError(err.message); }
+    finally { setRunning(null); }
   };
+
+  const handleSort = (col) => {
+    if (sortBy === col) { setSortAsc(!sortAsc); }
+    else { setSortBy(col); setSortAsc(false); }
+  };
+
+  // ── Computed ──
 
   const counts = useMemo(() => {
     const c = { active: 0, paused: 0, deleted: 0, total: adSets.length };
@@ -478,166 +499,425 @@ export default function AdSetsManager() {
   const totals = useMemo(() => {
     const active = adSets.filter(as => as.status === 'ACTIVE');
     const m7 = (as) => as.metrics?.last_7d || {};
+    const mT = (as) => as.metrics?.today || {};
+    const totalSpend7d = active.reduce((s, as) => s + (m7(as).spend || 0), 0);
+    const totalRev7d = active.reduce((s, as) => s + (m7(as).purchase_value || 0), 0);
     return {
-      spend7d: active.reduce((s, as) => s + (m7(as).spend || 0), 0),
+      spend7d: totalSpend7d,
+      revenue7d: totalRev7d,
+      roas7d: totalSpend7d > 0 ? totalRev7d / totalSpend7d : 0,
       purchases7d: active.reduce((s, as) => s + (m7(as).purchases || 0), 0),
-      avgRoas: active.length > 0 ? active.reduce((s, as) => s + (m7(as).roas || 0), 0) / active.length : 0,
+      spendToday: active.reduce((s, as) => s + (mT(as).spend || 0), 0),
       totalBudget: active.reduce((s, as) => s + (as.daily_budget || 0), 0)
     };
   }, [adSets]);
 
   const filtered = useMemo(() => {
     let list = adSets;
+
+    // Status filter
     if (filter === 'active') list = list.filter(as => as.status === 'ACTIVE');
     else if (filter === 'paused') list = list.filter(as => as.status === 'PAUSED');
     else if (filter === 'off') list = list.filter(as => as.status !== 'ACTIVE' && as.status !== 'PAUSED');
 
+    // Search
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(as => (as.entity_name || '').toLowerCase().includes(q) || (as.entity_id || '').includes(q));
     }
 
+    // Sort
+    const getSortVal = (as) => {
+      const m7 = as.metrics?.last_7d || {};
+      const mT = as.metrics?.today || {};
+      switch (sortBy) {
+        case 'name': return (as.entity_name || '').toLowerCase();
+        case 'status': return as.status;
+        case 'budget': return as.daily_budget || 0;
+        case 'spend_today': return mT.spend || 0;
+        case 'roas_today': return mT.roas || 0;
+        case 'spend_7d': return m7.spend || 0;
+        case 'roas_7d': return m7.roas || 0;
+        case 'purchases': return m7.purchases || 0;
+        case 'ctr': return m7.ctr || 0;
+        case 'frequency': return m7.frequency || 0;
+        default: return m7.spend || 0;
+      }
+    };
+
     return [...list].sort((a, b) => {
-      if (a.status === 'ACTIVE' && b.status !== 'ACTIVE') return -1;
-      if (a.status !== 'ACTIVE' && b.status === 'ACTIVE') return 1;
-      return ((b.metrics?.last_7d?.spend || 0) - (a.metrics?.last_7d?.spend || 0));
+      const va = getSortVal(a);
+      const vb = getSortVal(b);
+      const cmp = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
+      return sortAsc ? cmp : -cmp;
     });
-  }, [adSets, filter, search]);
+  }, [adSets, filter, search, sortBy, sortAsc]);
+
+  // ── Render ──
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: '#09090b', color: '#71717a', fontFamily: 'Inter, system-ui, sans-serif' }}>
-        <RefreshCw size={18} className="spin" /><span style={{ marginLeft: '10px', fontSize: '13px' }}>Loading ad sets...</span>
+      <div className="d-flex align-center justify-center" style={{ height: '100vh', gap: '12px' }}>
+        <div className="loading" />
+        <span className="text-muted text-sm">Fetching ad sets from Meta API...</span>
       </div>
     );
   }
 
+  const SortHeader = ({ col, children, align }) => (
+    <th className="sortable" style={{ textAlign: align || 'left' }} onClick={() => handleSort(col)}>
+      <span className="d-inline-flex align-center gap-1">
+        {children}
+        {sortBy === col && <ArrowUpDown size={10} style={{ opacity: 0.6 }} />}
+      </span>
+    </th>
+  );
+
   return (
-    <div style={{ backgroundColor: '#09090b', minHeight: '100vh', fontFamily: 'Inter, system-ui, sans-serif' }}>
-      <div style={{
-        padding: '16px 24px', borderBottom: '1px solid #27272a',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        position: 'sticky', top: 0, backgroundColor: '#09090b', zIndex: 100
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{
-            width: '34px', height: '34px', borderRadius: '10px',
-            background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center'
-          }}>
-            <BarChart2 size={17} color="#fff" />
+    <div className="adsets-manager">
+      {/* ── Header ── */}
+      <header className="manager-header">
+        <div className="d-flex align-center gap-3">
+          <div className="header-logo">
+            <BarChart3 size={18} color="#fff" />
           </div>
           <div>
-            <h1 style={{ fontSize: '16px', fontWeight: '800', color: '#fafafa', margin: 0, letterSpacing: '-0.02em' }}>Ad Sets</h1>
-            <span style={{ fontSize: '11px', color: '#52525b' }}>
-              {counts.total} total &middot; {counts.active} active &middot; {counts.paused} paused
+            <h1 className="mb-0" style={{ fontSize: '1.125rem' }}>Ad Sets Manager</h1>
+            <span className="text-muted text-xs">
+              {counts.total} ad sets &middot; {counts.active} active &middot; {counts.paused} paused
+              {fetchMeta && (
+                <span className="fetch-meta">
+                  {fetchMeta.cached ? ` · cached (${fetchMeta.age_seconds}s ago)` : ' · live'}
+                  {fetchMeta.fallback && ' · snapshot fallback'}
+                </span>
+              )}
             </span>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-          {[
-            { key: 'manager', fn: () => handleAction('manager', runAIManager), Icon: Bot, color: '#ec4899', label: 'Manager' },
-            { key: 'brain', fn: () => handleAction('brain', runAgents), Icon: Brain, color: '#3b82f6', label: 'Brain' },
-            { key: 'refresh', fn: () => handleAction('refresh', refreshAIOpsMetrics), Icon: RefreshCw, color: '#22c55e', label: 'Refresh' }
-          ].map(({ key, fn, Icon, color, label }) => (
-            <button key={key} onClick={fn} disabled={running != null} style={{
-              padding: '7px 14px', borderRadius: '8px', border: `1px solid ${color}33`,
-              backgroundColor: running === key ? color + '15' : '#18181b',
-              color, fontSize: '11px', fontWeight: '600', cursor: running ? 'not-allowed' : 'pointer',
-              display: 'flex', alignItems: 'center', gap: '5px', opacity: running && running !== key ? 0.3 : 1
-            }}>
-              {running === key ? <RefreshCw size={12} className="spin" /> : <Icon size={12} />}{label}
-            </button>
-          ))}
-          <button onClick={() => { setLoading(true); fetchData(); }} style={{
-            padding: '7px', borderRadius: '8px', border: '1px solid #27272a',
-            backgroundColor: '#18181b', color: '#52525b', cursor: 'pointer', display: 'flex', alignItems: 'center'
-          }}><RefreshCw size={14} /></button>
-          <button onClick={logout} title="Logout" style={{
-            padding: '7px', borderRadius: '8px', border: '1px solid #27272a',
-            backgroundColor: '#18181b', color: '#52525b', cursor: 'pointer', display: 'flex', alignItems: 'center'
-          }}><LogOut size={14} /></button>
+        <div className="d-flex align-center gap-2">
+          <button onClick={() => handleAction('manager', runAIManager)} disabled={running != null}
+            className={`btn btn-sm ${running === 'manager' ? 'btn-primary' : 'btn-secondary'}`}>
+            {running === 'manager' ? <RefreshCw size={13} className="loading-spin" /> : <Bot size={13} />} Manager
+          </button>
+          <button onClick={() => handleAction('brain', runAgents)} disabled={running != null}
+            className={`btn btn-sm ${running === 'brain' ? 'btn-primary' : 'btn-secondary'}`}>
+            {running === 'brain' ? <RefreshCw size={13} className="loading-spin" /> : <Brain size={13} />} Brain
+          </button>
+          <div className="header-divider" />
+          <button onClick={handleForceRefresh} disabled={running != null}
+            className={`btn btn-sm ${running === 'refresh' ? 'btn-success' : 'btn-secondary'}`}
+            title="Force refresh from Meta API">
+            {running === 'refresh' ? <RefreshCw size={13} className="loading-spin" /> : <Zap size={13} />} Live Refresh
+          </button>
+          <button onClick={logout} title="Logout" className="btn btn-ghost btn-icon btn-sm">
+            <LogOut size={15} />
+          </button>
         </div>
-      </div>
+      </header>
 
-      <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '20px 24px' }}>
+      {/* ── Content ── */}
+      <div className="manager-content">
+
+        {/* Error */}
         {error && (
-          <div style={{ padding: '10px 14px', backgroundColor: '#450a0a', border: '1px solid #dc2626', borderRadius: '10px', marginBottom: '16px', color: '#fca5a5', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            {error}
-            <button onClick={() => { setLoading(true); fetchData(); }} style={{ padding: '4px 10px', borderRadius: '6px', border: '1px solid #dc2626', backgroundColor: '#7f1d1d', color: '#fca5a5', cursor: 'pointer', fontSize: '11px' }}>Retry</button>
+          <div className="alert alert-danger mb-4">
+            <AlertTriangle size={16} />
+            <div className="flex-1">{error}</div>
+            <button onClick={() => { setLoading(true); fetchData(true); }} className="btn btn-danger btn-sm">Retry</button>
           </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', marginBottom: '20px' }}>
+        {/* KPI Summary */}
+        <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
           {[
-            { icon: Eye, color: '#22c55e', label: 'Active', value: counts.active, sub: `${counts.total} total` },
-            { icon: Pause, color: '#eab308', label: 'Paused', value: counts.paused, sub: `${counts.deleted} off/deleted` },
-            { icon: DollarSign, color: '#3b82f6', label: 'Spend 7d', value: fmtK(totals.spend7d), sub: `$${fmt(totals.totalBudget, 0)}/day budget` },
-            { icon: TrendingUp, color: roasColor(totals.avgRoas), label: 'Avg ROAS 7d', value: `${fmt(totals.avgRoas)}x`, sub: 'active ad sets' },
-            { icon: ShoppingCart, color: '#a78bfa', label: 'Purchases 7d', value: totals.purchases7d, sub: 'from active' },
-          ].map(({ icon: Icon, color, label, value, sub }, i) => (
-            <div key={i} style={{
-              backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '10px',
-              padding: '14px 16px', borderLeft: `3px solid ${color}`
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
-                <Icon size={12} color={color} />
-                <span style={{ fontSize: '10px', color: '#52525b', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</span>
+            { icon: Eye, label: 'Active Ad Sets', value: counts.active, sub: `${counts.total} total`, color: '--green' },
+            { icon: DollarSign, label: 'Today Spend', value: fmtMoney(totals.spendToday), sub: `${fmtMoney(totals.totalBudget)}/day budget`, color: '--blue-primary' },
+            { icon: TrendingUp, label: 'ROAS 7d', value: `${fmt(totals.roas7d)}x`, sub: `${fmtMoney(totals.revenue7d)} revenue`, color: totals.roas7d >= 2 ? '--green' : totals.roas7d >= 1 ? '--yellow' : '--red' },
+            { icon: DollarSign, label: 'Spend 7d', value: fmtMoney(totals.spend7d), sub: `across ${counts.active} active`, color: '--blue-light' },
+            { icon: ShoppingCart, label: 'Purchases 7d', value: totals.purchases7d, sub: 'total conversions', color: '--blue-primary' },
+          ].map(({ icon: Icon, label, value, sub, color }, i) => (
+            <div key={i} className="metric-card">
+              <div className="metric-header">
+                <span className="metric-label">{label}</span>
+                <div className="metric-icon" style={{ color: `var(${color})` }}><Icon size={18} /></div>
               </div>
-              <div style={{ fontSize: '22px', fontWeight: '800', color: '#fafafa', letterSpacing: '-0.02em' }}>{value}</div>
-              <div style={{ fontSize: '11px', color: '#52525b', marginTop: '2px' }}>{sub}</div>
+              <div className="metric-value">{value}</div>
+              <span className="text-muted text-xs">{sub}</span>
             </div>
           ))}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px', gap: '12px' }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 12px',
-            backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '8px', flex: 1, maxWidth: '320px'
-          }}>
-            <Search size={13} color="#52525b" />
-            <input type="text" placeholder="Search ad sets..." value={search} onChange={e => setSearch(e.target.value)} style={{
-              background: 'none', border: 'none', outline: 'none', color: '#e4e4e7',
-              fontSize: '12px', fontFamily: 'Inter, system-ui, sans-serif', width: '100%'
-            }} />
+        {/* Toolbar: Search + Filters */}
+        <div className="toolbar">
+          <div className="search-box">
+            <Search size={14} />
+            <input type="text" placeholder="Search ad sets..." value={search} onChange={e => setSearch(e.target.value)} />
           </div>
-          <div style={{ display: 'flex', gap: '4px' }}>
+          <div className="d-flex gap-1">
             {[
-              { value: 'active', label: 'Active', count: counts.active },
-              { value: 'all', label: 'All', count: counts.total },
-              { value: 'paused', label: 'Paused', count: counts.paused },
-              { value: 'off', label: 'Deleted', count: counts.deleted }
-            ].map(opt => (
-              <button key={opt.value} onClick={() => setFilter(opt.value)} style={{
-                padding: '5px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '600',
-                cursor: 'pointer', border: '1px solid',
-                backgroundColor: filter === opt.value ? '#172554' : 'transparent',
-                borderColor: filter === opt.value ? '#3b82f6' : '#27272a',
-                color: filter === opt.value ? '#93c5fd' : '#52525b'
-              }}>
-                {opt.label} ({opt.count})
+              { v: 'active', l: 'Active', c: counts.active },
+              { v: 'all', l: 'All', c: counts.total },
+              { v: 'paused', l: 'Paused', c: counts.paused },
+              { v: 'off', l: 'Off', c: counts.deleted },
+            ].map(f => (
+              <button key={f.v} onClick={() => setFilter(f.v)}
+                className={`btn btn-sm ${filter === f.v ? 'btn-primary' : 'btn-ghost'}`}>
+                {f.l} ({f.c})
               </button>
             ))}
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          {filtered.map((as, i) => <AdSetCard key={as.entity_id || i} adset={as} onRefresh={fetchData} />)}
+        {/* Ad Sets Table */}
+        <div className="table-container">
+          <div className="table-wrapper">
+            <table className="table adsets-table">
+              <thead>
+                <tr>
+                  <SortHeader col="status">Status</SortHeader>
+                  <SortHeader col="name">Ad Set Name</SortHeader>
+                  <SortHeader col="budget" align="right">Budget</SortHeader>
+                  <SortHeader col="spend_today" align="right">Spend Today</SortHeader>
+                  <SortHeader col="roas_today" align="right">ROAS Today</SortHeader>
+                  <SortHeader col="spend_7d" align="right">Spend 7d</SortHeader>
+                  <SortHeader col="roas_7d" align="right">ROAS 7d</SortHeader>
+                  <SortHeader col="purchases" align="right">Purch 7d</SortHeader>
+                  <SortHeader col="ctr" align="right">CTR</SortHeader>
+                  <SortHeader col="frequency" align="right">Freq</SortHeader>
+                  <th style={{ textAlign: 'center', width: '50px' }}>Trend</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((as, i) => (
+                  <AdSetRow key={as.entity_id || i} adset={as} onRefresh={() => fetchData(true)} />
+                ))}
+              </tbody>
+            </table>
+          </div>
           {filtered.length === 0 && (
-            <div style={{ padding: '40px', textAlign: 'center', color: '#3f3f46', fontSize: '13px', backgroundColor: '#18181b', borderRadius: '12px', border: '1px solid #27272a' }}>
+            <div className="d-flex align-center justify-center p-5 text-muted text-sm">
               {search ? `No ad sets match "${search}"` : `No ${filter} ad sets`}
             </div>
           )}
         </div>
       </div>
 
+      {/* ── Scoped Styles ── */}
       <style>{`
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        .spin { animation: spin 1s linear infinite; }
-        * { box-sizing: border-box; }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 3px; }
+        .adsets-manager {
+          min-height: 100vh;
+          background-color: var(--bg-primary);
+        }
+
+        /* Header */
+        .manager-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 12px 24px;
+          border-bottom: 1px solid var(--border-color);
+          position: sticky;
+          top: 0;
+          z-index: 100;
+          background-color: var(--bg-primary);
+          backdrop-filter: blur(8px);
+        }
+        .header-logo {
+          width: 36px; height: 36px;
+          border-radius: var(--radius-md);
+          background: linear-gradient(135deg, var(--blue-primary), #8b5cf6);
+          display: flex; align-items: center; justify-content: center;
+          flex-shrink: 0;
+        }
+        .header-divider {
+          width: 1px; height: 24px;
+          background-color: var(--border-color);
+          margin: 0 4px;
+        }
+        .fetch-meta { opacity: 0.6; }
+
+        /* Content */
+        .manager-content {
+          max-width: 1600px;
+          margin: 0 auto;
+          padding: 20px 24px 40px;
+        }
+
+        /* Toolbar */
+        .toolbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 16px;
+        }
+        .search-box {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 14px;
+          background-color: var(--bg-secondary);
+          border: 1px solid var(--border-color);
+          border-radius: var(--radius-md);
+          flex: 1;
+          max-width: 360px;
+          transition: border-color var(--transition-fast);
+        }
+        .search-box:focus-within {
+          border-color: var(--blue-primary);
+        }
+        .search-box input {
+          background: none;
+          border: none;
+          outline: none;
+          color: var(--text-primary);
+          font-family: var(--font-family);
+          font-size: 0.875rem;
+          width: 100%;
+        }
+        .search-box input::placeholder { color: var(--text-muted); }
+        .search-box svg { color: var(--text-muted); flex-shrink: 0; }
+
+        /* Ad Sets Table */
+        .adsets-table { font-size: 0.8125rem; }
+        .adsets-table thead th { white-space: nowrap; }
+        .adsets-table .adset-row { cursor: pointer; }
+        .adsets-table .adset-row:hover { background-color: var(--bg-hover); }
+        .adsets-table .adset-row.expanded { background-color: var(--bg-tertiary); }
+        .adset-name-cell {
+          max-width: 280px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          display: inline-block;
+          vertical-align: middle;
+        }
+        .ad-name-cell {
+          max-width: 220px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          display: inline-block;
+          vertical-align: middle;
+        }
+        .adset-detail-row td {
+          background-color: var(--bg-primary) !important;
+        }
+        .adset-detail-row:hover td {
+          background-color: var(--bg-primary) !important;
+        }
+
+        /* Ad Set Detail (expanded) */
+        .adset-detail {
+          padding: 20px 24px;
+          border-top: 1px solid var(--border-color);
+        }
+
+        .kpi-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+          gap: 1px;
+          background-color: var(--border-color);
+          border: 1px solid var(--border-color);
+          border-radius: var(--radius-md);
+          overflow: hidden;
+          margin-bottom: 16px;
+        }
+        .kpi-cell {
+          background-color: var(--bg-secondary);
+          padding: 10px 14px;
+        }
+        .kpi-label {
+          font-size: 0.625rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          color: var(--text-muted);
+          margin-bottom: 4px;
+        }
+        .kpi-value {
+          font-size: 0.9375rem;
+          font-weight: 700;
+          color: var(--text-primary);
+        }
+
+        .analysis-bar {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          padding: 8px 14px;
+          background-color: var(--bg-secondary);
+          border: 1px solid var(--border-color);
+          border-radius: var(--radius-md);
+          margin-bottom: 16px;
+          font-size: 0.8125rem;
+        }
+
+        .ads-section { margin-top: 4px; }
+
+        /* Creative panel */
+        .creative-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+          gap: 10px;
+          max-height: 280px;
+          overflow-y: auto;
+          margin-bottom: 12px;
+        }
+        .creative-thumb {
+          border: 2px solid var(--border-color);
+          border-radius: var(--radius-md);
+          overflow: hidden;
+          cursor: pointer;
+          transition: border-color var(--transition-fast);
+        }
+        .creative-thumb.selected { border-color: var(--green); }
+        .creative-thumb:hover { border-color: var(--border-light); }
+        .creative-thumb-img {
+          width: 100%; height: 100px;
+          background-color: var(--bg-tertiary);
+          overflow: hidden;
+        }
+        .creative-thumb-img img {
+          width: 100%; height: 100%;
+          object-fit: cover;
+        }
+        .creative-thumb-name {
+          padding: 6px 8px;
+          font-size: 0.6875rem;
+          color: var(--text-secondary);
+          font-weight: 500;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .copy-variant {
+          padding: 12px 14px;
+          border: 2px solid var(--border-color);
+          border-radius: var(--radius-md);
+          cursor: pointer;
+          transition: border-color var(--transition-fast);
+        }
+        .copy-variant.selected { border-color: var(--green); background-color: rgba(16,185,129,0.05); }
+        .copy-variant:hover { border-color: var(--border-light); }
+
+        /* Loading spinner */
+        .loading-spin {
+          animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Responsive */
+        @media (max-width: 1024px) {
+          .manager-header { padding: 12px 16px; flex-wrap: wrap; gap: 8px; }
+          .manager-content { padding: 16px; }
+          .toolbar { flex-direction: column; align-items: stretch; }
+          .search-box { max-width: none; }
+        }
+        @media (max-width: 640px) {
+          .metrics-grid { grid-template-columns: repeat(2, 1fr) !important; }
+        }
       `}</style>
     </div>
   );
