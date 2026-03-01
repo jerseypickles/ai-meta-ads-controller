@@ -404,73 +404,21 @@ router.get('/adsets/live', async (req, res) => {
   }
 });
 
-// GET /api/metrics/ads/live/:adSetId — Ads for a specific ad set, fetched LIVE from Meta API
+// GET /api/metrics/ads/live/:adSetId — Ads for a specific ad set from snapshots (no extra API calls)
 router.get('/ads/live/:adSetId', async (req, res) => {
   try {
-    const meta = getMetaClient();
-    const timeRanges = getTimeRanges();
     const adSetId = req.params.adSetId;
-
-    // 1. Get ads list with status
-    let adsList;
-    try {
-      adsList = await meta.getAds(adSetId);
-    } catch (err) {
-      logger.warn(`[LIVE] Error fetching ads for ${adSetId}: ${err.message}`);
-      adsList = [];
-    }
-
-    if (adsList.length === 0) {
-      return res.json([]);
-    }
-
-    // 2. Get insights at ad level — uses MetaClient's 90s cache so this is cheap
-    const adInsights = {};
-    for (const [window, range] of Object.entries(timeRanges)) {
-      try {
-        const rows = await meta.getAccountInsights('ad', range);
-        for (const row of rows) {
-          if (!row.ad_id) continue;
-          if (row.adset_id !== adSetId) continue;
-          if (!adInsights[row.ad_id]) adInsights[row.ad_id] = { ad_name: row.ad_name };
-          adInsights[row.ad_id][window] = parseInsightRow(row);
-        }
-      } catch (err) {
-        logger.warn(`[LIVE] Error fetching ad insights for ${window}: ${err.message}`);
-      }
-    }
-
-    const emptyMetrics = {
-      spend: 0, impressions: 0, clicks: 0, ctr: 0, cpm: 0, cpc: 0,
-      purchases: 0, purchase_value: 0, roas: 0, cpa: 0, reach: 0, frequency: 0
-    };
-
-    // 3. Build response
-    const ads = adsList.map(ad => {
-      const insights = adInsights[ad.id] || {};
-      const metrics = {};
-      for (const window of Object.keys(timeRanges)) {
-        metrics[window] = insights[window] || { ...emptyMetrics };
-      }
-
-      return {
-        entity_id: ad.id,
-        entity_name: ad.name || insights.ad_name || ad.id,
-        status: ad.effective_status,
-        parent_id: adSetId,
-        metrics
-      };
-    });
-
-    res.json(ads);
+    const snapshots = await getAdsForAdSet(adSetId);
+    res.json(snapshots.map(s => ({
+      entity_id: s.entity_id,
+      entity_name: s.entity_name,
+      status: s.status,
+      parent_id: s.parent_id,
+      metrics: s.metrics || {}
+    })));
   } catch (error) {
-    logger.error(`[LIVE] Error fetching live ads: ${error.message}`);
-    try {
-      const ads = await getAdsForAdSet(req.params.adSetId);
-      res.json(ads);
-    } catch (fallbackErr) {
-      res.status(500).json({ error: error.message });
-    }
+    logger.error(`[LIVE] Error fetching ads for ad set: ${error.message}`);
+    res.status(500).json({ error: error.message });
   }
 });
 

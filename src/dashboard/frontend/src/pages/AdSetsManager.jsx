@@ -7,7 +7,7 @@ import {
   Power, Plus, Send, X, Trash2,
   LogOut, Search, ShoppingCart, BarChart3,
   Clock, Zap, AlertTriangle, ArrowUpDown,
-  Calendar, Target
+  Calendar, Target, Activity
 } from 'lucide-react';
 import {
   getAllAdSets, getAdsForAdSet, getAccountOverview,
@@ -58,11 +58,26 @@ const fmtMoney = (v) => {
 const fmtInt = (v) => (v != null && !isNaN(v)) ? Number(v).toLocaleString() : '—';
 const fmtPct = (v) => (v != null && !isNaN(v)) ? `${Number(v).toFixed(2)}%` : '—';
 
+const isActiveStatus = (s) => s === 'ACTIVE';
+const isPausedStatus = (s) => s === 'PAUSED' || s === 'ADSET_PAUSED' || s === 'CAMPAIGN_PAUSED';
+
 const statusClass = (status) => {
-  if (status === 'ACTIVE') return 'status-active';
-  if (status === 'PAUSED') return 'status-paused';
+  if (isActiveStatus(status)) return 'status-active';
+  if (isPausedStatus(status)) return 'status-paused';
   if (status === 'DELETED' || status === 'ARCHIVED') return 'status-archived';
+  if (status === 'PENDING_REVIEW' || status === 'IN_PROCESS') return 'status-pending';
+  if (status === 'DISAPPROVED' || status === 'WITH_ISSUES') return 'status-error';
   return 'status-paused';
+};
+
+const statusLabel = (status) => {
+  if (status === 'ADSET_PAUSED') return 'PAUSED';
+  if (status === 'CAMPAIGN_PAUSED') return 'CAMP PAUSED';
+  if (status === 'PENDING_REVIEW') return 'REVIEW';
+  if (status === 'WITH_ISSUES') return 'ISSUES';
+  if (status === 'IN_PROCESS') return 'PROCESSING';
+  if (status === 'PENDING_BILLING_INFO') return 'BILLING';
+  return status;
 };
 
 // ── Color functions based on KPI targets ──
@@ -320,7 +335,7 @@ const AdSetDetail = ({ adset, timeWindow, onRefresh }) => {
   const m3 = adset.metrics?.last_3d || {};
   const m7 = adset.metrics?.last_7d || {};
   const m14 = adset.metrics?.last_14d || {};
-  const isActive = adset.status === 'ACTIVE';
+  const isActive = isActiveStatus(adset.status);
   const analysis = adset.analysis || {};
 
   useEffect(() => {
@@ -328,7 +343,7 @@ const AdSetDetail = ({ adset, timeWindow, onRefresh }) => {
     (async () => {
       try {
         const data = await getAdsForAdSet(adset.entity_id);
-        if (!cancelled) setAds((data || []).filter(a => a.status === 'ACTIVE' || a.status === 'PAUSED'));
+        if (!cancelled) setAds(data || []);
       } catch { if (!cancelled) setAds([]); }
       finally { if (!cancelled) setLoadingAds(false); }
     })();
@@ -339,13 +354,13 @@ const AdSetDetail = ({ adset, timeWindow, onRefresh }) => {
     setLoadingAds(true);
     try {
       const data = await getAdsForAdSet(adset.entity_id);
-      setAds((data || []).filter(a => a.status === 'ACTIVE' || a.status === 'PAUSED'));
+      setAds(data || []);
     } catch { /* ignore */ }
     finally { setLoadingAds(false); }
     onRefresh?.();
   };
 
-  const activeAds = (ads || []).filter(a => a.status === 'ACTIVE').length;
+  const activeAds = (ads || []).filter(a => isActiveStatus(a.status)).length;
   const totalAds = (ads || []).length;
 
   const windows = [
@@ -357,150 +372,151 @@ const AdSetDetail = ({ adset, timeWindow, onRefresh }) => {
 
   return (
     <div className="adset-detail animate-fade-in">
-      {/* Multi-window comparison table */}
-      <div className="detail-comparison">
-        <table className="comparison-table">
-          <thead>
-            <tr>
-              <th></th>
-              {windows.map(w => (
-                <th key={w.key} className={w.key === timeWindow ? 'comparison-active' : ''}>{w.label}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td className="comparison-label">Spend</td>
-              {windows.map(w => <td key={w.key} className={`comparison-val ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtMoney(w.m.spend)}</td>)}
-            </tr>
-            <tr>
-              <td className="comparison-label">ROAS</td>
-              {windows.map(w => <td key={w.key} className={`comparison-val font-bold ${roasColor(w.m.roas)} ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmt(w.m.roas)}x</td>)}
-            </tr>
-            <tr>
-              <td className="comparison-label">Purchases</td>
-              {windows.map(w => <td key={w.key} className={`comparison-val ${w.key === timeWindow ? 'comparison-active' : ''}`}>{w.m.purchases || 0}</td>)}
-            </tr>
-            <tr>
-              <td className="comparison-label">Revenue</td>
-              {windows.map(w => <td key={w.key} className={`comparison-val ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtMoney(w.m.purchase_value)}</td>)}
-            </tr>
-            <tr>
-              <td className="comparison-label">CPA</td>
-              {windows.map(w => <td key={w.key} className={`comparison-val ${cpaColor(w.m.cpa)} ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtMoney(w.m.cpa)}</td>)}
-            </tr>
-            <tr>
-              <td className="comparison-label">CTR</td>
-              {windows.map(w => <td key={w.key} className={`comparison-val ${ctrColor(w.m.ctr)} ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtPct(w.m.ctr)}</td>)}
-            </tr>
-            <tr>
-              <td className="comparison-label">CPM</td>
-              {windows.map(w => <td key={w.key} className={`comparison-val ${cpmColor(w.m.cpm)} ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtMoney(w.m.cpm)}</td>)}
-            </tr>
-            <tr>
-              <td className="comparison-label">CPC</td>
-              {windows.map(w => <td key={w.key} className={`comparison-val ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtMoney(w.m.cpc)}</td>)}
-            </tr>
-            <tr>
-              <td className="comparison-label">Frequency</td>
-              {windows.map(w => <td key={w.key} className={`comparison-val ${freqColor(w.m.frequency)} ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmt(w.m.frequency, 2)}</td>)}
-            </tr>
-            <tr>
-              <td className="comparison-label">Reach</td>
-              {windows.map(w => <td key={w.key} className={`comparison-val ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtInt(w.m.reach)}</td>)}
-            </tr>
-            <tr>
-              <td className="comparison-label">Impressions</td>
-              {windows.map(w => <td key={w.key} className={`comparison-val ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtInt(w.m.impressions)}</td>)}
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      {/* Detail layout: two columns — metrics left, ads right */}
+      <div className="detail-grid">
 
-      {/* Budget + Analysis bar */}
-      <div className="detail-info-bar">
-        <div className="detail-info-item">
-          <span className="detail-info-label">Budget</span>
-          <span className="detail-info-value">{fmtMoney(adset.daily_budget)}/day</span>
-        </div>
-        {adset.optimization_goal && (
-          <div className="detail-info-item">
-            <span className="detail-info-label">Goal</span>
-            <span className="detail-info-value">{adset.optimization_goal.replace(/_/g, ' ').toLowerCase()}</span>
-          </div>
-        )}
-        {adset.bid_strategy && (
-          <div className="detail-info-item">
-            <span className="detail-info-label">Bid</span>
-            <span className="detail-info-value">{adset.bid_strategy.replace(/_/g, ' ').toLowerCase()}</span>
-          </div>
-        )}
-        <div className="detail-info-item">
-          <span className="detail-info-label">Trend</span>
-          <span className="detail-info-value d-inline-flex align-center gap-1">
-            <TrendIcon trend={analysis.roas_trend} />
-            <span>{analysis.roas_trend || 'stable'}</span>
-          </span>
-        </div>
-        {analysis.frequency_alert && (
-          <div className="detail-info-item kpi-warn">
-            <AlertTriangle size={12} /> High frequency
-          </div>
-        )}
-      </div>
-
-      {/* Ads Table */}
-      <div className="ads-section">
-        <div className="d-flex align-center justify-between mb-2">
-          <h6 className="text-tertiary text-xs font-bold mb-0" style={{ letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-            Ads {ads !== null && <span className="text-muted">({activeAds} active / {totalAds} total)</span>}
-          </h6>
-        </div>
-
-        {loadingAds && (
-          <div className="d-flex align-center justify-center gap-2 p-4 text-muted text-sm">
-            <div className="loading" /> Loading ads from Meta...
-          </div>
-        )}
-
-        {!loadingAds && ads !== null && ads.length > 0 && (
-          <div className="table-container" style={{ marginBottom: '8px' }}>
-            <div className="table-wrapper">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Ad Name</th>
-                    <th style={{ textAlign: 'right' }}>Spend</th>
-                    <th style={{ textAlign: 'right' }}>ROAS</th>
-                    <th style={{ textAlign: 'right' }}>Purch</th>
-                    <th style={{ textAlign: 'right' }}>CPA</th>
-                    <th style={{ textAlign: 'right' }}>CTR</th>
-                    <th style={{ textAlign: 'right' }}>Freq</th>
-                    <th style={{ textAlign: 'right', width: '80px' }}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ads.map((ad, i) => <AdRow key={ad.entity_id || i} ad={ad} timeWindow={timeWindow} onAction={reloadAds} />)}
-                </tbody>
-              </table>
+        {/* LEFT: Budget bar + Comparison table */}
+        <div className="detail-left">
+          {/* Budget + Analysis bar */}
+          <div className="detail-info-bar">
+            <div className="detail-info-item">
+              <span className="detail-info-label">Budget</span>
+              <span className="detail-info-value">{fmtMoney(adset.daily_budget)}/day</span>
             </div>
+            {adset.optimization_goal && (
+              <div className="detail-info-item">
+                <span className="detail-info-label">Goal</span>
+                <span className="detail-info-value">{adset.optimization_goal.replace(/_/g, ' ').toLowerCase()}</span>
+              </div>
+            )}
+            {adset.bid_strategy && (
+              <div className="detail-info-item">
+                <span className="detail-info-label">Bid</span>
+                <span className="detail-info-value">{adset.bid_strategy.replace(/_/g, ' ').toLowerCase()}</span>
+              </div>
+            )}
+            <div className="detail-info-item">
+              <span className="detail-info-label">Trend</span>
+              <span className="detail-info-value d-inline-flex align-center gap-1">
+                <TrendIcon trend={analysis.roas_trend} />
+                <span>{analysis.roas_trend || 'stable'}</span>
+              </span>
+            </div>
+            {analysis.frequency_alert && (
+              <div className="detail-info-item kpi-warn">
+                <AlertTriangle size={12} /> High freq
+              </div>
+            )}
           </div>
-        )}
 
-        {!loadingAds && ads !== null && ads.length === 0 && (
-          <p className="text-muted text-sm text-center p-3">No ads in this ad set</p>
-        )}
+          {/* Multi-window comparison table */}
+          <div className="detail-comparison">
+            <table className="comparison-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  {windows.map(w => (
+                    <th key={w.key} className={w.key === timeWindow ? 'comparison-active' : ''}>{w.label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="comparison-label">Spend</td>
+                  {windows.map(w => <td key={w.key} className={`comparison-val ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtMoney(w.m.spend)}</td>)}
+                </tr>
+                <tr>
+                  <td className="comparison-label">Revenue</td>
+                  {windows.map(w => <td key={w.key} className={`comparison-val ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtMoney(w.m.purchase_value)}</td>)}
+                </tr>
+                <tr>
+                  <td className="comparison-label">ROAS</td>
+                  {windows.map(w => <td key={w.key} className={`comparison-val font-bold ${roasColor(w.m.roas)} ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmt(w.m.roas)}x</td>)}
+                </tr>
+                <tr>
+                  <td className="comparison-label">Purchases</td>
+                  {windows.map(w => <td key={w.key} className={`comparison-val ${w.key === timeWindow ? 'comparison-active' : ''}`}>{w.m.purchases || 0}</td>)}
+                </tr>
+                <tr>
+                  <td className="comparison-label">CPA</td>
+                  {windows.map(w => <td key={w.key} className={`comparison-val ${cpaColor(w.m.cpa)} ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtMoney(w.m.cpa)}</td>)}
+                </tr>
+                <tr>
+                  <td className="comparison-label">CTR</td>
+                  {windows.map(w => <td key={w.key} className={`comparison-val ${ctrColor(w.m.ctr)} ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtPct(w.m.ctr)}</td>)}
+                </tr>
+                <tr>
+                  <td className="comparison-label">CPM</td>
+                  {windows.map(w => <td key={w.key} className={`comparison-val ${cpmColor(w.m.cpm)} ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtMoney(w.m.cpm)}</td>)}
+                </tr>
+                <tr>
+                  <td className="comparison-label">Frequency</td>
+                  {windows.map(w => <td key={w.key} className={`comparison-val ${freqColor(w.m.frequency)} ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmt(w.m.frequency, 2)}</td>)}
+                </tr>
+                <tr>
+                  <td className="comparison-label">Reach</td>
+                  {windows.map(w => <td key={w.key} className={`comparison-val ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtInt(w.m.reach)}</td>)}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
 
-        {isActive && !showAddCreative && (
-          <button onClick={() => setShowAddCreative(true)} className="btn btn-secondary w-full btn-sm" style={{ borderStyle: 'dashed' }}>
-            <Plus size={14} /> Add Creative
-          </button>
-        )}
+        {/* RIGHT: Ads */}
+        <div className="detail-right">
+          <div className="ads-section">
+            <div className="d-flex align-center justify-between mb-2">
+              <h6 className="text-tertiary text-xs font-bold mb-0" style={{ letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                Ads {ads !== null && <span className="text-muted">({activeAds} active / {totalAds})</span>}
+              </h6>
+            </div>
+
+            {loadingAds && (
+              <div className="d-flex align-center justify-center gap-2 p-3 text-muted text-sm">
+                <div className="loading" /> Loading...
+              </div>
+            )}
+
+            {!loadingAds && ads !== null && ads.length > 0 && (
+              <div className="table-container" style={{ marginBottom: '8px' }}>
+                <div className="table-wrapper">
+                  <table className="table ads-table">
+                    <thead>
+                      <tr>
+                        <th>Ad</th>
+                        <th style={{ textAlign: 'right' }}>Spend</th>
+                        <th style={{ textAlign: 'right' }}>ROAS</th>
+                        <th style={{ textAlign: 'right' }}>Purch</th>
+                        <th style={{ textAlign: 'right' }}>CPA</th>
+                        <th style={{ textAlign: 'right' }}>CTR</th>
+                        <th style={{ textAlign: 'right' }}>Freq</th>
+                        <th style={{ textAlign: 'right', width: '70px' }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ads.map((ad, i) => <AdRow key={ad.entity_id || i} ad={ad} timeWindow={timeWindow} onAction={reloadAds} />)}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {!loadingAds && ads !== null && ads.length === 0 && (
+              <p className="text-muted text-sm text-center p-3">No ads in this ad set</p>
+            )}
+
+            {isActive && !showAddCreative && (
+              <button onClick={() => setShowAddCreative(true)} className="btn btn-secondary w-full btn-sm" style={{ borderStyle: 'dashed' }}>
+                <Plus size={14} /> Add Creative
+              </button>
+            )}
+          </div>
+
+          {showAddCreative && (
+            <AddCreativePanel adsetId={adset.entity_id} onClose={() => setShowAddCreative(false)} onSuccess={reloadAds} />
+          )}
+        </div>
       </div>
-
-      {showAddCreative && (
-        <AddCreativePanel adsetId={adset.entity_id} onClose={() => setShowAddCreative(false)} onSuccess={reloadAds} />
-      )}
     </div>
   );
 };
@@ -513,7 +529,7 @@ const AdSetRow = ({ adset, timeWindow, onRefresh }) => {
   const [expanded, setExpanded] = useState(false);
 
   const m = getMetrics(adset, timeWindow);
-  const isActive = adset.status === 'ACTIVE';
+  const isActive = isActiveStatus(adset.status);
   const analysis = adset.analysis || {};
 
   return (
@@ -522,7 +538,7 @@ const AdSetRow = ({ adset, timeWindow, onRefresh }) => {
         <td>
           <span className="d-inline-flex align-center gap-2">
             {expanded ? <ChevronDown size={14} className="text-muted" /> : <ChevronRight size={14} className="text-muted" />}
-            <span className={`badge badge-sm badge-dot badge-pill ${statusClass(adset.status)}`}>{adset.status}</span>
+            <span className={`badge badge-sm badge-dot badge-pill ${statusClass(adset.status)}`}>{statusLabel(adset.status)}</span>
           </span>
         </td>
         <td className="primary">
@@ -626,17 +642,17 @@ export default function AdSetsManager() {
   // ── Computed ──
 
   const counts = useMemo(() => {
-    const c = { active: 0, paused: 0, deleted: 0, total: adSets.length };
+    const c = { active: 0, paused: 0, other: 0, total: adSets.length };
     for (const as of adSets) {
-      if (as.status === 'ACTIVE') c.active++;
-      else if (as.status === 'PAUSED') c.paused++;
-      else c.deleted++;
+      if (isActiveStatus(as.status)) c.active++;
+      else if (isPausedStatus(as.status)) c.paused++;
+      else c.other++;
     }
     return c;
   }, [adSets]);
 
   const totals = useMemo(() => {
-    const active = adSets.filter(as => as.status === 'ACTIVE');
+    const active = adSets.filter(as => isActiveStatus(as.status));
     const mw = (as) => getMetrics(as, timeWindow);
     const totalSpend = active.reduce((s, as) => s + (mw(as).spend || 0), 0);
     const totalRev = active.reduce((s, as) => s + (mw(as).purchase_value || 0), 0);
@@ -654,9 +670,9 @@ export default function AdSetsManager() {
   const filtered = useMemo(() => {
     let list = adSets;
 
-    if (filter === 'active') list = list.filter(as => as.status === 'ACTIVE');
-    else if (filter === 'paused') list = list.filter(as => as.status === 'PAUSED');
-    else if (filter === 'off') list = list.filter(as => as.status !== 'ACTIVE' && as.status !== 'PAUSED');
+    if (filter === 'active') list = list.filter(as => isActiveStatus(as.status));
+    else if (filter === 'paused') list = list.filter(as => isPausedStatus(as.status));
+    else if (filter === 'off') list = list.filter(as => !isActiveStatus(as.status) && !isPausedStatus(as.status));
 
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -830,7 +846,7 @@ export default function AdSetsManager() {
               { v: 'active', l: 'Active', c: counts.active },
               { v: 'all', l: 'All', c: counts.total },
               { v: 'paused', l: 'Paused', c: counts.paused },
-              { v: 'off', l: 'Off', c: counts.deleted },
+              { v: 'off', l: 'Off', c: counts.other },
             ].map(f => (
               <button key={f.v} onClick={() => setFilter(f.v)}
                 className={`btn btn-sm ${filter === f.v ? 'btn-primary' : 'btn-ghost'}`}>
@@ -898,6 +914,10 @@ export default function AdSetsManager() {
         .kpi-warn { color: var(--yellow); }
         .kpi-bad { color: var(--red); }
         .kpi-neutral { color: var(--text-muted); }
+
+        /* Status badge extras */
+        .status-pending { background-color: var(--blue-primary) !important; color: white !important; }
+        .status-error { background-color: var(--red) !important; color: white !important; }
 
         /* Header */
         .manager-header {
@@ -1086,13 +1106,22 @@ export default function AdSetsManager() {
 
         /* Ad Set Detail (expanded) */
         .adset-detail {
-          padding: 20px 24px;
+          padding: 16px 24px 20px;
           border-top: 1px solid var(--border-color);
         }
 
+        /* Detail grid — 2 columns */
+        .detail-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+          gap: 20px;
+        }
+
+        .detail-left { min-width: 0; }
+        .detail-right { min-width: 0; }
+
         /* Comparison table in detail */
         .detail-comparison {
-          margin-bottom: 16px;
           overflow-x: auto;
         }
         .comparison-table {
@@ -1101,7 +1130,7 @@ export default function AdSetsManager() {
           font-size: 0.75rem;
         }
         .comparison-table th {
-          padding: 6px 16px;
+          padding: 6px 14px;
           text-align: right;
           font-weight: 700;
           color: var(--text-muted);
@@ -1116,7 +1145,7 @@ export default function AdSetsManager() {
           background-color: rgba(59, 130, 246, 0.05);
         }
         .comparison-table td {
-          padding: 5px 16px;
+          padding: 4px 14px;
           border-bottom: 1px solid rgba(55, 65, 81, 0.3);
         }
         .comparison-label {
@@ -1141,33 +1170,34 @@ export default function AdSetsManager() {
         .detail-info-bar {
           display: flex;
           align-items: center;
-          gap: 20px;
-          padding: 8px 14px;
+          gap: 16px;
+          padding: 8px 12px;
           background-color: var(--bg-secondary);
           border: 1px solid var(--border-color);
           border-radius: var(--radius-md);
-          margin-bottom: 16px;
-          font-size: 0.75rem;
+          margin-bottom: 12px;
+          font-size: 0.6875rem;
           flex-wrap: wrap;
         }
         .detail-info-item {
           display: flex;
           align-items: center;
-          gap: 6px;
+          gap: 5px;
         }
         .detail-info-label {
           color: var(--text-muted);
           font-weight: 600;
           text-transform: uppercase;
           letter-spacing: 0.03em;
-          font-size: 0.625rem;
+          font-size: 0.5625rem;
         }
         .detail-info-value {
           color: var(--text-primary);
           font-weight: 600;
         }
 
-        .ads-section { margin-top: 4px; }
+        .ads-section { margin-top: 0; }
+        .ads-table { font-size: 0.75rem; }
 
         /* Creative panel */
         .creative-grid {
@@ -1237,6 +1267,9 @@ export default function AdSetsManager() {
         @keyframes spin { to { transform: rotate(360deg); } }
 
         /* Responsive */
+        @media (max-width: 1200px) {
+          .detail-grid { grid-template-columns: 1fr; }
+        }
         @media (max-width: 1024px) {
           .manager-header { padding: 12px 16px; flex-wrap: wrap; gap: 8px; }
           .manager-content { padding: 16px; }

@@ -26,7 +26,7 @@ const metricSnapshotSchema = new mongoose.Schema({
   entity_name: { type: String, required: true },
   parent_id: { type: String, default: null },
   campaign_id: { type: String, required: true, index: true },
-  status: { type: String, enum: ['ACTIVE', 'PAUSED', 'DELETED', 'ARCHIVED'], default: 'ACTIVE' },
+  status: { type: String, enum: ['ACTIVE', 'PAUSED', 'DELETED', 'ARCHIVED', 'CAMPAIGN_PAUSED', 'ADSET_PAUSED', 'PENDING_REVIEW', 'DISAPPROVED', 'WITH_ISSUES', 'IN_PROCESS', 'PENDING_BILLING_INFO'], default: 'ACTIVE' },
 
   // Info de presupuesto (nivel ad set)
   daily_budget: { type: Number, default: 0 },
