@@ -1,3 +1,4 @@
+const axios = require('axios');
 const { getMetaClient } = require('./client');
 const { parseInsightRow, calculateROASTrend, calculateSpendVelocity, parseBudget, getTimeRanges } = require('./helpers');
 const MetricSnapshot = require('../db/models/MetricSnapshot');
@@ -19,6 +20,9 @@ class DataCollector {
     const startTime = Date.now();
     logger.info('═══ Iniciando ciclo de recolección de datos ═══');
 
+    // Signal to other callers (live endpoints) that data-collector is running
+    this.meta.setBusy('data-collector');
+
     try {
       const timeRanges = getTimeRanges(); // today, last_3d, last_7d
       let totalSnapshots = 0;
@@ -34,19 +38,30 @@ class DataCollector {
         campaignMap[c.id] = c;
       }
 
-      // Obtener ad sets de todas las campañas
+      // Obtener ad sets — try account-level first (1 call), fall back to campaign-by-campaign
       let totalAdSets = 0;
-      for (const campaign of campaigns) {
-        try {
-          const adSets = await this.meta.getAdSets(campaign.id);
-          for (const as of adSets) {
-            adSetMap[as.id] = { ...as, campaign };
+      try {
+        const allAdSets = await this.meta.getAllAdSets();
+        for (const as of allAdSets) {
+          const campaign = campaignMap[as.campaign_id] || { id: as.campaign_id, name: 'Unknown' };
+          adSetMap[as.id] = { ...as, campaign };
+        }
+        totalAdSets = allAdSets.length;
+        logger.info(`  ${totalAdSets} ad sets obtenidos (account-level, 1 API call)`);
+      } catch (err) {
+        logger.warn(`  getAllAdSets() failed (${err.message}), falling back to campaign-based fetch`);
+        for (const campaign of campaigns) {
+          try {
+            const adSets = await this.meta.getAdSets(campaign.id);
+            for (const as of adSets) {
+              adSetMap[as.id] = { ...as, campaign };
+            }
+            totalAdSets += adSets.length;
+            logger.info(`  Campaña "${campaign.name}": ${adSets.length} ad sets`);
+          } catch (e) {
+            const errMsg = e.response?.data?.error?.message || e.message || 'Error desconocido';
+            logger.warn(`  Error obteniendo ad sets de campaña ${campaign.id}: ${errMsg}`);
           }
-          totalAdSets += adSets.length;
-          logger.info(`  Campaña "${campaign.name}": ${adSets.length} ad sets`);
-        } catch (err) {
-          const errMsg = err.response?.data?.error?.message || err.message || 'Error desconocido';
-          logger.warn(`  Error obteniendo ad sets de campaña ${campaign.id}: ${errMsg}`);
         }
       }
 
@@ -168,22 +183,40 @@ class DataCollector {
       }
       logger.info(`  ${adSetSnapshots} snapshots de ad sets guardados`);
 
-      // 6. Obtener status real de todos los ads
-      logger.info('Recolectando status de ads...');
+      // 6. Obtener status real de todos los ads — single account-level query
+      //    instead of N individual getAds() calls (was ~40 calls, now 1)
+      logger.info('Recolectando status de ads (account-level)...');
       const adStatusMap = {}; // { adId: 'ACTIVE' | 'PAUSED' | ... }
-      const adSetsFetchedOk = new Set(); // Track successful API calls
-      for (const [adSetId] of Object.entries(adSetMap)) {
-        try {
-          const ads = await this.meta.getAds(adSetId, 'id,effective_status');
-          adSetsFetchedOk.add(adSetId);
-          for (const ad of ads) {
-            adStatusMap[ad.id] = ad.effective_status || 'ACTIVE';
-          }
-        } catch (err) {
-          logger.warn(`  Error obteniendo status de ads para ad set ${adSetId}: ${err.message} — preservando status existente`);
+      const adSetsFetchedOk = new Set(); // Track which ad sets had ads returned
+      let adsFetchSuccess = false;
+      try {
+        const allAdsData = await this.meta.get(`/${this.meta.adAccountId}/ads`, {
+          fields: 'id,effective_status,adset_id',
+          filtering: JSON.stringify([
+            { field: 'effective_status', operator: 'IN', value: ['ACTIVE', 'PAUSED', 'CAMPAIGN_PAUSED', 'ADSET_PAUSED', 'PENDING_REVIEW', 'DISAPPROVED', 'WITH_ISSUES'] }
+          ]),
+          limit: 500
+        });
+
+        let allAds = allAdsData.data || [];
+
+        // Handle pagination
+        let paging = allAdsData.paging;
+        while (paging?.next) {
+          const nextRes = await this.meta.limiter.schedule(() => axios.get(paging.next));
+          allAds = allAds.concat(nextRes.data?.data || []);
+          paging = nextRes.data?.paging;
         }
+
+        adsFetchSuccess = true;
+        for (const ad of allAds) {
+          adStatusMap[ad.id] = ad.effective_status || 'ACTIVE';
+          if (ad.adset_id) adSetsFetchedOk.add(ad.adset_id);
+        }
+        logger.info(`  ${allAds.length} ads con status real obtenido (1 API call, ${adSetsFetchedOk.size} ad sets covered)`);
+      } catch (err) {
+        logger.warn(`  Error obteniendo ads a nivel de cuenta: ${err.message} — preservando status existente`);
       }
-      logger.info(`  ${Object.keys(adStatusMap).length} ads con status real obtenido (${adSetsFetchedOk.size}/${Object.keys(adSetMap).length} ad sets OK)`);
 
       // 7. Obtener insights a nivel de cuenta con level=ad (5 llamadas)
       logger.info('Recolectando insights de ads/creativos (level=ad)...');
@@ -210,17 +243,17 @@ class DataCollector {
       for (const [adId, adData] of Object.entries(adInsights)) {
         // Determine ad status:
         // - If we have it from the API, use it
-        // - If the API call failed for this ad's ad set, look up existing status from DB
-        // - Only default to ACTIVE if no prior data exists
+        // - If the account-level ads fetch failed entirely, preserve existing status from DB
+        // - If fetch succeeded but ad not in response — it may be deleted
         let adStatus = adStatusMap[adId];
-        if (!adStatus && !adSetsFetchedOk.has(adData.adset_id)) {
+        if (!adStatus && !adsFetchSuccess) {
           // API call failed — preserve existing status from DB
           const existingSnap = await MetricSnapshot.findOne({
             entity_type: 'ad', entity_id: adId
           }).sort({ snapshot_at: -1 }).select('status').lean();
           adStatus = existingSnap?.status || 'ACTIVE';
         } else if (!adStatus) {
-          // API succeeded but ad not in response — it's deleted
+          // API succeeded but ad not in response — it's deleted/archived
           adStatus = 'DELETED';
         }
 
@@ -248,8 +281,10 @@ class DataCollector {
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       logger.info(`${totalSnapshots} snapshots guardados en MongoDB`);
-      const apiCalls = Object.keys(timeRanges).length * 3; // campaign + adset + ad per window
+      const apiCalls = Object.keys(timeRanges).length * 3 + 1; // campaign + adset + ad per window + 1 account-level ads query
       logger.info(`═══ Recolección completada en ${elapsed}s (${totalAdSets} ad sets, ${adSnapshots} ads, ~${apiCalls} API calls) ═══`);
+
+      this.meta.clearBusy();
 
       return {
         success: true,
@@ -260,6 +295,7 @@ class DataCollector {
         elapsed: `${elapsed}s`
       };
     } catch (error) {
+      this.meta.clearBusy();
       const errMsg = error.response?.data?.error?.message || error.message || 'Error desconocido';
       logger.error(`Error en ciclo de recolección: ${errMsg}`);
       throw error;

@@ -144,6 +144,55 @@ class MetaClient {
   }
 
   /**
+   * Shared busy flag — set when a long-running operation (like data-collector)
+   * is actively making many API calls. Other callers (like live endpoints)
+   * can check this to decide whether to use a fallback instead.
+   */
+  setBusy(label) {
+    this._busy = { label, since: Date.now() };
+    logger.debug(`[META-CLIENT] Busy: ${label}`);
+  }
+
+  clearBusy() {
+    if (this._busy) {
+      logger.debug(`[META-CLIENT] No longer busy (was: ${this._busy.label})`);
+    }
+    this._busy = null;
+  }
+
+  /**
+   * Returns { label, since } if another process is busy, or null.
+   * Auto-clears stale busy flags older than 5 minutes.
+   */
+  isBusy() {
+    if (!this._busy) return null;
+    if (Date.now() - this._busy.since > 5 * 60 * 1000) {
+      logger.warn(`[META-CLIENT] Clearing stale busy flag: ${this._busy.label}`);
+      this._busy = null;
+      return null;
+    }
+    return this._busy;
+  }
+
+  /**
+   * Returns true if we know we're rate limited (code 17 error recently or usage > 90%).
+   */
+  isRateLimited() {
+    const usage = this.getRateLimitUsage();
+    if (usage && usage.max > 90) return true;
+    if (this._rateLimitedUntil && Date.now() < this._rateLimitedUntil) return true;
+    return false;
+  }
+
+  /**
+   * Mark that we hit a rate limit. Sets a cooldown period.
+   */
+  setRateLimited(seconds = 60) {
+    this._rateLimitedUntil = Date.now() + (seconds * 1000);
+    logger.warn(`[META-CLIENT] Rate limited — cooldown for ${seconds}s`);
+  }
+
+  /**
    * GET request con rate limiting y retry
    */
   async get(endpoint, params = {}) {
@@ -161,6 +210,14 @@ class MetaClient {
     ).then(res => {
       this._checkRateLimitHeaders(res);
       return res.data;
+    }).catch(err => {
+      // Detect Meta rate limit errors (code 17) and set cooldown
+      const metaError = err.response?.data?.error;
+      if (metaError?.code === 17 || metaError?.code === 4) {
+        const regainIn = metaError.estimated_time_to_regain_access || 60;
+        this.setRateLimited(Math.max(regainIn, 60));
+      }
+      throw err;
     });
   }
 

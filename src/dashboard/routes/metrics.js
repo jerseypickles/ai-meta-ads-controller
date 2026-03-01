@@ -71,9 +71,31 @@ function _broadcastSSE(event, data) {
   }
 }
 
+// ── Snapshot fallback — returns data from MongoDB when Meta API is unavailable ──
+async function _getSnapshotFallback(reason) {
+  logger.info(`[LIVE] Using snapshot fallback: ${reason}`);
+  const snapshots = await getLatestSnapshots('adset');
+  return {
+    adsets: snapshots.map(_mapSnapshot),
+    fallback: true,
+    fallback_reason: reason
+  };
+}
+
 // ── Core fetch function (used by both HTTP endpoint and background refresh) ──
 async function _fetchLiveAdSets() {
   const meta = getMetaClient();
+
+  // Pre-flight checks: skip live fetch if we know it will fail
+  if (meta.isRateLimited()) {
+    return _getSnapshotFallback('rate_limited');
+  }
+
+  const busy = meta.isBusy();
+  if (busy) {
+    return _getSnapshotFallback(`api_busy: ${busy.label}`);
+  }
+
   const timeRanges = getTimeRanges();
 
   // 1. Get all ad sets — try account-level first (1 call), fall back to campaign→adsets (N+1)
@@ -91,6 +113,11 @@ async function _fetchLiveAdSets() {
       adSetMap[as.id] = { ...as, campaign_name: campaign.name };
     }
   } catch (err) {
+    // Check if this is a rate limit error — fall back to snapshots immediately
+    const metaError = err.response?.data?.error;
+    if (metaError?.code === 17 || metaError?.code === 4) {
+      return _getSnapshotFallback('rate_limited_on_adsets');
+    }
     // Fallback: campaign-by-campaign (works on all account types)
     logger.warn(`[LIVE] getAllAdSets() failed (${err.message}), falling back to campaign-based fetch`);
     for (const c of campaigns) {
@@ -100,9 +127,18 @@ async function _fetchLiveAdSets() {
           adSetMap[as.id] = { ...as, campaign_name: c.name, campaign_id: c.id };
         }
       } catch (e) {
+        const eCode = e.response?.data?.error?.code;
+        if (eCode === 17 || eCode === 4) {
+          return _getSnapshotFallback('rate_limited_on_campaign_adsets');
+        }
         logger.warn(`[LIVE] Error fetching ad sets for campaign ${c.id}: ${e.message}`);
       }
     }
+  }
+
+  // If we got no ad sets from Meta, fall back to snapshots
+  if (Object.keys(adSetMap).length === 0) {
+    return _getSnapshotFallback('no_adsets_from_api');
   }
 
   // 2. Get insights for ALL ad sets in bulk (5 API calls, one per time window)
@@ -116,6 +152,11 @@ async function _fetchLiveAdSets() {
         adSetInsights[asid][window] = parseInsightRow(row);
       }
     } catch (err) {
+      const eCode = err.response?.data?.error?.code;
+      if (eCode === 17 || eCode === 4) {
+        logger.warn(`[LIVE] Rate limited on insights — continuing with partial data`);
+        break; // Stop fetching more windows, use what we have
+      }
       logger.warn(`[LIVE] Error fetching adset insights for ${window}: ${err.message}`);
     }
   }
@@ -167,7 +208,7 @@ async function _fetchLiveAdSets() {
   // Sort by 7d spend descending
   adsets.sort((a, b) => (b.metrics?.last_7d?.spend || 0) - (a.metrics?.last_7d?.spend || 0));
 
-  return adsets;
+  return { adsets, fallback: false };
 }
 
 // ── Background refresh loop — proactively keeps cache fresh and pushes to SSE clients ──
@@ -204,18 +245,35 @@ async function _backgroundRefresh() {
       return;
     }
 
-    const adsets = await _fetchLiveAdSets();
-    _liveCache = { adsets, ts: Date.now(), refreshing: false };
+    // Skip if another process (data-collector) is busy with the API
+    const busy = meta.isBusy();
+    if (busy) {
+      logger.info(`[LIVE-BG] Skipping refresh — API busy: ${busy.label}`);
+      _liveCache.refreshing = false;
+      return;
+    }
+
+    const result = await _fetchLiveAdSets();
+    const adsets = result.adsets;
+
+    // Only update cache timestamp if we got live data (not fallback)
+    if (!result.fallback) {
+      _liveCache = { adsets, ts: Date.now(), refreshing: false };
+    } else {
+      _liveCache.refreshing = false;
+    }
 
     // Push to all connected SSE clients
     if (_sseClients.size > 0) {
       _broadcastSSE('adsets', {
         adsets,
-        cached: false,
+        cached: result.fallback,
+        fallback: result.fallback || false,
+        fallback_reason: result.fallback_reason || null,
         fetched_at: new Date().toISOString(),
         age_seconds: 0
       });
-      logger.debug(`[LIVE-BG] Pushed fresh data to ${_sseClients.size} SSE client(s)`);
+      logger.debug(`[LIVE-BG] Pushed ${result.fallback ? 'fallback' : 'fresh'} data to ${_sseClients.size} SSE client(s)`);
     }
   } catch (err) {
     logger.warn(`[LIVE-BG] Background refresh failed: ${err.message}`);
@@ -302,16 +360,20 @@ router.get('/adsets/live', async (req, res) => {
       });
     }
 
-    const adsets = await _fetchLiveAdSets();
+    const result = await _fetchLiveAdSets();
+    const adsets = result.adsets;
 
-    // Cache result
-    _liveCache = { adsets, ts: Date.now(), refreshing: false };
+    // Only update cache if we got live data (not a fallback)
+    if (!result.fallback) {
+      _liveCache = { adsets, ts: Date.now(), refreshing: false };
+    }
 
     // Also push to SSE clients
     if (_sseClients.size > 0) {
       _broadcastSSE('adsets', {
         adsets,
-        cached: false,
+        cached: result.fallback,
+        fallback: result.fallback || false,
         fetched_at: new Date().toISOString(),
         age_seconds: 0
       });
@@ -319,7 +381,9 @@ router.get('/adsets/live', async (req, res) => {
 
     res.json({
       adsets,
-      cached: false,
+      cached: result.fallback,
+      fallback: result.fallback || false,
+      fallback_reason: result.fallback_reason || null,
       fetched_at: new Date().toISOString(),
       age_seconds: 0
     });
@@ -332,7 +396,7 @@ router.get('/adsets/live', async (req, res) => {
         adsets: snapshots.map(_mapSnapshot),
         cached: false,
         fallback: true,
-        error: error.message
+        fallback_reason: error.message
       });
     } catch (fallbackErr) {
       res.status(500).json({ error: error.message });
