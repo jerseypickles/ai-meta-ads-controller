@@ -6,7 +6,8 @@ import {
   ChevronDown, ChevronRight, Pause, Play,
   Power, Plus, Send, X, Trash2,
   LogOut, Search, ShoppingCart, BarChart3,
-  Clock, Zap, AlertTriangle, ArrowUpDown
+  Clock, Zap, AlertTriangle, ArrowUpDown,
+  Calendar, Target
 } from 'lucide-react';
 import {
   getAllAdSets, getAdsForAdSet, getAccountOverview,
@@ -17,6 +18,33 @@ import {
 } from '../api';
 
 /* ══════════════════════════════════════════
+   KPI TARGETS (mirror of config/kpi-targets.js)
+   ══════════════════════════════════════════ */
+
+const KPI = {
+  roas_excellent: 5.0,
+  roas_target: 3.0,
+  roas_minimum: 1.5,
+  cpa_target: 25.00,
+  cpa_maximum: 50.00,
+  ctr_minimum: 1.0,
+  ctr_low: 0.5,
+  frequency_warning: 2.5,
+  frequency_critical: 4.0,
+  cpm_benchmark: 15.00,
+};
+
+/* ══════════════════════════════════════════
+   TIME WINDOWS
+   ══════════════════════════════════════════ */
+
+const TIME_WINDOWS = [
+  { key: 'today', label: 'Today', short: '1d' },
+  { key: 'last_7d', label: '7 Days', short: '7d' },
+  { key: 'last_14d', label: '14 Days', short: '14d' },
+];
+
+/* ══════════════════════════════════════════
    HELPERS
    ══════════════════════════════════════════ */
 
@@ -25,8 +53,9 @@ const fmtMoney = (v) => {
   if (v == null || isNaN(v)) return '—';
   if (v >= 10000) return `$${(v / 1000).toFixed(1)}k`;
   if (v >= 1000) return `$${(v / 1000).toFixed(1)}k`;
-  return `$${Number(v).toFixed(0)}`;
+  return `$${Number(v).toFixed(2)}`;
 };
+const fmtInt = (v) => (v != null && !isNaN(v)) ? Number(v).toLocaleString() : '—';
 const fmtPct = (v) => (v != null && !isNaN(v)) ? `${Number(v).toFixed(2)}%` : '—';
 
 const statusClass = (status) => {
@@ -36,27 +65,65 @@ const statusClass = (status) => {
   return 'status-paused';
 };
 
-const roasClass = (roas) => {
+// ── Color functions based on KPI targets ──
+
+const roasColor = (roas) => {
   const v = roas || 0;
-  if (v >= 3) return 'text-success';
-  if (v >= 1.5) return 'text-warning';
-  return 'text-danger';
+  if (v >= KPI.roas_target) return 'kpi-good';
+  if (v >= KPI.roas_minimum) return 'kpi-warn';
+  if (v > 0) return 'kpi-bad';
+  return 'kpi-neutral';
+};
+
+const ctrColor = (ctr) => {
+  const v = ctr || 0;
+  if (v >= KPI.ctr_minimum) return 'kpi-good';
+  if (v >= KPI.ctr_low) return 'kpi-warn';
+  if (v > 0) return 'kpi-bad';
+  return 'kpi-neutral';
+};
+
+const freqColor = (freq) => {
+  const v = freq || 0;
+  if (v === 0) return 'kpi-neutral';
+  if (v >= KPI.frequency_critical) return 'kpi-bad';
+  if (v >= KPI.frequency_warning) return 'kpi-warn';
+  return 'kpi-good';
+};
+
+const cpaColor = (cpa) => {
+  const v = cpa || 0;
+  if (v === 0) return 'kpi-neutral';
+  if (v <= KPI.cpa_target) return 'kpi-good';
+  if (v <= KPI.cpa_maximum) return 'kpi-warn';
+  return 'kpi-bad';
+};
+
+const cpmColor = (cpm) => {
+  const v = cpm || 0;
+  if (v === 0) return 'kpi-neutral';
+  if (v <= KPI.cpm_benchmark) return 'kpi-good';
+  if (v <= KPI.cpm_benchmark * 1.5) return 'kpi-warn';
+  return 'kpi-bad';
 };
 
 const TrendIcon = ({ trend }) => {
-  if (trend === 'improving') return <TrendingUp size={13} className="text-success" />;
-  if (trend === 'declining') return <TrendingDown size={13} className="text-danger" />;
+  if (trend === 'improving') return <TrendingUp size={13} className="kpi-good" />;
+  if (trend === 'declining') return <TrendingDown size={13} className="kpi-bad" />;
   return <Minus size={13} className="text-muted" />;
 };
+
+/** Get metrics for the selected time window */
+const getMetrics = (adset, window) => adset.metrics?.[window] || {};
 
 /* ══════════════════════════════════════════
    AD ROW (inside expanded ad set)
    ══════════════════════════════════════════ */
 
-const AdRow = ({ ad, onAction }) => {
+const AdRow = ({ ad, timeWindow, onAction }) => {
   const [busy, setBusy] = useState(null);
   const [removed, setRemoved] = useState(false);
-  const m = ad.metrics?.last_7d || {};
+  const m = ad.metrics?.[timeWindow] || ad.metrics?.last_7d || {};
 
   const handlePause = async (e) => {
     e.stopPropagation();
@@ -96,10 +163,11 @@ const AdRow = ({ ad, onAction }) => {
         </span>
       </td>
       <td className="numeric">{fmtMoney(m.spend)}</td>
-      <td className={`numeric font-bold ${roasClass(m.roas)}`}>{fmt(m.roas)}x</td>
+      <td className={`numeric font-bold ${roasColor(m.roas)}`}>{fmt(m.roas)}x</td>
       <td className="numeric">{m.purchases || 0}</td>
-      <td className="numeric">{fmtPct(m.ctr)}</td>
-      <td className="numeric">{fmt(m.frequency, 1)}</td>
+      <td className={`numeric ${cpaColor(m.cpa)}`}>{fmtMoney(m.cpa)}</td>
+      <td className={`numeric ${ctrColor(m.ctr)}`}>{fmtPct(m.ctr)}</td>
+      <td className={`numeric ${freqColor(m.frequency)}`}>{fmt(m.frequency, 1)}</td>
       <td className="numeric">
         <span className="d-inline-flex gap-1">
           {isActive && (
@@ -243,14 +311,14 @@ const AddCreativePanel = ({ adsetId, onClose, onSuccess }) => {
    EXPANDED AD SET DETAIL
    ══════════════════════════════════════════ */
 
-const AdSetDetail = ({ adset, onRefresh }) => {
+const AdSetDetail = ({ adset, timeWindow, onRefresh }) => {
   const [ads, setAds] = useState(null);
   const [loadingAds, setLoadingAds] = useState(true);
   const [showAddCreative, setShowAddCreative] = useState(false);
 
-  const m7 = adset.metrics?.last_7d || {};
-  const m3 = adset.metrics?.last_3d || {};
   const mT = adset.metrics?.today || {};
+  const m3 = adset.metrics?.last_3d || {};
+  const m7 = adset.metrics?.last_7d || {};
   const m14 = adset.metrics?.last_14d || {};
   const isActive = adset.status === 'ACTIVE';
   const analysis = adset.analysis || {};
@@ -280,54 +348,106 @@ const AdSetDetail = ({ adset, onRefresh }) => {
   const activeAds = (ads || []).filter(a => a.status === 'ACTIVE').length;
   const totalAds = (ads || []).length;
 
-  const kpis = [
-    { label: 'Budget/day', value: fmtMoney(adset.daily_budget) },
-    { label: 'Today Spend', value: fmtMoney(mT.spend) },
-    { label: 'Today ROAS', value: `${fmt(mT.roas)}x`, cls: roasClass(mT.roas) },
-    { label: 'Spend 3d', value: fmtMoney(m3.spend) },
-    { label: 'ROAS 3d', value: `${fmt(m3.roas)}x`, cls: roasClass(m3.roas) },
-    { label: 'Spend 7d', value: fmtMoney(m7.spend) },
-    { label: 'ROAS 7d', value: `${fmt(m7.roas)}x`, cls: roasClass(m7.roas) },
-    { label: 'Spend 14d', value: fmtMoney(m14.spend) },
-    { label: 'ROAS 14d', value: `${fmt(m14.roas)}x`, cls: roasClass(m14.roas) },
-    { label: 'Purchases 7d', value: m7.purchases || 0 },
-    { label: 'CPA 7d', value: fmtMoney(m7.cpa) },
-    { label: 'CTR 7d', value: fmtPct(m7.ctr) },
-    { label: 'CPM 7d', value: fmtMoney(m7.cpm) },
-    { label: 'CPC 7d', value: fmtMoney(m7.cpc) },
-    { label: 'Frequency', value: fmt(m7.frequency, 2), cls: (m7.frequency || 0) > 4 ? 'text-danger' : (m7.frequency || 0) > 3 ? 'text-warning' : '' },
-    { label: 'Reach 7d', value: (m7.reach || 0).toLocaleString() },
+  const windows = [
+    { key: 'today', label: 'Today', m: mT },
+    { key: 'last_3d', label: '3d', m: m3 },
+    { key: 'last_7d', label: '7d', m: m7 },
+    { key: 'last_14d', label: '14d', m: m14 },
   ];
 
   return (
     <div className="adset-detail animate-fade-in">
-      {/* KPI Grid */}
-      <div className="kpi-grid">
-        {kpis.map((k, i) => (
-          <div key={i} className="kpi-cell">
-            <div className="kpi-label">{k.label}</div>
-            <div className={`kpi-value ${k.cls || ''}`}>{k.value}</div>
-          </div>
-        ))}
+      {/* Multi-window comparison table */}
+      <div className="detail-comparison">
+        <table className="comparison-table">
+          <thead>
+            <tr>
+              <th></th>
+              {windows.map(w => (
+                <th key={w.key} className={w.key === timeWindow ? 'comparison-active' : ''}>{w.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td className="comparison-label">Spend</td>
+              {windows.map(w => <td key={w.key} className={`comparison-val ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtMoney(w.m.spend)}</td>)}
+            </tr>
+            <tr>
+              <td className="comparison-label">ROAS</td>
+              {windows.map(w => <td key={w.key} className={`comparison-val font-bold ${roasColor(w.m.roas)} ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmt(w.m.roas)}x</td>)}
+            </tr>
+            <tr>
+              <td className="comparison-label">Purchases</td>
+              {windows.map(w => <td key={w.key} className={`comparison-val ${w.key === timeWindow ? 'comparison-active' : ''}`}>{w.m.purchases || 0}</td>)}
+            </tr>
+            <tr>
+              <td className="comparison-label">Revenue</td>
+              {windows.map(w => <td key={w.key} className={`comparison-val ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtMoney(w.m.purchase_value)}</td>)}
+            </tr>
+            <tr>
+              <td className="comparison-label">CPA</td>
+              {windows.map(w => <td key={w.key} className={`comparison-val ${cpaColor(w.m.cpa)} ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtMoney(w.m.cpa)}</td>)}
+            </tr>
+            <tr>
+              <td className="comparison-label">CTR</td>
+              {windows.map(w => <td key={w.key} className={`comparison-val ${ctrColor(w.m.ctr)} ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtPct(w.m.ctr)}</td>)}
+            </tr>
+            <tr>
+              <td className="comparison-label">CPM</td>
+              {windows.map(w => <td key={w.key} className={`comparison-val ${cpmColor(w.m.cpm)} ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtMoney(w.m.cpm)}</td>)}
+            </tr>
+            <tr>
+              <td className="comparison-label">CPC</td>
+              {windows.map(w => <td key={w.key} className={`comparison-val ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtMoney(w.m.cpc)}</td>)}
+            </tr>
+            <tr>
+              <td className="comparison-label">Frequency</td>
+              {windows.map(w => <td key={w.key} className={`comparison-val ${freqColor(w.m.frequency)} ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmt(w.m.frequency, 2)}</td>)}
+            </tr>
+            <tr>
+              <td className="comparison-label">Reach</td>
+              {windows.map(w => <td key={w.key} className={`comparison-val ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtInt(w.m.reach)}</td>)}
+            </tr>
+            <tr>
+              <td className="comparison-label">Impressions</td>
+              {windows.map(w => <td key={w.key} className={`comparison-val ${w.key === timeWindow ? 'comparison-active' : ''}`}>{fmtInt(w.m.impressions)}</td>)}
+            </tr>
+          </tbody>
+        </table>
       </div>
 
-      {/* Analysis bar */}
-      {(analysis.roas_trend || analysis.frequency_alert) && (
-        <div className="analysis-bar">
-          <span className="d-inline-flex align-center gap-1">
-            <TrendIcon trend={analysis.roas_trend} />
-            <span className="font-semibold">{analysis.roas_trend || 'stable'}</span>
-          </span>
-          {analysis.roas_3d_vs_7d ? (
-            <span className="text-tertiary">3d/7d ratio: {fmt(analysis.roas_3d_vs_7d, 2)}</span>
-          ) : null}
-          {analysis.frequency_alert && (
-            <span className="d-inline-flex align-center gap-1 text-warning">
-              <AlertTriangle size={12} /> High frequency
-            </span>
-          )}
+      {/* Budget + Analysis bar */}
+      <div className="detail-info-bar">
+        <div className="detail-info-item">
+          <span className="detail-info-label">Budget</span>
+          <span className="detail-info-value">{fmtMoney(adset.daily_budget)}/day</span>
         </div>
-      )}
+        {adset.optimization_goal && (
+          <div className="detail-info-item">
+            <span className="detail-info-label">Goal</span>
+            <span className="detail-info-value">{adset.optimization_goal.replace(/_/g, ' ').toLowerCase()}</span>
+          </div>
+        )}
+        {adset.bid_strategy && (
+          <div className="detail-info-item">
+            <span className="detail-info-label">Bid</span>
+            <span className="detail-info-value">{adset.bid_strategy.replace(/_/g, ' ').toLowerCase()}</span>
+          </div>
+        )}
+        <div className="detail-info-item">
+          <span className="detail-info-label">Trend</span>
+          <span className="detail-info-value d-inline-flex align-center gap-1">
+            <TrendIcon trend={analysis.roas_trend} />
+            <span>{analysis.roas_trend || 'stable'}</span>
+          </span>
+        </div>
+        {analysis.frequency_alert && (
+          <div className="detail-info-item kpi-warn">
+            <AlertTriangle size={12} /> High frequency
+          </div>
+        )}
+      </div>
 
       {/* Ads Table */}
       <div className="ads-section">
@@ -350,16 +470,17 @@ const AdSetDetail = ({ adset, onRefresh }) => {
                 <thead>
                   <tr>
                     <th>Ad Name</th>
-                    <th style={{ textAlign: 'right' }}>Spend 7d</th>
-                    <th style={{ textAlign: 'right' }}>ROAS 7d</th>
+                    <th style={{ textAlign: 'right' }}>Spend</th>
+                    <th style={{ textAlign: 'right' }}>ROAS</th>
                     <th style={{ textAlign: 'right' }}>Purch</th>
+                    <th style={{ textAlign: 'right' }}>CPA</th>
                     <th style={{ textAlign: 'right' }}>CTR</th>
                     <th style={{ textAlign: 'right' }}>Freq</th>
                     <th style={{ textAlign: 'right', width: '80px' }}></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {ads.map((ad, i) => <AdRow key={ad.entity_id || i} ad={ad} onAction={reloadAds} />)}
+                  {ads.map((ad, i) => <AdRow key={ad.entity_id || i} ad={ad} timeWindow={timeWindow} onAction={reloadAds} />)}
                 </tbody>
               </table>
             </div>
@@ -388,17 +509,16 @@ const AdSetDetail = ({ adset, onRefresh }) => {
    MAIN AD SET ROW (in the table)
    ══════════════════════════════════════════ */
 
-const AdSetRow = ({ adset, onRefresh }) => {
+const AdSetRow = ({ adset, timeWindow, onRefresh }) => {
   const [expanded, setExpanded] = useState(false);
 
-  const m7 = adset.metrics?.last_7d || {};
-  const mT = adset.metrics?.today || {};
+  const m = getMetrics(adset, timeWindow);
   const isActive = adset.status === 'ACTIVE';
   const analysis = adset.analysis || {};
 
   return (
     <>
-      <tr onClick={() => setExpanded(!expanded)} className={`adset-row ${expanded ? 'expanded' : ''} ${!isActive ? 'opacity-50' : ''}`}>
+      <tr onClick={() => setExpanded(!expanded)} className={`adset-row ${expanded ? 'expanded' : ''} ${!isActive ? 'inactive-row' : ''}`}>
         <td>
           <span className="d-inline-flex align-center gap-2">
             {expanded ? <ChevronDown size={14} className="text-muted" /> : <ChevronRight size={14} className="text-muted" />}
@@ -406,16 +526,17 @@ const AdSetRow = ({ adset, onRefresh }) => {
           </span>
         </td>
         <td className="primary">
-          <span className="adset-name-cell">{adset.entity_name || adset.entity_id}</span>
+          <div className="adset-name-cell">{adset.entity_name || adset.entity_id}</div>
+          {adset.campaign_name && <div className="campaign-label">{adset.campaign_name}</div>}
         </td>
-        <td className="numeric">{fmtMoney(adset.daily_budget)}/d</td>
-        <td className="numeric">{fmtMoney(mT.spend)}</td>
-        <td className={`numeric font-bold ${roasClass(mT.roas)}`}>{fmt(mT.roas)}x</td>
-        <td className="numeric">{fmtMoney(m7.spend)}</td>
-        <td className={`numeric font-bold ${roasClass(m7.roas)}`}>{fmt(m7.roas)}x</td>
-        <td className="numeric">{m7.purchases || 0}</td>
-        <td className="numeric">{fmtPct(m7.ctr)}</td>
-        <td className="numeric">{fmt(m7.frequency, 1)}</td>
+        <td className="numeric">{fmtMoney(adset.daily_budget)}</td>
+        <td className="numeric">{fmtMoney(m.spend)}</td>
+        <td className={`numeric font-bold ${roasColor(m.roas)}`}>{fmt(m.roas)}x</td>
+        <td className="numeric">{m.purchases || 0}</td>
+        <td className={`numeric ${cpaColor(m.cpa)}`}>{fmtMoney(m.cpa)}</td>
+        <td className={`numeric ${ctrColor(m.ctr)}`}>{fmtPct(m.ctr)}</td>
+        <td className={`numeric ${cpmColor(m.cpm)}`}>{fmtMoney(m.cpm)}</td>
+        <td className={`numeric ${freqColor(m.frequency)}`}>{fmt(m.frequency, 1)}</td>
         <td className="text-center">
           <TrendIcon trend={analysis.roas_trend} />
         </td>
@@ -423,7 +544,7 @@ const AdSetRow = ({ adset, onRefresh }) => {
       {expanded && (
         <tr className="adset-detail-row">
           <td colSpan="11" style={{ padding: 0 }}>
-            <AdSetDetail adset={adset} onRefresh={onRefresh} />
+            <AdSetDetail adset={adset} timeWindow={timeWindow} onRefresh={onRefresh} />
           </td>
         </tr>
       )}
@@ -442,9 +563,10 @@ export default function AdSetsManager() {
   const [running, setRunning] = useState(null);
   const [filter, setFilter] = useState('active');
   const [search, setSearch] = useState('');
-  const [sortBy, setSortBy] = useState('spend_7d');
+  const [sortBy, setSortBy] = useState('spend');
   const [sortAsc, setSortAsc] = useState(false);
-  const [fetchMeta, setFetchMeta] = useState(null); // { cached, fetched_at, age_seconds }
+  const [timeWindow, setTimeWindow] = useState('last_7d');
+  const [fetchMeta, setFetchMeta] = useState(null);
   const [sseConnected, setSseConnected] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
 
@@ -462,38 +584,22 @@ export default function AdSetsManager() {
 
   // SSE connection for real-time push updates
   useEffect(() => {
-    // Initial HTTP fetch (fast — may hit cache)
     fetchData();
-
-    // Connect to SSE stream for live push updates
     const es = connectSSE(
       (data) => {
-        // Received push update from server
         setAdSets(data.adsets || []);
-        setFetchMeta({ cached: data.cached, fetched_at: data.fetched_at, age_seconds: data.age_seconds });
+        setFetchMeta({ cached: data.cached, fetched_at: data.fetched_at, age_seconds: data.age_seconds, fallback: data.fallback });
         setLastUpdate(new Date());
         setLoading(false);
         setSseConnected(true);
       },
-      () => {
-        // SSE error — will auto-reconnect (browser default)
-        setSseConnected(false);
-      }
+      () => { setSseConnected(false); }
     );
-
-    // SSE connected
     es.onopen = () => setSseConnected(true);
-
-    // Fallback: if SSE drops, poll every 60s
     const fallbackInterval = setInterval(() => {
       if (!sseConnected) fetchData();
     }, 60000);
-
-    return () => {
-      es.close();
-      clearInterval(fallbackInterval);
-      setSseConnected(false);
-    };
+    return () => { es.close(); clearInterval(fallbackInterval); setSseConnected(false); };
   }, [fetchData]);
 
   const handleForceRefresh = async () => {
@@ -531,50 +637,50 @@ export default function AdSetsManager() {
 
   const totals = useMemo(() => {
     const active = adSets.filter(as => as.status === 'ACTIVE');
-    const m7 = (as) => as.metrics?.last_7d || {};
-    const mT = (as) => as.metrics?.today || {};
-    const totalSpend7d = active.reduce((s, as) => s + (m7(as).spend || 0), 0);
-    const totalRev7d = active.reduce((s, as) => s + (m7(as).purchase_value || 0), 0);
+    const mw = (as) => getMetrics(as, timeWindow);
+    const totalSpend = active.reduce((s, as) => s + (mw(as).spend || 0), 0);
+    const totalRev = active.reduce((s, as) => s + (mw(as).purchase_value || 0), 0);
+    const totalPurchases = active.reduce((s, as) => s + (mw(as).purchases || 0), 0);
     return {
-      spend7d: totalSpend7d,
-      revenue7d: totalRev7d,
-      roas7d: totalSpend7d > 0 ? totalRev7d / totalSpend7d : 0,
-      purchases7d: active.reduce((s, as) => s + (m7(as).purchases || 0), 0),
-      spendToday: active.reduce((s, as) => s + (mT(as).spend || 0), 0),
+      spend: totalSpend,
+      revenue: totalRev,
+      roas: totalSpend > 0 ? totalRev / totalSpend : 0,
+      purchases: totalPurchases,
+      cpa: totalPurchases > 0 ? totalSpend / totalPurchases : 0,
       totalBudget: active.reduce((s, as) => s + (as.daily_budget || 0), 0)
     };
-  }, [adSets]);
+  }, [adSets, timeWindow]);
 
   const filtered = useMemo(() => {
     let list = adSets;
 
-    // Status filter
     if (filter === 'active') list = list.filter(as => as.status === 'ACTIVE');
     else if (filter === 'paused') list = list.filter(as => as.status === 'PAUSED');
     else if (filter === 'off') list = list.filter(as => as.status !== 'ACTIVE' && as.status !== 'PAUSED');
 
-    // Search
     if (search.trim()) {
       const q = search.toLowerCase();
-      list = list.filter(as => (as.entity_name || '').toLowerCase().includes(q) || (as.entity_id || '').includes(q));
+      list = list.filter(as =>
+        (as.entity_name || '').toLowerCase().includes(q) ||
+        (as.entity_id || '').includes(q) ||
+        (as.campaign_name || '').toLowerCase().includes(q)
+      );
     }
 
-    // Sort
     const getSortVal = (as) => {
-      const m7 = as.metrics?.last_7d || {};
-      const mT = as.metrics?.today || {};
+      const m = getMetrics(as, timeWindow);
       switch (sortBy) {
         case 'name': return (as.entity_name || '').toLowerCase();
         case 'status': return as.status;
         case 'budget': return as.daily_budget || 0;
-        case 'spend_today': return mT.spend || 0;
-        case 'roas_today': return mT.roas || 0;
-        case 'spend_7d': return m7.spend || 0;
-        case 'roas_7d': return m7.roas || 0;
-        case 'purchases': return m7.purchases || 0;
-        case 'ctr': return m7.ctr || 0;
-        case 'frequency': return m7.frequency || 0;
-        default: return m7.spend || 0;
+        case 'spend': return m.spend || 0;
+        case 'roas': return m.roas || 0;
+        case 'purchases': return m.purchases || 0;
+        case 'cpa': return m.cpa || 0;
+        case 'ctr': return m.ctr || 0;
+        case 'cpm': return m.cpm || 0;
+        case 'frequency': return m.frequency || 0;
+        default: return m.spend || 0;
       }
     };
 
@@ -584,7 +690,7 @@ export default function AdSetsManager() {
       const cmp = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
       return sortAsc ? cmp : -cmp;
     });
-  }, [adSets, filter, search, sortBy, sortAsc]);
+  }, [adSets, filter, search, sortBy, sortAsc, timeWindow]);
 
   // ── Render ──
 
@@ -596,6 +702,8 @@ export default function AdSetsManager() {
       </div>
     );
   }
+
+  const windowLabel = TIME_WINDOWS.find(w => w.key === timeWindow)?.short || '7d';
 
   const SortHeader = ({ col, children, align }) => (
     <th className="sortable" style={{ textAlign: align || 'left' }} onClick={() => handleSort(col)}>
@@ -624,12 +732,22 @@ export default function AdSetsManager() {
                 ) : (
                   <span> &middot; polling</span>
                 )}
-                {fetchMeta?.fallback && ' · snapshot fallback'}
+                {fetchMeta?.fallback && ' · snapshot'}
               </span>
             </span>
           </div>
         </div>
         <div className="d-flex align-center gap-2">
+          {/* Time Window Selector */}
+          <div className="time-selector">
+            {TIME_WINDOWS.map(w => (
+              <button key={w.key} onClick={() => setTimeWindow(w.key)}
+                className={`time-btn ${timeWindow === w.key ? 'active' : ''}`}>
+                {w.short}
+              </button>
+            ))}
+          </div>
+          <div className="header-divider" />
           <button onClick={() => handleAction('manager', runAIManager)} disabled={running != null}
             className={`btn btn-sm ${running === 'manager' ? 'btn-primary' : 'btn-secondary'}`}>
             {running === 'manager' ? <RefreshCw size={13} className="loading-spin" /> : <Bot size={13} />} Manager
@@ -642,7 +760,7 @@ export default function AdSetsManager() {
           <button onClick={handleForceRefresh} disabled={running != null}
             className={`btn btn-sm ${running === 'refresh' ? 'btn-success' : 'btn-secondary'}`}
             title="Force refresh from Meta API">
-            {running === 'refresh' ? <RefreshCw size={13} className="loading-spin" /> : <Zap size={13} />} Live Refresh
+            {running === 'refresh' ? <RefreshCw size={13} className="loading-spin" /> : <Zap size={13} />}
           </button>
           <button onClick={logout} title="Logout" className="btn btn-ghost btn-icon btn-sm">
             <LogOut size={15} />
@@ -662,31 +780,50 @@ export default function AdSetsManager() {
           </div>
         )}
 
-        {/* KPI Summary */}
-        <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-          {[
-            { icon: Eye, label: 'Active Ad Sets', value: counts.active, sub: `${counts.total} total`, color: '--green' },
-            { icon: DollarSign, label: 'Today Spend', value: fmtMoney(totals.spendToday), sub: `${fmtMoney(totals.totalBudget)}/day budget`, color: '--blue-primary' },
-            { icon: TrendingUp, label: 'ROAS 7d', value: `${fmt(totals.roas7d)}x`, sub: `${fmtMoney(totals.revenue7d)} revenue`, color: totals.roas7d >= 2 ? '--green' : totals.roas7d >= 1 ? '--yellow' : '--red' },
-            { icon: DollarSign, label: 'Spend 7d', value: fmtMoney(totals.spend7d), sub: `across ${counts.active} active`, color: '--blue-light' },
-            { icon: ShoppingCart, label: 'Purchases 7d', value: totals.purchases7d, sub: 'total conversions', color: '--blue-primary' },
-          ].map(({ icon: Icon, label, value, sub, color }, i) => (
-            <div key={i} className="metric-card">
-              <div className="metric-header">
-                <span className="metric-label">{label}</span>
-                <div className="metric-icon" style={{ color: `var(${color})` }}><Icon size={18} /></div>
-              </div>
-              <div className="metric-value">{value}</div>
-              <span className="text-muted text-xs">{sub}</span>
+        {/* KPI Summary Cards */}
+        <div className="kpi-cards">
+          <div className="kpi-card">
+            <div className="kpi-card-header">
+              <span className="kpi-card-label">Active</span>
+              <Eye size={16} className="kpi-card-icon" style={{ color: 'var(--green)' }} />
             </div>
-          ))}
+            <div className="kpi-card-value">{counts.active}</div>
+            <div className="kpi-card-sub">{counts.total} total &middot; {fmtMoney(totals.totalBudget)}/d budget</div>
+          </div>
+
+          <div className="kpi-card">
+            <div className="kpi-card-header">
+              <span className="kpi-card-label">Spend {windowLabel}</span>
+              <DollarSign size={16} className="kpi-card-icon" style={{ color: 'var(--blue-light)' }} />
+            </div>
+            <div className="kpi-card-value">{fmtMoney(totals.spend)}</div>
+            <div className="kpi-card-sub">{fmtMoney(totals.revenue)} revenue</div>
+          </div>
+
+          <div className="kpi-card">
+            <div className="kpi-card-header">
+              <span className="kpi-card-label">ROAS {windowLabel}</span>
+              <Target size={16} className="kpi-card-icon" style={{ color: totals.roas >= KPI.roas_target ? 'var(--green)' : totals.roas >= KPI.roas_minimum ? 'var(--yellow)' : 'var(--red)' }} />
+            </div>
+            <div className={`kpi-card-value ${roasColor(totals.roas)}`}>{fmt(totals.roas)}x</div>
+            <div className="kpi-card-sub">target {KPI.roas_target}x</div>
+          </div>
+
+          <div className="kpi-card">
+            <div className="kpi-card-header">
+              <span className="kpi-card-label">Purchases {windowLabel}</span>
+              <ShoppingCart size={16} className="kpi-card-icon" style={{ color: 'var(--blue-primary)' }} />
+            </div>
+            <div className="kpi-card-value">{fmtInt(totals.purchases)}</div>
+            <div className={`kpi-card-sub ${cpaColor(totals.cpa)}`}>CPA: {fmtMoney(totals.cpa)}</div>
+          </div>
         </div>
 
         {/* Toolbar: Search + Filters */}
         <div className="toolbar">
           <div className="search-box">
             <Search size={14} />
-            <input type="text" placeholder="Search ad sets..." value={search} onChange={e => setSearch(e.target.value)} />
+            <input type="text" placeholder="Search ad sets or campaigns..." value={search} onChange={e => setSearch(e.target.value)} />
           </div>
           <div className="d-flex gap-1">
             {[
@@ -710,21 +847,21 @@ export default function AdSetsManager() {
               <thead>
                 <tr>
                   <SortHeader col="status">Status</SortHeader>
-                  <SortHeader col="name">Ad Set Name</SortHeader>
-                  <SortHeader col="budget" align="right">Budget</SortHeader>
-                  <SortHeader col="spend_today" align="right">Spend Today</SortHeader>
-                  <SortHeader col="roas_today" align="right">ROAS Today</SortHeader>
-                  <SortHeader col="spend_7d" align="right">Spend 7d</SortHeader>
-                  <SortHeader col="roas_7d" align="right">ROAS 7d</SortHeader>
-                  <SortHeader col="purchases" align="right">Purch 7d</SortHeader>
+                  <SortHeader col="name">Ad Set</SortHeader>
+                  <SortHeader col="budget" align="right">Budget/d</SortHeader>
+                  <SortHeader col="spend" align="right">Spend {windowLabel}</SortHeader>
+                  <SortHeader col="roas" align="right">ROAS</SortHeader>
+                  <SortHeader col="purchases" align="right">Purch</SortHeader>
+                  <SortHeader col="cpa" align="right">CPA</SortHeader>
                   <SortHeader col="ctr" align="right">CTR</SortHeader>
+                  <SortHeader col="cpm" align="right">CPM</SortHeader>
                   <SortHeader col="frequency" align="right">Freq</SortHeader>
                   <th style={{ textAlign: 'center', width: '50px' }}>Trend</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((as, i) => (
-                  <AdSetRow key={as.entity_id || i} adset={as} onRefresh={() => fetchData(true)} />
+                  <AdSetRow key={as.entity_id || i} adset={as} timeWindow={timeWindow} onRefresh={() => fetchData(true)} />
                 ))}
               </tbody>
             </table>
@@ -735,6 +872,18 @@ export default function AdSetsManager() {
             </div>
           )}
         </div>
+
+        {/* KPI Legend */}
+        <div className="kpi-legend">
+          <span className="kpi-legend-title">KPI Targets:</span>
+          <span>ROAS: <span className="kpi-good">{KPI.roas_target}x+</span> <span className="kpi-warn">{KPI.roas_minimum}x</span> <span className="kpi-bad">&lt;{KPI.roas_minimum}x</span></span>
+          <span className="kpi-legend-sep">&middot;</span>
+          <span>CTR: <span className="kpi-good">{KPI.ctr_minimum}%+</span> <span className="kpi-bad">&lt;{KPI.ctr_low}%</span></span>
+          <span className="kpi-legend-sep">&middot;</span>
+          <span>CPA: <span className="kpi-good">&lt;${KPI.cpa_target}</span> <span className="kpi-bad">&gt;${KPI.cpa_maximum}</span></span>
+          <span className="kpi-legend-sep">&middot;</span>
+          <span>Freq: <span className="kpi-warn">{KPI.frequency_warning}</span> <span className="kpi-bad">{KPI.frequency_critical}+</span></span>
+        </div>
       </div>
 
       {/* ── Scoped Styles ── */}
@@ -743,6 +892,12 @@ export default function AdSetsManager() {
           min-height: 100vh;
           background-color: var(--bg-primary);
         }
+
+        /* KPI color classes */
+        .kpi-good { color: var(--green); }
+        .kpi-warn { color: var(--yellow); }
+        .kpi-bad { color: var(--red); }
+        .kpi-neutral { color: var(--text-muted); }
 
         /* Header */
         .manager-header {
@@ -785,11 +940,79 @@ export default function AdSetsManager() {
           50% { opacity: 0.7; box-shadow: 0 0 0 4px rgba(16,185,129,0); }
         }
 
+        /* Time Window Selector */
+        .time-selector {
+          display: flex;
+          background-color: var(--bg-tertiary);
+          border-radius: var(--radius-md);
+          padding: 2px;
+          gap: 2px;
+        }
+        .time-btn {
+          background: none;
+          border: none;
+          color: var(--text-muted);
+          font-family: var(--font-family);
+          font-size: 0.6875rem;
+          font-weight: 600;
+          padding: 4px 12px;
+          border-radius: calc(var(--radius-md) - 2px);
+          cursor: pointer;
+          transition: all var(--transition-fast);
+          letter-spacing: 0.02em;
+        }
+        .time-btn:hover { color: var(--text-primary); }
+        .time-btn.active {
+          background-color: var(--blue-primary);
+          color: white;
+        }
+
         /* Content */
         .manager-content {
           max-width: 1600px;
           margin: 0 auto;
           padding: 20px 24px 40px;
+        }
+
+        /* KPI Cards */
+        .kpi-cards {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 16px;
+          margin-bottom: 20px;
+        }
+        .kpi-card {
+          background-color: var(--bg-secondary);
+          border: 1px solid var(--border-color);
+          border-radius: var(--radius-lg);
+          padding: 16px 20px;
+          transition: border-color var(--transition-fast);
+        }
+        .kpi-card:hover { border-color: var(--border-light); }
+        .kpi-card-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 8px;
+        }
+        .kpi-card-label {
+          font-size: 0.75rem;
+          font-weight: 600;
+          color: var(--text-tertiary);
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+        .kpi-card-icon { opacity: 0.8; }
+        .kpi-card-value {
+          font-size: 1.5rem;
+          font-weight: 800;
+          color: var(--text-primary);
+          line-height: 1.1;
+          margin-bottom: 4px;
+        }
+        .kpi-card-sub {
+          font-size: 0.6875rem;
+          color: var(--text-muted);
         }
 
         /* Toolbar */
@@ -812,17 +1035,12 @@ export default function AdSetsManager() {
           max-width: 360px;
           transition: border-color var(--transition-fast);
         }
-        .search-box:focus-within {
-          border-color: var(--blue-primary);
-        }
+        .search-box:focus-within { border-color: var(--blue-primary); }
         .search-box input {
-          background: none;
-          border: none;
-          outline: none;
+          background: none; border: none; outline: none;
           color: var(--text-primary);
           font-family: var(--font-family);
-          font-size: 0.875rem;
-          width: 100%;
+          font-size: 0.875rem; width: 100%;
         }
         .search-box input::placeholder { color: var(--text-muted); }
         .search-box svg { color: var(--text-muted); flex-shrink: 0; }
@@ -833,13 +1051,23 @@ export default function AdSetsManager() {
         .adsets-table .adset-row { cursor: pointer; }
         .adsets-table .adset-row:hover { background-color: var(--bg-hover); }
         .adsets-table .adset-row.expanded { background-color: var(--bg-tertiary); }
+        .adsets-table .adset-row.inactive-row { opacity: 0.5; }
+        .adsets-table .adset-row.inactive-row:hover { opacity: 0.7; }
         .adset-name-cell {
           max-width: 280px;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
-          display: inline-block;
-          vertical-align: middle;
+          display: block;
+        }
+        .campaign-label {
+          font-size: 0.625rem;
+          color: var(--text-muted);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          max-width: 280px;
+          margin-top: 1px;
         }
         .ad-name-cell {
           max-width: 220px;
@@ -862,44 +1090,81 @@ export default function AdSetsManager() {
           border-top: 1px solid var(--border-color);
         }
 
-        .kpi-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-          gap: 1px;
-          background-color: var(--border-color);
-          border: 1px solid var(--border-color);
-          border-radius: var(--radius-md);
-          overflow: hidden;
+        /* Comparison table in detail */
+        .detail-comparison {
           margin-bottom: 16px;
+          overflow-x: auto;
         }
-        .kpi-cell {
-          background-color: var(--bg-secondary);
-          padding: 10px 14px;
+        .comparison-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 0.75rem;
         }
-        .kpi-label {
-          font-size: 0.625rem;
+        .comparison-table th {
+          padding: 6px 16px;
+          text-align: right;
           font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
           color: var(--text-muted);
-          margin-bottom: 4px;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          font-size: 0.625rem;
+          border-bottom: 1px solid var(--border-color);
         }
-        .kpi-value {
-          font-size: 0.9375rem;
-          font-weight: 700;
+        .comparison-table th:first-child { text-align: left; }
+        .comparison-table th.comparison-active {
+          color: var(--blue-light);
+          background-color: rgba(59, 130, 246, 0.05);
+        }
+        .comparison-table td {
+          padding: 5px 16px;
+          border-bottom: 1px solid rgba(55, 65, 81, 0.3);
+        }
+        .comparison-label {
+          font-weight: 600;
+          color: var(--text-tertiary);
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+          font-size: 0.625rem;
+        }
+        .comparison-val {
+          text-align: right;
+          font-variant-numeric: tabular-nums;
+          color: var(--text-secondary);
+        }
+        .comparison-val.comparison-active {
+          background-color: rgba(59, 130, 246, 0.05);
           color: var(--text-primary);
+          font-weight: 600;
         }
 
-        .analysis-bar {
+        /* Detail info bar */
+        .detail-info-bar {
           display: flex;
           align-items: center;
-          gap: 16px;
+          gap: 20px;
           padding: 8px 14px;
           background-color: var(--bg-secondary);
           border: 1px solid var(--border-color);
           border-radius: var(--radius-md);
           margin-bottom: 16px;
-          font-size: 0.8125rem;
+          font-size: 0.75rem;
+          flex-wrap: wrap;
+        }
+        .detail-info-item {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .detail-info-label {
+          color: var(--text-muted);
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+          font-size: 0.625rem;
+        }
+        .detail-info-value {
+          color: var(--text-primary);
+          font-weight: 600;
         }
 
         .ads-section { margin-top: 4px; }
@@ -951,6 +1216,20 @@ export default function AdSetsManager() {
         .copy-variant.selected { border-color: var(--green); background-color: rgba(16,185,129,0.05); }
         .copy-variant:hover { border-color: var(--border-light); }
 
+        /* KPI Legend */
+        .kpi-legend {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-top: 16px;
+          padding: 8px 14px;
+          font-size: 0.6875rem;
+          color: var(--text-muted);
+          flex-wrap: wrap;
+        }
+        .kpi-legend-title { font-weight: 700; }
+        .kpi-legend-sep { opacity: 0.3; }
+
         /* Loading spinner */
         .loading-spin {
           animation: spin 0.8s linear infinite;
@@ -963,9 +1242,10 @@ export default function AdSetsManager() {
           .manager-content { padding: 16px; }
           .toolbar { flex-direction: column; align-items: stretch; }
           .search-box { max-width: none; }
+          .kpi-cards { grid-template-columns: repeat(2, 1fr); }
         }
         @media (max-width: 640px) {
-          .metrics-grid { grid-template-columns: repeat(2, 1fr) !important; }
+          .kpi-cards { grid-template-columns: 1fr; }
         }
       `}</style>
     </div>
