@@ -19,6 +19,7 @@ const { startDashboard } = require('./dashboard/server');
 const { refreshMetaToken } = require('./dashboard/routes/meta-auth');
 const { syncCreativeMetrics } = require('./dashboard/routes/creatives');
 const { refreshAIOpsMetrics } = require('./dashboard/routes/ai-ops');
+const BrainAnalyzer = require('./ai/brain/brain-analyzer');
 const logger = require('./utils/logger');
 
 const TIMEZONE = config.system.timezone;
@@ -46,6 +47,17 @@ async function jobDataCollection() {
     const collector = new DataCollector();
     const result = await collector.collect();
     logger.info(`[CRON] Recolección completada: ${result.snapshots} snapshots en ${result.elapsed}`);
+
+    // Brain Analyzer: analizar cambios después de cada recolección
+    try {
+      const brainAnalyzer = new BrainAnalyzer();
+      const brainResult = await brainAnalyzer.analyze();
+      if (brainResult.insights_created > 0) {
+        logger.info(`[CRON] Brain Analyzer: ${brainResult.insights_created} insights generados en ${brainResult.elapsed}`);
+      }
+    } catch (brainErr) {
+      logger.error(`[CRON] Brain Analyzer error: ${brainErr.message}`);
+    }
   } catch (error) {
     logger.error('[CRON] Error en recolección de datos:', error);
   }

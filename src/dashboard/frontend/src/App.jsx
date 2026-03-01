@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { getToken } from './api';
 import Login from './pages/Login';
 import AdSetsManager from './pages/AdSetsManager';
+import BrainIntelligence from './pages/BrainIntelligence';
 
 // AuthContext
 const AuthContext = createContext();
@@ -67,6 +68,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <AdSetsManager />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/brain"
+            element={
+              <ProtectedRoute>
+                <BrainIntelligence />
               </ProtectedRoute>
             }
           />

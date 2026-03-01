@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Brain, Bot, CheckCircle,
   TrendingUp, TrendingDown, Minus,
@@ -573,6 +574,7 @@ const AdSetRow = ({ adset, timeWindow, onRefresh }) => {
    ══════════════════════════════════════════ */
 
 export default function AdSetsManager() {
+  const navigate = useNavigate();
   const [adSets, setAdSets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -771,6 +773,10 @@ export default function AdSetsManager() {
           <button onClick={() => handleAction('brain', runAgents)} disabled={running != null}
             className={`btn btn-sm ${running === 'brain' ? 'btn-primary' : 'btn-secondary'}`}>
             {running === 'brain' ? <RefreshCw size={13} className="loading-spin" /> : <Brain size={13} />} Brain
+          </button>
+          <button onClick={() => navigate('/brain')}
+            className="btn btn-sm btn-secondary" title="Brain Intelligence">
+            <Brain size={13} /> Intel
           </button>
           <div className="header-divider" />
           <button onClick={handleForceRefresh} disabled={running != null}

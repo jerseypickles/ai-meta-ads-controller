@@ -206,4 +206,52 @@ export const getCreativePreviewUrl = (filenameOrId, filename) => {
   return `${BASE_URL}/uploads/creatives/${fname}`;
 };
 
+// ═══ BRAIN — Intelligence Feed & Chat ═══
+
+export const getBrainInsights = async (page = 1, limit = 20, filters = {}) => {
+  const params = { page, limit, ...filters };
+  const response = await api.get('/api/brain/insights', { params });
+  return response.data;
+};
+
+export const markInsightRead = async (id) => {
+  const response = await api.post(`/api/brain/insights/${id}/read`);
+  return response.data;
+};
+
+export const markAllInsightsRead = async () => {
+  const response = await api.post('/api/brain/insights/read-all');
+  return response.data;
+};
+
+export const triggerBrainAnalysis = async () => {
+  const response = await api.post('/api/brain/analyze', {}, { timeout: 120000 });
+  return response.data;
+};
+
+export const sendBrainChat = async (message) => {
+  const response = await api.post('/api/brain/chat', { message }, { timeout: 60000 });
+  return response.data;
+};
+
+export const getBrainChatHistory = async (limit = 50) => {
+  const response = await api.get('/api/brain/chat/history', { params: { limit } });
+  return response.data;
+};
+
+export const clearBrainChatHistory = async () => {
+  const response = await api.delete('/api/brain/chat/history');
+  return response.data;
+};
+
+export const getBrainStats = async () => {
+  const response = await api.get('/api/brain/stats');
+  return response.data;
+};
+
+export const getBrainMemory = async () => {
+  const response = await api.get('/api/brain/memory');
+  return response.data;
+};
+
 export default api;
