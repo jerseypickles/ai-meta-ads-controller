@@ -254,4 +254,33 @@ export const getBrainMemory = async () => {
   return response.data;
 };
 
+// ═══ BRAIN — Recommendations ═══
+
+export const getBrainRecommendations = async (page = 1, limit = 20, status = '') => {
+  const params = { page, limit };
+  if (status) params.status = status;
+  const response = await api.get('/api/brain/recommendations', { params });
+  return response.data;
+};
+
+export const approveRecommendation = async (id, note = '') => {
+  const response = await api.post(`/api/brain/recommendations/${id}/approve`, { note });
+  return response.data;
+};
+
+export const rejectRecommendation = async (id, note = '') => {
+  const response = await api.post(`/api/brain/recommendations/${id}/reject`, { note });
+  return response.data;
+};
+
+export const triggerBrainRecommendations = async () => {
+  const response = await api.post('/api/brain/recommendations/generate', {}, { timeout: 120000 });
+  return response.data;
+};
+
+export const getRecommendationHistory = async (limit = 20) => {
+  const response = await api.get('/api/brain/recommendations/history', { params: { limit } });
+  return response.data;
+};
+
 export default api;

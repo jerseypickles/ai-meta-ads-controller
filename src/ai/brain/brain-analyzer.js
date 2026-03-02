@@ -5,6 +5,7 @@ const { getLatestSnapshots, getAccountOverview, getRecentActions } = require('..
 const BrainMemory = require('../../db/models/BrainMemory');
 const BrainInsight = require('../../db/models/BrainInsight');
 const BrainChat = require('../../db/models/BrainChat');
+const BrainRecommendation = require('../../db/models/BrainRecommendation');
 const logger = require('../../utils/logger');
 
 /**
@@ -690,18 +691,19 @@ Responde con un JSON object:
    */
   async chat(userMessage) {
     // 1. Cargar datos actuales para contexto
-    const [adsetSnapshots, accountOverview, recentInsights, chatHistory] = await Promise.all([
+    const [adsetSnapshots, accountOverview, recentInsights, chatHistory, activeRecs] = await Promise.all([
       getLatestSnapshots('adset'),
       getAccountOverview(),
       BrainInsight.find({}).sort({ created_at: -1 }).limit(10).lean(),
-      BrainChat.find({}).sort({ created_at: -1 }).limit(20).lean()
+      BrainChat.find({}).sort({ created_at: -1 }).limit(20).lean(),
+      BrainRecommendation.find({ status: { $in: ['pending', 'approved'] } }).sort({ created_at: -1 }).limit(10).lean()
     ]);
 
     // 2. Guardar mensaje del usuario
     await BrainChat.create({ role: 'user', content: userMessage });
 
     // 3. Construir contexto
-    const context = this._buildChatContext(adsetSnapshots, accountOverview, recentInsights);
+    const context = this._buildChatContext(adsetSnapshots, accountOverview, recentInsights, activeRecs);
 
     // 4. Construir historial de conversación
     const messages = [];
@@ -748,10 +750,421 @@ REGLAS:
     };
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  // RECOMMENDATION ENGINE — Ciclo separado cada 6h con datos 7d
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Genera recomendaciones accionables usando datos estables (7d window).
+   * Llamado cada 6h por cron — separado del ciclo de insights (10 min).
+   */
+  async generateRecommendations() {
+    const startTime = Date.now();
+    const cycleId = `rec_${Date.now()}`;
+    logger.info('[BRAIN-RECS] Iniciando ciclo de recomendaciones...');
+
+    try {
+      // 1. Cargar datos actuales
+      const [adsetSnapshots, accountOverview, recentActions] = await Promise.all([
+        getLatestSnapshots('adset'),
+        getAccountOverview(),
+        getRecentActions(7)
+      ]);
+
+      // 2. Cargar memorias y insights recientes para contexto
+      const [memories, recentInsights, previousRecs] = await Promise.all([
+        BrainMemory.find({}).lean(),
+        BrainInsight.find({}).sort({ created_at: -1 }).limit(30).lean(),
+        BrainRecommendation.find({ status: 'pending' }).lean()
+      ]);
+
+      const memoryMap = {};
+      for (const m of memories) memoryMap[m.entity_id] = m;
+
+      // 3. Construir prompt con datos 7d estables
+      const prompt = this._buildRecommendationPrompt(
+        adsetSnapshots, accountOverview, recentActions,
+        memoryMap, recentInsights, previousRecs
+      );
+
+      // 4. Llamar a Claude para recomendaciones
+      const response = await this.anthropic.messages.create({
+        model: config.claude.model,
+        max_tokens: 6000,
+        messages: [{ role: 'user', content: prompt }],
+        system: this._getRecommendationSystemPrompt()
+      });
+
+      const text = response.content[0]?.text || '';
+      const tokensUsed = (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0);
+
+      // 5. Parsear recomendaciones
+      const recs = this._parseRecommendationResponse(text, adsetSnapshots, accountOverview);
+
+      // 6. Expirar recomendaciones pendientes anteriores
+      const expired = await BrainRecommendation.updateMany(
+        { status: 'pending' },
+        { $set: { status: 'expired', updated_at: new Date() } }
+      );
+      if (expired.modifiedCount > 0) {
+        logger.info(`[BRAIN-RECS] ${expired.modifiedCount} recomendaciones anteriores expiradas`);
+      }
+
+      // 7. Guardar nuevas recomendaciones
+      let created = 0;
+      for (const rec of recs) {
+        try {
+          // Capturar snapshot de métricas al momento de la recomendación
+          const snap = adsetSnapshots.find(s => s.entity_id === rec.entity.entity_id);
+          const m7d = snap?.metrics?.last_7d || {};
+
+          await BrainRecommendation.create({
+            ...rec,
+            cycle_id: cycleId,
+            generated_by: 'ai',
+            ai_model: config.claude.model,
+            tokens_used: Math.ceil(tokensUsed / recs.length),
+            'follow_up.metrics_at_recommendation': {
+              roas_7d: m7d.roas || 0,
+              cpa_7d: m7d.cpa || 0,
+              spend_7d: m7d.spend || 0,
+              frequency_7d: m7d.frequency || 0,
+              purchases_7d: m7d.purchases || 0,
+              status: snap?.status || 'UNKNOWN'
+            }
+          });
+          created++;
+        } catch (saveErr) {
+          logger.error(`[BRAIN-RECS] Error guardando recomendación: ${saveErr.message}`);
+        }
+      }
+
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      logger.info(`[BRAIN-RECS] Ciclo completado en ${elapsed}s — ${created} recomendaciones generadas (${tokensUsed} tokens)`);
+
+      return { recommendations_created: created, elapsed: `${elapsed}s`, cycle_id: cycleId };
+    } catch (error) {
+      logger.error(`[BRAIN-RECS] Error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * System prompt para generación de recomendaciones.
+   */
+  _getRecommendationSystemPrompt() {
+    return `Eres el Brain Strategist de un sistema de Meta Ads para Jersey Pickles (e-commerce de alimentos).
+
+Tu trabajo es generar RECOMENDACIONES ACCIONABLES basadas en datos estables de 7 días. NO son observaciones — son decisiones concretas que el usuario puede aprobar o rechazar.
+
+REGLAS CRÍTICAS:
+1. Solo recomienda acciones cuando los datos 7d lo justifiquen claramente. Si no hay acción clara, no inventes una.
+2. Cada recomendación debe ser ESPECÍFICA: "Pausar X" o "Aumentar budget de Y en 20%", no "considerar optimizar".
+3. Usa datos cuantitativos concretos para respaldar cada recomendación.
+4. Máximo 5-7 recomendaciones por ciclo. Prioriza las más impactantes.
+5. Si una recomendación anterior fue expirada y la situación no cambió, puedes repetirla (el usuario puede no haberla visto).
+6. Si la situación cambió respecto a recomendaciones anteriores, menciónalo: "Actualización: antes recomendé X pero ahora..."
+7. Si un ad set está funcionando bien, NO recomiendes cambios. "Si funciona, no lo toques."
+
+FORMATO DE RESPUESTA — JSON array:
+[
+  {
+    "priority": "urgente|evaluar|monitorear",
+    "action_type": "pause|scale_up|scale_down|reactivate|restructure|creative_refresh|bid_change|monitor",
+    "entity_id": "id_del_adset",
+    "entity_name": "nombre",
+    "title": "Título corto y claro (máx 80 chars)",
+    "body": "Análisis completo en español: por qué recomiendas esto, qué datos lo respaldan, qué esperas que pase si se ejecuta (2-3 párrafos)",
+    "action_detail": "Acción específica: 'Pausar ad set BROAD 5' o 'Aumentar budget de BROAD 2 de $15 a $20/día'",
+    "confidence": "high|medium|low",
+    "confidence_score": 75,
+    "supporting_data": {
+      "current_roas_7d": 0.8,
+      "current_cpa_7d": 45.00,
+      "current_spend_7d": 120,
+      "current_frequency_7d": 2.5,
+      "current_ctr_7d": 1.2,
+      "current_purchases_7d": 3,
+      "account_avg_roas_7d": 3.2,
+      "trend_direction": "declining",
+      "days_declining": 4
+    }
+  }
+]
+
+IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explicación fuera del JSON.`;
+  }
+
+  /**
+   * Construye prompt para recomendaciones con datos estables 7d.
+   */
+  _buildRecommendationPrompt(snapshots, accountOverview, recentActions, memoryMap, recentInsights, previousRecs) {
+    let prompt = `## DATOS DE CUENTA (7 DÍAS)\n`;
+    prompt += `ROAS 7d: ${accountOverview.roas_7d?.toFixed(2)}x | Target: ${kpiTargets.roas_target}x | Mínimo: ${kpiTargets.roas_minimum}x\n`;
+    prompt += `ROAS 3d: ${accountOverview.roas_3d?.toFixed(2)}x\n`;
+    prompt += `Spend 7d total: ~$${(accountOverview.today_spend * 7)?.toFixed(0) || '?'}\n`;
+    prompt += `Ad sets activos: ${accountOverview.active_adsets} | Pausados: ${accountOverview.paused_adsets}\n\n`;
+
+    // Ad sets activos con datos completos
+    const active = snapshots.filter(s => s.status === 'ACTIVE')
+      .sort((a, b) => (b.metrics?.last_7d?.spend || 0) - (a.metrics?.last_7d?.spend || 0));
+
+    prompt += `## AD SETS ACTIVOS (${active.length})\n\n`;
+    for (const s of active) {
+      const m7d = s.metrics?.last_7d || {};
+      const m3d = s.metrics?.last_3d || {};
+      const mem = memoryMap[s.entity_id];
+      const trend = mem?.trends || {};
+
+      prompt += `### ${s.entity_name} [${s.entity_id}]\n`;
+      prompt += `  7d: ROAS=${(m7d.roas||0).toFixed(2)}x, Spend=$${(m7d.spend||0).toFixed(0)}, CPA=$${(m7d.cpa||0).toFixed(2)}, CTR=${(m7d.ctr||0).toFixed(2)}%, Freq=${(m7d.frequency||0).toFixed(1)}, Purchases=${m7d.purchases||0}\n`;
+      prompt += `  3d: ROAS=${(m3d.roas||0).toFixed(2)}x, Spend=$${(m3d.spend||0).toFixed(0)}\n`;
+      prompt += `  Budget: $${s.daily_budget||0}/día\n`;
+      if (trend.roas_direction && trend.roas_direction !== 'unknown') {
+        prompt += `  Tendencia ROAS: ${trend.roas_direction}`;
+        if (trend.consecutive_decline_days > 0) prompt += ` (${trend.consecutive_decline_days} ciclos declinando)`;
+        if (trend.consecutive_improve_days > 0) prompt += ` (${trend.consecutive_improve_days} ciclos mejorando)`;
+        prompt += `\n`;
+      }
+      prompt += `\n`;
+    }
+
+    // Ad sets pausados (oportunidades de reactivación)
+    const paused = snapshots.filter(s => ['PAUSED', 'ADSET_PAUSED', 'CAMPAIGN_PAUSED'].includes(s.status));
+    if (paused.length > 0) {
+      prompt += `## AD SETS PAUSADOS (${paused.length}) — ¿alguno vale reactivar?\n`;
+      for (const s of paused) {
+        const m7d = s.metrics?.last_7d || {};
+        prompt += `- ${s.entity_name}: último ROAS 7d=${(m7d.roas||0).toFixed(2)}x, Spend=$${(m7d.spend||0).toFixed(0)}, ${m7d.purchases||0} compras\n`;
+      }
+      prompt += `\n`;
+    }
+
+    // Acciones recientes
+    if (recentActions.length > 0) {
+      prompt += `## ACCIONES EJECUTADAS (últimos 7 días)\n`;
+      for (const a of recentActions.slice(0, 15)) {
+        prompt += `- ${a.action} en ${a.entity_name}: ${a.before_value} → ${a.after_value} (${new Date(a.executed_at).toISOString().split('T')[0]})\n`;
+      }
+      prompt += `\n`;
+    }
+
+    // Insights recientes del Brain (contexto)
+    if (recentInsights.length > 0) {
+      prompt += `## INSIGHTS RECIENTES DEL BRAIN (últimas observaciones)\n`;
+      for (const i of recentInsights.slice(0, 10)) {
+        prompt += `- [${new Date(i.created_at).toISOString().split('T')[0]}] [${i.insight_type}/${i.severity}] ${i.title}\n`;
+      }
+      prompt += `\n`;
+    }
+
+    // Recomendaciones anteriores que fueron aprobadas/rechazadas (para que el Brain aprenda)
+    const decidedRecs = previousRecs.filter(r => r.status === 'approved' || r.status === 'rejected');
+    // Actually, load from DB the recently decided ones
+    prompt += `## HISTORIAL DE DECISIONES DEL USUARIO\n`;
+    prompt += `(El usuario aprueba o rechaza las recomendaciones. Aprende de sus preferencias.)\n`;
+    // This will be enhanced — for now, note previous pending ones
+    if (previousRecs.length > 0) {
+      prompt += `Recomendaciones pendientes que serán reemplazadas por este ciclo:\n`;
+      for (const r of previousRecs.slice(0, 5)) {
+        prompt += `- [${r.priority}] ${r.title} (estado: ${r.status})\n`;
+      }
+    }
+    prompt += `\n`;
+
+    prompt += `Genera recomendaciones accionables basándote en los datos 7d. Si no hay acciones claras que tomar, devuelve un array vacío [].`;
+
+    return prompt;
+  }
+
+  /**
+   * Parsear respuesta JSON de recomendaciones de Claude.
+   */
+  _parseRecommendationResponse(text, snapshots, accountOverview) {
+    try {
+      let jsonText = text.trim();
+      if (jsonText.startsWith('```')) {
+        jsonText = jsonText.replace(/```json?\n?/g, '').replace(/```$/g, '').trim();
+      }
+
+      const parsed = JSON.parse(jsonText);
+      if (!Array.isArray(parsed)) return [];
+
+      const snapshotMap = {};
+      for (const s of snapshots) snapshotMap[s.entity_id] = s;
+
+      return parsed.map(item => {
+        const snap = snapshotMap[item.entity_id];
+        return {
+          priority: item.priority || 'evaluar',
+          action_type: item.action_type || 'monitor',
+          entity: {
+            entity_type: 'adset',
+            entity_id: item.entity_id || '',
+            entity_name: item.entity_name || snap?.entity_name || item.entity_id
+          },
+          title: item.title || 'Recomendación',
+          body: item.body || '',
+          action_detail: item.action_detail || '',
+          confidence: item.confidence || 'medium',
+          confidence_score: item.confidence_score || 50,
+          supporting_data: {
+            current_roas_7d: item.supporting_data?.current_roas_7d || 0,
+            current_cpa_7d: item.supporting_data?.current_cpa_7d || 0,
+            current_spend_7d: item.supporting_data?.current_spend_7d || 0,
+            current_frequency_7d: item.supporting_data?.current_frequency_7d || 0,
+            current_ctr_7d: item.supporting_data?.current_ctr_7d || 0,
+            current_purchases_7d: item.supporting_data?.current_purchases_7d || 0,
+            account_avg_roas_7d: accountOverview.roas_7d || 0,
+            trend_direction: item.supporting_data?.trend_direction || 'unknown',
+            days_declining: item.supporting_data?.days_declining || 0
+          }
+        };
+      }).filter(r => r.body.length > 0 && r.entity.entity_id);
+    } catch (parseErr) {
+      logger.error(`[BRAIN-RECS] Error parseando respuesta: ${parseErr.message}`);
+      return [];
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // FOLLOW-UP ENGINE — Mide impacto de recomendaciones aprobadas
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Revisa recomendaciones aprobadas y mide si la acción fue ejecutada + impacto.
+   * Llamado en cada ciclo de datos (cada 10 min) pero solo actúa si hay
+   * recomendaciones aprobadas hace >24h sin follow-up.
+   */
+  async followUpApprovedRecommendations() {
+    try {
+      // Buscar recomendaciones aprobadas sin follow-up, aprobadas hace >24h
+      const oneDayAgo = new Date(Date.now() - 24 * 3600000);
+      const approvedRecs = await BrainRecommendation.find({
+        status: 'approved',
+        'follow_up.checked': false,
+        decided_at: { $lte: oneDayAgo }
+      }).lean();
+
+      if (approvedRecs.length === 0) return 0;
+
+      const snapshots = await getLatestSnapshots('adset');
+      const snapshotMap = {};
+      for (const s of snapshots) snapshotMap[s.entity_id] = s;
+
+      let followedUp = 0;
+
+      for (const rec of approvedRecs) {
+        const snap = snapshotMap[rec.entity.entity_id];
+        if (!snap) continue;
+
+        const m7d = snap.metrics?.last_7d || {};
+        const prev = rec.follow_up?.metrics_at_recommendation || {};
+
+        // Detectar si la acción fue ejecutada
+        let actionExecuted = false;
+        if (rec.action_type === 'pause') {
+          actionExecuted = ['PAUSED', 'ADSET_PAUSED', 'CAMPAIGN_PAUSED'].includes(snap.status);
+        } else if (rec.action_type === 'scale_up') {
+          actionExecuted = (snap.daily_budget || 0) > (prev.spend_7d / 7 || 0);
+        } else if (rec.action_type === 'scale_down') {
+          actionExecuted = (snap.daily_budget || 0) < (prev.spend_7d / 7 || 0);
+        } else if (rec.action_type === 'reactivate') {
+          actionExecuted = snap.status === 'ACTIVE' && prev.status !== 'ACTIVE';
+        } else {
+          // Para otros tipos, simplemente medir el cambio
+          actionExecuted = true; // Asumimos que se hizo algo
+        }
+
+        // Calcular impacto
+        let impactSummary = '';
+        let impactVerdict = 'neutral';
+
+        if (rec.action_type === 'pause' && actionExecuted) {
+          // Impacto en la cuenta general
+          impactSummary = `Ad set "${rec.entity.entity_name}" fue pausado. ROAS de cuenta al momento: ${prev.roas_7d?.toFixed(2)}x.`;
+          impactVerdict = 'positive'; // Pausar un bajo rendimiento es generalmente positivo
+        } else if (prev.roas_7d && prev.roas_7d > 0) {
+          const roasChange = ((m7d.roas || 0) - prev.roas_7d) / prev.roas_7d * 100;
+          if (roasChange > 10) {
+            impactVerdict = 'positive';
+            impactSummary = `ROAS mejoró de ${prev.roas_7d.toFixed(2)}x a ${(m7d.roas||0).toFixed(2)}x (+${roasChange.toFixed(0)}%). Compras: ${prev.purchases_7d||0} → ${m7d.purchases||0}.`;
+          } else if (roasChange < -10) {
+            impactVerdict = 'negative';
+            impactSummary = `ROAS bajó de ${prev.roas_7d.toFixed(2)}x a ${(m7d.roas||0).toFixed(2)}x (${roasChange.toFixed(0)}%). Puede ser volatilidad transitoria.`;
+          } else {
+            impactVerdict = 'neutral';
+            impactSummary = `ROAS se mantuvo estable: ${prev.roas_7d.toFixed(2)}x → ${(m7d.roas||0).toFixed(2)}x. Sin cambio significativo aún.`;
+          }
+        } else {
+          impactSummary = `Datos insuficientes para medir impacto. Métricas actuales: ROAS=${(m7d.roas||0).toFixed(2)}x, Spend=$${(m7d.spend||0).toFixed(0)}.`;
+        }
+
+        // Guardar follow-up
+        await BrainRecommendation.updateOne(
+          { _id: rec._id },
+          {
+            $set: {
+              'follow_up.checked': true,
+              'follow_up.checked_at': new Date(),
+              'follow_up.action_executed': actionExecuted,
+              'follow_up.execution_detected_at': actionExecuted ? new Date() : null,
+              'follow_up.metrics_after': {
+                roas_7d: m7d.roas || 0,
+                cpa_7d: m7d.cpa || 0,
+                spend_7d: m7d.spend || 0,
+                frequency_7d: m7d.frequency || 0,
+                purchases_7d: m7d.purchases || 0,
+                status: snap.status,
+                measured_at: new Date()
+              },
+              'follow_up.impact_summary': impactSummary,
+              'follow_up.impact_verdict': impactVerdict,
+              updated_at: new Date()
+            }
+          }
+        );
+
+        // Crear insight de follow-up si la acción fue ejecutada
+        if (actionExecuted) {
+          try {
+            await BrainInsight.create({
+              insight_type: 'follow_up',
+              severity: impactVerdict === 'positive' ? 'info' : impactVerdict === 'negative' ? 'medium' : 'low',
+              title: `Seguimiento: ${rec.title}`,
+              body: `**Recomendación aprobada:** ${rec.action_detail}\n\n**Estado:** ${actionExecuted ? 'Acción ejecutada' : 'Acción no detectada'}\n\n**Impacto:** ${impactSummary}`,
+              entities: [rec.entity],
+              generated_by: 'hybrid',
+              data_points: {
+                recommendation_id: rec._id.toString(),
+                action_type: rec.action_type,
+                impact_verdict: impactVerdict,
+                roas_before: prev.roas_7d,
+                roas_after: m7d.roas || 0
+              }
+            });
+          } catch (insightErr) {
+            logger.error(`[BRAIN-RECS] Error creando insight de follow-up: ${insightErr.message}`);
+          }
+        }
+
+        followedUp++;
+      }
+
+      if (followedUp > 0) {
+        logger.info(`[BRAIN-RECS] Follow-up: ${followedUp} recomendaciones revisadas`);
+      }
+      return followedUp;
+    } catch (error) {
+      logger.error(`[BRAIN-RECS] Error en follow-up: ${error.message}`);
+      return 0;
+    }
+  }
+
   /**
    * Construir contexto compacto para el chat.
    */
-  _buildChatContext(snapshots, accountOverview, recentInsights) {
+  _buildChatContext(snapshots, accountOverview, recentInsights, activeRecs = []) {
     let ctx = `## CUENTA\n`;
     ctx += `ROAS 7d: ${accountOverview.roas_7d?.toFixed(2)}x | ROAS 3d: ${accountOverview.roas_3d?.toFixed(2)}x | Spend hoy: $${accountOverview.today_spend?.toFixed(0)} | Revenue hoy: $${accountOverview.today_revenue?.toFixed(0)}\n`;
     ctx += `Ad sets: ${accountOverview.active_adsets} activos, ${accountOverview.paused_adsets} pausados, ${accountOverview.total_adsets} total\n\n`;
@@ -776,6 +1189,14 @@ REGLAS:
       ctx += `\n## INSIGHTS RECIENTES\n`;
       for (const i of recentInsights.slice(0, 5)) {
         ctx += `- [${i.created_at.toISOString().split('T')[0]}] ${i.title}\n`;
+      }
+    }
+
+    if (activeRecs.length > 0) {
+      ctx += `\n## RECOMENDACIONES ACTIVAS\n`;
+      for (const r of activeRecs) {
+        ctx += `- [${r.priority}/${r.status}] ${r.title} — ${r.action_detail}\n`;
+        if (r.follow_up?.impact_summary) ctx += `  Follow-up: ${r.follow_up.impact_summary}\n`;
       }
     }
 

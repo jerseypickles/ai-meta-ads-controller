@@ -4,6 +4,7 @@ const BrainAnalyzer = require('../../ai/brain/brain-analyzer');
 const BrainInsight = require('../../db/models/BrainInsight');
 const BrainMemory = require('../../db/models/BrainMemory');
 const BrainChat = require('../../db/models/BrainChat');
+const BrainRecommendation = require('../../db/models/BrainRecommendation');
 const logger = require('../../utils/logger');
 
 const analyzer = new BrainAnalyzer();
@@ -189,7 +190,10 @@ router.get('/stats', async (req, res) => {
       weekInsights,
       entitiesTracked,
       totalChats,
-      insightsByType
+      insightsByType,
+      pendingRecs,
+      approvedRecs,
+      rejectedRecs
     ] = await Promise.all([
       BrainInsight.countDocuments({}),
       BrainInsight.countDocuments({ read: false }),
@@ -199,7 +203,10 @@ router.get('/stats', async (req, res) => {
       BrainChat.countDocuments({}),
       BrainInsight.aggregate([
         { $group: { _id: '$insight_type', count: { $sum: 1 } } }
-      ])
+      ]),
+      BrainRecommendation.countDocuments({ status: 'pending' }),
+      BrainRecommendation.countDocuments({ status: 'approved' }),
+      BrainRecommendation.countDocuments({ status: 'rejected' })
     ]);
 
     const typeBreakdown = {};
@@ -214,8 +221,120 @@ router.get('/stats', async (req, res) => {
       week_insights: weekInsights,
       entities_tracked: entitiesTracked,
       total_chats: totalChats,
-      insights_by_type: typeBreakdown
+      insights_by_type: typeBreakdown,
+      pending_recommendations: pendingRecs,
+      approved_recommendations: approvedRecs,
+      rejected_recommendations: rejectedRecs
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══ RECOMMENDATIONS ═══
+
+/**
+ * GET /api/brain/recommendations — Lista recomendaciones activas + historial
+ * Query: ?status=pending|approved|rejected|expired&page=1&limit=20
+ */
+router.get('/recommendations', async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(50, parseInt(req.query.limit) || 20);
+    const skip = (page - 1) * limit;
+
+    const filter = {};
+    if (req.query.status) filter.status = req.query.status;
+
+    const [recommendations, total, pendingCount] = await Promise.all([
+      BrainRecommendation.find(filter).sort({ created_at: -1 }).skip(skip).limit(limit).lean(),
+      BrainRecommendation.countDocuments(filter),
+      BrainRecommendation.countDocuments({ status: 'pending' })
+    ]);
+
+    res.json({
+      recommendations,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+      pending_count: pendingCount
+    });
+  } catch (error) {
+    logger.error(`[BRAIN-API] Error obteniendo recomendaciones: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/brain/recommendations/:id/approve — Aprobar recomendación
+ * Body: { note: "optional note" }
+ */
+router.post('/recommendations/:id/approve', async (req, res) => {
+  try {
+    const rec = await BrainRecommendation.findById(req.params.id);
+    if (!rec) return res.status(404).json({ error: 'Recomendación no encontrada' });
+    if (rec.status !== 'pending') return res.status(400).json({ error: `No se puede aprobar una recomendación con estado "${rec.status}"` });
+
+    rec.status = 'approved';
+    rec.decided_at = new Date();
+    rec.decision_note = req.body.note || '';
+    rec.updated_at = new Date();
+    await rec.save();
+
+    logger.info(`[BRAIN-API] Recomendación aprobada: ${rec.title}`);
+    res.json({ ok: true, recommendation: rec });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/brain/recommendations/:id/reject — Rechazar recomendación
+ * Body: { note: "optional reason" }
+ */
+router.post('/recommendations/:id/reject', async (req, res) => {
+  try {
+    const rec = await BrainRecommendation.findById(req.params.id);
+    if (!rec) return res.status(404).json({ error: 'Recomendación no encontrada' });
+    if (rec.status !== 'pending') return res.status(400).json({ error: `No se puede rechazar una recomendación con estado "${rec.status}"` });
+
+    rec.status = 'rejected';
+    rec.decided_at = new Date();
+    rec.decision_note = req.body.note || '';
+    rec.updated_at = new Date();
+    await rec.save();
+
+    logger.info(`[BRAIN-API] Recomendación rechazada: ${rec.title}`);
+    res.json({ ok: true, recommendation: rec });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/brain/recommendations/generate — Trigger manual de ciclo de recomendaciones
+ */
+router.post('/recommendations/generate', async (req, res) => {
+  try {
+    const result = await analyzer.generateRecommendations();
+    res.json(result);
+  } catch (error) {
+    logger.error(`[BRAIN-API] Error generando recomendaciones: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/brain/recommendations/history — Historial de decisiones (aprobadas/rechazadas con follow-up)
+ */
+router.get('/recommendations/history', async (req, res) => {
+  try {
+    const limit = Math.min(50, parseInt(req.query.limit) || 20);
+    const decided = await BrainRecommendation.find({
+      status: { $in: ['approved', 'rejected'] }
+    }).sort({ decided_at: -1 }).limit(limit).lean();
+
+    res.json({ recommendations: decided });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

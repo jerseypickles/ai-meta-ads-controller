@@ -41,6 +41,8 @@ async function jobDataCollection() {
       if (brainResult.insights_created > 0) {
         logger.info(`[CRON] Brain Analyzer: ${brainResult.insights_created} insights generados en ${brainResult.elapsed}`);
       }
+      // Follow-up: revisar recomendaciones aprobadas (ligero, solo DB queries)
+      await brainAnalyzer.followUpApprovedRecommendations();
     } catch (brainErr) {
       logger.error(`[CRON] Brain Analyzer error: ${brainErr.message}`);
     }
@@ -443,6 +445,22 @@ async function jobAIOpsRefresh() {
 }
 
 /**
+ * Job: Brain Recommendations — cada 6 horas.
+ * Genera recomendaciones accionables usando datos estables de 7 días.
+ * Separado del ciclo de insights (cada 10 min) para evitar volatilidad.
+ */
+async function jobBrainRecommendations() {
+  try {
+    logger.info('[CRON] Generando recomendaciones del Brain...');
+    const brainAnalyzer = new BrainAnalyzer();
+    const result = await brainAnalyzer.generateRecommendations();
+    logger.info(`[CRON] Brain Recommendations: ${result.recommendations_created} generadas en ${result.elapsed}`);
+  } catch (error) {
+    logger.error('[CRON] Error en Brain Recommendations:', error.message);
+  }
+}
+
+/**
  * Job: Limpieza de snapshots antiguos — diario a las 2:00 AM.
  */
 async function jobCleanup() {
@@ -549,6 +567,13 @@ function initCronJobs() {
     name: 'aiops-refresh'
   });
   logger.info('  [*] AI Ops metrics refresh — cada 15 min (24/7)');
+
+  // Cada 6 horas: Brain Recommendations (datos estables 7d, no volátiles)
+  cron.schedule('0 6,12,18,0 * * *', jobBrainRecommendations, {
+    timezone: TIMEZONE,
+    name: 'brain-recommendations'
+  });
+  logger.info('  [*] Brain Recommendations — 4x/día: 6am, 12pm, 6pm, 12am ET');
 
   // Cada 6 horas: Sync de métricas de creativos (después de data collection)
   cron.schedule('30 */6 * * *', jobCreativeMetricsSync, {

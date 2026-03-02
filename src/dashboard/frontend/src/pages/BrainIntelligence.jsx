@@ -4,7 +4,9 @@ import ReactMarkdown from 'react-markdown';
 import {
   getBrainInsights, markInsightRead, markAllInsightsRead,
   triggerBrainAnalysis, sendBrainChat, getBrainChatHistory,
-  clearBrainChatHistory, getBrainStats, logout
+  clearBrainChatHistory, getBrainStats, getBrainRecommendations,
+  approveRecommendation, rejectRecommendation,
+  triggerBrainRecommendations, logout
 } from '../api';
 
 // ═══ CONSTANTES ═══
@@ -32,7 +34,7 @@ const SEVERITY_CONFIG = {
 
 export default function BrainIntelligence() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('feed'); // 'feed' | 'chat'
+  const [activeTab, setActiveTab] = useState('feed'); // 'feed' | 'chat' | 'recs'
   const [insights, setInsights] = useState([]);
   const [insightsTotal, setInsightsTotal] = useState(0);
   const [insightsPage, setInsightsPage] = useState(1);
@@ -48,6 +50,15 @@ export default function BrainIntelligence() {
   const [chatLoading, setChatLoading] = useState(false);
   const chatEndRef = useRef(null);
   const chatInputRef = useRef(null);
+
+  // Recommendations state
+  const [recommendations, setRecommendations] = useState([]);
+  const [recsTotal, setRecsTotal] = useState(0);
+  const [recsPage, setRecsPage] = useState(1);
+  const [recsPendingCount, setRecsPendingCount] = useState(0);
+  const [loadingRecs, setLoadingRecs] = useState(false);
+  const [generatingRecs, setGeneratingRecs] = useState(false);
+  const [recsStatusFilter, setRecsStatusFilter] = useState('');
 
   // Filter
   const [typeFilter, setTypeFilter] = useState('all');
@@ -94,6 +105,21 @@ export default function BrainIntelligence() {
     }
   }, []);
 
+  const loadRecommendations = useCallback(async (page = 1) => {
+    setLoadingRecs(true);
+    try {
+      const data = await getBrainRecommendations(page, 20, recsStatusFilter);
+      setRecommendations(data.recommendations || []);
+      setRecsTotal(data.total || 0);
+      setRecsPage(page);
+      setRecsPendingCount(data.pending_count || 0);
+    } catch (err) {
+      console.error('Error loading recommendations:', err);
+    } finally {
+      setLoadingRecs(false);
+    }
+  }, [recsStatusFilter]);
+
   useEffect(() => {
     loadInsights();
     loadStats();
@@ -104,6 +130,12 @@ export default function BrainIntelligence() {
       loadChatHistory();
     }
   }, [activeTab, chatMessages.length, loadChatHistory]);
+
+  useEffect(() => {
+    if (activeTab === 'recs') {
+      loadRecommendations();
+    }
+  }, [activeTab, loadRecommendations]);
 
   useEffect(() => {
     if (chatEndRef.current) {
@@ -186,6 +218,42 @@ export default function BrainIntelligence() {
     }
   };
 
+  const handleApproveRec = async (id) => {
+    try {
+      await approveRecommendation(id);
+      setRecommendations(prev => prev.map(r =>
+        r._id === id ? { ...r, status: 'approved', decided_at: new Date().toISOString() } : r
+      ));
+      setRecsPendingCount(prev => Math.max(0, prev - 1));
+    } catch (err) {
+      console.error('Error approving:', err);
+    }
+  };
+
+  const handleRejectRec = async (id) => {
+    try {
+      await rejectRecommendation(id);
+      setRecommendations(prev => prev.map(r =>
+        r._id === id ? { ...r, status: 'rejected', decided_at: new Date().toISOString() } : r
+      ));
+      setRecsPendingCount(prev => Math.max(0, prev - 1));
+    } catch (err) {
+      console.error('Error rejecting:', err);
+    }
+  };
+
+  const handleGenerateRecs = async () => {
+    setGeneratingRecs(true);
+    try {
+      await triggerBrainRecommendations();
+      await loadRecommendations();
+    } catch (err) {
+      console.error('Error generating recommendations:', err);
+    } finally {
+      setGeneratingRecs(false);
+    }
+  };
+
   // ═══ HELPERS ═══
 
   const formatTime = (dateStr) => {
@@ -258,6 +326,15 @@ export default function BrainIntelligence() {
           {unreadCount > 0 && <span className="tab-badge">{unreadCount}</span>}
         </button>
         <button
+          className={`brain-tab ${activeTab === 'recs' ? 'active' : ''}`}
+          onClick={() => setActiveTab('recs')}
+        >
+          Recomendaciones
+          {(stats?.pending_recommendations || recsPendingCount) > 0 && (
+            <span className="tab-badge rec-badge">{stats?.pending_recommendations || recsPendingCount}</span>
+          )}
+        </button>
+        <button
           className={`brain-tab ${activeTab === 'chat' ? 'active' : ''}`}
           onClick={() => setActiveTab('chat')}
         >
@@ -283,6 +360,23 @@ export default function BrainIntelligence() {
             onMarkAllRead={handleMarkAllRead}
             onInsightClick={handleInsightClick}
             onPageChange={(p) => loadInsights(p)}
+            formatTime={formatTime}
+          />
+        ) : activeTab === 'recs' ? (
+          <RecommendationsPanel
+            recommendations={recommendations}
+            loading={loadingRecs}
+            generating={generatingRecs}
+            statusFilter={recsStatusFilter}
+            recsPage={recsPage}
+            totalPages={Math.ceil(recsTotal / 20)}
+            recsTotal={recsTotal}
+            pendingCount={recsPendingCount}
+            onStatusFilter={setRecsStatusFilter}
+            onGenerate={handleGenerateRecs}
+            onApprove={handleApproveRec}
+            onReject={handleRejectRec}
+            onPageChange={(p) => loadRecommendations(p)}
             formatTime={formatTime}
           />
         ) : (
@@ -465,6 +559,260 @@ function InsightCard({ insight, expanded, onToggle, formatTime }) {
           {insight.follow_up_count > 0 && (
             <div className="insight-follow-info">
               Tiene {insight.follow_up_count} seguimiento(s) posterior(es)
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══ RECOMMENDATIONS PANEL ═══
+
+const PRIORITY_CONFIG = {
+  urgente:    { icon: '🔴', color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: 'URGENTE' },
+  evaluar:    { icon: '🟡', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: 'EVALUAR' },
+  monitorear: { icon: '🔵', color: '#3b82f6', bg: 'rgba(59,130,246,0.15)', label: 'MONITOREAR' }
+};
+
+const ACTION_TYPE_CONFIG = {
+  pause:           { icon: '⏸️', label: 'Pausar' },
+  scale_up:        { icon: '📈', label: 'Escalar' },
+  scale_down:      { icon: '📉', label: 'Reducir' },
+  reactivate:      { icon: '▶️', label: 'Reactivar' },
+  restructure:     { icon: '🔧', label: 'Reestructurar' },
+  creative_refresh:{ icon: '🎨', label: 'Creativos' },
+  bid_change:      { icon: '💰', label: 'Puja' },
+  monitor:         { icon: '👁️', label: 'Monitorear' },
+  other:           { icon: '📋', label: 'Otro' }
+};
+
+const STATUS_LABELS = {
+  pending:    { label: 'Pendiente', color: '#f59e0b' },
+  approved:   { label: 'Aprobada', color: '#10b981' },
+  rejected:   { label: 'Rechazada', color: '#ef4444' },
+  expired:    { label: 'Expirada', color: '#6b7280' },
+  superseded: { label: 'Reemplazada', color: '#6b7280' }
+};
+
+function RecommendationsPanel({
+  recommendations, loading, generating, statusFilter,
+  recsPage, totalPages, recsTotal, pendingCount,
+  onStatusFilter, onGenerate, onApprove, onReject, onPageChange,
+  formatTime
+}) {
+  const [expandedId, setExpandedId] = useState(null);
+
+  return (
+    <div className="recs-panel">
+      {/* Toolbar */}
+      <div className="feed-toolbar">
+        <div className="feed-filters">
+          <select
+            className="feed-select"
+            value={statusFilter}
+            onChange={(e) => onStatusFilter(e.target.value)}
+          >
+            <option value="">Todas</option>
+            <option value="pending">Pendientes ({pendingCount})</option>
+            <option value="approved">Aprobadas</option>
+            <option value="rejected">Rechazadas</option>
+            <option value="expired">Expiradas</option>
+          </select>
+        </div>
+        <div className="feed-actions">
+          <button
+            className="btn-primary"
+            onClick={onGenerate}
+            disabled={generating}
+          >
+            {generating ? 'Generando...' : 'Generar recomendaciones'}
+          </button>
+        </div>
+      </div>
+
+      {/* Info banner */}
+      <div className="recs-info-banner">
+        Las recomendaciones se generan cada 6h usando datos estables de 7 días.
+        Aprueba o rechaza cada una — el Brain aprende de tus decisiones.
+      </div>
+
+      {/* Recommendations List */}
+      <div className="recs-list">
+        {loading ? (
+          <div className="feed-empty">Cargando recomendaciones...</div>
+        ) : recommendations.length === 0 ? (
+          <div className="feed-empty">
+            <div className="feed-empty-icon">🎯</div>
+            <p>Sin recomendaciones aún.</p>
+            <p className="feed-empty-hint">Genera recomendaciones manualmente o espera al próximo ciclo automático (cada 6h).</p>
+          </div>
+        ) : (
+          recommendations.map(rec => (
+            <RecommendationCard
+              key={rec._id}
+              rec={rec}
+              expanded={expandedId === rec._id}
+              onToggle={() => setExpandedId(expandedId === rec._id ? null : rec._id)}
+              onApprove={() => onApprove(rec._id)}
+              onReject={() => onReject(rec._id)}
+              formatTime={formatTime}
+            />
+          ))
+        )}
+      </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="feed-pagination">
+          <button
+            className="btn-page"
+            disabled={recsPage <= 1}
+            onClick={() => onPageChange(recsPage - 1)}
+          >
+            Anterior
+          </button>
+          <span className="page-info">
+            Página {recsPage} de {totalPages} ({recsTotal} recomendaciones)
+          </span>
+          <button
+            className="btn-page"
+            disabled={recsPage >= totalPages}
+            onClick={() => onPageChange(recsPage + 1)}
+          >
+            Siguiente
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══ RECOMMENDATION CARD ═══
+
+function RecommendationCard({ rec, expanded, onToggle, onApprove, onReject, formatTime }) {
+  const priorityCfg = PRIORITY_CONFIG[rec.priority] || PRIORITY_CONFIG.evaluar;
+  const actionCfg = ACTION_TYPE_CONFIG[rec.action_type] || ACTION_TYPE_CONFIG.other;
+  const statusCfg = STATUS_LABELS[rec.status] || STATUS_LABELS.pending;
+  const confidencePct = rec.confidence_score || 50;
+
+  return (
+    <div className={`rec-card ${rec.status} ${expanded ? 'expanded' : ''}`} onClick={onToggle}>
+      <div className="rec-header">
+        <div className="rec-left">
+          <span className="rec-priority-icon">{priorityCfg.icon}</span>
+          <div className="rec-meta">
+            <div className="rec-title-row">
+              <span className="rec-title">{rec.title}</span>
+            </div>
+            <div className="rec-tags">
+              <span className="rec-tag priority" style={{ color: priorityCfg.color, backgroundColor: priorityCfg.bg }}>
+                {priorityCfg.label}
+              </span>
+              <span className="rec-tag action">
+                {actionCfg.icon} {actionCfg.label}
+              </span>
+              <span className="rec-tag confidence" title={`Confianza: ${confidencePct}%`}>
+                {rec.confidence === 'high' ? '🟢' : rec.confidence === 'medium' ? '🟡' : '🔴'} {confidencePct}%
+              </span>
+              <span className="rec-tag entity">{rec.entity?.entity_name}</span>
+            </div>
+          </div>
+        </div>
+        <div className="rec-right">
+          <span className="rec-time">{formatTime(rec.created_at)}</span>
+          <span className="rec-status" style={{ color: statusCfg.color }}>{statusCfg.label}</span>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="rec-body">
+          <div className="rec-action-detail">
+            <strong>Acción:</strong> {rec.action_detail}
+          </div>
+
+          <div className="rec-body-text markdown-body">
+            <ReactMarkdown>{rec.body}</ReactMarkdown>
+          </div>
+
+          {/* Supporting data */}
+          {rec.supporting_data && (
+            <div className="rec-data-grid">
+              {rec.supporting_data.current_roas_7d > 0 && (
+                <div className="rec-data-item">
+                  <span className="rec-data-label">ROAS 7d</span>
+                  <span className="rec-data-value">{rec.supporting_data.current_roas_7d.toFixed(2)}x</span>
+                </div>
+              )}
+              {rec.supporting_data.current_cpa_7d > 0 && (
+                <div className="rec-data-item">
+                  <span className="rec-data-label">CPA 7d</span>
+                  <span className="rec-data-value">${rec.supporting_data.current_cpa_7d.toFixed(2)}</span>
+                </div>
+              )}
+              {rec.supporting_data.current_spend_7d > 0 && (
+                <div className="rec-data-item">
+                  <span className="rec-data-label">Spend 7d</span>
+                  <span className="rec-data-value">${rec.supporting_data.current_spend_7d.toFixed(0)}</span>
+                </div>
+              )}
+              {rec.supporting_data.current_frequency_7d > 0 && (
+                <div className="rec-data-item">
+                  <span className="rec-data-label">Freq 7d</span>
+                  <span className="rec-data-value">{rec.supporting_data.current_frequency_7d.toFixed(1)}</span>
+                </div>
+              )}
+              {rec.supporting_data.current_purchases_7d > 0 && (
+                <div className="rec-data-item">
+                  <span className="rec-data-label">Compras 7d</span>
+                  <span className="rec-data-value">{rec.supporting_data.current_purchases_7d}</span>
+                </div>
+              )}
+              {rec.supporting_data.account_avg_roas_7d > 0 && (
+                <div className="rec-data-item">
+                  <span className="rec-data-label">ROAS cuenta</span>
+                  <span className="rec-data-value">{rec.supporting_data.account_avg_roas_7d.toFixed(2)}x</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Follow-up info (for decided recommendations) */}
+          {rec.follow_up?.checked && (
+            <div className={`rec-followup ${rec.follow_up.impact_verdict}`}>
+              <div className="rec-followup-header">
+                <span className="rec-followup-icon">
+                  {rec.follow_up.impact_verdict === 'positive' ? '✅' : rec.follow_up.impact_verdict === 'negative' ? '❌' : '➖'}
+                </span>
+                <strong>Follow-up: {rec.follow_up.action_executed ? 'Acción ejecutada' : 'Acción no detectada'}</strong>
+              </div>
+              <p className="rec-followup-text">{rec.follow_up.impact_summary}</p>
+            </div>
+          )}
+
+          {/* Approve/Reject buttons */}
+          {rec.status === 'pending' && (
+            <div className="rec-decision-bar">
+              <button
+                className="rec-btn approve"
+                onClick={(e) => { e.stopPropagation(); onApprove(); }}
+              >
+                Aprobar
+              </button>
+              <button
+                className="rec-btn reject"
+                onClick={(e) => { e.stopPropagation(); onReject(); }}
+              >
+                Rechazar
+              </button>
+            </div>
+          )}
+
+          {/* Decided info */}
+          {(rec.status === 'approved' || rec.status === 'rejected') && rec.decided_at && (
+            <div className="rec-decided-info">
+              {rec.status === 'approved' ? 'Aprobada' : 'Rechazada'} {formatTime(rec.decided_at)}
+              {rec.decision_note && ` — "${rec.decision_note}"`}
             </div>
           )}
         </div>
