@@ -15,6 +15,7 @@ const ActionLog = require('../../db/models/ActionLog');
 const CreativeAsset = require('../../db/models/CreativeAsset');
 const AICreation = require('../../db/models/AICreation');
 const BrainRecommendation = require('../../db/models/BrainRecommendation');
+const BrainCycleMemory = require('../../db/models/BrainCycleMemory');
 const StrategicDirective = require('../../db/models/StrategicDirective');
 const logger = require('../../utils/logger');
 
@@ -83,7 +84,8 @@ class UnifiedBrain {
         strategicDirectives: sharedData.strategicDirectives,
         learnerSummary,
         aiManagerFeedback: sharedData.aiManagerFeedback,
-        recommendationHistory: sharedData.recommendationHistory
+        recommendationHistory: sharedData.recommendationHistory,
+        cycleMemories: sharedData.cycleMemories
       });
 
       logger.info(`[BRAIN] Prompt enviado a Claude: ${userPrompt.length} chars`);
@@ -248,6 +250,11 @@ class UnifiedBrain {
       // 14. Auto-ejecutar segun modo de autonomia
       const autoExecuted = await this._autoExecuteRecommendations(report);
 
+      // 15. Persistir memoria de análisis del ciclo (non-blocking)
+      this._saveCycleMemory(cycleId, parsed, enrichedRecs, sharedData.accountOverview, response).catch(err => {
+        logger.warn(`[BRAIN] Error guardando cycle memory: ${err.message}`);
+      });
+
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       logger.info(`═══ Cerebro IA completado en ${elapsed}s — ${report.recommendations.length} recomendaciones, ${autoExecuted} auto-ejecutadas, ${directivesCreated} directivas para AI Manager ═══`);
 
@@ -322,7 +329,18 @@ class UnifiedBrain {
       logger.warn(`[BRAIN] Error cargando historial de recomendaciones: ${e.message}`);
     }
 
-    logger.info(`[BRAIN] Datos cargados: ${adSetSnapshots.length} ad sets, ${adSnapshots.length} ads, ${campaignSnapshots.length} campanas, ${activeCooldowns.length} cooldowns, ${recommendationHistory.length} rec history`);
+    // Load recent cycle memories (Claude's persistent analysis memory)
+    let cycleMemories = [];
+    try {
+      cycleMemories = await BrainCycleMemory.find({})
+        .sort({ created_at: -1 })
+        .limit(5)
+        .lean();
+    } catch (e) {
+      logger.warn(`[BRAIN] Error cargando cycle memories: ${e.message}`);
+    }
+
+    logger.info(`[BRAIN] Datos cargados: ${adSetSnapshots.length} ad sets, ${adSnapshots.length} ads, ${campaignSnapshots.length} campanas, ${activeCooldowns.length} cooldowns, ${recommendationHistory.length} rec history, ${cycleMemories.length} cycle memories`);
 
     return {
       cycleId,
@@ -337,7 +355,8 @@ class UnifiedBrain {
       aiCreations,
       strategicDirectives,
       aiManagerFeedback,
-      recommendationHistory
+      recommendationHistory,
+      cycleMemories
     };
   }
 
@@ -1145,6 +1164,99 @@ class UnifiedBrain {
     }
 
     return actions;
+  }
+
+  /**
+   * Persiste la memoria de análisis del ciclo actual.
+   * Hace una llamada ligera a Claude pidiendo un resumen de conclusiones
+   * para que el Brain recuerde su razonamiento entre ciclos.
+   */
+  async _saveCycleMemory(cycleId, parsed, recommendations, accountOverview, originalResponse) {
+    try {
+      // Construir resumen de lo que se recomendó
+      const recSummary = recommendations.slice(0, 8).map(r =>
+        `${r.action} en ${r.entity_name}: ${r.reasoning?.substring(0, 100)}`
+      ).join('\n');
+
+      const memoryPrompt = `Acabas de analizar la cuenta de Meta Ads y generaste estas recomendaciones:
+
+RESUMEN: ${parsed.summary || 'Sin resumen'}
+STATUS: ${parsed.status || 'unknown'}
+
+RECOMENDACIONES (${recommendations.length}):
+${recSummary || 'Ninguna'}
+
+Ahora necesito que generes un JSON con tus CONCLUSIONES CLAVE para recordar en el próximo ciclo (en 6 horas).
+
+Responde SOLO con JSON válido:
+{
+  "conclusions": [
+    { "topic": "categoria_corta", "conclusion": "tu conclusión en 1-2 oraciones", "confidence": "high|medium|low", "entities": ["entity_id1"] }
+  ],
+  "account_assessment": "healthy|warning|declining|recovering|critical",
+  "hypotheses": [
+    { "hypothesis": "algo que quieres validar en el próximo ciclo", "proposed_action": "qué observar" }
+  ]
+}
+
+REGLAS:
+- Máximo 5 conclusiones, solo las más importantes
+- Máximo 3 hipótesis activas
+- Topics válidos: scaling_opportunity, fatigue_risk, budget_concern, performance_pattern, creative_gap, audience_saturation, recovery_signal, learning_insight
+- Sé específico: nombra entidades, da números
+- Las hipótesis deben ser verificables en el próximo ciclo`;
+
+      const memoryResponse = await this.anthropic.messages.create({
+        model: config.claude.model,
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: memoryPrompt }]
+      });
+
+      const memoryText = memoryResponse.content[0]?.text || '';
+      let memoryData;
+      try {
+        let cleaned = memoryText.trim();
+        if (cleaned.startsWith('```')) cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+        memoryData = JSON.parse(cleaned);
+      } catch (parseErr) {
+        logger.warn(`[BRAIN] No se pudo parsear cycle memory: ${parseErr.message}`);
+        return;
+      }
+
+      // Determinar top action
+      const actionCounts = {};
+      for (const r of recommendations) {
+        actionCounts[r.action] = (actionCounts[r.action] || 0) + 1;
+      }
+      const topAction = Object.entries(actionCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+
+      await BrainCycleMemory.create({
+        cycle_id: cycleId,
+        conclusions: (memoryData.conclusions || []).slice(0, 5).map(c => ({
+          topic: c.topic || 'other',
+          conclusion: String(c.conclusion || '').substring(0, 300),
+          confidence: ['high', 'medium', 'low'].includes(c.confidence) ? c.confidence : 'medium',
+          entities: Array.isArray(c.entities) ? c.entities.slice(0, 5) : []
+        })),
+        account_assessment: memoryData.account_assessment || parsed.status || 'unknown',
+        hypotheses: (memoryData.hypotheses || []).slice(0, 3).map(h => ({
+          hypothesis: String(h.hypothesis || '').substring(0, 200),
+          proposed_action: String(h.proposed_action || '').substring(0, 150),
+          status: 'active'
+        })),
+        snapshot: {
+          roas_7d: accountOverview.roas_7d || 0,
+          roas_30d: accountOverview.roas_30d || 0,
+          active_adsets: accountOverview.active_adsets || 0,
+          recommendations_count: recommendations.length,
+          top_action: topAction
+        }
+      });
+
+      logger.info(`[BRAIN] Cycle memory guardada: ${(memoryData.conclusions || []).length} conclusiones, ${(memoryData.hypotheses || []).length} hipótesis`);
+    } catch (error) {
+      logger.warn(`[BRAIN] Error en _saveCycleMemory: ${error.message}`);
+    }
   }
 
   async _expirePendingRecommendations() {

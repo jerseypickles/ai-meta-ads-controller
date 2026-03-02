@@ -149,7 +149,8 @@ function buildUserPrompt({
   strategicDirectives,
   learnerSummary,
   aiManagerFeedback,
-  recommendationHistory
+  recommendationHistory,
+  cycleMemories
 }) {
   const now = moment().tz(TIMEZONE);
   const hourET = now.hours();
@@ -186,6 +187,35 @@ NOTA: Prepara la cuenta para el aumento de demanda. Considera escalar ad sets ga
 
   prompt += '\n';
 
+  // === MEMORIA DE CICLOS ANTERIORES ===
+  if (cycleMemories && cycleMemories.length > 0) {
+    prompt += `═══ TU MEMORIA — CONCLUSIONES DE CICLOS ANTERIORES ═══\n`;
+    prompt += `(Estas son TUS propias conclusiones de análisis previos. Úsalas para mantener continuidad.)\n\n`;
+
+    for (const mem of cycleMemories.slice(0, 5)) {
+      const hoursAgo = Math.round((Date.now() - new Date(mem.created_at).getTime()) / (1000 * 60 * 60));
+      prompt += `--- Ciclo hace ${hoursAgo}h [${mem.account_assessment || '?'}] ---\n`;
+
+      if (mem.conclusions && mem.conclusions.length > 0) {
+        for (const c of mem.conclusions) {
+          prompt += `  [${c.topic}] (${c.confidence}): ${c.conclusion}${c.entities?.length > 0 ? ` — entidades: ${c.entities.join(', ')}` : ''}\n`;
+        }
+      }
+
+      if (mem.hypotheses && mem.hypotheses.length > 0) {
+        const activeHyp = mem.hypotheses.filter(h => h.status === 'active');
+        if (activeHyp.length > 0) {
+          prompt += `  HIPOTESIS PENDIENTES: ${activeHyp.map(h => `"${h.hypothesis}" → ${h.proposed_action}`).join(' | ')}\n`;
+        }
+      }
+
+      if (mem.snapshot) {
+        prompt += `  Snapshot: ROAS 7d=${(mem.snapshot.roas_7d || 0).toFixed(2)}x, 30d=${(mem.snapshot.roas_30d || 0).toFixed(2)}x, ${mem.snapshot.recommendations_count} recs, top: ${mem.snapshot.top_action}\n`;
+      }
+    }
+
+    prompt += `\nINSTRUCCION DE MEMORIA: Revisa tus conclusiones anteriores. Si una hipótesis sigue sin validar, intenta verificarla con datos actuales. Si una conclusión ya no aplica (datos cambiaron), descártala. Mantén coherencia con tu análisis previo a menos que los datos indiquen lo contrario.\n\n`;
+  }
 
   // === RESUMEN DE CUENTA ===
   const acctSpend30d = accountOverview.spend_30d || 0;

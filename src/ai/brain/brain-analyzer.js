@@ -8,6 +8,7 @@ const BrainMemory = require('../../db/models/BrainMemory');
 const BrainInsight = require('../../db/models/BrainInsight');
 const BrainChat = require('../../db/models/BrainChat');
 const BrainRecommendation = require('../../db/models/BrainRecommendation');
+const BrainCycleMemory = require('../../db/models/BrainCycleMemory');
 const logger = require('../../utils/logger');
 
 /**
@@ -693,20 +694,21 @@ Responde con un JSON object:
    */
   async chat(userMessage) {
     // 1. Cargar datos actuales para contexto
-    const [adsetSnapshots, accountOverview, recentInsights, chatHistory, activeRecs, recHistory] = await Promise.all([
+    const [adsetSnapshots, accountOverview, recentInsights, chatHistory, activeRecs, recHistory, cycleMemories] = await Promise.all([
       getLatestSnapshots('adset'),
       getAccountOverview(),
       BrainInsight.find({}).sort({ created_at: -1 }).limit(10).lean(),
       BrainChat.find({}).sort({ created_at: -1 }).limit(20).lean(),
       BrainRecommendation.find({ status: { $in: ['pending', 'approved'] } }).sort({ created_at: -1 }).limit(10).lean(),
-      BrainRecommendation.find({ status: { $in: ['approved', 'rejected'] } }).sort({ decided_at: -1 }).limit(20).lean()
+      BrainRecommendation.find({ status: { $in: ['approved', 'rejected'] } }).sort({ decided_at: -1 }).limit(20).lean(),
+      BrainCycleMemory.find({}).sort({ created_at: -1 }).limit(3).lean().catch(() => [])
     ]);
 
     // 2. Guardar mensaje del usuario
     await BrainChat.create({ role: 'user', content: userMessage });
 
     // 3. Construir contexto
-    const context = this._buildChatContext(adsetSnapshots, accountOverview, recentInsights, activeRecs, recHistory);
+    const context = this._buildChatContext(adsetSnapshots, accountOverview, recentInsights, activeRecs, recHistory, cycleMemories);
 
     // 4. Construir historial de conversación
     const messages = [];
@@ -1191,7 +1193,7 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
    * Construir contexto enriquecido para el chat.
    * Incluye: 14d/30d metrics, AOV, funnel, seasonality, budget, rec history.
    */
-  _buildChatContext(snapshots, accountOverview, recentInsights, activeRecs = [], recHistory = []) {
+  _buildChatContext(snapshots, accountOverview, recentInsights, activeRecs = [], recHistory = [], cycleMemories = []) {
     const TIMEZONE = process.env.TIMEZONE || 'America/New_York';
     const now = moment().tz(TIMEZONE);
 
@@ -1278,6 +1280,23 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
         const daysAgo = r.decided_at ? Math.round((Date.now() - new Date(r.decided_at).getTime()) / 86400000) : '?';
         const impact = r.follow_up?.impact_verdict || 'sin medir';
         ctx += `- [${r.status}] ${r.action_type} en ${r.entity?.entity_name || 'N/A'} (${daysAgo}d ago) — impacto: ${impact}\n`;
+      }
+    }
+
+    // Cycle memories (persistent analysis memory)
+    if (cycleMemories && cycleMemories.length > 0) {
+      ctx += `\n## TU MEMORIA — ANÁLISIS PREVIOS\n`;
+      for (const mem of cycleMemories) {
+        const hoursAgo = Math.round((Date.now() - new Date(mem.created_at).getTime()) / (1000 * 60 * 60));
+        ctx += `[${hoursAgo}h ago | ${mem.account_assessment}] `;
+        if (mem.conclusions?.length > 0) {
+          ctx += mem.conclusions.map(c => `${c.topic}: ${c.conclusion}`).join(' | ');
+        }
+        ctx += '\n';
+        if (mem.hypotheses?.length > 0) {
+          const active = mem.hypotheses.filter(h => h.status === 'active');
+          if (active.length > 0) ctx += `  Hipótesis: ${active.map(h => h.hypothesis).join('; ')}\n`;
+        }
       }
     }
 
