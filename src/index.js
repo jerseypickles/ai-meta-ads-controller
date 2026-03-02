@@ -25,23 +25,9 @@ const logger = require('./utils/logger');
 const TIMEZONE = config.system.timezone;
 
 /**
- * Verifica si estamos dentro de las horas activas.
- */
-function isActiveHours() {
-  const now = moment().tz(TIMEZONE);
-  const hour = now.hours();
-  return hour >= safetyGuards.active_hours.start && hour < safetyGuards.active_hours.end;
-}
-
-/**
- * Job: Recolección de datos — cada 30 minutos durante horas activas.
+ * Job: Recolección de datos — cada 10 minutos, 24/7.
  */
 async function jobDataCollection() {
-  if (!isActiveHours()) {
-    logger.debug('Fuera de horas activas, saltando recolección de datos');
-    return;
-  }
-
   try {
     logger.info('[CRON] Iniciando recolección de datos...');
     const collector = new DataCollector();
@@ -86,11 +72,6 @@ async function jobCreativeMetricsSync() {
  * Auto-ejecucion segun modo de autonomia (manual/semi_auto/auto).
  */
 async function jobAgentsCycle() {
-  if (!isActiveHours()) {
-    logger.debug('Fuera de horas activas, saltando ciclo del Cerebro IA');
-    return;
-  }
-
   const aiEnabled = await isAIEnabled();
   if (!aiEnabled) {
     logger.info('[CRON] IA desactivada — saltando ciclo del Cerebro IA');
@@ -131,8 +112,6 @@ async function jobKillSwitchMonitor() {
  * en entidades individuales. Solo alerta (no pausa automática).
  */
 async function jobAnomalyDetection() {
-  if (!isActiveHours()) return;
-
   try {
     const detector = new AnomalyDetector();
     const result = await detector.monitor();
@@ -390,11 +369,6 @@ async function jobMeasureAICreations(snapshotMap, extractMetrics) {
  * activate, learning phase, evaluate, scale/kill.
  */
 async function jobLifecycleManager() {
-  if (!isActiveHours()) {
-    logger.debug('Fuera de horas activas, saltando lifecycle manager');
-    return;
-  }
-
   const aiEnabled = await isAIEnabled();
   if (!aiEnabled) return;
 
@@ -416,11 +390,6 @@ async function jobLifecycleManager() {
  * Corre DESPUÉS del Brain para leer directivas estratégicas frescas.
  */
 async function jobAIManager() {
-  if (!isActiveHours()) {
-    logger.debug('Fuera de horas activas, saltando AI Manager');
-    return;
-  }
-
   const aiEnabled = await isAIEnabled();
   if (!aiEnabled) {
     logger.info('[CRON] IA desactivada — saltando AI Manager');
@@ -544,24 +513,21 @@ function initCronJobs() {
     timezone: TIMEZONE,
     name: 'data-collection'
   });
-  logger.info('  [*] Recolección de datos — cada 10 min (horas activas)');
+  logger.info('  [*] Recolección de datos — cada 10 min (24/7)');
 
   // 4 veces al día: Ciclo del Cerebro IA unificado (7am, 1pm, 7pm, 11pm ET)
-  // Reducido de cada 30min — Meta Ads necesita horas/días para mostrar resultados reales.
-  // Un cerebro de calidad analiza, actúa, y ESPERA antes de volver a evaluar.
   cron.schedule('0 7,13,19,23 * * *', jobAgentsCycle, {
     timezone: TIMEZONE,
     name: 'brain-cycle'
   });
-  logger.info('  [*] Cerebro IA — 4x/día: 7am, 1pm, 7pm, 11pm ET (horas activas)');
+  logger.info('  [*] Cerebro IA — 4x/día: 7am, 1pm, 7pm, 11pm ET');
 
   // Cada 2 horas: Lifecycle manager (activar, learning, escalar, matar)
-  // Reducido de cada 30min — las transiciones de fase no necesitan velocidad extrema.
   cron.schedule('30 */2 * * *', jobLifecycleManager, {
     timezone: TIMEZONE,
     name: 'lifecycle-manager'
   });
-  logger.info('  [*] Lifecycle Manager IA — cada 2 horas (horas activas)');
+  logger.info('  [*] Lifecycle Manager IA — cada 2 horas');
 
   // Cada 2 horas: Medición de impacto (24h y 3d checkpoints)
   cron.schedule('0 */2 * * *', jobMeasureImpact, {
@@ -571,30 +537,18 @@ function initCronJobs() {
   logger.info('  [*] Medición de impacto — cada 2 horas');
 
   // 3 veces al día: AI Manager autónomo (9am, 5pm, 10pm ET)
-  // Reducido de cada 2h — corre DESPUÉS del Brain para leer directivas frescas.
-  // Meta necesita horas/días para procesar cambios. Más frecuencia = más ruido.
   cron.schedule('0 9,17,22 * * *', jobAIManager, {
     timezone: TIMEZONE,
     name: 'ai-manager'
   });
-  logger.info('  [*] AI Manager autónomo — 3x/día: 9am, 5pm, 10pm ET (horas activas)');
+  logger.info('  [*] AI Manager autónomo — 3x/día: 9am, 5pm, 10pm ET');
 
-  // AI Ops metrics refresh — 24/7 con frecuencia adaptativa
-  // Horas activas (cada 15 min): minutos 5, 20, 35, 50
-  // Fuera de horas (cada 30 min): minutos 5, 35
-  // Offset 5 min del data-collector general para no colisionar en API calls
-  cron.schedule('5,20,35,50 * * * *', () => {
-    // Fuera de horas activas: solo correr en minutos 5 y 35 (cada 30 min)
-    if (!isActiveHours()) {
-      const minute = moment().tz(TIMEZONE).minutes();
-      if (minute !== 5 && minute !== 35) return;
-    }
-    jobAIOpsRefresh();
-  }, {
+  // AI Ops metrics refresh — cada 15 min, 24/7
+  cron.schedule('5,20,35,50 * * * *', jobAIOpsRefresh, {
     timezone: TIMEZONE,
     name: 'aiops-refresh'
   });
-  logger.info('  [*] AI Ops metrics refresh — cada 15 min (activo) / cada 30 min (fuera de horario)');
+  logger.info('  [*] AI Ops metrics refresh — cada 15 min (24/7)');
 
   // Cada 6 horas: Sync de métricas de creativos (después de data collection)
   cron.schedule('30 */6 * * *', jobCreativeMetricsSync, {
@@ -654,9 +608,9 @@ async function main() {
     logger.info('');
     logger.info('═══ Sistema iniciado ═══');
     logger.info(`  Hora: ${now.format('YYYY-MM-DD HH:mm:ss')} ET`);
-    logger.info(`  Horas activas: ${safetyGuards.active_hours.start}:00 - ${safetyGuards.active_hours.end}:00 ET`);
-    logger.info(`  Estado actual: ${isActiveHours() ? 'ACTIVO' : 'FUERA DE HORARIO'}`);
+    logger.info(`  Operación: 24/7 (sin restricción de horas activas)`);
     logger.info(`  IA: ${aiEnabled ? 'ACTIVADA' : 'DESACTIVADA (solo recolección de datos)'}`);
+
     logger.info(`  Dashboard: http://localhost:${config.dashboard.port}`);
     logger.info(`  Meta API: ${config.meta.apiVersion}`);
     logger.info(`  Claude: ${config.claude.model}`);
@@ -668,11 +622,9 @@ async function main() {
     logger.info('  Deep research: integrado en el cerebro (Brave/SERP API)');
     logger.info('');
 
-    // 5. Ejecutar primera recolección de datos si estamos en horas activas
-    if (isActiveHours()) {
-      logger.info('Ejecutando primera recolección de datos...');
-      setTimeout(jobDataCollection, 5000); // Esperar 5s para que todo se inicialice
-    }
+    // 5. Ejecutar primera recolección de datos
+    logger.info('Ejecutando primera recolección de datos...');
+    setTimeout(jobDataCollection, 5000); // Esperar 5s para que todo se inicialice
 
   } catch (error) {
     logger.error('Error fatal al iniciar el sistema:', error);
