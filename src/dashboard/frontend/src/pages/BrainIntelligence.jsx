@@ -1254,30 +1254,119 @@ function FollowUpPanel({ formatTime }) {
           <h3 className="followup-section-title">En progreso ({pending.length})</h3>
           <div className="followup-pending-list">
             {pending.map(p => {
+              const actionCfg = ACTION_TYPE_CONFIG[p.action_type] || ACTION_TYPE_CONFIG.other;
               const phaseLabel = p.current_phase === 'awaiting_day_3' ? 'Esperando dia 3'
                 : p.current_phase === 'awaiting_day_7' ? 'Esperando dia 7'
                 : p.current_phase === 'awaiting_day_14' ? 'Esperando dia 14'
                 : 'Midiendo...';
+              const daysAgo = p.hours_since_approved >= 24
+                ? `${Math.floor(p.hours_since_approved / 24)}d ${p.hours_since_approved % 24}h`
+                : `${p.hours_since_approved}h`;
+              const priorityColor = p.priority === 'urgente' ? '#ef4444' : p.priority === 'evaluar' ? '#f59e0b' : '#3b82f6';
               return (
                 <div key={p._id} className="followup-pending-item">
+                  {/* Header row: action type + entity + phase dots */}
+                  <div className="followup-pending-header">
+                    <div className="followup-pending-action-badge" style={{ borderLeftColor: priorityColor }}>
+                      <span className="followup-pending-action-icon">{actionCfg.icon}</span>
+                      <span className="followup-pending-action-label">{actionCfg.label}</span>
+                    </div>
+                    <div className="followup-pending-right">
+                      <div className="followup-phase-dots">
+                        <span className={`phase-dot ${p.day_3 ? 'done' : p.current_phase === 'awaiting_day_3' ? 'active' : ''}`} title="Dia 3">3d</span>
+                        <span className={`phase-dot ${p.current_phase === 'awaiting_day_7' ? 'active' : p.current_phase === 'awaiting_day_14' || p.current_phase === 'complete' ? 'done' : ''}`} title="Dia 7">7d</span>
+                        <span className={`phase-dot ${p.current_phase === 'awaiting_day_14' ? 'active' : p.current_phase === 'complete' ? 'done' : ''}`} title="Dia 14">14d</span>
+                      </div>
+                      <span className="followup-pending-hours">{daysAgo}</span>
+                    </div>
+                  </div>
+
+                  {/* Title + entity */}
                   <div className="followup-pending-info">
                     <span className="followup-pending-title">{p.title}</span>
                     <span className="followup-pending-entity">{p.entity_name}</span>
                   </div>
-                  <div className="followup-pending-meta">
-                    {/* Phase progress dots */}
-                    <div className="followup-phase-dots">
-                      <span className={`phase-dot ${p.day_3 ? 'done' : p.current_phase === 'awaiting_day_3' ? 'active' : ''}`} title="Dia 3">3d</span>
-                      <span className={`phase-dot ${p.current_phase === 'awaiting_day_7' ? 'active' : p.current_phase === 'awaiting_day_14' || p.current_phase === 'complete' ? 'done' : ''}`} title="Dia 7">7d</span>
-                      <span className={`phase-dot ${p.current_phase === 'awaiting_day_14' ? 'active' : p.current_phase === 'complete' ? 'done' : ''}`} title="Dia 14">14d</span>
-                    </div>
-                    <span className="followup-pending-phase">{phaseLabel}</span>
-                    <span className="followup-pending-hours">{p.hours_since_approved}h</span>
+
+                  {/* Metrics at approval snapshot */}
+                  <div className="followup-pending-snapshot">
+                    {p.roas_at_approval > 0 && (
+                      <div className="followup-snap-metric">
+                        <span className="followup-snap-label">ROAS</span>
+                        <span className="followup-snap-value">{p.roas_at_approval.toFixed(2)}x</span>
+                      </div>
+                    )}
+                    {p.cpa_at_approval > 0 && (
+                      <div className="followup-snap-metric">
+                        <span className="followup-snap-label">CPA</span>
+                        <span className="followup-snap-value">${p.cpa_at_approval.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {p.ctr_at_approval > 0 && (
+                      <div className="followup-snap-metric">
+                        <span className="followup-snap-label">CTR</span>
+                        <span className="followup-snap-value">{p.ctr_at_approval.toFixed(2)}%</span>
+                      </div>
+                    )}
+                    {p.spend_at_approval > 0 && (
+                      <div className="followup-snap-metric">
+                        <span className="followup-snap-label">Spend 7d</span>
+                        <span className="followup-snap-value">${p.spend_at_approval.toFixed(0)}</span>
+                      </div>
+                    )}
+                    {p.daily_budget_at_approval > 0 && (
+                      <div className="followup-snap-metric">
+                        <span className="followup-snap-label">Budget</span>
+                        <span className="followup-snap-value">${p.daily_budget_at_approval.toFixed(0)}/d</span>
+                      </div>
+                    )}
+                    {p.frequency_at_approval > 0 && (
+                      <div className="followup-snap-metric">
+                        <span className="followup-snap-label">Freq</span>
+                        <span className="followup-snap-value">{p.frequency_at_approval.toFixed(1)}</span>
+                      </div>
+                    )}
                   </div>
+
+                  {/* Status row: execution + phase + note */}
+                  <div className="followup-pending-status-row">
+                    <span className={`followup-exec-badge ${p.action_executed ? 'executed' : 'not-executed'}`}>
+                      {p.action_executed ? '\u2705 Ejecutada' : '\u23F3 Pendiente ejecucion'}
+                    </span>
+                    <span className="followup-pending-phase">{phaseLabel}</span>
+                  </div>
+
+                  {/* Decision note */}
+                  {p.decision_note && (
+                    <div className="followup-pending-note">
+                      <span className="followup-note-icon">{'\uD83D\uDCDD'}</span> {p.decision_note}
+                    </div>
+                  )}
+
+                  {/* Action detail */}
+                  {p.action_detail && (
+                    <div className="followup-pending-detail">{p.action_detail}</div>
+                  )}
+
+                  {/* Early signal from day 3 */}
                   {p.day_3 && (
                     <div className="followup-pending-early">
-                      Senal temprana: ROAS {p.day_3.roas_pct > 0 ? '+' : ''}{p.day_3.roas_pct}%
-                      <span className={`followup-early-verdict ${p.day_3.verdict}`}>{p.day_3.verdict === 'positive' ? '+++' : p.day_3.verdict === 'negative' ? '---' : '...'}</span>
+                      <span className="followup-early-label">Senal dia 3:</span>
+                      <span className={`followup-early-metric ${(p.day_3.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
+                        ROAS {p.day_3.roas_pct > 0 ? '+' : ''}{p.day_3.roas_pct}%
+                      </span>
+                      {p.day_3.cpa_pct != null && (
+                        <span className={`followup-early-metric ${(p.day_3.cpa_pct || 0) <= 0 ? 'positive' : 'negative'}`}>
+                          CPA {p.day_3.cpa_pct > 0 ? '+' : ''}{p.day_3.cpa_pct}%
+                        </span>
+                      )}
+                      {p.day_3.ctr_pct != null && (
+                        <span className={`followup-early-metric ${(p.day_3.ctr_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
+                          CTR {p.day_3.ctr_pct > 0 ? '+' : ''}{p.day_3.ctr_pct}%
+                        </span>
+                      )}
+                      <span className={`followup-early-verdict ${p.day_3.verdict}`}>
+                        {p.day_3.verdict === 'positive' ? '\u2705' : p.day_3.verdict === 'negative' ? '\u274C' : p.day_3.verdict === 'too_early' ? '\u23F3' : '\u2796'}
+                      </span>
                     </div>
                   )}
                 </div>

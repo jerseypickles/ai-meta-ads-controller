@@ -3497,18 +3497,58 @@ a:hover {
 .followup-pending-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
 }
 
 .followup-pending-item {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 14px;
+  gap: 8px;
+  padding: 12px 16px;
   background: var(--bg-tertiary);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  transition: border-color 0.2s ease;
 }
 
+.followup-pending-item:hover {
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+/* Header row */
+.followup-pending-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.followup-pending-action-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 8px;
+  border-left: 3px solid var(--blue-primary);
+}
+
+.followup-pending-action-icon {
+  font-size: 14px;
+}
+
+.followup-pending-action-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.followup-pending-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Info */
 .followup-pending-info {
   display: flex;
   flex-direction: column;
@@ -3519,6 +3559,7 @@ a:hover {
   font-size: 13px;
   color: var(--text-primary);
   font-weight: 500;
+  line-height: 1.4;
 }
 
 .followup-pending-entity {
@@ -3526,11 +3567,60 @@ a:hover {
   color: var(--text-muted);
 }
 
-.followup-pending-meta {
+/* Snapshot metrics row */
+.followup-pending-snapshot {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+}
+
+.followup-snap-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 50px;
+}
+
+.followup-snap-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.followup-snap-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* Status row */
+.followup-pending-status-row {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
+  gap: 10px;
   flex-wrap: wrap;
+}
+
+.followup-exec-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.followup-exec-badge.executed {
+  color: var(--green);
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.followup-exec-badge.not-executed {
+  color: var(--text-muted);
+  background: rgba(107, 114, 128, 0.12);
 }
 
 .followup-pending-phase {
@@ -3544,6 +3634,30 @@ a:hover {
   background: rgba(245, 158, 11, 0.12);
   padding: 2px 8px;
   border-radius: 10px;
+  font-weight: 600;
+}
+
+/* Decision note */
+.followup-pending-note {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 6px 10px;
+  background: rgba(139, 92, 246, 0.06);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid rgba(139, 92, 246, 0.3);
+  font-style: italic;
+}
+
+.followup-note-icon {
+  margin-right: 4px;
+}
+
+/* Action detail */
+.followup-pending-detail {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  padding-left: 10px;
+  border-left: 2px solid var(--border-color);
 }
 
 /* Phase dots */
@@ -3590,6 +3704,10 @@ a:hover {
 /* Early signal */
 
 .followup-pending-early {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
   font-size: 12px;
   color: var(--text-secondary);
   padding: 6px 10px;
@@ -3598,10 +3716,28 @@ a:hover {
   border-left: 2px solid var(--blue-primary);
 }
 
-.followup-early-verdict {
-  margin-left: 6px;
-  font-weight: 700;
+.followup-early-label {
+  font-weight: 600;
   font-size: 11px;
+  color: var(--text-muted);
+}
+
+.followup-early-metric {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.followup-early-metric.positive {
+  color: var(--green);
+}
+
+.followup-early-metric.negative {
+  color: var(--red);
+}
+
+.followup-early-verdict {
+  margin-left: 2px;
+  font-size: 13px;
 }
 
 .followup-early-verdict.positive {

@@ -501,18 +501,31 @@ router.get('/recommendations/follow-up-stats', async (req, res) => {
         _id: r._id,
         title: r.title,
         action_type: r.action_type,
+        action_detail: r.action_detail,
         entity_name: r.entity?.entity_name,
+        entity_type: r.entity?.entity_type,
         priority: r.priority,
+        confidence: r.confidence,
+        confidence_score: r.confidence_score,
         decided_at: r.decided_at,
+        decision_note: r.decision_note || '',
         hours_since_approved: hoursAgo,
         current_phase: currentPhase,
         action_executed: r.follow_up?.action_executed || false,
+        // Metrics at approval snapshot
         roas_at_approval: before.roas_7d || 0,
         cpa_at_approval: before.cpa_7d || 0,
+        ctr_at_approval: before.ctr_7d || 0,
+        spend_at_approval: before.spend_7d || 0,
+        frequency_at_approval: before.frequency_7d || 0,
+        purchases_at_approval: before.purchases_7d || 0,
+        daily_budget_at_approval: before.daily_budget || 0,
         // Early phase data if available
         day_3: phases.day_3?.measured ? {
           verdict: phases.day_3.verdict,
-          roas_pct: phases.day_3.deltas?.roas_pct
+          roas_pct: phases.day_3.deltas?.roas_pct,
+          cpa_pct: phases.day_3.deltas?.cpa_pct,
+          ctr_pct: phases.day_3.deltas?.ctr_pct
         } : null
       };
     });
