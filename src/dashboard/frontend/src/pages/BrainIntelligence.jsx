@@ -442,6 +442,7 @@ export default function BrainIntelligence() {
             onReject={handleRejectRec}
             onPageChange={(p) => loadRecommendations(p)}
             onDiscussRec={handleDiscussRec}
+            onGoToFollowUp={() => setActiveTab('followup')}
             formatTime={formatTime}
           />
         ) : activeTab === 'followup' ? (
@@ -776,12 +777,19 @@ function RecommendationsPanel({
   recommendations, loading, generating, statusFilter,
   recsPage, totalPages, recsTotal, pendingCount,
   onStatusFilter, onGenerate, onApprove, onReject, onPageChange,
-  onDiscussRec, formatTime
+  onDiscussRec, onGoToFollowUp, formatTime
 }) {
   const [expandedId, setExpandedId] = useState(null);
 
   const pendingRecs = recommendations.filter(r => r.status === 'pending');
-  const decidedRecs = recommendations.filter(r => r.status !== 'pending');
+  // Approved with active follow-up (not yet fully measured)
+  const trackingRecs = recommendations.filter(r =>
+    r.status === 'approved' && !r.follow_up?.checked && r.follow_up?.current_phase !== 'complete'
+  );
+  // Everything else that's been decided
+  const historyRecs = recommendations.filter(r =>
+    r.status !== 'pending' && !(r.status === 'approved' && !r.follow_up?.checked && r.follow_up?.current_phase !== 'complete')
+  );
 
   return (
     <div className="recs-panel">
@@ -849,12 +857,40 @@ function RecommendationsPanel({
                 onDiscuss={onDiscussRec ? () => onDiscussRec(rec) : undefined}
                 formatTime={formatTime}
                 animDelay={idx * 0.04}
+                showTracker={rec.status === 'approved' && !rec.follow_up?.checked && rec.follow_up?.current_phase !== 'complete'}
               />
             ))}
-            {!statusFilter && decidedRecs.length > 0 && (
+            {!statusFilter && trackingRecs.length > 0 && (
+              <>
+                <div className="recs-section-label tracking">
+                  <span className="recs-tracking-dot" />
+                  En seguimiento ({trackingRecs.length})
+                  {onGoToFollowUp && (
+                    <span className="recs-followup-link" onClick={(e) => { e.stopPropagation(); onGoToFollowUp(); }}>
+                      Ver panel completo →
+                    </span>
+                  )}
+                </div>
+                {trackingRecs.map((rec, idx) => (
+                  <RecommendationCard
+                    key={rec._id}
+                    rec={rec}
+                    expanded={expandedId === rec._id}
+                    onToggle={() => setExpandedId(expandedId === rec._id ? null : rec._id)}
+                    onApprove={() => onApprove(rec._id)}
+                    onReject={() => onReject(rec._id)}
+                    onDiscuss={onDiscussRec ? () => onDiscussRec(rec) : undefined}
+                    formatTime={formatTime}
+                    animDelay={idx * 0.04}
+                    showTracker
+                  />
+                ))}
+              </>
+            )}
+            {!statusFilter && historyRecs.length > 0 && (
               <>
                 <div className="recs-section-label decided">Historial</div>
-                {decidedRecs.map((rec, idx) => (
+                {historyRecs.map((rec, idx) => (
                   <RecommendationCard
                     key={rec._id}
                     rec={rec}
@@ -901,15 +937,25 @@ function RecommendationsPanel({
 
 // ═══ RECOMMENDATION CARD ═══
 
-function RecommendationCard({ rec, expanded, onToggle, onApprove, onReject, onDiscuss, formatTime, animDelay = 0 }) {
+function RecommendationCard({ rec, expanded, onToggle, onApprove, onReject, onDiscuss, formatTime, animDelay = 0, showTracker = false }) {
   const priorityCfg = PRIORITY_CONFIG[rec.priority] || PRIORITY_CONFIG.evaluar;
   const actionCfg = ACTION_TYPE_CONFIG[rec.action_type] || ACTION_TYPE_CONFIG.other;
   const statusCfg = STATUS_LABELS[rec.status] || STATUS_LABELS.pending;
   const confidencePct = rec.confidence_score || 50;
 
+  // Follow-up tracking data
+  const followUp = rec.follow_up || {};
+  const currentPhase = followUp.current_phase || 'awaiting_day_3';
+  const phases = followUp.phases || {};
+  const isTracking = showTracker && rec.status === 'approved';
+  const hoursSinceApproval = rec.decided_at ? Math.round((Date.now() - new Date(rec.decided_at).getTime()) / 3600000) : 0;
+  const daysAgo = hoursSinceApproval >= 24
+    ? `${Math.floor(hoursSinceApproval / 24)}d ${hoursSinceApproval % 24}h`
+    : `${hoursSinceApproval}h`;
+
   return (
     <div
-      className={`rec-card ${rec.status} ${expanded ? 'expanded' : ''}`}
+      className={`rec-card ${rec.status} ${expanded ? 'expanded' : ''} ${isTracking ? 'tracking' : ''}`}
       onClick={onToggle}
       style={{ animationDelay: `${animDelay}s` }}
     >
@@ -1070,11 +1116,87 @@ function RecommendationCard({ rec, expanded, onToggle, onApprove, onReject, onDi
               )}
             </div>
 
-            {/* Decided info */}
-            {(rec.status === 'approved' || rec.status === 'rejected') && rec.decided_at && (
+            {/* Decided info — simple for rejected/completed, rich tracker for active follow-up */}
+            {rec.status === 'rejected' && rec.decided_at && (
               <div className="rec-decided-info">
-                {rec.status === 'approved' ? 'Aprobada' : 'Rechazada'} {formatTime(rec.decided_at)}
+                Rechazada {formatTime(rec.decided_at)}
                 {rec.decision_note && ` — "${rec.decision_note}"`}
+              </div>
+            )}
+            {rec.status === 'approved' && rec.decided_at && !isTracking && (
+              <div className="rec-decided-info">
+                Aprobada {formatTime(rec.decided_at)}
+                {rec.decision_note && ` — "${rec.decision_note}"`}
+              </div>
+            )}
+            {isTracking && (
+              <div className="rec-tracker">
+                <div className="rec-tracker-header">
+                  <div className="rec-tracker-status">
+                    <span className={`rec-tracker-exec ${followUp.action_executed ? 'done' : 'waiting'}`}>
+                      {followUp.action_executed ? '✅ Ejecutada' : '⏳ Pendiente ejecucion'}
+                    </span>
+                    <span className="rec-tracker-time">{daysAgo}</span>
+                  </div>
+                  <div className="rec-tracker-phases">
+                    <span className={`rec-tracker-phase ${phases.day_3?.measured ? 'done' : currentPhase === 'awaiting_day_3' ? 'active' : ''}`}>3d</span>
+                    <span className="rec-tracker-phase-line" />
+                    <span className={`rec-tracker-phase ${phases.day_7?.measured ? 'done' : currentPhase === 'awaiting_day_7' ? 'active' : ''}`}>7d</span>
+                    <span className="rec-tracker-phase-line" />
+                    <span className={`rec-tracker-phase ${phases.day_14?.measured ? 'done' : currentPhase === 'awaiting_day_14' ? 'active' : ''}`}>14d</span>
+                  </div>
+                </div>
+                {/* Metrics at approval */}
+                {followUp.metrics_at_recommendation && (
+                  <div className="rec-tracker-metrics">
+                    {followUp.metrics_at_recommendation.roas_7d > 0 && (
+                      <div className="rec-tracker-metric">
+                        <span className="rec-tracker-metric-label">ROAS</span>
+                        <span className="rec-tracker-metric-value">{followUp.metrics_at_recommendation.roas_7d.toFixed(2)}x</span>
+                      </div>
+                    )}
+                    {followUp.metrics_at_recommendation.cpa_7d > 0 && (
+                      <div className="rec-tracker-metric">
+                        <span className="rec-tracker-metric-label">CPA</span>
+                        <span className="rec-tracker-metric-value">${followUp.metrics_at_recommendation.cpa_7d.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {followUp.metrics_at_recommendation.daily_budget > 0 && (
+                      <div className="rec-tracker-metric">
+                        <span className="rec-tracker-metric-label">Budget</span>
+                        <span className="rec-tracker-metric-value">${followUp.metrics_at_recommendation.daily_budget.toFixed(0)}/d</span>
+                      </div>
+                    )}
+                    {followUp.metrics_at_recommendation.ctr_7d > 0 && (
+                      <div className="rec-tracker-metric">
+                        <span className="rec-tracker-metric-label">CTR</span>
+                        <span className="rec-tracker-metric-value">{followUp.metrics_at_recommendation.ctr_7d.toFixed(2)}%</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {/* Early signal from day 3 */}
+                {phases.day_3?.measured && (
+                  <div className="rec-tracker-signal">
+                    <span className="rec-tracker-signal-label">Dia 3:</span>
+                    {phases.day_3.deltas?.roas_pct != null && (
+                      <span className={`rec-tracker-signal-delta ${(phases.day_3.deltas.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
+                        ROAS {phases.day_3.deltas.roas_pct > 0 ? '+' : ''}{phases.day_3.deltas.roas_pct?.toFixed(0)}%
+                      </span>
+                    )}
+                    {phases.day_3.deltas?.cpa_pct != null && (
+                      <span className={`rec-tracker-signal-delta ${(phases.day_3.deltas.cpa_pct || 0) <= 0 ? 'positive' : 'negative'}`}>
+                        CPA {phases.day_3.deltas.cpa_pct > 0 ? '+' : ''}{phases.day_3.deltas.cpa_pct?.toFixed(0)}%
+                      </span>
+                    )}
+                    <span className={`rec-tracker-signal-verdict ${phases.day_3.verdict}`}>
+                      {phases.day_3.verdict === 'positive' ? '✅' : phases.day_3.verdict === 'negative' ? '❌' : phases.day_3.verdict === 'too_early' ? '⏳' : '➖'}
+                    </span>
+                  </div>
+                )}
+                {rec.decision_note && (
+                  <div className="rec-tracker-note">📝 {rec.decision_note}</div>
+                )}
               </div>
             )}
           </div>

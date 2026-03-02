@@ -3190,6 +3190,227 @@ a:hover {
   margin-top: var(--spacing-sm);
 }
 
+/* ═══ TRACKING STATE — Approved recs with active follow-up ═══ */
+
+.rec-card.tracking {
+  border-color: rgba(16, 185, 129, 0.25);
+  background: linear-gradient(135deg, var(--bg-secondary) 0%, rgba(16, 185, 129, 0.03) 100%);
+}
+
+.rec-card.tracking:hover {
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.rec-card.tracking .rec-priority-bar {
+  background: linear-gradient(180deg, #10b981, #3b82f6) !important;
+}
+
+/* Section label: "En seguimiento" */
+.recs-section-label.tracking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: var(--spacing-md);
+  color: var(--green);
+  opacity: 1;
+  border-bottom-color: rgba(16, 185, 129, 0.25);
+}
+
+.recs-tracking-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: tracking-pulse 2s ease-in-out infinite;
+}
+
+@keyframes tracking-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+  50% { opacity: 0.6; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0); }
+}
+
+.recs-followup-link {
+  margin-left: auto;
+  font-size: 0.62rem;
+  font-weight: 500;
+  color: var(--blue-light);
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+  transition: color 0.15s ease;
+}
+
+.recs-followup-link:hover {
+  color: var(--text-primary);
+}
+
+/* ═══ REC TRACKER STRIP — Inline follow-up tracker on approved cards ═══ */
+
+.rec-tracker {
+  margin-top: var(--spacing-sm);
+  padding: 10px 12px;
+  background: rgba(16, 185, 129, 0.04);
+  border: 1px solid rgba(16, 185, 129, 0.15);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rec-tracker-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.rec-tracker-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rec-tracker-exec {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.rec-tracker-exec.done {
+  color: var(--green);
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.rec-tracker-exec.waiting {
+  color: var(--text-muted);
+  background: rgba(107, 114, 128, 0.12);
+}
+
+.rec-tracker-time {
+  font-size: 0.65rem;
+  color: var(--yellow);
+  background: rgba(245, 158, 11, 0.1);
+  padding: 2px 7px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+/* Phase progress dots */
+.rec-tracker-phases {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.rec-tracker-phase {
+  font-size: 9px;
+  font-weight: 700;
+  width: 26px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.rec-tracker-phase.active {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--blue-light);
+  border-color: var(--blue-primary);
+  animation: phase-pulse 2s ease-in-out infinite;
+}
+
+.rec-tracker-phase.done {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--green);
+  border-color: var(--green);
+}
+
+.rec-tracker-phase-line {
+  width: 8px;
+  height: 1px;
+  background: var(--border-color);
+}
+
+/* Metrics snapshot */
+.rec-tracker-metrics {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 5px 8px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+}
+
+.rec-tracker-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 44px;
+}
+
+.rec-tracker-metric-label {
+  font-size: 8px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.rec-tracker-metric-value {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+/* Early signal */
+.rec-tracker-signal {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 0.7rem;
+  padding: 4px 8px;
+  background: rgba(59, 130, 246, 0.06);
+  border-radius: 6px;
+  border-left: 2px solid var(--blue-primary);
+}
+
+.rec-tracker-signal-label {
+  font-weight: 600;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+.rec-tracker-signal-delta {
+  font-weight: 700;
+  font-size: 0.7rem;
+}
+
+.rec-tracker-signal-delta.positive { color: var(--green); }
+.rec-tracker-signal-delta.negative { color: var(--red); }
+
+.rec-tracker-signal-verdict { font-size: 0.75rem; }
+.rec-tracker-signal-verdict.positive { color: var(--green); }
+.rec-tracker-signal-verdict.negative { color: var(--red); }
+.rec-tracker-signal-verdict.too_early,
+.rec-tracker-signal-verdict.neutral { color: var(--text-muted); }
+
+/* Decision note in tracker */
+.rec-tracker-note {
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  background: rgba(139, 92, 246, 0.06);
+  border-radius: 4px;
+  border-left: 2px solid rgba(139, 92, 246, 0.3);
+  font-style: italic;
+}
+
 /* ============================================
    FOLLOW-UP PANEL — Intelligent Multi-Phase
    ============================================ */
