@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import {
@@ -9,6 +9,8 @@ import {
   triggerBrainRecommendations, getFollowUpStats,
   getPolicyState, getKnowledgeHistory, logout
 } from '../api';
+
+const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
 
 // ═══ CONSTANTES ═══
 
@@ -367,6 +369,8 @@ export default function BrainIntelligence() {
             insightsPage={insightsPage}
             totalPages={totalPages}
             insightsTotal={insightsTotal}
+            stats={stats}
+            unreadCount={unreadCount}
             onTypeFilter={setTypeFilter}
             onSeverityFilter={setSeverityFilter}
             onAnalyze={handleAnalyze}
@@ -419,7 +423,7 @@ export default function BrainIntelligence() {
 
 function FeedPanel({
   insights, loadingInsights, analyzing, typeFilter, severityFilter,
-  insightsPage, totalPages, insightsTotal,
+  insightsPage, totalPages, insightsTotal, stats, unreadCount,
   onTypeFilter, onSeverityFilter, onAnalyze, onMarkAllRead, onInsightClick, onPageChange,
   formatTime
 }) {
@@ -427,6 +431,21 @@ function FeedPanel({
 
   return (
     <div className="feed-panel">
+      {/* Brain Orb Hero */}
+      <div className="feed-hero">
+        <Suspense fallback={<div className="brain-orb-fallback"><div className="orb-placeholder" /></div>}>
+          <BrainOrb stats={stats} unreadCount={unreadCount || 0} analyzing={analyzing} />
+        </Suspense>
+        <div className="feed-hero-info">
+          <h2 className="feed-hero-title">Brain Neural Feed</h2>
+          <p className="feed-hero-subtitle">
+            {analyzing ? 'Procesando nuevos patrones...' :
+             insightsTotal > 0 ? `${insightsTotal} observaciones del cerebro` :
+             'Esperando primer ciclo de análisis'}
+          </p>
+        </div>
+      </div>
+
       {/* Toolbar */}
       <div className="feed-toolbar">
         <div className="feed-filters">
@@ -452,11 +471,11 @@ function FeedPanel({
           </select>
         </div>
         <div className="feed-actions">
-          <button className="btn-secondary" onClick={onMarkAllRead}>
+          <button className="btn-secondary btn-small" onClick={onMarkAllRead}>
             Marcar todo leído
           </button>
           <button
-            className="btn-primary"
+            className={`btn-primary ${analyzing ? 'btn-analyzing' : ''}`}
             onClick={onAnalyze}
             disabled={analyzing}
           >
@@ -468,7 +487,10 @@ function FeedPanel({
       {/* Insights List */}
       <div className="insights-list">
         {loadingInsights ? (
-          <div className="feed-empty">Cargando insights...</div>
+          <div className="feed-empty">
+            <div className="feed-loading-pulse" />
+            <p>Cargando insights...</p>
+          </div>
         ) : insights.length === 0 ? (
           <div className="feed-empty">
             <div className="feed-empty-icon">🧠</div>
@@ -476,11 +498,12 @@ function FeedPanel({
             <p className="feed-empty-hint">Ejecuta un análisis o espera al próximo ciclo de datos.</p>
           </div>
         ) : (
-          insights.map(insight => (
+          insights.map((insight, idx) => (
             <InsightCard
               key={insight._id}
               insight={insight}
               expanded={expandedId === insight._id}
+              animDelay={idx * 0.05}
               onToggle={() => {
                 setExpandedId(expandedId === insight._id ? null : insight._id);
                 onInsightClick(insight);
@@ -519,18 +542,28 @@ function FeedPanel({
 
 // ═══ INSIGHT CARD ═══
 
-function InsightCard({ insight, expanded, onToggle, formatTime }) {
+function InsightCard({ insight, expanded, onToggle, formatTime, animDelay = 0 }) {
   const typeCfg = INSIGHT_TYPE_CONFIG[insight.insight_type] || INSIGHT_TYPE_CONFIG.anomaly;
   const sevCfg = SEVERITY_CONFIG[insight.severity] || SEVERITY_CONFIG.medium;
 
   return (
     <div
-      className={`insight-card ${!insight.read ? 'unread' : ''} ${expanded ? 'expanded' : ''}`}
+      className={`insight-card ${!insight.read ? 'unread' : ''} ${expanded ? 'expanded' : ''} severity-${insight.severity || 'medium'}`}
       onClick={onToggle}
+      style={{
+        '--card-accent': typeCfg.color,
+        '--severity-color': sevCfg.color,
+        animationDelay: `${animDelay}s`,
+      }}
     >
+      {/* Severity glow bar */}
+      <div className="insight-severity-bar" style={{ background: `linear-gradient(180deg, ${sevCfg.color}, transparent)` }} />
+
       <div className="insight-header">
         <div className="insight-left">
-          <span className="insight-type-icon" style={{ color: typeCfg.color }}>{typeCfg.icon}</span>
+          <div className="insight-type-badge" style={{ background: `${typeCfg.color}20`, borderColor: `${typeCfg.color}40` }}>
+            <span className="insight-type-icon">{typeCfg.icon}</span>
+          </div>
           <div className="insight-meta">
             <div className="insight-title-row">
               <span className="insight-title">{insight.title}</span>
@@ -546,15 +579,34 @@ function InsightCard({ insight, expanded, onToggle, formatTime }) {
               {insight.follows_up && (
                 <span className="insight-tag followup">Seguimiento</span>
               )}
-              {insight.entities?.map((e, i) => (
-                <span key={i} className="insight-tag entity">{e.entity_name}</span>
-              ))}
             </div>
+            {/* Entity badges - prominent */}
+            {insight.entities && insight.entities.length > 0 && (
+              <div className="insight-entities">
+                {insight.entities.map((e, i) => (
+                  <span key={i} className="insight-entity-badge">
+                    <span className="entity-type-dot" style={{
+                      background: e.entity_type === 'adset' ? '#3b82f6' :
+                                  e.entity_type === 'campaign' ? '#8b5cf6' :
+                                  e.entity_type === 'ad' ? '#10b981' : '#6b7280'
+                    }} />
+                    <span className="entity-type-label">
+                      {e.entity_type === 'adset' ? 'Ad Set' :
+                       e.entity_type === 'campaign' ? 'Campaign' :
+                       e.entity_type === 'ad' ? 'Ad' : 'Account'}
+                    </span>
+                    <span className="entity-name">{e.entity_name}</span>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
         <div className="insight-right">
           <span className="insight-time">{formatTime(insight.created_at)}</span>
-          <span className="insight-source">{insight.generated_by === 'ai' ? 'IA' : insight.generated_by === 'hybrid' ? 'Híbrido' : 'Math'}</span>
+          <span className={`insight-source source-${insight.generated_by}`}>
+            {insight.generated_by === 'ai' ? 'IA' : insight.generated_by === 'hybrid' ? 'Hybrid' : 'Math'}
+          </span>
         </div>
       </div>
 
@@ -567,7 +619,7 @@ function InsightCard({ insight, expanded, onToggle, formatTime }) {
             <div className="insight-data-points">
               {Object.entries(insight.data_points).map(([k, v]) => (
                 <span key={k} className="data-point">
-                  <span className="dp-key">{k}:</span>
+                  <span className="dp-key">{k}</span>
                   <span className="dp-value">{typeof v === 'number' ? v.toFixed(2) : String(v)}</span>
                 </span>
               ))}
@@ -575,7 +627,7 @@ function InsightCard({ insight, expanded, onToggle, formatTime }) {
           )}
           {insight.follow_up_count > 0 && (
             <div className="insight-follow-info">
-              Tiene {insight.follow_up_count} seguimiento(s) posterior(es)
+              {insight.follow_up_count} seguimiento{insight.follow_up_count > 1 ? 's' : ''} posterior{insight.follow_up_count > 1 ? 'es' : ''}
             </div>
           )}
         </div>
