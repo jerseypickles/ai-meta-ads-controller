@@ -283,4 +283,21 @@ export const getRecommendationHistory = async (limit = 20) => {
   return response.data;
 };
 
+// ═══ BRAIN — Follow-Up Stats & Knowledge ═══
+
+export const getFollowUpStats = async () => {
+  const response = await api.get('/api/brain/recommendations/follow-up-stats');
+  return response.data;
+};
+
+export const getPolicyState = async () => {
+  const response = await api.get('/api/brain/policy/state');
+  return response.data;
+};
+
+export const getKnowledgeHistory = async (days = 30) => {
+  const response = await api.get('/api/brain/knowledge/history', { params: { days } });
+  return response.data;
+};
+
 export default api;

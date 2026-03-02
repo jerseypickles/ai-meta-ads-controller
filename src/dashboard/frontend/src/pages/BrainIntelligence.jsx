@@ -6,7 +6,8 @@ import {
   triggerBrainAnalysis, sendBrainChat, getBrainChatHistory,
   clearBrainChatHistory, getBrainStats, getBrainRecommendations,
   approveRecommendation, rejectRecommendation,
-  triggerBrainRecommendations, logout
+  triggerBrainRecommendations, getFollowUpStats,
+  getPolicyState, getKnowledgeHistory, logout
 } from '../api';
 
 // ═══ CONSTANTES ═══
@@ -34,7 +35,7 @@ const SEVERITY_CONFIG = {
 
 export default function BrainIntelligence() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('feed'); // 'feed' | 'chat' | 'recs'
+  const [activeTab, setActiveTab] = useState('feed'); // 'feed' | 'recs' | 'followup' | 'knowledge' | 'chat'
   const [insights, setInsights] = useState([]);
   const [insightsTotal, setInsightsTotal] = useState(0);
   const [insightsPage, setInsightsPage] = useState(1);
@@ -335,6 +336,18 @@ export default function BrainIntelligence() {
           )}
         </button>
         <button
+          className={`brain-tab ${activeTab === 'followup' ? 'active' : ''}`}
+          onClick={() => setActiveTab('followup')}
+        >
+          Seguimiento
+        </button>
+        <button
+          className={`brain-tab ${activeTab === 'knowledge' ? 'active' : ''}`}
+          onClick={() => setActiveTab('knowledge')}
+        >
+          Conocimiento
+        </button>
+        <button
           className={`brain-tab ${activeTab === 'chat' ? 'active' : ''}`}
           onClick={() => setActiveTab('chat')}
         >
@@ -379,6 +392,10 @@ export default function BrainIntelligence() {
             onPageChange={(p) => loadRecommendations(p)}
             formatTime={formatTime}
           />
+        ) : activeTab === 'followup' ? (
+          <FollowUpPanel formatTime={formatTime} />
+        ) : activeTab === 'knowledge' ? (
+          <KnowledgePanel formatTime={formatTime} />
         ) : (
           <ChatPanel
             messages={chatMessages}
@@ -815,6 +832,390 @@ function RecommendationCard({ rec, expanded, onToggle, onApprove, onReject, form
               {rec.decision_note && ` — "${rec.decision_note}"`}
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══ FOLLOW-UP PANEL ═══
+
+const VERDICT_CONFIG = {
+  positive: { icon: '\u2705', label: 'Positivo', color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+  negative: { icon: '\u274C', label: 'Negativo', color: '#ef4444', bg: 'rgba(239,68,68,0.12)' },
+  neutral:  { icon: '\u2796', label: 'Neutral', color: '#6b7280', bg: 'rgba(107,114,128,0.12)' }
+};
+
+function FollowUpPanel({ formatTime }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const result = await getFollowUpStats();
+        setData(result);
+      } catch (err) {
+        console.error('Error loading follow-up stats:', err);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  if (loading) return <div className="feed-empty">Cargando seguimiento...</div>;
+  if (!data) return <div className="feed-empty">Error al cargar datos de seguimiento.</div>;
+
+  const { summary, by_action_type, timeline, pending } = data;
+
+  return (
+    <div className="followup-panel">
+      {/* Summary Cards */}
+      <div className="followup-summary">
+        <div className="followup-card highlight">
+          <div className="followup-card-value">{summary.win_rate}%</div>
+          <div className="followup-card-label">Win Rate</div>
+        </div>
+        <div className="followup-card">
+          <div className="followup-card-value">{summary.total_measured}</div>
+          <div className="followup-card-label">Medidas</div>
+        </div>
+        <div className="followup-card positive">
+          <div className="followup-card-value">{summary.positive}</div>
+          <div className="followup-card-label">Positivas</div>
+        </div>
+        <div className="followup-card negative">
+          <div className="followup-card-value">{summary.negative}</div>
+          <div className="followup-card-label">Negativas</div>
+        </div>
+        <div className="followup-card">
+          <div className="followup-card-value">
+            {summary.avg_roas_delta_pct > 0 ? '+' : ''}{summary.avg_roas_delta_pct}%
+          </div>
+          <div className="followup-card-label">ROAS Promedio</div>
+        </div>
+        <div className="followup-card">
+          <div className="followup-card-value">{summary.pending_follow_up}</div>
+          <div className="followup-card-label">En espera</div>
+        </div>
+      </div>
+
+      {/* By Action Type */}
+      {Object.keys(by_action_type).length > 0 && (
+        <div className="followup-section">
+          <h3 className="followup-section-title">Rendimiento por tipo de accion</h3>
+          <div className="followup-action-grid">
+            {Object.entries(by_action_type).map(([action, stats]) => {
+              const actionCfg = ACTION_TYPE_CONFIG[action] || ACTION_TYPE_CONFIG.other;
+              const wr = stats.total > 0 ? Math.round((stats.positive / stats.total) * 100) : 0;
+              return (
+                <div key={action} className="followup-action-row">
+                  <div className="followup-action-name">
+                    <span>{actionCfg.icon}</span> {actionCfg.label}
+                  </div>
+                  <div className="followup-action-bar-container">
+                    <div className="followup-action-bar">
+                      {stats.positive > 0 && (
+                        <div className="bar-segment positive" style={{ width: `${(stats.positive / stats.total) * 100}%` }} />
+                      )}
+                      {stats.neutral > 0 && (
+                        <div className="bar-segment neutral" style={{ width: `${(stats.neutral / stats.total) * 100}%` }} />
+                      )}
+                      {stats.negative > 0 && (
+                        <div className="bar-segment negative" style={{ width: `${(stats.negative / stats.total) * 100}%` }} />
+                      )}
+                    </div>
+                    <span className="followup-action-wr">{wr}% ({stats.total})</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Pending Follow-ups */}
+      {pending.length > 0 && (
+        <div className="followup-section">
+          <h3 className="followup-section-title">Aprobadas en espera de medicion</h3>
+          <div className="followup-pending-list">
+            {pending.map(p => (
+              <div key={p._id} className="followup-pending-item">
+                <div className="followup-pending-info">
+                  <span className="followup-pending-title">{p.title}</span>
+                  <span className="followup-pending-entity">{p.entity_name}</span>
+                </div>
+                <div className="followup-pending-meta">
+                  <span className="followup-pending-time">Aprobada {formatTime(p.decided_at)}</span>
+                  <span className="followup-pending-hours">{p.hours_since_approved}h</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Timeline */}
+      {timeline.length > 0 && (
+        <div className="followup-section">
+          <h3 className="followup-section-title">Historial de impacto</h3>
+          <div className="followup-timeline">
+            {timeline.map(item => {
+              const vCfg = VERDICT_CONFIG[item.impact_verdict] || VERDICT_CONFIG.neutral;
+              return (
+                <div key={item._id} className="followup-timeline-item" style={{ borderLeftColor: vCfg.color }}>
+                  <div className="followup-timeline-header">
+                    <span className="followup-timeline-verdict" style={{ color: vCfg.color, backgroundColor: vCfg.bg }}>
+                      {vCfg.icon} {vCfg.label}
+                    </span>
+                    <span className="followup-timeline-time">{formatTime(item.checked_at)}</span>
+                  </div>
+                  <div className="followup-timeline-title">{item.title}</div>
+                  <div className="followup-timeline-entity">{item.entity_name}</div>
+                  <div className="followup-timeline-metrics">
+                    <span className="followup-metric">
+                      ROAS: {item.roas_before.toFixed(2)}x
+                      <span className={`followup-arrow ${item.roas_delta_pct >= 0 ? 'up' : 'down'}`}>
+                        {item.roas_delta_pct >= 0 ? '\u2191' : '\u2193'}
+                      </span>
+                      {item.roas_after.toFixed(2)}x
+                      <span className={`followup-delta ${item.roas_delta_pct >= 0 ? 'positive' : 'negative'}`}>
+                        ({item.roas_delta_pct > 0 ? '+' : ''}{item.roas_delta_pct}%)
+                      </span>
+                    </span>
+                    {item.cpa_before > 0 && (
+                      <span className="followup-metric">
+                        CPA: ${item.cpa_before.toFixed(2)} {'\u2192'} ${item.cpa_after.toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                  {item.impact_summary && (
+                    <div className="followup-timeline-summary">{item.impact_summary}</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {timeline.length === 0 && pending.length === 0 && (
+        <div className="feed-empty">
+          <div className="feed-empty-icon">{'\uD83D\uDCCA'}</div>
+          <p>Sin datos de seguimiento aun.</p>
+          <p className="feed-empty-hint">Aprueba recomendaciones y el Brain medira su impacto automaticamente despues de 24h.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══ KNOWLEDGE PANEL ═══
+
+function KnowledgePanel({ formatTime }) {
+  const [policyState, setPolicyState] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const [stateData, historyData] = await Promise.all([
+          getPolicyState(),
+          getKnowledgeHistory(30)
+        ]);
+        setPolicyState(stateData);
+        setHistory(historyData.snapshots || []);
+      } catch (err) {
+        console.error('Error loading knowledge data:', err);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  if (loading) return <div className="feed-empty">Cargando conocimiento del Brain...</div>;
+
+  return (
+    <div className="knowledge-panel">
+      {/* Current State Summary */}
+      {policyState && (
+        <div className="knowledge-current">
+          <h3 className="followup-section-title">Estado actual del aprendizaje</h3>
+          <div className="followup-summary">
+            <div className="followup-card highlight">
+              <div className="followup-card-value">{policyState.total_samples}</div>
+              <div className="followup-card-label">Muestras aprendidas</div>
+            </div>
+            <div className="followup-card">
+              <div className="followup-card-value">{policyState.total_buckets}</div>
+              <div className="followup-card-label">Contextos conocidos</div>
+            </div>
+            <div className="followup-card">
+              <div className="followup-card-value">
+                {policyState.updated_at ? formatTime(policyState.updated_at) : 'N/A'}
+              </div>
+              <div className="followup-card-label">Ultima actualizacion</div>
+            </div>
+          </div>
+
+          {/* Top Actions Performance */}
+          {policyState.top_actions?.length > 0 && (
+            <div className="followup-section">
+              <h3 className="followup-section-title">Rendimiento por accion (aprendido)</h3>
+              <div className="knowledge-actions-table">
+                <div className="knowledge-table-header">
+                  <span className="kt-col action">Accion</span>
+                  <span className="kt-col count">Muestras</span>
+                  <span className="kt-col reward">Reward Prom.</span>
+                  <span className="kt-col rate">Tasa Exito</span>
+                  <span className="kt-col bar">Confianza</span>
+                </div>
+                {policyState.top_actions.map(a => {
+                  const actionCfg = ACTION_TYPE_CONFIG[a.action] || { icon: '\uD83D\uDCCB', label: a.action };
+                  return (
+                    <div key={a.action} className="knowledge-table-row">
+                      <span className="kt-col action">
+                        {actionCfg.icon} {actionCfg.label}
+                      </span>
+                      <span className="kt-col count">{a.count}</span>
+                      <span className={`kt-col reward ${a.avg_reward >= 0 ? 'positive' : 'negative'}`}>
+                        {a.avg_reward > 0 ? '+' : ''}{a.avg_reward.toFixed(3)}
+                      </span>
+                      <span className="kt-col rate">{a.success_rate}%</span>
+                      <span className="kt-col bar">
+                        <div className="knowledge-confidence-bar">
+                          <div
+                            className={`knowledge-confidence-fill ${a.success_rate >= 55 ? 'good' : a.success_rate >= 45 ? 'mid' : 'low'}`}
+                            style={{ width: `${Math.min(100, a.success_rate)}%` }}
+                          />
+                        </div>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Top Buckets (Contexts) */}
+          {policyState.buckets_summary?.length > 0 && (
+            <div className="followup-section">
+              <h3 className="followup-section-title">Contextos mas explorados</h3>
+              <div className="knowledge-buckets">
+                {policyState.buckets_summary.slice(0, 8).map((b, i) => {
+                  const parts = b.bucket.split('|');
+                  return (
+                    <div key={i} className="knowledge-bucket-card">
+                      <div className="knowledge-bucket-header">
+                        <span className="knowledge-bucket-samples">{b.total_samples} muestras</span>
+                        <span className={`knowledge-bucket-reward ${b.avg_reward >= 0 ? 'positive' : 'negative'}`}>
+                          {b.avg_reward > 0 ? '+' : ''}{b.avg_reward.toFixed(3)} reward
+                        </span>
+                      </div>
+                      <div className="knowledge-bucket-dims">
+                        {parts.map((p, j) => (
+                          <span key={j} className="knowledge-dim-tag">{p}</span>
+                        ))}
+                      </div>
+                      <div className="knowledge-bucket-actions">
+                        {b.actions.slice(0, 3).map((a, j) => (
+                          <span key={j} className="knowledge-bucket-action">
+                            {a.action}: {a.count}x ({(a.mean * 100).toFixed(0)}%)
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Daily Evolution */}
+      {history.length > 0 && (
+        <div className="followup-section">
+          <h3 className="followup-section-title">Evolucion diaria del conocimiento</h3>
+          <div className="knowledge-history">
+            {history.slice().reverse().map((snap, i) => {
+              const prevSnap = history[history.length - 1 - i - 1];
+              const samplesDelta = prevSnap ? snap.total_samples - prevSnap.total_samples : snap.total_samples;
+              const wrDelta = prevSnap ? snap.win_rate - prevSnap.win_rate : 0;
+              return (
+                <div key={snap.date} className="knowledge-day-card">
+                  <div className="knowledge-day-header">
+                    <span className="knowledge-day-date">{snap.date}</span>
+                    <div className="knowledge-day-badges">
+                      {snap.insights_generated > 0 && (
+                        <span className="knowledge-day-badge insights">{snap.insights_generated} insights</span>
+                      )}
+                      {snap.recommendations_generated > 0 && (
+                        <span className="knowledge-day-badge recs">{snap.recommendations_generated} recs</span>
+                      )}
+                      {snap.recommendations_approved > 0 && (
+                        <span className="knowledge-day-badge approved">{snap.recommendations_approved} aprobadas</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="knowledge-day-metrics">
+                    <div className="knowledge-day-metric">
+                      <span className="knowledge-day-metric-value">{snap.total_samples}</span>
+                      <span className="knowledge-day-metric-label">Muestras</span>
+                      {samplesDelta > 0 && (
+                        <span className="knowledge-day-metric-delta positive">+{samplesDelta}</span>
+                      )}
+                    </div>
+                    <div className="knowledge-day-metric">
+                      <span className="knowledge-day-metric-value">{snap.win_rate}%</span>
+                      <span className="knowledge-day-metric-label">Win Rate</span>
+                      {wrDelta !== 0 && (
+                        <span className={`knowledge-day-metric-delta ${wrDelta >= 0 ? 'positive' : 'negative'}`}>
+                          {wrDelta > 0 ? '+' : ''}{wrDelta}%
+                        </span>
+                      )}
+                    </div>
+                    <div className="knowledge-day-metric">
+                      <span className="knowledge-day-metric-value">{snap.total_buckets}</span>
+                      <span className="knowledge-day-metric-label">Contextos</span>
+                    </div>
+                    <div className="knowledge-day-metric">
+                      <span className={`knowledge-day-metric-value ${snap.avg_reward >= 0 ? 'positive' : 'negative'}`}>
+                        {snap.avg_reward > 0 ? '+' : ''}{snap.avg_reward.toFixed(3)}
+                      </span>
+                      <span className="knowledge-day-metric-label">Reward Prom.</span>
+                    </div>
+                  </div>
+                  {/* Verdict bar */}
+                  {snap.total_actions_measured > 0 && (
+                    <div className="knowledge-day-verdicts">
+                      <div className="followup-action-bar">
+                        <div className="bar-segment positive" style={{ width: `${(snap.actions_by_verdict.positive / snap.total_actions_measured) * 100}%` }} />
+                        <div className="bar-segment neutral" style={{ width: `${(snap.actions_by_verdict.neutral / snap.total_actions_measured) * 100}%` }} />
+                        <div className="bar-segment negative" style={{ width: `${(snap.actions_by_verdict.negative / snap.total_actions_measured) * 100}%` }} />
+                      </div>
+                      <div className="knowledge-day-verdict-labels">
+                        <span className="positive">{snap.actions_by_verdict.positive} ok</span>
+                        <span className="neutral">{snap.actions_by_verdict.neutral} neutral</span>
+                        <span className="negative">{snap.actions_by_verdict.negative} mal</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {!policyState?.total_samples && history.length === 0 && (
+        <div className="feed-empty">
+          <div className="feed-empty-icon">{'\uD83E\uDDE0'}</div>
+          <p>El Brain aun no tiene datos de aprendizaje.</p>
+          <p className="feed-empty-hint">A medida que se ejecuten acciones y se mida su impacto, el Brain acumulara conocimiento aqui.</p>
         </div>
       )}
     </div>

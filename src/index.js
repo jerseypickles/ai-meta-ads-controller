@@ -20,6 +20,9 @@ const { refreshMetaToken } = require('./dashboard/routes/meta-auth');
 const { syncCreativeMetrics } = require('./dashboard/routes/creatives');
 const { refreshAIOpsMetrics } = require('./dashboard/routes/ai-ops');
 const BrainAnalyzer = require('./ai/brain/brain-analyzer');
+const BrainKnowledgeSnapshot = require('./db/models/BrainKnowledgeSnapshot');
+const BrainInsight = require('./db/models/BrainInsight');
+const BrainRecommendation = require('./db/models/BrainRecommendation');
 const logger = require('./utils/logger');
 
 const TIMEZONE = config.system.timezone;
@@ -507,6 +510,101 @@ async function jobTokenHealthCheck() {
 }
 
 /**
+ * Job: Snapshot diario del conocimiento del Brain — diario a las 11:55 PM.
+ * Captura el estado acumulado del policy learner, win rates, y actividad del dia.
+ */
+async function jobBrainKnowledgeSnapshot() {
+  try {
+    const moment = require('moment-timezone');
+    const today = moment().tz(TIMEZONE).format('YYYY-MM-DD');
+
+    // Evitar duplicados
+    const existing = await BrainKnowledgeSnapshot.findOne({ date: today });
+    if (existing) {
+      logger.debug(`[CRON] Knowledge snapshot ya existe para ${today}`);
+      return;
+    }
+
+    // 1. Estado del policy learner
+    const learnerState = await SystemConfig.get('unified_policy_learning_v1', {});
+    const buckets = learnerState.buckets || {};
+    const bucketKeys = Object.keys(buckets);
+
+    const actionStats = {};
+    for (const bKey of bucketKeys) {
+      for (const [action, stats] of Object.entries(buckets[bKey])) {
+        if (!actionStats[action]) actionStats[action] = { count: 0, total_reward: 0, alpha: 0, beta: 0 };
+        actionStats[action].count += stats.count || 0;
+        actionStats[action].total_reward += stats.total_reward || 0;
+        actionStats[action].alpha += stats.alpha || 0;
+        actionStats[action].beta += stats.beta || 0;
+      }
+    }
+
+    const topActions = Object.entries(actionStats)
+      .map(([action, s]) => ({
+        action,
+        count: s.count,
+        avg_reward: s.count > 0 ? Math.round((s.total_reward / s.count) * 1000) / 1000 : 0,
+        success_rate: (s.alpha + s.beta) > 0 ? Math.round((s.alpha / (s.alpha + s.beta)) * 100) : 50
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    // 2. Acciones medidas (acumulado total)
+    const [measuredTotal, positiveCount, negativeCount, neutralCount] = await Promise.all([
+      ActionLog.countDocuments({ impact_measured: true }),
+      ActionLog.countDocuments({ impact_measured: true, learned_reward: { $gt: 0.1 } }),
+      ActionLog.countDocuments({ impact_measured: true, learned_reward: { $lt: -0.1 } }),
+      ActionLog.countDocuments({ impact_measured: true, learned_reward: { $gte: -0.1, $lte: 0.1 } })
+    ]);
+
+    const winRate = measuredTotal > 0 ? Math.round((positiveCount / measuredTotal) * 100) : 0;
+
+    // 3. Avg reward
+    const rewardAgg = await ActionLog.aggregate([
+      { $match: { learned_reward: { $exists: true, $ne: null } } },
+      { $group: { _id: null, avg: { $avg: '$learned_reward' } } }
+    ]);
+    const avgReward = rewardAgg.length > 0 ? Math.round((rewardAgg[0].avg || 0) * 1000) / 1000 : 0;
+
+    // 4. Actividad del dia
+    const todayStart = moment().tz(TIMEZONE).startOf('day').toDate();
+    const todayEnd = moment().tz(TIMEZONE).endOf('day').toDate();
+    const dayFilter = { created_at: { $gte: todayStart, $lte: todayEnd } };
+
+    const [insightsToday, recsToday, recsApprovedToday] = await Promise.all([
+      BrainInsight.countDocuments(dayFilter),
+      BrainRecommendation.countDocuments(dayFilter),
+      BrainRecommendation.countDocuments({ ...dayFilter, status: 'approved' })
+    ]);
+
+    // 5. Guardar snapshot
+    await BrainKnowledgeSnapshot.create({
+      date: today,
+      total_samples: learnerState.total_samples || 0,
+      total_buckets: bucketKeys.length,
+      total_actions_measured: measuredTotal,
+      win_rate: winRate,
+      avg_reward: avgReward,
+      top_actions: topActions,
+      actions_by_verdict: {
+        positive: positiveCount,
+        negative: negativeCount,
+        neutral: neutralCount
+      },
+      insights_generated: insightsToday,
+      recommendations_generated: recsToday,
+      recommendations_approved: recsApprovedToday
+    });
+
+    logger.info(`[CRON] Knowledge snapshot guardado: ${today} — ${learnerState.total_samples || 0} samples, ${bucketKeys.length} buckets, win rate ${winRate}%`);
+  } catch (error) {
+    logger.error(`[CRON] Error en knowledge snapshot: ${error.message}`);
+  }
+}
+
+/**
  * Inicializa todos los cron jobs.
  */
 function initCronJobs() {
@@ -581,6 +679,13 @@ function initCronJobs() {
     name: 'creative-metrics-sync'
   });
   logger.info('  [*] Creative metrics sync — cada 6 horas');
+
+  // Diario 11:55 PM: Snapshot del conocimiento del Brain
+  cron.schedule('55 23 * * *', jobBrainKnowledgeSnapshot, {
+    timezone: TIMEZONE,
+    name: 'brain-knowledge-snapshot'
+  });
+  logger.info('  [*] Brain knowledge snapshot — diario 11:55 PM');
 
   // Diario 2:00 AM: Limpieza
   cron.schedule('0 2 * * *', jobCleanup, {

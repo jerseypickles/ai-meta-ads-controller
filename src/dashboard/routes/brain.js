@@ -5,6 +5,9 @@ const BrainInsight = require('../../db/models/BrainInsight');
 const BrainMemory = require('../../db/models/BrainMemory');
 const BrainChat = require('../../db/models/BrainChat');
 const BrainRecommendation = require('../../db/models/BrainRecommendation');
+const BrainKnowledgeSnapshot = require('../../db/models/BrainKnowledgeSnapshot');
+const ActionLog = require('../../db/models/ActionLog');
+const SystemConfig = require('../../db/models/SystemConfig');
 const logger = require('../../utils/logger');
 
 const analyzer = new BrainAnalyzer();
@@ -336,6 +339,246 @@ router.get('/recommendations/history', async (req, res) => {
 
     res.json({ recommendations: decided });
   } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══ FOLLOW-UP STATS ═══
+
+/**
+ * GET /api/brain/recommendations/follow-up-stats — Stats agregados de seguimiento
+ * Retorna win rate, impacto promedio, desglose por tipo de acción
+ */
+router.get('/recommendations/follow-up-stats', async (req, res) => {
+  try {
+    // Recomendaciones aprobadas con follow-up medido
+    const measured = await BrainRecommendation.find({
+      status: 'approved',
+      'follow_up.checked': true
+    }).sort({ decided_at: -1 }).lean();
+
+    // Recomendaciones aprobadas pendientes de follow-up
+    const pendingFollowUp = await BrainRecommendation.find({
+      status: 'approved',
+      'follow_up.checked': false
+    }).sort({ decided_at: -1 }).lean();
+
+    // Stats globales
+    const positive = measured.filter(r => r.follow_up?.impact_verdict === 'positive').length;
+    const negative = measured.filter(r => r.follow_up?.impact_verdict === 'negative').length;
+    const neutral = measured.filter(r => r.follow_up?.impact_verdict === 'neutral').length;
+    const winRate = measured.length > 0 ? Math.round((positive / measured.length) * 100) : 0;
+
+    // Calcular deltas promedio
+    let totalRoasDelta = 0;
+    let totalCpaDelta = 0;
+    let roasDeltaCount = 0;
+
+    for (const r of measured) {
+      const before = r.follow_up?.metrics_at_recommendation;
+      const after = r.follow_up?.metrics_after;
+      if (before?.roas_7d > 0 && after?.roas_7d > 0) {
+        totalRoasDelta += ((after.roas_7d - before.roas_7d) / before.roas_7d) * 100;
+        roasDeltaCount++;
+      }
+      if (before?.cpa_7d > 0 && after?.cpa_7d > 0) {
+        totalCpaDelta += ((before.cpa_7d - after.cpa_7d) / before.cpa_7d) * 100;
+      }
+    }
+
+    const avgRoasDelta = roasDeltaCount > 0 ? totalRoasDelta / roasDeltaCount : 0;
+    const avgCpaDelta = roasDeltaCount > 0 ? totalCpaDelta / roasDeltaCount : 0;
+
+    // Desglose por tipo de acción
+    const byActionType = {};
+    for (const r of measured) {
+      const at = r.action_type || 'other';
+      if (!byActionType[at]) byActionType[at] = { total: 0, positive: 0, negative: 0, neutral: 0 };
+      byActionType[at].total++;
+      const verdict = r.follow_up?.impact_verdict || 'neutral';
+      if (byActionType[at][verdict] !== undefined) byActionType[at][verdict]++;
+    }
+
+    // Timeline (últimas 30 medidas)
+    const timeline = measured.slice(0, 30).map(r => {
+      const before = r.follow_up?.metrics_at_recommendation || {};
+      const after = r.follow_up?.metrics_after || {};
+      const roasDelta = before.roas_7d > 0 ? ((after.roas_7d || 0) - before.roas_7d) / before.roas_7d * 100 : 0;
+      return {
+        _id: r._id,
+        title: r.title,
+        action_type: r.action_type,
+        entity_name: r.entity?.entity_name,
+        priority: r.priority,
+        confidence_score: r.confidence_score,
+        decided_at: r.decided_at,
+        checked_at: r.follow_up?.checked_at,
+        action_executed: r.follow_up?.action_executed,
+        impact_verdict: r.follow_up?.impact_verdict,
+        impact_summary: r.follow_up?.impact_summary,
+        roas_before: before.roas_7d || 0,
+        roas_after: after.roas_7d || 0,
+        roas_delta_pct: Math.round(roasDelta * 10) / 10,
+        cpa_before: before.cpa_7d || 0,
+        cpa_after: after.cpa_7d || 0,
+        spend_before: before.spend_7d || 0,
+        spend_after: after.spend_7d || 0
+      };
+    });
+
+    // Pendientes de follow-up
+    const pending = pendingFollowUp.map(r => {
+      const before = r.follow_up?.metrics_at_recommendation || {};
+      const hoursAgo = r.decided_at ? Math.round((Date.now() - new Date(r.decided_at).getTime()) / 3600000) : 0;
+      return {
+        _id: r._id,
+        title: r.title,
+        action_type: r.action_type,
+        entity_name: r.entity?.entity_name,
+        priority: r.priority,
+        decided_at: r.decided_at,
+        hours_since_approved: hoursAgo,
+        roas_at_approval: before.roas_7d || 0,
+        cpa_at_approval: before.cpa_7d || 0
+      };
+    });
+
+    res.json({
+      summary: {
+        total_measured: measured.length,
+        positive,
+        negative,
+        neutral,
+        win_rate: winRate,
+        avg_roas_delta_pct: Math.round(avgRoasDelta * 10) / 10,
+        avg_cpa_improvement_pct: Math.round(avgCpaDelta * 10) / 10,
+        pending_follow_up: pendingFollowUp.length
+      },
+      by_action_type: byActionType,
+      timeline,
+      pending
+    });
+  } catch (error) {
+    logger.error(`[BRAIN-API] Error en follow-up stats: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══ KNOWLEDGE / POLICY STATE ═══
+
+/**
+ * GET /api/brain/policy/state — Estado actual del Policy Learner (Thompson Sampling)
+ */
+router.get('/policy/state', async (req, res) => {
+  try {
+    const state = await SystemConfig.get('unified_policy_learning_v1', null);
+
+    if (!state) {
+      return res.json({
+        total_samples: 0,
+        total_buckets: 0,
+        updated_at: null,
+        top_actions: [],
+        buckets_summary: []
+      });
+    }
+
+    const buckets = state.buckets || {};
+    const bucketKeys = Object.keys(buckets);
+
+    // Resumir acciones globales
+    const actionStats = {};
+    for (const bKey of bucketKeys) {
+      for (const [action, stats] of Object.entries(buckets[bKey])) {
+        if (!actionStats[action]) actionStats[action] = { count: 0, total_reward: 0, alpha: 0, beta: 0 };
+        actionStats[action].count += stats.count || 0;
+        actionStats[action].total_reward += stats.total_reward || 0;
+        actionStats[action].alpha += stats.alpha || 0;
+        actionStats[action].beta += stats.beta || 0;
+      }
+    }
+
+    const topActions = Object.entries(actionStats)
+      .map(([action, s]) => ({
+        action,
+        count: s.count,
+        avg_reward: s.count > 0 ? Math.round((s.total_reward / s.count) * 1000) / 1000 : 0,
+        success_rate: (s.alpha + s.beta) > 0 ? Math.round((s.alpha / (s.alpha + s.beta)) * 100) : 50
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    // Top 15 buckets por muestra
+    const bucketsSummary = bucketKeys
+      .map(bKey => {
+        const actions = buckets[bKey];
+        let totalSamples = 0;
+        let totalReward = 0;
+        const actionList = [];
+        for (const [action, stats] of Object.entries(actions)) {
+          totalSamples += stats.count || 0;
+          totalReward += stats.total_reward || 0;
+          actionList.push({
+            action,
+            count: stats.count || 0,
+            mean: (stats.alpha || 1) / ((stats.alpha || 1) + (stats.beta || 1)),
+            avg_reward: stats.count > 0 ? (stats.total_reward || 0) / stats.count : 0
+          });
+        }
+        return {
+          bucket: bKey,
+          total_samples: totalSamples,
+          avg_reward: totalSamples > 0 ? totalReward / totalSamples : 0,
+          actions: actionList.sort((a, b) => b.count - a.count)
+        };
+      })
+      .sort((a, b) => b.total_samples - a.total_samples)
+      .slice(0, 15);
+
+    res.json({
+      total_samples: state.total_samples || 0,
+      total_buckets: bucketKeys.length,
+      updated_at: state.updated_at || null,
+      top_actions: topActions,
+      buckets_summary: bucketsSummary
+    });
+  } catch (error) {
+    logger.error(`[BRAIN-API] Error en policy state: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/brain/knowledge/history — Evolución diaria del conocimiento del Brain
+ * Query: ?days=30
+ */
+router.get('/knowledge/history', async (req, res) => {
+  try {
+    const days = Math.min(90, parseInt(req.query.days) || 30);
+    const since = new Date(Date.now() - days * 24 * 3600000);
+
+    const snapshots = await BrainKnowledgeSnapshot.find({
+      created_at: { $gte: since }
+    }).sort({ created_at: 1 }).lean();
+
+    res.json({
+      snapshots: snapshots.map(s => ({
+        date: s.date,
+        total_samples: s.total_samples,
+        total_buckets: s.total_buckets,
+        total_actions_measured: s.total_actions_measured,
+        win_rate: s.win_rate,
+        avg_reward: s.avg_reward,
+        top_actions: s.top_actions,
+        actions_by_verdict: s.actions_by_verdict,
+        insights_generated: s.insights_generated,
+        recommendations_generated: s.recommendations_generated,
+        recommendations_approved: s.recommendations_approved,
+        created_at: s.created_at
+      })),
+      total: snapshots.length
+    });
+  } catch (error) {
+    logger.error(`[BRAIN-API] Error en knowledge history: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
