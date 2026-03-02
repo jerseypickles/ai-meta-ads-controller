@@ -1260,6 +1260,21 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
         const hoursSinceApproval = (Date.now() - new Date(rec.decided_at).getTime()) / 3600000;
         const phase = rec.follow_up?.current_phase || 'awaiting_day_3';
 
+        // ═══ EARLY EXECUTION DETECTION ═══
+        // Runs every cycle (every 10 min) — detects if user already executed the action
+        // in Meta before waiting for phase measurement timing.
+        if (!rec.follow_up?.action_executed) {
+          const earlyDetected = this._detectActionExecution(rec, snap);
+          if (earlyDetected) {
+            await BrainRecommendation.updateOne({ _id: rec._id }, { $set: {
+              'follow_up.action_executed': true,
+              'follow_up.execution_detected_at': new Date(),
+              updated_at: new Date()
+            }});
+            logger.info(`[FOLLOW-UP] Early execution detected for "${rec.title}" (${rec.action_type}) — ${Math.round(hoursSinceApproval)}h after approval`);
+          }
+        }
+
         // Determine which phase to measure based on elapsed time
         let targetPhase = null;
         if (phase === 'awaiting_day_3' && hoursSinceApproval >= 72) {
