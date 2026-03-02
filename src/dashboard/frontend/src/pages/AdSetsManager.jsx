@@ -330,7 +330,7 @@ const AddCreativePanel = ({ adsetId, onClose, onSuccess }) => {
    EXPANDED AD SET DETAIL
    ══════════════════════════════════════════ */
 
-const AdSetDetail = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights }) => {
+const AdSetDetail = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights, trackingRecs }) => {
   const [ads, setAds] = useState(null);
   const [loadingAds, setLoadingAds] = useState(true);
   const [showAddCreative, setShowAddCreative] = useState(false);
@@ -526,6 +526,57 @@ const AdSetDetail = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights })
         </div>
       </div>
 
+      {/* Tracking Section — approved recs being monitored */}
+      {(trackingRecs || []).length > 0 && (
+        <div className="detail-tracking-section">
+          <div className="detail-tracking-header">
+            <Activity size={13} />
+            <span>En seguimiento ({trackingRecs.length})</span>
+          </div>
+          {trackingRecs.map((rec, i) => {
+            const fu = rec.follow_up || {};
+            const phase = fu.current_phase || 'awaiting_day_3';
+            const phases = fu.phases || {};
+            const before = fu.metrics_at_recommendation || {};
+            const hrsAgo = rec.decided_at ? Math.round((Date.now() - new Date(rec.decided_at).getTime()) / 3600000) : 0;
+            const timeLabel = hrsAgo >= 24 ? `${Math.floor(hrsAgo / 24)}d` : `${hrsAgo}h`;
+            return (
+              <div key={rec._id || i} className="detail-tracking-card">
+                <div className="detail-tracking-top">
+                  <div className="detail-tracking-info">
+                    <span className="detail-tracking-action">{rec.action_type?.replace(/_/g, ' ')}</span>
+                    <span className="detail-tracking-title">{rec.title}</span>
+                  </div>
+                  <div className="detail-tracking-right">
+                    <div className="detail-tracking-phases">
+                      <span className={`detail-tracking-ph ${phases.day_3?.measured ? 'done' : phase === 'awaiting_day_3' ? 'active' : ''}`}>3d</span>
+                      <span className="detail-tracking-ph-line" />
+                      <span className={`detail-tracking-ph ${phases.day_7?.measured ? 'done' : phase === 'awaiting_day_7' ? 'active' : ''}`}>7d</span>
+                      <span className="detail-tracking-ph-line" />
+                      <span className={`detail-tracking-ph ${phases.day_14?.measured ? 'done' : phase === 'awaiting_day_14' ? 'active' : ''}`}>14d</span>
+                    </div>
+                    <span className="detail-tracking-time">{timeLabel}</span>
+                  </div>
+                </div>
+                <div className="detail-tracking-bottom">
+                  <span className={`detail-tracking-exec ${fu.action_executed ? 'done' : ''}`}>
+                    {fu.action_executed ? '✅ Ejecutada' : '⏳ Pendiente'}
+                  </span>
+                  {before.roas_7d > 0 && <span className="detail-tracking-snap">ROAS {before.roas_7d.toFixed(2)}x</span>}
+                  {before.cpa_7d > 0 && <span className="detail-tracking-snap">CPA ${before.cpa_7d.toFixed(0)}</span>}
+                  {before.daily_budget > 0 && <span className="detail-tracking-snap">${before.daily_budget.toFixed(0)}/d</span>}
+                  {phases.day_3?.measured && phases.day_3.deltas?.roas_pct != null && (
+                    <span className={`detail-tracking-delta ${phases.day_3.deltas.roas_pct >= 0 ? 'positive' : 'negative'}`}>
+                      d3: {phases.day_3.deltas.roas_pct > 0 ? '+' : ''}{phases.day_3.deltas.roas_pct.toFixed(0)}% ROAS
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Brain Intelligence Section */}
       {(entityRecs.length > 0 || entityInsights.length > 0) && (
         <div className="detail-brain-section">
@@ -588,7 +639,7 @@ const AdSetDetail = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights })
    MAIN AD SET ROW (in the table)
    ══════════════════════════════════════════ */
 
-const AdSetRow = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights }) => {
+const AdSetRow = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights, trackingRecs }) => {
   const [expanded, setExpanded] = useState(false);
 
   const m = getMetrics(adset, timeWindow);
@@ -597,8 +648,10 @@ const AdSetRow = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights }) =>
 
   const recCount = brainRecs?.length || 0;
   const insightCount = brainInsights?.length || 0;
+  const trackingCount = trackingRecs?.length || 0;
   const hasHighPriority = brainRecs?.some(r => r.priority === 'high');
   const hasCriticalInsight = brainInsights?.some(i => i.severity === 'critical' || i.severity === 'warning');
+  const hasExecution = trackingRecs?.some(r => r.follow_up?.action_executed);
 
   return (
     <>
@@ -612,8 +665,14 @@ const AdSetRow = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights }) =>
         <td className="primary">
           <div className="adset-name-wrap">
             <div className="adset-name-cell">{adset.entity_name || adset.entity_id}</div>
-            {(recCount > 0 || insightCount > 0) && (
+            {(recCount > 0 || insightCount > 0 || trackingCount > 0) && (
               <span className="brain-badges">
+                {trackingCount > 0 && (
+                  <span className={`brain-badge brain-badge-tracking ${hasExecution ? 'executed' : ''}`} title={`${trackingCount} en seguimiento`}>
+                    <Activity size={9} />
+                    <span>{trackingCount}</span>
+                  </span>
+                )}
                 {recCount > 0 && (
                   <span className={`brain-badge brain-badge-rec ${hasHighPriority ? 'high' : ''}`} title={`${recCount} recommendation${recCount > 1 ? 's' : ''}`}>
                     <Sparkles size={9} />
@@ -647,7 +706,7 @@ const AdSetRow = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights }) =>
         <tr className="adset-detail-row">
           <td colSpan="11" style={{ padding: 0 }}>
             <AdSetDetail adset={adset} timeWindow={timeWindow} onRefresh={onRefresh}
-              brainRecs={brainRecs} brainInsights={brainInsights} />
+              brainRecs={brainRecs} brainInsights={brainInsights} trackingRecs={trackingRecs} />
           </td>
         </tr>
       )}
@@ -710,16 +769,26 @@ export default function AdSetsManager() {
     return () => { es.close(); clearInterval(fallbackInterval); setSseConnected(false); };
   }, [fetchData]);
 
-  // Fetch Brain data (recommendations + insights) for entity badges
+  // Fetch Brain data (recommendations + insights + tracking) for entity badges
+  const [trackingRecs, setTrackingRecs] = useState([]);
+
   useEffect(() => {
     const fetchBrainData = async () => {
       try {
-        const [recsRes, insightsRes] = await Promise.allSettled([
+        const [recsRes, insightsRes, trackingRes] = await Promise.allSettled([
           getBrainRecommendations(1, 100, 'pending'),
-          getBrainInsights(1, 100, { read: false })
+          getBrainInsights(1, 100, { read: false }),
+          getBrainRecommendations(1, 100, 'approved')
         ]);
         if (recsRes.status === 'fulfilled') setBrainRecs(recsRes.value?.recommendations || []);
         if (insightsRes.status === 'fulfilled') setBrainInsights(insightsRes.value?.insights || []);
+        if (trackingRes.status === 'fulfilled') {
+          // Filter to only active tracking (not yet fully measured)
+          const approved = trackingRes.value?.recommendations || [];
+          setTrackingRecs(approved.filter(r =>
+            !r.follow_up?.checked && r.follow_up?.current_phase !== 'complete'
+          ));
+        }
       } catch { /* silent — Brain data is supplemental */ }
     };
     fetchBrainData();
@@ -748,6 +817,16 @@ export default function AdSetsManager() {
     }
     return map;
   }, [brainInsights]);
+
+  // Map: entity_id → [tracking recs] (approved, active follow-up)
+  const trackingMap = useMemo(() => {
+    const map = {};
+    for (const rec of trackingRecs) {
+      const eid = rec.entity?.entity_id;
+      if (eid) { (map[eid] = map[eid] || []).push(rec); }
+    }
+    return map;
+  }, [trackingRecs]);
 
   const handleForceRefresh = async () => {
     setRunning('refresh');
@@ -1060,7 +1139,8 @@ export default function AdSetsManager() {
               <tbody>
                 {filtered.map((as, i) => (
                   <AdSetRow key={as.entity_id || i} adset={as} timeWindow={timeWindow} onRefresh={() => fetchData(true)}
-                    brainRecs={recsMap[as.entity_id]} brainInsights={insightsMap[as.entity_id]} />
+                    brainRecs={recsMap[as.entity_id]} brainInsights={insightsMap[as.entity_id]}
+                    trackingRecs={trackingMap[as.entity_id]} />
                 ))}
               </tbody>
             </table>
@@ -1320,6 +1400,17 @@ export default function AdSetsManager() {
           color: #fbbf24;
           border-color: rgba(245, 158, 11, 0.25);
         }
+        .brain-badge-tracking {
+          background: rgba(16, 185, 129, 0.12);
+          color: #34d399;
+          border: 1px solid rgba(16, 185, 129, 0.25);
+          animation: badge-pulse 2.5s ease-in-out infinite;
+        }
+        .brain-badge-tracking.executed {
+          background: rgba(16, 185, 129, 0.2);
+          color: #10b981;
+          border-color: rgba(16, 185, 129, 0.4);
+        }
         @keyframes badge-pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.65; }
@@ -1481,6 +1572,137 @@ export default function AdSetsManager() {
 
         .ads-section { margin-top: 0; }
         .ads-table { font-size: 0.75rem; }
+
+        /* ═══ TRACKING SECTION IN DETAIL ═══ */
+        .detail-tracking-section {
+          margin-top: 16px;
+          padding-top: 14px;
+          border-top: 1px solid rgba(16, 185, 129, 0.15);
+        }
+        .detail-tracking-header {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 0.6875rem;
+          font-weight: 700;
+          color: #34d399;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          margin-bottom: 10px;
+        }
+        .detail-tracking-card {
+          padding: 10px 12px;
+          background: rgba(16, 185, 129, 0.05);
+          border: 1px solid rgba(16, 185, 129, 0.12);
+          border-radius: 8px;
+          margin-bottom: 6px;
+        }
+        .detail-tracking-top {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 10px;
+          margin-bottom: 8px;
+        }
+        .detail-tracking-info {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          min-width: 0;
+        }
+        .detail-tracking-action {
+          font-size: 0.5625rem;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: #34d399;
+        }
+        .detail-tracking-title {
+          font-size: 0.6875rem;
+          color: var(--text-secondary);
+          line-height: 1.3;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          max-width: 300px;
+        }
+        .detail-tracking-right {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 3px;
+          flex-shrink: 0;
+        }
+        .detail-tracking-phases {
+          display: flex;
+          align-items: center;
+          gap: 3px;
+        }
+        .detail-tracking-ph {
+          font-size: 0.5625rem;
+          font-weight: 700;
+          color: var(--text-muted);
+          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid var(--border-color);
+          border-radius: 4px;
+          padding: 1px 5px;
+          line-height: 1.4;
+        }
+        .detail-tracking-ph.active {
+          color: #fbbf24;
+          border-color: rgba(245, 158, 11, 0.35);
+          background: rgba(245, 158, 11, 0.1);
+          animation: badge-pulse 2.5s ease-in-out infinite;
+        }
+        .detail-tracking-ph.done {
+          color: #10b981;
+          border-color: rgba(16, 185, 129, 0.35);
+          background: rgba(16, 185, 129, 0.12);
+        }
+        .detail-tracking-ph-line {
+          width: 8px;
+          height: 1px;
+          background: var(--border-color);
+        }
+        .detail-tracking-time {
+          font-size: 0.5625rem;
+          color: var(--text-muted);
+        }
+        .detail-tracking-bottom {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+          font-size: 0.625rem;
+        }
+        .detail-tracking-exec {
+          font-weight: 600;
+          color: var(--text-muted);
+        }
+        .detail-tracking-exec.done {
+          color: #10b981;
+        }
+        .detail-tracking-snap {
+          color: var(--text-tertiary);
+          padding: 1px 6px;
+          background: rgba(255, 255, 255, 0.04);
+          border-radius: 4px;
+          font-variant-numeric: tabular-nums;
+        }
+        .detail-tracking-delta {
+          font-weight: 700;
+          padding: 1px 6px;
+          border-radius: 4px;
+          font-variant-numeric: tabular-nums;
+        }
+        .detail-tracking-delta.positive {
+          color: #10b981;
+          background: rgba(16, 185, 129, 0.1);
+        }
+        .detail-tracking-delta.negative {
+          color: #ef4444;
+          background: rgba(239, 68, 68, 0.1);
+        }
 
         /* ═══ BRAIN SECTION IN DETAIL ═══ */
         .detail-brain-section {
