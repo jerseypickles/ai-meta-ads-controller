@@ -1832,10 +1832,10 @@ a:hover {
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: var(--spacing-lg);
+  padding: var(--spacing-md);
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-md);
+  gap: 6px;
 }
 
 .chat-loading {
@@ -1916,22 +1916,22 @@ a:hover {
 }
 
 .chat-msg-avatar {
-  font-size: 1.3rem;
+  font-size: 1.1rem;
   flex-shrink: 0;
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .chat-msg-content {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .chat-msg-text {
-  padding: var(--spacing-md);
+  padding: 8px 12px;
   border-radius: var(--radius-lg);
-  font-size: 0.85rem;
-  line-height: 1.6;
+  font-size: 0.84rem;
+  line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1952,9 +1952,9 @@ a:hover {
 .chat-msg-meta {
   display: flex;
   gap: var(--spacing-sm);
-  font-size: 0.65rem;
+  font-size: 0.6rem;
   color: var(--text-muted);
-  padding: 0 var(--spacing-sm);
+  padding: 0 4px;
 }
 
 .chat-message.user .chat-msg-meta {
@@ -2259,9 +2259,73 @@ a:hover {
   text-decoration: underline;
 }
 
-/* Adjust chat bubble padding for markdown */
+/* Compact markdown inside chat bubbles */
 .chat-message.assistant .chat-msg-text.markdown-body {
-  padding: var(--spacing-md) var(--spacing-lg);
+  padding: 8px 12px;
+  line-height: 1.45;
+  font-size: 0.84rem;
+}
+
+.chat-msg-text.markdown-body h1 {
+  font-size: 0.95rem;
+  margin: 0.6em 0 0.3em;
+  padding-bottom: 0.2em;
+}
+
+.chat-msg-text.markdown-body h2 {
+  font-size: 0.9rem;
+  margin: 0.5em 0 0.25em;
+  padding-bottom: 0.15em;
+}
+
+.chat-msg-text.markdown-body h3 {
+  font-size: 0.86rem;
+  margin: 0.4em 0 0.2em;
+}
+
+.chat-msg-text.markdown-body h4 {
+  font-size: 0.84rem;
+  margin: 0.3em 0 0.15em;
+}
+
+.chat-msg-text.markdown-body p {
+  margin: 0.25em 0;
+}
+
+.chat-msg-text.markdown-body ul,
+.chat-msg-text.markdown-body ol {
+  margin: 0.25em 0;
+  padding-left: 1.2em;
+}
+
+.chat-msg-text.markdown-body li {
+  margin: 0.1em 0;
+}
+
+.chat-msg-text.markdown-body hr {
+  margin: 0.5em 0;
+}
+
+.chat-msg-text.markdown-body blockquote {
+  margin: 0.3em 0;
+  padding: 0.2em 0 0.2em 0.8em;
+}
+
+.chat-msg-text.markdown-body pre {
+  margin: 0.3em 0;
+  padding: 8px;
+}
+
+.chat-msg-text.markdown-body table {
+  margin: 0.3em 0;
+}
+
+.chat-msg-text.markdown-body th {
+  padding: 4px 8px;
+}
+
+.chat-msg-text.markdown-body td {
+  padding: 3px 8px;
 }
 
 /* Insight body markdown */
