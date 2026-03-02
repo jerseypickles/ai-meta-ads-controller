@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
 import {
   getBrainInsights, markInsightRead, markAllInsightsRead,
   triggerBrainAnalysis, sendBrainChat, getBrainChatHistory,
@@ -448,7 +449,9 @@ function InsightCard({ insight, expanded, onToggle, formatTime }) {
 
       {expanded && (
         <div className="insight-body">
-          <div className="insight-body-text">{insight.body}</div>
+          <div className="insight-body-text markdown-body">
+            <ReactMarkdown>{insight.body}</ReactMarkdown>
+          </div>
           {insight.data_points && Object.keys(insight.data_points).length > 0 && (
             <div className="insight-data-points">
               {Object.entries(insight.data_points).map(([k, v]) => (
@@ -524,7 +527,13 @@ function ChatPanel({
             <div key={i} className={`chat-message ${msg.role}`}>
               {msg.role === 'assistant' && <span className="chat-msg-avatar">🧠</span>}
               <div className="chat-msg-content">
-                <div className="chat-msg-text">{msg.content}</div>
+                <div className={`chat-msg-text ${msg.role === 'assistant' ? 'markdown-body' : ''}`}>
+                  {msg.role === 'assistant' ? (
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  ) : (
+                    msg.content
+                  )}
+                </div>
                 <div className="chat-msg-meta">
                   <span>{formatTime(msg.created_at)}</span>
                   {msg.tokens_used > 0 && <span>{msg.tokens_used} tokens</span>}

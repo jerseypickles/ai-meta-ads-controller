@@ -2078,3 +2078,193 @@ a:hover {
     padding: var(--spacing-md);
   }
 }
+
+/* ============================================
+   MARKDOWN RENDERING — Dark theme
+   ============================================ */
+
+.markdown-body {
+  font-size: 0.85rem;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.markdown-body > *:first-child {
+  margin-top: 0;
+}
+
+.markdown-body > *:last-child {
+  margin-bottom: 0;
+}
+
+/* Headings */
+.markdown-body h1 {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 1.2em 0 0.6em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.markdown-body h2 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 1.1em 0 0.5em;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.markdown-body h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 1em 0 0.4em;
+}
+
+.markdown-body h4 {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0.8em 0 0.3em;
+}
+
+/* Paragraphs */
+.markdown-body p {
+  margin: 0.5em 0;
+}
+
+/* Bold & italic */
+.markdown-body strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.markdown-body em {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+/* Lists */
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+.markdown-body li {
+  margin: 0.25em 0;
+}
+
+.markdown-body li > p {
+  margin: 0.2em 0;
+}
+
+.markdown-body ul {
+  list-style-type: disc;
+}
+
+.markdown-body ol {
+  list-style-type: decimal;
+}
+
+.markdown-body li::marker {
+  color: var(--text-muted);
+}
+
+/* Horizontal rules */
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 1em 0;
+}
+
+/* Code inline */
+.markdown-body code {
+  background: var(--bg-hover);
+  color: var(--blue-light);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.82em;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+
+/* Code blocks */
+.markdown-body pre {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  overflow-x: auto;
+  margin: 0.6em 0;
+}
+
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  color: var(--text-secondary);
+  font-size: 0.8em;
+}
+
+/* Blockquotes */
+.markdown-body blockquote {
+  border-left: 3px solid var(--blue-primary);
+  margin: 0.6em 0;
+  padding: 0.4em 0 0.4em 1em;
+  color: var(--text-tertiary);
+  background: rgba(59, 130, 246, 0.05);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.markdown-body blockquote p {
+  margin: 0.2em 0;
+}
+
+/* Tables */
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 0.82em;
+}
+
+.markdown-body th {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  font-weight: 600;
+  text-align: left;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+}
+
+.markdown-body td {
+  padding: 6px 12px;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+}
+
+.markdown-body tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* Links */
+.markdown-body a {
+  color: var(--blue-light);
+  text-decoration: none;
+}
+
+.markdown-body a:hover {
+  text-decoration: underline;
+}
+
+/* Adjust chat bubble padding for markdown */
+.chat-message.assistant .chat-msg-text.markdown-body {
+  padding: var(--spacing-md) var(--spacing-lg);
+}
+
+/* Insight body markdown */
+.insight-body-text.markdown-body {
+  white-space: normal;
+}
