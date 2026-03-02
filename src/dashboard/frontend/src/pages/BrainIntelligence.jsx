@@ -63,6 +63,9 @@ export default function BrainIntelligence() {
   const [generatingRecs, setGeneratingRecs] = useState(false);
   const [recsStatusFilter, setRecsStatusFilter] = useState('');
 
+  // Attached rec for chat
+  const [attachedRec, setAttachedRec] = useState(null);
+
   // Filter
   const [typeFilter, setTypeFilter] = useState('all');
   const [severityFilter, setSeverityFilter] = useState('all');
@@ -188,12 +191,22 @@ export default function BrainIntelligence() {
     const msg = chatInput.trim();
     if (!msg || chatSending) return;
 
+    // Prepend rec context if attached
+    let fullMsg = msg;
+    let displayMsg = msg;
+    if (attachedRec) {
+      const recCtx = `[Rec: "${attachedRec.title}" — ${attachedRec.action_type} — ${attachedRec.entity?.entity_name || 'N/A'} — Conf: ${attachedRec.confidence_score || 50}%] `;
+      fullMsg = recCtx + msg;
+      displayMsg = fullMsg;
+      setAttachedRec(null);
+    }
+
     setChatInput('');
-    setChatMessages(prev => [...prev, { role: 'user', content: msg, created_at: new Date().toISOString() }]);
+    setChatMessages(prev => [...prev, { role: 'user', content: displayMsg, created_at: new Date().toISOString() }]);
     setChatSending(true);
 
     try {
-      const result = await sendBrainChat(msg);
+      const result = await sendBrainChat(fullMsg);
       setChatMessages(prev => [...prev, {
         role: 'assistant',
         content: result.message,
@@ -210,6 +223,13 @@ export default function BrainIntelligence() {
       setChatSending(false);
       chatInputRef.current?.focus();
     }
+  };
+
+  const handleDiscussRec = (rec) => {
+    setAttachedRec(rec);
+    setActiveTab('chat');
+    setChatInput('');
+    setTimeout(() => chatInputRef.current?.focus(), 100);
   };
 
   const handleClearChat = async () => {
@@ -394,6 +414,7 @@ export default function BrainIntelligence() {
             onApprove={handleApproveRec}
             onReject={handleRejectRec}
             onPageChange={(p) => loadRecommendations(p)}
+            onDiscussRec={handleDiscussRec}
             formatTime={formatTime}
           />
         ) : activeTab === 'followup' ? (
@@ -412,6 +433,8 @@ export default function BrainIntelligence() {
             onSend={handleSendChat}
             onClear={handleClearChat}
             formatTime={formatTime}
+            attachedRec={attachedRec}
+            onClearAttachment={() => setAttachedRec(null)}
           />
         )}
       </div>
@@ -668,12 +691,33 @@ function RecommendationsPanel({
   recommendations, loading, generating, statusFilter,
   recsPage, totalPages, recsTotal, pendingCount,
   onStatusFilter, onGenerate, onApprove, onReject, onPageChange,
-  formatTime
+  onDiscussRec, formatTime
 }) {
   const [expandedId, setExpandedId] = useState(null);
 
+  const pendingRecs = recommendations.filter(r => r.status === 'pending');
+  const decidedRecs = recommendations.filter(r => r.status !== 'pending');
+
   return (
     <div className="recs-panel">
+      {/* Hero stats row */}
+      <div className="recs-hero-stats">
+        <div className="recs-hero-stat highlight">
+          <span className="recs-hero-value">{pendingCount}</span>
+          <span className="recs-hero-label">Pendientes</span>
+        </div>
+        <div className="recs-hero-stat">
+          <span className="recs-hero-value">{recsTotal}</span>
+          <span className="recs-hero-label">Total</span>
+        </div>
+        <div className="recs-hero-stat">
+          <span className="recs-hero-value generate-action" onClick={!generating ? onGenerate : undefined}>
+            {generating ? '...' : '+'}
+          </span>
+          <span className="recs-hero-label">{generating ? 'Generando' : 'Generar'}</span>
+        </div>
+      </div>
+
       {/* Toolbar */}
       <div className="feed-toolbar">
         <div className="feed-filters">
@@ -689,21 +733,9 @@ function RecommendationsPanel({
             <option value="expired">Expiradas</option>
           </select>
         </div>
-        <div className="feed-actions">
-          <button
-            className="btn-primary"
-            onClick={onGenerate}
-            disabled={generating}
-          >
-            {generating ? 'Generando...' : 'Generar recomendaciones'}
-          </button>
+        <div className="recs-info-inline">
+          El Brain aprende de tus decisiones — aprueba o rechaza cada recomendacion.
         </div>
-      </div>
-
-      {/* Info banner */}
-      <div className="recs-info-banner">
-        Las recomendaciones se generan cada 6h usando datos estables de 7 días.
-        Aprueba o rechaza cada una — el Brain aprende de tus decisiones.
       </div>
 
       {/* Recommendations List */}
@@ -713,21 +745,46 @@ function RecommendationsPanel({
         ) : recommendations.length === 0 ? (
           <div className="feed-empty">
             <div className="feed-empty-icon">🎯</div>
-            <p>Sin recomendaciones aún.</p>
-            <p className="feed-empty-hint">Genera recomendaciones manualmente o espera al próximo ciclo automático (cada 6h).</p>
+            <p>Sin recomendaciones aun.</p>
+            <p className="feed-empty-hint">Genera recomendaciones manualmente o espera al proximo ciclo automatico (cada 6h).</p>
           </div>
         ) : (
-          recommendations.map(rec => (
-            <RecommendationCard
-              key={rec._id}
-              rec={rec}
-              expanded={expandedId === rec._id}
-              onToggle={() => setExpandedId(expandedId === rec._id ? null : rec._id)}
-              onApprove={() => onApprove(rec._id)}
-              onReject={() => onReject(rec._id)}
-              formatTime={formatTime}
-            />
-          ))
+          <>
+            {pendingRecs.length > 0 && !statusFilter && (
+              <div className="recs-section-label">Requieren tu decision</div>
+            )}
+            {(statusFilter ? recommendations : pendingRecs).map((rec, idx) => (
+              <RecommendationCard
+                key={rec._id}
+                rec={rec}
+                expanded={expandedId === rec._id}
+                onToggle={() => setExpandedId(expandedId === rec._id ? null : rec._id)}
+                onApprove={() => onApprove(rec._id)}
+                onReject={() => onReject(rec._id)}
+                onDiscuss={onDiscussRec ? () => onDiscussRec(rec) : undefined}
+                formatTime={formatTime}
+                animDelay={idx * 0.04}
+              />
+            ))}
+            {!statusFilter && decidedRecs.length > 0 && (
+              <>
+                <div className="recs-section-label decided">Historial</div>
+                {decidedRecs.map((rec, idx) => (
+                  <RecommendationCard
+                    key={rec._id}
+                    rec={rec}
+                    expanded={expandedId === rec._id}
+                    onToggle={() => setExpandedId(expandedId === rec._id ? null : rec._id)}
+                    onApprove={() => onApprove(rec._id)}
+                    onReject={() => onReject(rec._id)}
+                    onDiscuss={onDiscussRec ? () => onDiscussRec(rec) : undefined}
+                    formatTime={formatTime}
+                    animDelay={idx * 0.04}
+                  />
+                ))}
+              </>
+            )}
+          </>
         )}
       </div>
 
@@ -742,7 +799,7 @@ function RecommendationsPanel({
             Anterior
           </button>
           <span className="page-info">
-            Página {recsPage} de {totalPages} ({recsTotal} recomendaciones)
+            Pagina {recsPage} de {totalPages} ({recsTotal} recomendaciones)
           </span>
           <button
             className="btn-page"
@@ -759,133 +816,185 @@ function RecommendationsPanel({
 
 // ═══ RECOMMENDATION CARD ═══
 
-function RecommendationCard({ rec, expanded, onToggle, onApprove, onReject, formatTime }) {
+function RecommendationCard({ rec, expanded, onToggle, onApprove, onReject, onDiscuss, formatTime, animDelay = 0 }) {
   const priorityCfg = PRIORITY_CONFIG[rec.priority] || PRIORITY_CONFIG.evaluar;
   const actionCfg = ACTION_TYPE_CONFIG[rec.action_type] || ACTION_TYPE_CONFIG.other;
   const statusCfg = STATUS_LABELS[rec.status] || STATUS_LABELS.pending;
   const confidencePct = rec.confidence_score || 50;
 
   return (
-    <div className={`rec-card ${rec.status} ${expanded ? 'expanded' : ''}`} onClick={onToggle}>
-      <div className="rec-header">
-        <div className="rec-left">
-          <span className="rec-priority-icon">{priorityCfg.icon}</span>
-          <div className="rec-meta">
-            <div className="rec-title-row">
-              <span className="rec-title">{rec.title}</span>
+    <div
+      className={`rec-card ${rec.status} ${expanded ? 'expanded' : ''}`}
+      onClick={onToggle}
+      style={{ animationDelay: `${animDelay}s` }}
+    >
+      {/* Priority accent bar */}
+      <div className="rec-priority-bar" style={{ background: priorityCfg.color }} />
+
+      <div className="rec-inner">
+        <div className="rec-header">
+          <div className="rec-left">
+            <div className="rec-action-icon" style={{ background: priorityCfg.bg, color: priorityCfg.color }}>
+              {actionCfg.icon}
             </div>
-            <div className="rec-tags">
-              <span className="rec-tag priority" style={{ color: priorityCfg.color, backgroundColor: priorityCfg.bg }}>
-                {priorityCfg.label}
-              </span>
-              <span className="rec-tag action">
-                {actionCfg.icon} {actionCfg.label}
-              </span>
-              <span className="rec-tag confidence" title={`Confianza: ${confidencePct}%`}>
-                {rec.confidence === 'high' ? '🟢' : rec.confidence === 'medium' ? '🟡' : '🔴'} {confidencePct}%
-              </span>
-              <span className="rec-tag entity">{rec.entity?.entity_name}</span>
-            </div>
-          </div>
-        </div>
-        <div className="rec-right">
-          <span className="rec-time">{formatTime(rec.created_at)}</span>
-          <span className="rec-status" style={{ color: statusCfg.color }}>{statusCfg.label}</span>
-        </div>
-      </div>
-
-      {expanded && (
-        <div className="rec-body">
-          <div className="rec-action-detail">
-            <strong>Acción:</strong> {rec.action_detail}
-          </div>
-
-          <div className="rec-body-text markdown-body">
-            <ReactMarkdown>{rec.body}</ReactMarkdown>
-          </div>
-
-          {/* Supporting data */}
-          {rec.supporting_data && (
-            <div className="rec-data-grid">
-              {rec.supporting_data.current_roas_7d > 0 && (
-                <div className="rec-data-item">
-                  <span className="rec-data-label">ROAS 7d</span>
-                  <span className="rec-data-value">{rec.supporting_data.current_roas_7d.toFixed(2)}x</span>
-                </div>
-              )}
-              {rec.supporting_data.current_cpa_7d > 0 && (
-                <div className="rec-data-item">
-                  <span className="rec-data-label">CPA 7d</span>
-                  <span className="rec-data-value">${rec.supporting_data.current_cpa_7d.toFixed(2)}</span>
-                </div>
-              )}
-              {rec.supporting_data.current_spend_7d > 0 && (
-                <div className="rec-data-item">
-                  <span className="rec-data-label">Spend 7d</span>
-                  <span className="rec-data-value">${rec.supporting_data.current_spend_7d.toFixed(0)}</span>
-                </div>
-              )}
-              {rec.supporting_data.current_frequency_7d > 0 && (
-                <div className="rec-data-item">
-                  <span className="rec-data-label">Freq 7d</span>
-                  <span className="rec-data-value">{rec.supporting_data.current_frequency_7d.toFixed(1)}</span>
-                </div>
-              )}
-              {rec.supporting_data.current_purchases_7d > 0 && (
-                <div className="rec-data-item">
-                  <span className="rec-data-label">Compras 7d</span>
-                  <span className="rec-data-value">{rec.supporting_data.current_purchases_7d}</span>
-                </div>
-              )}
-              {rec.supporting_data.account_avg_roas_7d > 0 && (
-                <div className="rec-data-item">
-                  <span className="rec-data-label">ROAS cuenta</span>
-                  <span className="rec-data-value">{rec.supporting_data.account_avg_roas_7d.toFixed(2)}x</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Follow-up info (for decided recommendations) */}
-          {rec.follow_up?.checked && (
-            <div className={`rec-followup ${rec.follow_up.impact_verdict}`}>
-              <div className="rec-followup-header">
-                <span className="rec-followup-icon">
-                  {rec.follow_up.impact_verdict === 'positive' ? '✅' : rec.follow_up.impact_verdict === 'negative' ? '❌' : '➖'}
+            <div className="rec-meta">
+              <div className="rec-title-row">
+                <span className="rec-title">{rec.title}</span>
+                <span className="rec-status-pill" style={{ color: statusCfg.color, borderColor: statusCfg.color }}>
+                  {statusCfg.label}
                 </span>
-                <strong>Follow-up: {rec.follow_up.action_executed ? 'Acción ejecutada' : 'Acción no detectada'}</strong>
               </div>
-              <p className="rec-followup-text">{rec.follow_up.impact_summary}</p>
+              <div className="rec-tags">
+                <span className="rec-tag priority" style={{ color: priorityCfg.color, backgroundColor: priorityCfg.bg }}>
+                  {priorityCfg.label}
+                </span>
+                <span className="rec-tag action">
+                  {actionCfg.label}
+                </span>
+              </div>
+              {/* Entity badge */}
+              {rec.entity && (
+                <div className="rec-entity-row">
+                  <span className="rec-entity-badge">
+                    <span className="entity-type-dot" style={{
+                      background: rec.entity.entity_type === 'adset' ? '#3b82f6' :
+                                  rec.entity.entity_type === 'campaign' ? '#8b5cf6' : '#10b981'
+                    }} />
+                    <span className="entity-type-label">
+                      {rec.entity.entity_type === 'adset' ? 'Ad Set' :
+                       rec.entity.entity_type === 'campaign' ? 'Campaign' : 'Ad'}
+                    </span>
+                    <span className="entity-name">{rec.entity.entity_name}</span>
+                  </span>
+                </div>
+              )}
             </div>
-          )}
-
-          {/* Approve/Reject buttons */}
-          {rec.status === 'pending' && (
-            <div className="rec-decision-bar">
-              <button
-                className="rec-btn approve"
-                onClick={(e) => { e.stopPropagation(); onApprove(); }}
-              >
-                Aprobar
-              </button>
-              <button
-                className="rec-btn reject"
-                onClick={(e) => { e.stopPropagation(); onReject(); }}
-              >
-                Rechazar
-              </button>
+          </div>
+          <div className="rec-right">
+            <span className="rec-time">{formatTime(rec.created_at)}</span>
+            {/* Confidence gauge */}
+            <div className="rec-confidence-gauge" title={`Confianza: ${confidencePct}%`}>
+              <svg width="36" height="36" viewBox="0 0 36 36">
+                <circle cx="18" cy="18" r="15" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3" />
+                <circle cx="18" cy="18" r="15" fill="none"
+                  stroke={confidencePct >= 70 ? '#10b981' : confidencePct >= 45 ? '#f59e0b' : '#ef4444'}
+                  strokeWidth="3"
+                  strokeDasharray={`${(confidencePct / 100) * 94.2} 94.2`}
+                  strokeLinecap="round"
+                  transform="rotate(-90 18 18)"
+                />
+                <text x="18" y="19" textAnchor="middle" dominantBaseline="middle"
+                  fill="var(--text-primary)" fontSize="9" fontWeight="700">
+                  {confidencePct}
+                </text>
+              </svg>
             </div>
-          )}
-
-          {/* Decided info */}
-          {(rec.status === 'approved' || rec.status === 'rejected') && rec.decided_at && (
-            <div className="rec-decided-info">
-              {rec.status === 'approved' ? 'Aprobada' : 'Rechazada'} {formatTime(rec.decided_at)}
-              {rec.decision_note && ` — "${rec.decision_note}"`}
-            </div>
-          )}
+          </div>
         </div>
-      )}
+
+        {expanded && (
+          <div className="rec-body">
+            <div className="rec-action-detail">
+              <strong>Accion:</strong> {rec.action_detail}
+            </div>
+
+            <div className="rec-body-text markdown-body">
+              <ReactMarkdown>{rec.body}</ReactMarkdown>
+            </div>
+
+            {/* Supporting data */}
+            {rec.supporting_data && (
+              <div className="rec-data-grid">
+                {rec.supporting_data.current_roas_7d > 0 && (
+                  <div className="rec-data-item">
+                    <span className="rec-data-label">ROAS 7d</span>
+                    <span className="rec-data-value">{rec.supporting_data.current_roas_7d.toFixed(2)}x</span>
+                  </div>
+                )}
+                {rec.supporting_data.current_cpa_7d > 0 && (
+                  <div className="rec-data-item">
+                    <span className="rec-data-label">CPA 7d</span>
+                    <span className="rec-data-value">${rec.supporting_data.current_cpa_7d.toFixed(2)}</span>
+                  </div>
+                )}
+                {rec.supporting_data.current_spend_7d > 0 && (
+                  <div className="rec-data-item">
+                    <span className="rec-data-label">Spend 7d</span>
+                    <span className="rec-data-value">${rec.supporting_data.current_spend_7d.toFixed(0)}</span>
+                  </div>
+                )}
+                {rec.supporting_data.current_frequency_7d > 0 && (
+                  <div className="rec-data-item">
+                    <span className="rec-data-label">Freq 7d</span>
+                    <span className="rec-data-value">{rec.supporting_data.current_frequency_7d.toFixed(1)}</span>
+                  </div>
+                )}
+                {rec.supporting_data.current_purchases_7d > 0 && (
+                  <div className="rec-data-item">
+                    <span className="rec-data-label">Compras 7d</span>
+                    <span className="rec-data-value">{rec.supporting_data.current_purchases_7d}</span>
+                  </div>
+                )}
+                {rec.supporting_data.account_avg_roas_7d > 0 && (
+                  <div className="rec-data-item account-ref">
+                    <span className="rec-data-label">ROAS cuenta</span>
+                    <span className="rec-data-value">{rec.supporting_data.account_avg_roas_7d.toFixed(2)}x</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Follow-up info */}
+            {rec.follow_up?.checked && (
+              <div className={`rec-followup ${rec.follow_up.impact_verdict}`}>
+                <div className="rec-followup-header">
+                  <span className="rec-followup-icon">
+                    {rec.follow_up.impact_verdict === 'positive' ? '\u2705' : rec.follow_up.impact_verdict === 'negative' ? '\u274C' : '\u2796'}
+                  </span>
+                  <strong>Follow-up: {rec.follow_up.action_executed ? 'Accion ejecutada' : 'Accion no detectada'}</strong>
+                </div>
+                <p className="rec-followup-text">{rec.follow_up.impact_summary}</p>
+              </div>
+            )}
+
+            {/* Action bar */}
+            <div className="rec-action-bar">
+              {rec.status === 'pending' && (
+                <>
+                  <button
+                    className="rec-btn approve"
+                    onClick={(e) => { e.stopPropagation(); onApprove(); }}
+                  >
+                    Aprobar
+                  </button>
+                  <button
+                    className="rec-btn reject"
+                    onClick={(e) => { e.stopPropagation(); onReject(); }}
+                  >
+                    Rechazar
+                  </button>
+                </>
+              )}
+              {onDiscuss && (
+                <button
+                  className="rec-btn discuss"
+                  onClick={(e) => { e.stopPropagation(); onDiscuss(); }}
+                >
+                  Discutir con Brain
+                </button>
+              )}
+            </div>
+
+            {/* Decided info */}
+            {(rec.status === 'approved' || rec.status === 'rejected') && rec.decided_at && (
+              <div className="rec-decided-info">
+                {rec.status === 'approved' ? 'Aprobada' : 'Rechazada'} {formatTime(rec.decided_at)}
+                {rec.decision_note && ` — "${rec.decision_note}"`}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1069,6 +1178,7 @@ function KnowledgePanel({ formatTime }) {
   const [policyState, setPolicyState] = useState(null);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -1092,113 +1202,140 @@ function KnowledgePanel({ formatTime }) {
 
   return (
     <div className="knowledge-panel">
-      {/* Current State Summary */}
+      {/* Knowledge Hero */}
       {policyState && (
-        <div className="knowledge-current">
-          <h3 className="followup-section-title">Estado actual del aprendizaje</h3>
-          <div className="followup-summary">
-            <div className="followup-card highlight">
-              <div className="followup-card-value">{policyState.total_samples}</div>
-              <div className="followup-card-label">Muestras aprendidas</div>
+        <div className="knowledge-hero">
+          <div className="knowledge-hero-grid">
+            <div className="knowledge-hero-card main">
+              <div className="knowledge-hero-icon">🧬</div>
+              <div className="knowledge-hero-value">{policyState.total_samples}</div>
+              <div className="knowledge-hero-label">Muestras aprendidas</div>
+              <div className="knowledge-hero-bar">
+                <div className="knowledge-hero-fill" style={{ width: `${Math.min(100, (policyState.total_samples / 200) * 100)}%` }} />
+              </div>
             </div>
-            <div className="followup-card">
-              <div className="followup-card-value">{policyState.total_buckets}</div>
-              <div className="followup-card-label">Contextos conocidos</div>
+            <div className="knowledge-hero-card">
+              <div className="knowledge-hero-icon">🔮</div>
+              <div className="knowledge-hero-value">{policyState.total_buckets}</div>
+              <div className="knowledge-hero-label">Contextos</div>
             </div>
-            <div className="followup-card">
-              <div className="followup-card-value">
+            <div className="knowledge-hero-card">
+              <div className="knowledge-hero-icon">🕐</div>
+              <div className="knowledge-hero-value kh-time">
                 {policyState.updated_at ? formatTime(policyState.updated_at) : 'N/A'}
               </div>
-              <div className="followup-card-label">Ultima actualizacion</div>
+              <div className="knowledge-hero-label">Ultima actualizacion</div>
             </div>
           </div>
+        </div>
+      )}
 
-          {/* Top Actions Performance */}
-          {policyState.top_actions?.length > 0 && (
-            <div className="followup-section">
-              <h3 className="followup-section-title">Rendimiento por accion (aprendido)</h3>
-              <div className="knowledge-actions-table">
-                <div className="knowledge-table-header">
-                  <span className="kt-col action">Accion</span>
-                  <span className="kt-col count">Muestras</span>
-                  <span className="kt-col reward">Reward Prom.</span>
-                  <span className="kt-col rate">Tasa Exito</span>
-                  <span className="kt-col bar">Confianza</span>
+      {/* Top Actions Performance */}
+      {policyState?.top_actions?.length > 0 && (
+        <div className="knowledge-section">
+          <div className="knowledge-section-header">
+            <h3 className="knowledge-section-title">Rendimiento por accion</h3>
+            <span className="knowledge-section-badge">Thompson Sampling</span>
+          </div>
+          <div className="knowledge-actions-table">
+            <div className="knowledge-table-header">
+              <span className="kt-col action">Accion</span>
+              <span className="kt-col count">Muestras</span>
+              <span className="kt-col reward">Reward</span>
+              <span className="kt-col rate">Exito</span>
+              <span className="kt-col bar">Confianza</span>
+            </div>
+            {policyState.top_actions.map(a => {
+              const actionCfg = ACTION_TYPE_CONFIG[a.action] || { icon: '\uD83D\uDCCB', label: a.action };
+              return (
+                <div key={a.action} className="knowledge-table-row">
+                  <span className="kt-col action">
+                    {actionCfg.icon} {actionCfg.label}
+                  </span>
+                  <span className="kt-col count">{a.count}</span>
+                  <span className={`kt-col reward ${a.avg_reward >= 0 ? 'positive' : 'negative'}`}>
+                    {a.avg_reward > 0 ? '+' : ''}{a.avg_reward.toFixed(3)}
+                  </span>
+                  <span className={`kt-col rate ${a.success_rate >= 55 ? 'good' : a.success_rate >= 45 ? '' : 'bad'}`}>
+                    {a.success_rate}%
+                  </span>
+                  <span className="kt-col bar">
+                    <div className="knowledge-confidence-bar">
+                      <div
+                        className={`knowledge-confidence-fill ${a.success_rate >= 55 ? 'good' : a.success_rate >= 45 ? 'mid' : 'low'}`}
+                        style={{ width: `${Math.min(100, a.success_rate)}%` }}
+                      />
+                    </div>
+                  </span>
                 </div>
-                {policyState.top_actions.map(a => {
-                  const actionCfg = ACTION_TYPE_CONFIG[a.action] || { icon: '\uD83D\uDCCB', label: a.action };
-                  return (
-                    <div key={a.action} className="knowledge-table-row">
-                      <span className="kt-col action">
-                        {actionCfg.icon} {actionCfg.label}
-                      </span>
-                      <span className="kt-col count">{a.count}</span>
-                      <span className={`kt-col reward ${a.avg_reward >= 0 ? 'positive' : 'negative'}`}>
-                        {a.avg_reward > 0 ? '+' : ''}{a.avg_reward.toFixed(3)}
-                      </span>
-                      <span className="kt-col rate">{a.success_rate}%</span>
-                      <span className="kt-col bar">
-                        <div className="knowledge-confidence-bar">
-                          <div
-                            className={`knowledge-confidence-fill ${a.success_rate >= 55 ? 'good' : a.success_rate >= 45 ? 'mid' : 'low'}`}
-                            style={{ width: `${Math.min(100, a.success_rate)}%` }}
-                          />
-                        </div>
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+              );
+            })}
+          </div>
+        </div>
+      )}
 
-          {/* Top Buckets (Contexts) */}
-          {policyState.buckets_summary?.length > 0 && (
-            <div className="followup-section">
-              <h3 className="followup-section-title">Contextos mas explorados</h3>
-              <div className="knowledge-buckets">
-                {policyState.buckets_summary.slice(0, 8).map((b, i) => {
-                  const parts = b.bucket.split('|');
-                  return (
-                    <div key={i} className="knowledge-bucket-card">
-                      <div className="knowledge-bucket-header">
-                        <span className="knowledge-bucket-samples">{b.total_samples} muestras</span>
-                        <span className={`knowledge-bucket-reward ${b.avg_reward >= 0 ? 'positive' : 'negative'}`}>
-                          {b.avg_reward > 0 ? '+' : ''}{b.avg_reward.toFixed(3)} reward
-                        </span>
-                      </div>
-                      <div className="knowledge-bucket-dims">
-                        {parts.map((p, j) => (
-                          <span key={j} className="knowledge-dim-tag">{p}</span>
-                        ))}
-                      </div>
-                      <div className="knowledge-bucket-actions">
-                        {b.actions.slice(0, 3).map((a, j) => (
-                          <span key={j} className="knowledge-bucket-action">
-                            {a.action}: {a.count}x ({(a.mean * 100).toFixed(0)}%)
+      {/* Top Buckets (Contexts) */}
+      {policyState?.buckets_summary?.length > 0 && (
+        <div className="knowledge-section">
+          <div className="knowledge-section-header">
+            <h3 className="knowledge-section-title">Contextos mas explorados</h3>
+            <span className="knowledge-section-count">{policyState.buckets_summary.length} contextos</span>
+          </div>
+          <div className="knowledge-buckets">
+            {policyState.buckets_summary.slice(0, 8).map((b, i) => {
+              const parts = b.bucket.split('|');
+              return (
+                <div key={i} className="knowledge-bucket-card" style={{ animationDelay: `${i * 0.04}s` }}>
+                  <div className="knowledge-bucket-header">
+                    <span className="knowledge-bucket-samples">{b.total_samples} muestras</span>
+                    <span className={`knowledge-bucket-reward ${b.avg_reward >= 0 ? 'positive' : 'negative'}`}>
+                      {b.avg_reward > 0 ? '+' : ''}{b.avg_reward.toFixed(3)}
+                    </span>
+                  </div>
+                  <div className="knowledge-bucket-dims">
+                    {parts.map((p, j) => (
+                      <span key={j} className="knowledge-dim-tag">{p}</span>
+                    ))}
+                  </div>
+                  <div className="knowledge-bucket-actions">
+                    {b.actions.slice(0, 3).map((a, j) => {
+                      const acfg = ACTION_TYPE_CONFIG[a.action] || { icon: '', label: a.action };
+                      return (
+                        <span key={j} className="knowledge-bucket-action">
+                          {acfg.icon} {acfg.label}: {a.count}x
+                          <span className={`bucket-action-rate ${a.mean >= 0.55 ? 'good' : a.mean < 0.45 ? 'bad' : ''}`}>
+                            ({(a.mean * 100).toFixed(0)}%)
                           </span>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
       {/* Daily Evolution */}
       {history.length > 0 && (
-        <div className="followup-section">
-          <h3 className="followup-section-title">Evolucion diaria del conocimiento</h3>
+        <div className="knowledge-section">
+          <div className="knowledge-section-header">
+            <h3 className="knowledge-section-title">Evolucion diaria</h3>
+            <button
+              className="knowledge-toggle-btn"
+              onClick={() => setHistoryExpanded(!historyExpanded)}
+            >
+              {historyExpanded ? 'Colapsar' : `Ver ${history.length} dias`}
+            </button>
+          </div>
           <div className="knowledge-history">
-            {history.slice().reverse().map((snap, i) => {
+            {(historyExpanded ? history.slice().reverse() : history.slice().reverse().slice(0, 5)).map((snap, i) => {
               const prevSnap = history[history.length - 1 - i - 1];
               const samplesDelta = prevSnap ? snap.total_samples - prevSnap.total_samples : snap.total_samples;
               const wrDelta = prevSnap ? snap.win_rate - prevSnap.win_rate : 0;
               return (
-                <div key={snap.date} className="knowledge-day-card">
+                <div key={snap.date} className="knowledge-day-card" style={{ animationDelay: `${i * 0.03}s` }}>
                   <div className="knowledge-day-header">
                     <span className="knowledge-day-date">{snap.date}</span>
                     <div className="knowledge-day-badges">
@@ -1238,10 +1375,9 @@ function KnowledgePanel({ formatTime }) {
                       <span className={`knowledge-day-metric-value ${snap.avg_reward >= 0 ? 'positive' : 'negative'}`}>
                         {snap.avg_reward > 0 ? '+' : ''}{snap.avg_reward.toFixed(3)}
                       </span>
-                      <span className="knowledge-day-metric-label">Reward Prom.</span>
+                      <span className="knowledge-day-metric-label">Reward</span>
                     </div>
                   </div>
-                  {/* Verdict bar */}
                   {snap.total_actions_measured > 0 && (
                     <div className="knowledge-day-verdicts">
                       <div className="followup-action-bar">
@@ -1279,22 +1415,30 @@ function KnowledgePanel({ formatTime }) {
 function ChatPanel({
   messages, chatInput, chatSending, chatLoading,
   chatEndRef, chatInputRef,
-  onInputChange, onSend, onClear, formatTime
+  onInputChange, onSend, onClear, formatTime,
+  attachedRec, onClearAttachment
 }) {
   return (
     <div className="chat-panel">
       {/* Chat Header */}
       <div className="chat-header">
         <div className="chat-header-left">
-          <span className="chat-brain-icon">🧠</span>
+          <div className="chat-brain-orb">
+            <div className="chat-orb-ring" />
+            <span className="chat-brain-icon">🧠</span>
+          </div>
           <div>
             <div className="chat-header-title">Brain Analyst</div>
-            <div className="chat-header-sub">Pregunta sobre tus campañas</div>
+            <div className="chat-header-sub">
+              {chatSending ? (
+                <span className="chat-status-active">Analizando...</span>
+              ) : 'Pregunta sobre tus campanas'}
+            </div>
           </div>
         </div>
         {messages.length > 0 && (
-          <button className="btn-secondary btn-small" onClick={onClear}>
-            Limpiar chat
+          <button className="btn-clear-chat" onClick={onClear}>
+            Limpiar
           </button>
         )}
       </div>
@@ -1305,39 +1449,58 @@ function ChatPanel({
           <div className="chat-loading">Cargando historial...</div>
         ) : messages.length === 0 ? (
           <div className="chat-welcome">
-            <div className="chat-welcome-icon">🧠</div>
+            <div className="chat-welcome-orb">
+              <div className="chat-welcome-ring" />
+              <span>🧠</span>
+            </div>
             <h3>Brain Analyst</h3>
-            <p>Soy el analista inteligente de tus campañas de Meta Ads. Conozco cada ad set, sus métricas, tendencias y rendimiento.</p>
+            <p>Soy el analista inteligente de tus campanas de Meta Ads. Conozco cada ad set, sus metricas, tendencias y rendimiento.</p>
             <div className="chat-suggestions">
-              <button className="chat-suggestion" onClick={() => onInputChange('¿Cuál es el ad set con mejor ROAS?')}>
-                ¿Mejor ROAS?
+              <button className="chat-suggestion" onClick={() => onInputChange('¿Cual es el ad set con mejor ROAS?')}>
+                Mejor ROAS
               </button>
-              <button className="chat-suggestion" onClick={() => onInputChange('¿Qué ad sets debería considerar pausar?')}>
-                ¿Cuáles pausar?
+              <button className="chat-suggestion" onClick={() => onInputChange('¿Que ad sets deberia considerar pausar?')}>
+                Ad sets a pausar
               </button>
-              <button className="chat-suggestion" onClick={() => onInputChange('Dame un resumen del estado de las campañas')}>
+              <button className="chat-suggestion" onClick={() => onInputChange('Dame un resumen del estado de las campanas')}>
                 Resumen general
               </button>
-              <button className="chat-suggestion" onClick={() => onInputChange('¿Hay alguna anomalía o problema?')}>
-                ¿Anomalías?
+              <button className="chat-suggestion" onClick={() => onInputChange('¿Hay alguna anomalia o problema?')}>
+                Anomalias
+              </button>
+              <button className="chat-suggestion" onClick={() => onInputChange('¿Cuales son las tendencias de esta semana?')}>
+                Tendencias
+              </button>
+              <button className="chat-suggestion" onClick={() => onInputChange('¿Que oportunidades de escalado hay?')}>
+                Oportunidades
               </button>
             </div>
           </div>
         ) : (
           messages.map((msg, i) => (
             <div key={i} className={`chat-message ${msg.role}`}>
-              {msg.role === 'assistant' && <span className="chat-msg-avatar">🧠</span>}
+              {msg.role === 'assistant' && (
+                <div className="chat-msg-avatar-wrap">
+                  <span className="chat-msg-avatar">🧠</span>
+                </div>
+              )}
               <div className="chat-msg-content">
+                {/* Show attached rec context if this is a user message with rec prefix */}
+                {msg.role === 'user' && msg.content.startsWith('[Rec:') && (
+                  <div className="chat-msg-rec-context">
+                    Discutiendo recomendacion
+                  </div>
+                )}
                 <div className={`chat-msg-text ${msg.role === 'assistant' ? 'markdown-body' : ''}`}>
                   {msg.role === 'assistant' ? (
                     <ReactMarkdown>{msg.content}</ReactMarkdown>
                   ) : (
-                    msg.content
+                    msg.content.startsWith('[Rec:') ? msg.content.replace(/^\[Rec:.*?\]\s*/, '') : msg.content
                   )}
                 </div>
                 <div className="chat-msg-meta">
                   <span>{formatTime(msg.created_at)}</span>
-                  {msg.tokens_used > 0 && <span>{msg.tokens_used} tokens</span>}
+                  {msg.tokens_used > 0 && <span className="chat-token-count">{msg.tokens_used} tokens</span>}
                 </div>
               </div>
             </div>
@@ -1345,7 +1508,9 @@ function ChatPanel({
         )}
         {chatSending && (
           <div className="chat-message assistant">
-            <span className="chat-msg-avatar">🧠</span>
+            <div className="chat-msg-avatar-wrap">
+              <span className="chat-msg-avatar">🧠</span>
+            </div>
             <div className="chat-msg-content">
               <div className="chat-msg-text typing">
                 <span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" />
@@ -1356,6 +1521,20 @@ function ChatPanel({
         <div ref={chatEndRef} />
       </div>
 
+      {/* Attached recommendation chip */}
+      {attachedRec && (
+        <div className="chat-attached-rec">
+          <div className="chat-attached-inner">
+            <span className="chat-attached-icon">🎯</span>
+            <div className="chat-attached-info">
+              <span className="chat-attached-label">Discutiendo:</span>
+              <span className="chat-attached-title">{attachedRec.title}</span>
+            </div>
+            <button className="chat-attached-close" onClick={onClearAttachment}>&times;</button>
+          </div>
+        </div>
+      )}
+
       {/* Input */}
       <form className="chat-input-form" onSubmit={onSend}>
         <input
@@ -1364,12 +1543,18 @@ function ChatPanel({
           className="chat-input"
           value={chatInput}
           onChange={(e) => onInputChange(e.target.value)}
-          placeholder="Pregunta sobre tus campañas..."
+          placeholder={attachedRec ? `Pregunta sobre: ${attachedRec.title}` : 'Pregunta sobre tus campanas...'}
           disabled={chatSending}
           autoFocus
         />
         <button type="submit" className="btn-send" disabled={chatSending || !chatInput.trim()}>
-          {chatSending ? '...' : '→'}
+          {chatSending ? (
+            <span className="send-loading" />
+          ) : (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
+            </svg>
+          )}
         </button>
       </form>
     </div>
