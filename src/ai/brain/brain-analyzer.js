@@ -9,6 +9,7 @@ const BrainInsight = require('../../db/models/BrainInsight');
 const BrainChat = require('../../db/models/BrainChat');
 const BrainRecommendation = require('../../db/models/BrainRecommendation');
 const BrainCycleMemory = require('../../db/models/BrainCycleMemory');
+const DiagnosticEngine = require('./diagnostic-engine');
 const logger = require('../../utils/logger');
 
 /**
@@ -28,6 +29,7 @@ const logger = require('../../utils/logger');
 class BrainAnalyzer {
   constructor() {
     this.anthropic = new Anthropic({ apiKey: config.claude.apiKey });
+    this.diagnosticEngine = new DiagnosticEngine();
 
     // Umbrales para considerar un cambio "significativo"
     this.thresholds = {
@@ -70,10 +72,27 @@ class BrainAnalyzer {
       // 3. Fase matemática: detectar cambios significativos
       const findings = this._detectChanges(adsetSnapshots, memoryMap, accountOverview);
 
+      // 3.5. Diagnostic engine: pre-compute structured diagnostic signals
+      let diagnostics = {};
+      try {
+        const adSnapshots = await getLatestSnapshots('ad');
+        diagnostics = this.diagnosticEngine.diagnoseAll(adsetSnapshots, adSnapshots, memoryMap, accountOverview);
+        const diagnosticFindings = this._extractDiagnosticFindings(diagnostics, memoryMap);
+        // Merge diagnostic findings (deduped by entity)
+        const existingEntityIds = new Set(findings.map(f => f.entity?.entity_id));
+        for (const df of diagnosticFindings) {
+          if (!existingEntityIds.has(df.entity.entity_id)) {
+            findings.push(df);
+          }
+        }
+      } catch (diagErr) {
+        logger.warn(`[BRAIN-ANALYZER] Diagnostic engine error (non-fatal): ${diagErr.message}`);
+      }
+
       // 4. Fase IA: si hay hallazgos, generar insights de calidad
       let insightsCreated = 0;
       if (findings.length > 0) {
-        insightsCreated = await this._generateInsights(findings, adsetSnapshots, accountOverview, recentActions);
+        insightsCreated = await this._generateInsights(findings, adsetSnapshots, accountOverview, recentActions, diagnostics);
       }
 
       // 5. Actualizar memoria con estado actual
@@ -248,9 +267,71 @@ class BrainAnalyzer {
   }
 
   /**
+   * Extract findings from diagnostic engine results.
+   * These catch things the threshold-based detection misses:
+   * funnel leaks, creative fatigue patterns, audience saturation.
+   */
+  _extractDiagnosticFindings(diagnostics, memoryMap) {
+    const findings = [];
+
+    for (const [entityId, diag] of Object.entries(diagnostics)) {
+      // Critical funnel leaks
+      if (diag.funnel.primary_leak) {
+        findings.push({
+          type: 'diagnostic',
+          severity: 'high',
+          entity: { entity_type: 'adset', entity_id: entityId, entity_name: diag.entity_name },
+          data: {
+            diagnostic_label: diag.funnel.primary_leak,
+            diagnostic_type: 'funnel_leak',
+            message: diag.funnel.leaks[0]?.detail || `Funnel leak: ${diag.funnel.primary_leak}`,
+            funnel_rates: diag.funnel.rates,
+            suggested_action: diag.overall.primary_action
+          }
+        });
+      }
+
+      // Severe creative fatigue
+      if (diag.fatigue.level === 'severe') {
+        findings.push({
+          type: 'diagnostic',
+          severity: 'high',
+          entity: { entity_type: 'adset', entity_id: entityId, entity_name: diag.entity_name },
+          data: {
+            diagnostic_label: 'CREATIVE_FATIGUE_SEVERE',
+            diagnostic_type: 'creative_fatigue',
+            message: `Fatiga creativa severa (score ${diag.fatigue.score}/100): ${diag.fatigue.signals.map(s => s.detail).join('. ')}`,
+            fatigue_score: diag.fatigue.score,
+            active_ads: diag.active_ads,
+            suggested_action: diag.overall.primary_action
+          }
+        });
+      }
+
+      // Audience saturation
+      if (diag.saturation.level === 'saturated') {
+        findings.push({
+          type: 'diagnostic',
+          severity: 'high',
+          entity: { entity_type: 'adset', entity_id: entityId, entity_name: diag.entity_name },
+          data: {
+            diagnostic_label: 'AUDIENCE_SATURATED',
+            diagnostic_type: 'audience_saturation',
+            message: `Audiencia saturada (score ${diag.saturation.score}/100): ${diag.saturation.signals.map(s => s.detail).join('. ')}`,
+            saturation_score: diag.saturation.score,
+            suggested_action: diag.overall.primary_action
+          }
+        });
+      }
+    }
+
+    return findings;
+  }
+
+  /**
    * Fase 2: IA interpreta los hallazgos y genera insights de calidad.
    */
-  async _generateInsights(findings, snapshots, accountOverview, recentActions) {
+  async _generateInsights(findings, snapshots, accountOverview, recentActions, diagnostics = {}) {
     // Filtrar solo hallazgos que merecen insight (no new_entity/info)
     const significant = findings.filter(f => f.type !== 'new_entity');
     if (significant.length === 0) return 0;
@@ -292,8 +373,8 @@ class BrainAnalyzer {
       }
     }
 
-    // Construir prompt para Claude
-    const prompt = this._buildInsightPrompt(filtered, snapshots, accountOverview, recentActions, previousMap);
+    // Construir prompt para Claude (with diagnostic context)
+    const prompt = this._buildInsightPrompt(filtered, snapshots, accountOverview, recentActions, previousMap, diagnostics);
 
     try {
       const response = await this.anthropic.messages.create({
@@ -369,6 +450,12 @@ REGLAS CRÍTICAS:
 4. Usa números específicos, no generalidades.
 5. Si algo es urgente, dilo claramente. Si no, no alarmes innecesariamente.
 6. Cada insight debe poder leerse independientemente pero formar parte de una narrativa coherente.
+7. DIAGNOSTICA LA CAUSA RAÍZ: Cuando un ad set tiene mal ROAS, NO solo digas "ROAS bajo". Explica POR QUÉ:
+   - Si hay datos de funnel (ATC→IC→Purchase), analiza dónde se pierde la conversión
+   - Si hay CTR alto pero 0 conversiones → probable problema de landing page, no del ad
+   - Si hay frequency alta con CTR cayendo → audiencia saturada, no mal ad
+   - Si hay CPA subiendo con CTR estable → posible competencia CPM, no fatiga creativa
+8. USA LOS DATOS DE DIAGNÓSTICO PRE-COMPUTADOS cuando estén disponibles. No ignores las etiquetas diagnósticas.
 
 FORMATO DE RESPUESTA:
 Responde con un JSON array. Cada elemento:
@@ -387,7 +474,7 @@ IMPORTANTE: Responde SOLO con el JSON array, sin texto adicional ni markdown.`;
   /**
    * Construye el prompt con los hallazgos y contexto.
    */
-  _buildInsightPrompt(findings, snapshots, accountOverview, recentActions, previousMap) {
+  _buildInsightPrompt(findings, snapshots, accountOverview, recentActions, previousMap, diagnostics = {}) {
     const snapshotMap = {};
     for (const s of snapshots) snapshotMap[s.entity_id] = s;
 
@@ -397,6 +484,7 @@ IMPORTANTE: Responde SOLO con el JSON array, sin texto adicional ni markdown.`;
       const snap = snapshotMap[f.entity.entity_id];
       const m7d = snap?.metrics?.last_7d || {};
       const m3d = snap?.metrics?.last_3d || {};
+      const m14d = snap?.metrics?.last_14d || {};
       const mToday = snap?.metrics?.today || {};
 
       prompt += `### ${f.entity.entity_name} (${f.entity.entity_id})\n`;
@@ -404,8 +492,30 @@ IMPORTANTE: Responde SOLO con el JSON array, sin texto adicional ni markdown.`;
       prompt += `Datos: ${JSON.stringify(f.data)}\n`;
       prompt += `Métricas actuales 7d: ROAS=${m7d.roas?.toFixed(2)||'N/A'}, Spend=$${m7d.spend?.toFixed(0)||0}, CPA=$${m7d.cpa?.toFixed(2)||'N/A'}, CTR=${m7d.ctr?.toFixed(2)||'N/A'}%, Freq=${m7d.frequency?.toFixed(1)||'N/A'}, Purchases=${m7d.purchases||0}\n`;
       prompt += `Métricas 3d: ROAS=${m3d.roas?.toFixed(2)||'N/A'}, Spend=$${m3d.spend?.toFixed(0)||0}\n`;
+      prompt += `Métricas 14d: ROAS=${m14d.roas?.toFixed(2)||'N/A'}, CPA=$${m14d.cpa?.toFixed(2)||'N/A'}\n`;
       prompt += `Hoy: ROAS=${mToday.roas?.toFixed(2)||'N/A'}, Spend=$${mToday.spend?.toFixed(0)||0}\n`;
       prompt += `Budget diario: $${snap?.daily_budget || 0}\n`;
+
+      // Funnel data
+      if ((m7d.add_to_cart || 0) > 0 || (m7d.clicks || 0) > 20) {
+        const clicks = m7d.clicks || 0;
+        const atc = m7d.add_to_cart || 0;
+        const ic = m7d.initiate_checkout || 0;
+        const purchases = m7d.purchases || 0;
+        prompt += `Funnel 7d: ${clicks} clicks → ${atc} ATC → ${ic} IC → ${purchases} compras`;
+        if (clicks > 0) prompt += ` (Click→Compra: ${((purchases / clicks) * 100).toFixed(1)}%)`;
+        if (atc > 0) prompt += ` (ATC→Compra: ${((purchases / atc) * 100).toFixed(0)}%)`;
+        prompt += '\n';
+      }
+
+      // Diagnostic context for this entity
+      const diag = diagnostics[f.entity.entity_id];
+      if (diag) {
+        prompt += `DIAGNÓSTICO: [${diag.overall.labels.join(' + ')}] — ${diag.overall.summary}\n`;
+        if (diag.fatigue.score > 10) prompt += `  Fatiga creativa: ${diag.fatigue.level} (${diag.fatigue.score}/100) | ${diag.active_ads} ads activos\n`;
+        if (diag.saturation.score > 10) prompt += `  Saturación audiencia: ${diag.saturation.level} (${diag.saturation.score}/100)\n`;
+        prompt += `  Acción sugerida: ${diag.overall.primary_action}\n`;
+      }
 
       const prev = previousMap[f.entity.entity_id];
       if (prev) {
@@ -694,18 +804,31 @@ Responde con un JSON object:
    */
   async chat(userMessage) {
     // 1. Cargar datos actuales para contexto
-    const [adsetSnapshots, accountOverview, recentInsights, chatHistory, activeRecs, recHistory, cycleMemories] = await Promise.all([
+    const [adsetSnapshots, accountOverview, recentInsights, chatHistory, activeRecs, recHistory, cycleMemories, adSnapshots, memories] = await Promise.all([
       getLatestSnapshots('adset'),
       getAccountOverview(),
       BrainInsight.find({}).sort({ created_at: -1 }).limit(10).lean(),
       BrainChat.find({}).sort({ created_at: -1 }).limit(10).lean(),
       BrainRecommendation.find({ status: { $in: ['pending', 'approved'] } }).sort({ created_at: -1 }).limit(10).lean(),
       BrainRecommendation.find({ status: { $in: ['approved', 'rejected'] } }).sort({ decided_at: -1 }).limit(20).lean(),
-      BrainCycleMemory.find({}).sort({ created_at: -1 }).limit(3).lean().catch(() => [])
+      BrainCycleMemory.find({}).sort({ created_at: -1 }).limit(3).lean().catch(() => []),
+      getLatestSnapshots('ad').catch(() => []),
+      BrainMemory.find({}).lean().catch(() => [])
     ]);
 
     // 2. Guardar mensaje del usuario
     await BrainChat.create({ role: 'user', content: userMessage });
+
+    // 2.5. Run diagnostic engine for chat context
+    let diagnosticSummary = '';
+    try {
+      const memoryMap = {};
+      for (const m of memories) memoryMap[m.entity_id] = m;
+      const diagnostics = this.diagnosticEngine.diagnoseAll(adsetSnapshots, adSnapshots, memoryMap, accountOverview);
+      diagnosticSummary = this.diagnosticEngine.formatForPrompt(diagnostics);
+    } catch (diagErr) {
+      // Non-fatal — chat still works without diagnostics
+    }
 
     // 3. Construir contexto
     const context = this._buildChatContext(adsetSnapshots, accountOverview, recentInsights, activeRecs, recHistory, cycleMemories);
@@ -736,6 +859,9 @@ CAPACIDADES DE DATOS:
 - Budget mensual y pacing
 - Historial de recomendaciones aprobadas/rechazadas por el usuario y su impacto medido
 - KPIs objetivo configurados
+- Diagnóstico pre-computado por entidad (fatiga creativa, saturación de audiencia, funnel leaks)
+
+${diagnosticSummary ? `DIAGNÓSTICOS PRE-COMPUTADOS:\n${diagnosticSummary}` : ''}
 
 REGLAS:
 1. Responde en ESPAÑOL, de forma profesional pero accesible.
@@ -744,7 +870,9 @@ REGLAS:
 4. Puedes sugerir acciones pero aclara que el Brain las ejecutaría si se aprueban.
 5. Sé conciso — responde en 2-4 párrafos máximo. Usa bullet points para datos.
 6. Cuando analices tendencias, usa datos de 14d/30d para contexto histórico, no solo 7d.
-7. Menciona el funnel (ATC→IC→Purchase) cuando sea relevante para diagnosticar problemas de conversión.`
+7. Menciona el funnel (ATC→IC→Purchase) cuando sea relevante para diagnosticar problemas de conversión.
+8. Cuando diagnostiques problemas, explica la CAUSA RAÍZ: ¿Es fatiga creativa? ¿Saturación de audiencia? ¿Problema de landing page? No solo digas "ROAS bajo".
+9. Usa los diagnósticos pre-computados cuando estén disponibles para dar análisis más profundos.`
     });
 
     const assistantMessage = response.content[0]?.text || '';
@@ -798,10 +926,19 @@ REGLAS:
       const memoryMap = {};
       for (const m of memories) memoryMap[m.entity_id] = m;
 
+      // 2.5. Compute diagnostics for each ad set
+      let diagnostics = {};
+      try {
+        const adSnapshots = await getLatestSnapshots('ad');
+        diagnostics = this.diagnosticEngine.diagnoseAll(adsetSnapshots, adSnapshots, memoryMap, accountOverview);
+      } catch (diagErr) {
+        logger.warn(`[BRAIN-RECS] Diagnostic engine error (non-fatal): ${diagErr.message}`);
+      }
+
       // 3. Construir prompt con datos 7d estables
       const prompt = this._buildRecommendationPrompt(
         adsetSnapshots, accountOverview, recentActions,
-        memoryMap, recentInsights, previousRecs, decidedRecs
+        memoryMap, recentInsights, previousRecs, decidedRecs, diagnostics
       );
 
       // 4. Llamar a Claude para recomendaciones
@@ -882,6 +1019,11 @@ REGLAS CRÍTICAS:
 5. Si una recomendación anterior fue expirada y la situación no cambió, puedes repetirla (el usuario puede no haberla visto).
 6. Si la situación cambió respecto a recomendaciones anteriores, menciónalo: "Actualización: antes recomendé X pero ahora..."
 7. Si un ad set está funcionando bien, NO recomiendes cambios. "Si funciona, no lo toques."
+8. DIAGNÓSTICO CAUSAL: En el "body" de cada recomendación, SIEMPRE explica la CAUSA RAÍZ:
+   - Si ROAS es bajo, ¿es por funnel leak, fatiga creativa, saturación de audiencia, o estacionalidad?
+   - Si CTR es alto pero 0 conversiones → problema de landing page, NO del ad
+   - Nunca digas solo "ROAS bajo, pausar". Diagnostica POR QUÉ y actúa sobre la causa.
+9. USA LOS DIAGNÓSTICOS: Cuando hay datos de diagnóstico pre-computados, úsalos para informar tu decisión.
 
 FORMATO DE RESPUESTA — JSON array:
 [
@@ -915,7 +1057,7 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
   /**
    * Construye prompt para recomendaciones con datos estables 7d.
    */
-  _buildRecommendationPrompt(snapshots, accountOverview, recentActions, memoryMap, recentInsights, previousRecs, decidedRecs = []) {
+  _buildRecommendationPrompt(snapshots, accountOverview, recentActions, memoryMap, recentInsights, previousRecs, decidedRecs = [], diagnostics = {}) {
     let prompt = `## DATOS DE CUENTA (7 DÍAS)\n`;
     prompt += `ROAS 7d: ${accountOverview.roas_7d?.toFixed(2)}x | Target: ${kpiTargets.roas_target}x | Mínimo: ${kpiTargets.roas_minimum}x\n`;
     prompt += `ROAS 3d: ${accountOverview.roas_3d?.toFixed(2)}x\n`;
@@ -941,8 +1083,18 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
       prompt += `  3d: ROAS=${(m3d.roas||0).toFixed(2)}x, Spend=$${(m3d.spend||0).toFixed(0)}\n`;
       prompt += `  14d: ROAS=${(m14d.roas||0).toFixed(2)}x, CPA=$${(m14d.cpa||0).toFixed(2)}, Purchases=${m14d.purchases||0}\n`;
       prompt += `  30d: ROAS=${(m30d.roas||0).toFixed(2)}x, Spend=$${(m30d.spend||0).toFixed(0)}, Purchases=${m30d.purchases||0}\n`;
-      if ((m7d.add_to_cart || 0) > 0) {
-        prompt += `  Funnel 7d: ATC=${m7d.add_to_cart} → IC=${m7d.initiate_checkout||0} → Purchase=${m7d.purchases||0}\n`;
+      // Funnel data with conversion rates
+      if ((m7d.add_to_cart || 0) > 0 || (m7d.clicks || 0) > 20) {
+        const clicks = m7d.clicks || 0;
+        const atc = m7d.add_to_cart || 0;
+        const ic = m7d.initiate_checkout || 0;
+        const purch = m7d.purchases || 0;
+        prompt += `  Funnel 7d: ${clicks} clicks → ${atc} ATC → ${ic} IC → ${purch} Purchase`;
+        if (clicks > 0 && atc > 0) prompt += ` | Click→ATC: ${((atc/clicks)*100).toFixed(1)}%`;
+        if (atc > 0 && purch > 0) prompt += ` | ATC→Purchase: ${((purch/atc)*100).toFixed(0)}%`;
+        if (clicks > 0 && purch > 0) prompt += ` | Click→Purchase: ${((purch/clicks)*100).toFixed(1)}%`;
+        if (clicks > 50 && purch === 0 && (m7d.ctr || 0) > 0.8) prompt += ` | ⚠ HIGH CTR + 0 CONVERSIONS = probable problema de landing page`;
+        prompt += '\n';
       }
       prompt += `  Budget: $${s.daily_budget||0}/día\n`;
       if (trend.roas_direction && trend.roas_direction !== 'unknown') {
@@ -950,6 +1102,15 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
         if (trend.consecutive_decline_days > 0) prompt += ` (${trend.consecutive_decline_days} ciclos declinando)`;
         if (trend.consecutive_improve_days > 0) prompt += ` (${trend.consecutive_improve_days} ciclos mejorando)`;
         prompt += `\n`;
+      }
+      // Diagnostic label for this entity
+      const diag = diagnostics[s.entity_id];
+      if (diag) {
+        prompt += `  DIAGNÓSTICO: [${diag.overall.labels.join(' + ')}] → ${diag.overall.primary_action}`;
+        if (diag.fatigue.score > 20) prompt += ` | Fatiga: ${diag.fatigue.level}(${diag.fatigue.score}/100)`;
+        if (diag.saturation.score > 20) prompt += ` | Saturación: ${diag.saturation.level}(${diag.saturation.score}/100)`;
+        if (diag.funnel.primary_leak) prompt += ` | Funnel: ${diag.funnel.primary_leak}`;
+        prompt += '\n';
       }
       prompt += `\n`;
     }

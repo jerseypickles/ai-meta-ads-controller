@@ -24,6 +24,9 @@ CAPACIDADES (antes eran 4 agentes separados, ahora eres uno solo):
 CONOCIMIENTO BASE DE META ADS:
 ${deepResearchPriors.principles.map((p, i) => `${i + 1}. ${p}`).join('\n')}
 
+FRAMEWORK DE DIAGNOSTICO — CUANDO ROAS ES BAJO, DIAGNOSTICA ANTES DE ACTUAR:
+${_buildDiagnosticFrameworkText()}
+
 KPIs OBJETIVO:
 - ROAS target: ${kpiTargets.roas_target}x (minimo: ${kpiTargets.roas_minimum}x, excelente: ${kpiTargets.roas_excellent}x)
 - CPA target: $${kpiTargets.cpa_target} (maximo: $${kpiTargets.cpa_maximum})
@@ -150,7 +153,8 @@ function buildUserPrompt({
   learnerSummary,
   aiManagerFeedback,
   recommendationHistory,
-  cycleMemories
+  cycleMemories,
+  diagnosticContext
 }) {
   const now = moment().tz(TIMEZONE);
   const hourET = now.hours();
@@ -518,6 +522,11 @@ Budget ceiling diario: $${budgetCeiling} | Pacing mensual estimado: ${monthlyPac
     prompt += `INSTRUCCION: Aprende de las preferencias del usuario. Repite patrones de acciones aprobadas. Evita recomendar acciones que el usuario ha rechazado consistentemente.\n`;
   }
 
+  // === DIAGNOSTIC CONTEXT (pre-computed by math engine) ===
+  if (diagnosticContext) {
+    prompt += `\n${diagnosticContext}\n`;
+  }
+
   prompt += `\n═══ GENERA TUS RECOMENDACIONES AHORA ═══
 Analiza TODA la informacion anterior de forma holistica. Recuerda:
 - Una sola recomendacion por entidad
@@ -527,9 +536,45 @@ Analiza TODA la informacion anterior de forma holistica. Recuerda:
 - Coordina: si subes budget a un ad set, asegurate que sus creativos no estan fatigados
 - CRITICO: Si un ad set tiene pocos creativos (< 3 ads activos) y metricas en declive, recomienda create_ad PRIMERO — NO pausar
 - Pausar un ad set es ULTIMO RECURSO. Prioriza: create_ad > update_ad_status > scale_down > pause
+- USA EL DIAGNOSTICO PRE-ANALISIS: Cada ad set tiene un diagnostico computado matematicamente. Si dice FUNNEL_LEAK, no pausar — investigar funnel. Si dice CREATIVE_FATIGUE, refrescar creativos primero. Si dice AUDIENCE_SATURATED, expandir o reducir budget.
+- DIAGNOSTICA EL "POR QUE" en tu reasoning: En cada recomendacion, explica la CAUSA RAIZ del problema (fatiga creativa? saturacion? funnel? estacionalidad?) y por que tu accion ataca esa causa.
 Responde SOLO con JSON valido.`;
 
   return prompt;
+}
+
+/**
+ * Builds condensed diagnostic framework text for the system prompt.
+ * This teaches Claude HOW to diagnose, not just what to do.
+ */
+function _buildDiagnosticFrameworkText() {
+  const diag = deepResearchPriors.diagnostics || {};
+  let text = '';
+
+  text += `A. HIGH CTR + LOW CONVERSIONS → Probable problema de LANDING PAGE, no del ad:
+   Causas: ${(diag.good_ctr_low_conversion?.likely_causes || []).slice(0, 3).join('; ')}
+   Acción: NO pausar el ad. Investigar landing page, checkout, y tracking.\n`;
+
+  text += `B. HIGH CPM + LOW CTR → Problema CREATIVO:
+   Causas: ${(diag.high_cpm_low_ctr?.likely_causes || []).slice(0, 3).join('; ')}
+   Acción: Refrescar creativos con hook más fuerte, nuevos ángulos.\n`;
+
+  text += `C. ROAS DECLINING (no es solo "pausar"):
+   Causas: ${(diag.roas_declining?.likely_causes || []).slice(0, 4).join('; ')}
+   Acción: Primero diagnosticar la causa (fatiga? saturación? estacionalidad?) antes de actuar.\n`;
+
+  text += `D. HIGH FREQUENCY + LOW ROAS → AUDIENCIA SATURADA:
+   Causas: ${(diag.high_frequency_low_roas?.likely_causes || []).slice(0, 3).join('; ')}
+   Acción: Refrescar creativos urgente, expandir audiencia, o horizontal scaling.\n`;
+
+  text += `E. UNDERSPENDING → META NO PUEDE GASTAR:
+   Causas: ${(diag.underspending?.likely_causes || []).slice(0, 3).join('; ')}
+   Acción: Ampliar audiencia, mejorar calidad creativa, o ajustar bid strategy.\n`;
+
+  text += `\nREGLA DE ORO: Nunca recomiendes "pause" como primera reacción a ROAS bajo.
+Secuencia de diagnóstico: ¿Es funnel? → ¿Es fatiga creativa? → ¿Es saturación de audiencia? → ¿Es estacionalidad/CPM? → Solo entonces, considerar pause.`;
+
+  return text;
 }
 
 module.exports = { getSystemPrompt, buildUserPrompt };

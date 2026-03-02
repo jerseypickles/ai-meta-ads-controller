@@ -9,6 +9,7 @@ const { buildFeatureSet } = require('../unified/feature-builder');
 const AdaptiveScorer = require('../unified/adaptive-scorer');
 const PolicyLearner = require('../unified/policy-learner');
 const ImpactContextBuilder = require('./impact-context-builder');
+const DiagnosticEngine = require('./diagnostic-engine');
 const { getSystemPrompt, buildUserPrompt } = require('./brain-prompts');
 const AgentReport = require('../../db/models/AgentReport');
 const ActionLog = require('../../db/models/ActionLog');
@@ -16,6 +17,7 @@ const CreativeAsset = require('../../db/models/CreativeAsset');
 const AICreation = require('../../db/models/AICreation');
 const BrainRecommendation = require('../../db/models/BrainRecommendation');
 const BrainCycleMemory = require('../../db/models/BrainCycleMemory');
+const BrainMemory = require('../../db/models/BrainMemory');
 const StrategicDirective = require('../../db/models/StrategicDirective');
 const logger = require('../../utils/logger');
 
@@ -37,6 +39,7 @@ class UnifiedBrain {
     });
     this.learner = new PolicyLearner();
     this.impactBuilder = new ImpactContextBuilder();
+    this.diagnosticEngine = new DiagnosticEngine();
   }
 
   /**
@@ -69,6 +72,29 @@ class UnifiedBrain {
       const learnerState = await this.learner.loadState();
       const learnerSummary = this._buildLearnerSummary(learnerState, learningResult);
 
+      // 5.5. Run diagnostic engine for structured pre-analysis
+      let diagnosticContext = '';
+      try {
+        const memoryMap = {};
+        if (sharedData.memories) {
+          for (const m of sharedData.memories) memoryMap[m.entity_id] = m;
+        }
+        const diagnostics = this.diagnosticEngine.diagnoseAll(
+          sharedData.adSetSnapshots || [],
+          sharedData.adSnapshots || [],
+          memoryMap,
+          sharedData.accountOverview || {}
+        );
+        diagnosticContext = this.diagnosticEngine.formatForPrompt(diagnostics);
+        const diagCount = Object.keys(diagnostics).length;
+        const urgentCount = Object.values(diagnostics).filter(d => d.overall.urgency === 'high').length;
+        if (diagCount > 0) {
+          logger.info(`[BRAIN] Diagnósticos: ${diagCount} entidades analizadas, ${urgentCount} urgentes`);
+        }
+      } catch (diagErr) {
+        logger.warn(`[BRAIN] Diagnostic engine error (non-fatal): ${diagErr.message}`);
+      }
+
       // 6. Llamar a Claude con todo el contexto
       const systemPrompt = getSystemPrompt();
       const userPrompt = buildUserPrompt({
@@ -85,7 +111,8 @@ class UnifiedBrain {
         learnerSummary,
         aiManagerFeedback: sharedData.aiManagerFeedback,
         recommendationHistory: sharedData.recommendationHistory,
-        cycleMemories: sharedData.cycleMemories
+        cycleMemories: sharedData.cycleMemories,
+        diagnosticContext
       });
 
       logger.info(`[BRAIN] Prompt enviado a Claude: ${userPrompt.length} chars`);
@@ -340,6 +367,14 @@ class UnifiedBrain {
       logger.warn(`[BRAIN] Error cargando cycle memories: ${e.message}`);
     }
 
+    // Load BrainMemory for diagnostic engine (entity trends & remembered metrics)
+    let memories = [];
+    try {
+      memories = await BrainMemory.find({}).lean();
+    } catch (e) {
+      logger.warn(`[BRAIN] Error cargando BrainMemory: ${e.message}`);
+    }
+
     logger.info(`[BRAIN] Datos cargados: ${adSetSnapshots.length} ad sets, ${adSnapshots.length} ads, ${campaignSnapshots.length} campanas, ${activeCooldowns.length} cooldowns, ${recommendationHistory.length} rec history, ${cycleMemories.length} cycle memories`);
 
     return {
@@ -356,7 +391,8 @@ class UnifiedBrain {
       strategicDirectives,
       aiManagerFeedback,
       recommendationHistory,
-      cycleMemories
+      cycleMemories,
+      memories
     };
   }
 

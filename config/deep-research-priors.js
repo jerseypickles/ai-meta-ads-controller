@@ -1,6 +1,6 @@
 module.exports = {
-  version: 'meta_delivery_priors_v2026_02',
-  updated_at: '2026-02-16',
+  version: 'meta_delivery_priors_v2026_03',
+  updated_at: '2026-03-02',
 
   // ═══════════════════════════════════════════════════════════════
   // PRINCIPIOS FUNDAMENTALES
@@ -145,7 +145,11 @@ module.exports = {
       'Si el ad set esta en learning limited, considerar consolidar con otros',
       'Budget minimo recomendado: CPA objetivo x 50 / 7 = budget diario minimo',
       'Avoid making more than 1 significant edit per ad set per week',
-      'Para ads de Purchase, budget diario minimo de ~7x CPA target'
+      'Para ads de Purchase, budget diario minimo de ~7x CPA target',
+      '2025 update: Wait 7+ days before making ANY changes to a new ad set',
+      '2025 update: Adding new ads to an ad set may NOT trigger learning reset (Meta updated this)',
+      '2025 update: Batch all edits into a single change rather than multiple small changes over days',
+      '2025 update: Scale budget gradually (max 20% every 2-3 days) to avoid resetting learning'
     ],
     learning_limited: {
       description: 'El ad set no logro 50 conversiones en 7 dias',
@@ -403,6 +407,14 @@ module.exports = {
       }
     },
     fatigue_detection: {
+      // 5-signal framework for creative fatigue detection
+      five_signal_framework: [
+        'Signal 1: CTR decline — 20%+ drop from 7-day peak indicates early fatigue',
+        'Signal 2: CPM increase — 30%+ rise over 2 weeks means Meta is having trouble finding receptive audience',
+        'Signal 3: Frequency acceleration — prospecting >2.5-3.0, retargeting >5-6 means audience recycling',
+        'Signal 4: CPA creep — rising CPA with stable CTR means conversion resistance building',
+        'Signal 5: Negative feedback — hide/report signals damage ad quality score permanently'
+      ],
       signals: [
         'Frequency >2.5 con CTR bajando en los ultimos 7 dias',
         'CPM subiendo mientras CTR y conversion rate bajan',
@@ -410,6 +422,17 @@ module.exports = {
         'Engagement rate (reactions + comments + shares / impressions) cayendo',
         'Relevance diagnostics degradando (below average quality/engagement/conversion)'
       ],
+      creative_lifespan: {
+        typical_weeks: '2-4 semanas antes de fatiga visible',
+        refresh_interval: '10-14 dias para mejores resultados',
+        warning_signs_timeline: [
+          'Dia 1-7: Rendimiento estable (learning + optimization)',
+          'Dia 7-14: Peak performance (optimal delivery)',
+          'Dia 14-21: Early fatigue (CTR empieza a bajar 5-10%)',
+          'Dia 21-28: Moderate fatigue (CTR -20%, CPM +15%)',
+          'Dia 28+: Severe fatigue (CTR -40%+, CPA subiendo, frequency alta)'
+        ]
+      },
       refresh_strategy: [
         'Rotar 2-3 creativos nuevos cada 2-3 semanas',
         'Mantener el formato que funciona pero cambiar el angulo de messaging',
@@ -557,16 +580,22 @@ module.exports = {
   // ═══════════════════════════════════════════════════════════════
   benchmarks: {
     food_ecommerce_2025: {
-      cpm_range: { low: 8, median: 15, high: 25, unit: 'USD' },
-      ctr_range: { low: 0.8, median: 1.5, high: 2.5, unit: '%' },
-      cpa_range: { low: 15, median: 30, high: 50, unit: 'USD' },
-      roas_range: { low: 1.5, median: 3.0, high: 6.0, unit: 'x' },
+      cpm_range: { low: 8, median: 13.48, high: 25, unit: 'USD' },
+      ctr_range: { low: 0.8, median: 1.85, high: 2.5, unit: '%' },
+      cpa_range: { low: 15, median: 38.17, high: 50, unit: 'USD' },
+      roas_range: { low: 1.5, median: 2.87, high: 6.0, unit: 'x' },
       frequency_healthy: { max: 2.0, warning: 2.5, critical: 4.0 },
-      conversion_rate: { low: 1.5, median: 3.0, high: 5.0, unit: '%' },
+      conversion_rate: { low: 1.5, median: 2.02, high: 5.0, unit: '%' },
+      aov_range: { low: 40, median: 61.71, high: 90, unit: 'USD' },
       notes: [
         'CPM varies heavily by season — Q4 can be 2-3x Q1',
         'Food/beverage typically has lower CPA than fashion/electronics',
-        'DTC food brands average ROAS of 2.5-4.0x'
+        'DTC food brands average ROAS of 2.5-4.0x',
+        'All-industry median ROAS dropped to 1.93 in 2025 (was higher in 2024)',
+        'Food & Beverage CTR of 1.85% is lowest among verticals',
+        'Food AOV grew +8.4% YoY to $61.71 in 2025',
+        'CPC in food increased +69.44% YoY — highest increase across verticals',
+        'CPM trending +20% YoY across industries — competition increasing'
       ]
     },
     seasonal_cpm_multipliers: {
@@ -577,6 +606,83 @@ module.exports = {
       q4_bfcm: 2.0,
       q4_holiday: 1.5,
       note: 'CPM se multiplica por estos factores en cada trimestre vs baseline'
+    }
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  // AUDIENCE SATURATION DETECTION
+  // Señales de que la audiencia está agotada
+  // ═══════════════════════════════════════════════════════════════
+  audience_saturation: {
+    detection_signals: [
+      'First Time Impression Ratio declining (available in Delivery Insights)',
+      'Audience Reached Ratio approaching 100% (available in Delivery Insights)',
+      'Frequency >3-4 in 7-day window',
+      'CTR declining while frequency increases (classic divergence)',
+      'Reach growth stagnating despite maintained/increased spend',
+      'Diminishing returns: spend increasing but conversions flat or declining'
+    ],
+    overlap_threshold: {
+      warning: 0.25,
+      critical: 0.30,
+      impact: 'Audience overlap >25% means ad sets are bidding against each other, inflating CPM'
+    },
+    scaling_strategy: {
+      hybrid: 'Vertical scaling until CPA rises, then switch to horizontal',
+      vertical_limit: 'When CPA rises >15% after budget increase, audience is saturating',
+      horizontal_trigger: 'Create new ad set with different creative angles for fresh audience pool',
+      audience_rest: 'If severely saturated, reduce budget 50% for 3-5 days to let audience "reset"'
+    }
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  // FUNNEL DIAGNOSIS FRAMEWORK
+  // How to diagnose WHERE conversion problems happen
+  // ═══════════════════════════════════════════════════════════════
+  funnel_diagnosis: {
+    stages: {
+      impression_to_click: {
+        metric: 'CTR',
+        healthy: '>1.0%',
+        problem: '<0.5%',
+        diagnosis_if_low: 'Creative not capturing attention — weak hook, wrong format, or targeting mismatch',
+        action: 'Refresh creatives, test new hooks, try different formats (video, carousel, UGC)'
+      },
+      click_to_atc: {
+        metric: 'ATC/Clicks',
+        healthy: '>5%',
+        problem: '<2%',
+        diagnosis_if_low: 'Landing page disconnect — ad promise doesnt match page, slow load, poor mobile UX, price shock',
+        action: 'DO NOT pause ad or ad set — fix landing page. Check page speed, mobile experience, pricing visibility'
+      },
+      atc_to_ic: {
+        metric: 'IC/ATC',
+        healthy: '>50%',
+        problem: '<25%',
+        diagnosis_if_low: 'Checkout friction — shipping cost surprise, long forms, lack of trust signals, no guest checkout',
+        action: 'Audit checkout flow. Show shipping costs early. Add trust badges. Simplify forms.'
+      },
+      ic_to_purchase: {
+        metric: 'Purchase/IC',
+        healthy: '>60%',
+        problem: '<30%',
+        diagnosis_if_low: 'Payment/final step issue — payment errors, extra costs at final step, technical bugs',
+        action: 'Check payment processing. Look for error rates. Ensure no surprise fees at final step.'
+      }
+    },
+    critical_pattern: {
+      high_ctr_zero_conversions: {
+        description: 'CTR >1% but 0 purchases with 50+ clicks',
+        root_cause: '#1 culprit is landing page mismatch — the ad attracts clicks but the page fails to convert',
+        common_reasons: [
+          'Wrong campaign objective (Traffic instead of Conversions)',
+          'Audience too broad — attracting clicks from non-buyers',
+          'Broken pixel or CAPI — conversions happening but not tracked',
+          'Funnel stage misalignment — ad shows product but lands on homepage',
+          'Trust/friction issues — no reviews, no SSL, unclear returns policy'
+        ],
+        action: 'NEVER pause the ad set for this pattern. Investigate landing page first. Check pixel fires. Verify campaign objective.'
+      }
     }
   },
 
@@ -717,14 +823,34 @@ module.exports = {
       'Reels placement se ha vuelto uno de los de mejor rendimiento para ecommerce',
       'Conversion API (CAPI) es practicamente obligatorio para tracking preciso',
       'Shops Ads: anuncios que venden directamente dentro de Facebook/Instagram sin salir',
-      'Advantage+ Creative ajusta automaticamente aspectos visuales del ad para cada persona'
+      'Advantage+ Creative ajusta automaticamente aspectos visuales del ad para cada persona',
+      'Unified attribution settings mid-2025 — standardized measurement across campaigns',
+      'Andromeda retrieval engine (2025) — Metas new ad delivery system with 87% prediction accuracy',
+      'Oct 2025: 7d/28d view-through attribution deprecated — move to click-based attribution',
+      'Jan 2026: 28-day attribution windows fully deprecated',
+      'Advantage+ Sales Campaigns (ASC): 22% higher revenue per dollar, max 150 ads (50/ad set)',
+      'ASC best practice: start with 10-20 creatives, scale after 50+ conversions, hybrid approach with manual campaigns'
     ],
     recommendations: [
       'Implementar CAPI si no esta activo — critico para measurement accuracy',
       'Crear contenido vertical 9:16 para Reels — es el placement con mayor crecimiento',
       'Probar Advantage+ Shopping Campaigns si hay suficiente volumen de creativos',
       'Usar Advantage+ Creative optimizations para personalizar automaticamente',
-      'Considerar video corto (<15s) como formato prioritario'
-    ]
+      'Considerar video corto (<15s) como formato prioritario',
+      'Migrate to click-based attribution before Oct 2025 deprecation',
+      'View-through attribution can inflate ROAS 15-30% — track click-through separately for true performance'
+    ],
+    meta_algorithm_insights: {
+      total_value_formula: 'Advertiser Bid x Estimated Action Rate x Ad Quality Score',
+      prediction_accuracy: '87% for purchase prediction (Q4 2025)',
+      explore_exploit: 'Learning phase = explore (high variance), Post-learning = exploit (optimized delivery)',
+      real_time_adjustments: 'Meta adjusts bids, audience targeting, and placements in real-time based on signals',
+      implications: [
+        'Higher ad quality score can win auctions with lower bids — focus on creative quality',
+        'Stable conversion history improves Estimated Action Rate — avoid disrupting winning ad sets',
+        'Frequent edits reset predictions — batch changes and minimize disruptions',
+        'Algorithm needs 50+ data points to optimize well — ensure sufficient budget for conversion volume'
+      ]
+    }
   }
 };
