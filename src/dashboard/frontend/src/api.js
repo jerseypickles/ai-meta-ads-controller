@@ -230,7 +230,7 @@ export const triggerBrainAnalysis = async () => {
 };
 
 export const sendBrainChat = async (message) => {
-  const response = await api.post('/api/brain/chat', { message }, { timeout: 60000 });
+  const response = await api.post('/api/brain/chat', { message }, { timeout: 180000 });
   return response.data;
 };
 

@@ -698,7 +698,7 @@ Responde con un JSON object:
       getLatestSnapshots('adset'),
       getAccountOverview(),
       BrainInsight.find({}).sort({ created_at: -1 }).limit(10).lean(),
-      BrainChat.find({}).sort({ created_at: -1 }).limit(20).lean(),
+      BrainChat.find({}).sort({ created_at: -1 }).limit(10).lean(),
       BrainRecommendation.find({ status: { $in: ['pending', 'approved'] } }).sort({ created_at: -1 }).limit(10).lean(),
       BrainRecommendation.find({ status: { $in: ['approved', 'rejected'] } }).sort({ decided_at: -1 }).limit(20).lean(),
       BrainCycleMemory.find({}).sort({ created_at: -1 }).limit(3).lean().catch(() => [])
@@ -721,7 +721,7 @@ Responde con un JSON object:
     // 5. Llamar a Claude
     const response = await this.anthropic.messages.create({
       model: config.claude.model,
-      max_tokens: 2048,
+      max_tokens: 1500,
       messages,
       system: `Eres el Brain Analyst de Jersey Pickles — un asistente experto en Meta Ads que conoce todas las campañas en detalle.
 
@@ -742,7 +742,7 @@ REGLAS:
 2. Usa datos específicos cuando respondas — nombres de ad sets, números, métricas reales.
 3. Si no tienes la información exacta, dilo honestamente pero indica qué datos SI tienes que pueden ayudar.
 4. Puedes sugerir acciones pero aclara que el Brain las ejecutaría si se aprueban.
-5. Sé conciso pero completo.
+5. Sé conciso — responde en 2-4 párrafos máximo. Usa bullet points para datos.
 6. Cuando analices tendencias, usa datos de 14d/30d para contexto histórico, no solo 7d.
 7. Menciona el funnel (ATC→IC→Purchase) cuando sea relevante para diagnosticar problemas de conversión.`
     });
@@ -1245,14 +1245,16 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
       }
     }
 
-    const paused = snapshots.filter(s => ['PAUSED', 'ADSET_PAUSED', 'CAMPAIGN_PAUSED'].includes(s.status));
+    const paused = snapshots.filter(s => ['PAUSED', 'ADSET_PAUSED', 'CAMPAIGN_PAUSED'].includes(s.status))
+      .sort((a, b) => (b.metrics?.last_30d?.spend || 0) - (a.metrics?.last_30d?.spend || 0));
     if (paused.length > 0) {
-      ctx += `\n## AD SETS PAUSADOS\n`;
-      for (const s of paused) {
+      ctx += `\n## AD SETS PAUSADOS (top ${Math.min(paused.length, 5)})\n`;
+      for (const s of paused.slice(0, 5)) {
         const m7 = s.metrics?.last_7d || {};
         const m30 = s.metrics?.last_30d || {};
         ctx += `- ${s.entity_name}: ROAS 7d=${(m7.roas||0).toFixed(2)}x, 30d=${(m30.roas||0).toFixed(2)}x, Spend 30d=$${(m30.spend||0).toFixed(0)}, Compras 30d=${m30.purchases||0}\n`;
       }
+      if (paused.length > 5) ctx += `(+${paused.length - 5} más pausados)\n`;
     }
 
     if (recentInsights.length > 0) {
@@ -1276,7 +1278,7 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
       const rejected = recHistory.filter(r => r.status === 'rejected');
       ctx += `\n## HISTORIAL DE DECISIONES DEL USUARIO\n`;
       ctx += `Aprobadas: ${approved.length} | Rechazadas: ${rejected.length} (ultimas 20)\n`;
-      for (const r of recHistory.slice(0, 10)) {
+      for (const r of recHistory.slice(0, 5)) {
         const daysAgo = r.decided_at ? Math.round((Date.now() - new Date(r.decided_at).getTime()) / 86400000) : '?';
         const impact = r.follow_up?.impact_verdict || 'sin medir';
         ctx += `- [${r.status}] ${r.action_type} en ${r.entity?.entity_name || 'N/A'} (${daysAgo}d ago) — impacto: ${impact}\n`;
