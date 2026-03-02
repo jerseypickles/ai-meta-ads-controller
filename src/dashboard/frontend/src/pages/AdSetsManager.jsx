@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, Suspense, lazy } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Brain, Bot, CheckCircle,
@@ -8,15 +8,18 @@ import {
   Power, Plus, Send, X, Trash2,
   LogOut, Search, ShoppingCart, BarChart3,
   Clock, Zap, AlertTriangle, ArrowUpDown,
-  Calendar, Target, Activity
+  Calendar, Target, Activity, Lightbulb, Sparkles
 } from 'lucide-react';
 import {
   getAllAdSets, getAdsForAdSet, getAccountOverview,
   runAIManager, runAgents, refreshAIOpsMetrics,
   refreshLiveCache, connectSSE,
   pauseEntity, deleteEntity, getAvailableCreatives,
-  addAdToAdSet, generateAdCopy, getCreativePreviewUrl, logout
+  addAdToAdSet, generateAdCopy, getCreativePreviewUrl, logout,
+  getBrainRecommendations, getBrainInsights
 } from '../api';
+
+const AccountOrb = lazy(() => import('../components/AccountOrb'));
 
 /* ══════════════════════════════════════════
    KPI TARGETS (mirror of config/kpi-targets.js)
@@ -327,7 +330,7 @@ const AddCreativePanel = ({ adsetId, onClose, onSuccess }) => {
    EXPANDED AD SET DETAIL
    ══════════════════════════════════════════ */
 
-const AdSetDetail = ({ adset, timeWindow, onRefresh }) => {
+const AdSetDetail = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights }) => {
   const [ads, setAds] = useState(null);
   const [loadingAds, setLoadingAds] = useState(true);
   const [showAddCreative, setShowAddCreative] = useState(false);
@@ -338,6 +341,10 @@ const AdSetDetail = ({ adset, timeWindow, onRefresh }) => {
   const m14 = adset.metrics?.last_14d || {};
   const isActive = isActiveStatus(adset.status);
   const analysis = adset.analysis || {};
+
+  // Brain data for this ad set
+  const entityRecs = brainRecs || [];
+  const entityInsights = brainInsights || [];
 
   useEffect(() => {
     let cancelled = false;
@@ -518,6 +525,61 @@ const AdSetDetail = ({ adset, timeWindow, onRefresh }) => {
           )}
         </div>
       </div>
+
+      {/* Brain Intelligence Section */}
+      {(entityRecs.length > 0 || entityInsights.length > 0) && (
+        <div className="detail-brain-section">
+          <div className="detail-brain-header">
+            <Brain size={13} />
+            <span>Brain Intelligence</span>
+          </div>
+          <div className="detail-brain-grid">
+            {entityRecs.length > 0 && (
+              <div className="detail-brain-col">
+                <div className="detail-brain-col-title">
+                  <Sparkles size={11} /> Recommendations ({entityRecs.length})
+                </div>
+                {entityRecs.map((rec, i) => {
+                  const priorityColor = rec.priority === 'high' ? 'var(--red)' : rec.priority === 'medium' ? 'var(--yellow)' : 'var(--blue-light)';
+                  return (
+                    <div key={rec._id || i} className="detail-brain-rec">
+                      <div className="detail-brain-rec-bar" style={{ backgroundColor: priorityColor }} />
+                      <div className="detail-brain-rec-body">
+                        <div className="detail-brain-rec-title">{rec.title}</div>
+                        <div className="detail-brain-rec-meta">
+                          <span className="detail-brain-rec-action">{rec.action_type?.replace(/_/g, ' ')}</span>
+                          {rec.confidence_score && <span className="detail-brain-rec-conf">{rec.confidence_score}%</span>}
+                          <span className={`detail-brain-rec-priority priority-${rec.priority}`}>{rec.priority}</span>
+                        </div>
+                        {rec.reasoning && <div className="detail-brain-rec-reason">{rec.reasoning}</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {entityInsights.length > 0 && (
+              <div className="detail-brain-col">
+                <div className="detail-brain-col-title">
+                  <Lightbulb size={11} /> Insights ({entityInsights.length})
+                </div>
+                {entityInsights.slice(0, 5).map((ins, i) => {
+                  const sevColor = ins.severity === 'critical' ? 'var(--red)' : ins.severity === 'warning' ? 'var(--yellow)' : ins.severity === 'positive' ? 'var(--green)' : 'var(--blue-light)';
+                  return (
+                    <div key={ins._id || i} className="detail-brain-insight">
+                      <div className="detail-brain-insight-dot" style={{ backgroundColor: sevColor }} />
+                      <div className="detail-brain-insight-body">
+                        <div className="detail-brain-insight-title">{ins.title}</div>
+                        {ins.description && <div className="detail-brain-insight-desc">{ins.description}</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -526,12 +588,17 @@ const AdSetDetail = ({ adset, timeWindow, onRefresh }) => {
    MAIN AD SET ROW (in the table)
    ══════════════════════════════════════════ */
 
-const AdSetRow = ({ adset, timeWindow, onRefresh }) => {
+const AdSetRow = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights }) => {
   const [expanded, setExpanded] = useState(false);
 
   const m = getMetrics(adset, timeWindow);
   const isActive = isActiveStatus(adset.status);
   const analysis = adset.analysis || {};
+
+  const recCount = brainRecs?.length || 0;
+  const insightCount = brainInsights?.length || 0;
+  const hasHighPriority = brainRecs?.some(r => r.priority === 'high');
+  const hasCriticalInsight = brainInsights?.some(i => i.severity === 'critical' || i.severity === 'warning');
 
   return (
     <>
@@ -543,7 +610,25 @@ const AdSetRow = ({ adset, timeWindow, onRefresh }) => {
           </span>
         </td>
         <td className="primary">
-          <div className="adset-name-cell">{adset.entity_name || adset.entity_id}</div>
+          <div className="adset-name-wrap">
+            <div className="adset-name-cell">{adset.entity_name || adset.entity_id}</div>
+            {(recCount > 0 || insightCount > 0) && (
+              <span className="brain-badges">
+                {recCount > 0 && (
+                  <span className={`brain-badge brain-badge-rec ${hasHighPriority ? 'high' : ''}`} title={`${recCount} recommendation${recCount > 1 ? 's' : ''}`}>
+                    <Sparkles size={9} />
+                    <span>{recCount}</span>
+                  </span>
+                )}
+                {insightCount > 0 && (
+                  <span className={`brain-badge brain-badge-insight ${hasCriticalInsight ? 'warn' : ''}`} title={`${insightCount} insight${insightCount > 1 ? 's' : ''}`}>
+                    <Lightbulb size={9} />
+                    <span>{insightCount}</span>
+                  </span>
+                )}
+              </span>
+            )}
+          </div>
           {adset.campaign_name && <div className="campaign-label">{adset.campaign_name}</div>}
         </td>
         <td className="numeric">{fmtMoney(adset.daily_budget)}</td>
@@ -561,7 +646,8 @@ const AdSetRow = ({ adset, timeWindow, onRefresh }) => {
       {expanded && (
         <tr className="adset-detail-row">
           <td colSpan="11" style={{ padding: 0 }}>
-            <AdSetDetail adset={adset} timeWindow={timeWindow} onRefresh={onRefresh} />
+            <AdSetDetail adset={adset} timeWindow={timeWindow} onRefresh={onRefresh}
+              brainRecs={brainRecs} brainInsights={brainInsights} />
           </td>
         </tr>
       )}
@@ -587,6 +673,10 @@ export default function AdSetsManager() {
   const [fetchMeta, setFetchMeta] = useState(null);
   const [sseConnected, setSseConnected] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
+
+  // Brain Intelligence data
+  const [brainRecs, setBrainRecs] = useState([]);
+  const [brainInsights, setBrainInsights] = useState([]);
 
   const fetchData = useCallback(async (force = false) => {
     try {
@@ -619,6 +709,45 @@ export default function AdSetsManager() {
     }, 60000);
     return () => { es.close(); clearInterval(fallbackInterval); setSseConnected(false); };
   }, [fetchData]);
+
+  // Fetch Brain data (recommendations + insights) for entity badges
+  useEffect(() => {
+    const fetchBrainData = async () => {
+      try {
+        const [recsRes, insightsRes] = await Promise.allSettled([
+          getBrainRecommendations(1, 100, 'pending'),
+          getBrainInsights(1, 100, { read: false })
+        ]);
+        if (recsRes.status === 'fulfilled') setBrainRecs(recsRes.value?.recommendations || []);
+        if (insightsRes.status === 'fulfilled') setBrainInsights(insightsRes.value?.insights || []);
+      } catch { /* silent — Brain data is supplemental */ }
+    };
+    fetchBrainData();
+    const brainInterval = setInterval(fetchBrainData, 120000);
+    return () => clearInterval(brainInterval);
+  }, []);
+
+  // Maps: entity_id → [recs] and entity_id → [insights]
+  const recsMap = useMemo(() => {
+    const map = {};
+    for (const rec of brainRecs) {
+      const eid = rec.entity?.entity_id;
+      if (eid) { (map[eid] = map[eid] || []).push(rec); }
+    }
+    return map;
+  }, [brainRecs]);
+
+  const insightsMap = useMemo(() => {
+    const map = {};
+    for (const ins of brainInsights) {
+      const entities = ins.entities || [];
+      for (const ent of entities) {
+        const eid = ent.entity_id;
+        if (eid) { (map[eid] = map[eid] || []).push(ins); }
+      }
+    }
+    return map;
+  }, [brainInsights]);
 
   const handleForceRefresh = async () => {
     setRunning('refresh');
@@ -737,13 +866,16 @@ export default function AdSetsManager() {
       {/* ── Header ── */}
       <header className="manager-header">
         <div className="d-flex align-center gap-3">
-          <div className="header-logo">
-            <BarChart3 size={18} color="#fff" />
+          <div className="header-orb-wrap">
+            <Suspense fallback={<div className="header-orb-fallback"><BarChart3 size={18} color="#818cf8" /></div>}>
+              <AccountOrb roas={totals.roas} roasTarget={KPI.roas_target} roasMinimum={KPI.roas_minimum} roasExcellent={KPI.roas_excellent} />
+            </Suspense>
           </div>
           <div>
             <h1 className="mb-0" style={{ fontSize: '1.125rem' }}>Ad Sets Manager</h1>
             <span className="text-muted text-xs">
               {counts.total} ad sets &middot; {counts.active} active &middot; {counts.paused} paused
+              {brainRecs.length > 0 && <span className="header-brain-count"> &middot; <Sparkles size={9} style={{ verticalAlign: 'middle' }} /> {brainRecs.length} recs</span>}
               <span className="fetch-meta">
                 {sseConnected ? (
                   <span className="sse-live"> &middot; <span className="live-dot" /> LIVE</span>
@@ -802,42 +934,86 @@ export default function AdSetsManager() {
           </div>
         )}
 
-        {/* KPI Summary Cards */}
-        <div className="kpi-cards">
-          <div className="kpi-card">
-            <div className="kpi-card-header">
-              <span className="kpi-card-label">Active</span>
-              <Eye size={16} className="kpi-card-icon" style={{ color: 'var(--green)' }} />
+        {/* KPI Summary Cards — Glassmorphism */}
+        <div className="kpi-cards-v2">
+          <div className="kpi-card-v2 kpi-card-active">
+            <div className="kpi-card-v2-glow" style={{ background: 'radial-gradient(circle at 30% 30%, rgba(16,185,129,0.12), transparent 70%)' }} />
+            <div className="kpi-card-v2-header">
+              <span className="kpi-card-v2-label">Active</span>
+              <div className="kpi-card-v2-icon" style={{ background: 'rgba(16,185,129,0.15)', color: 'var(--green)' }}>
+                <Eye size={14} />
+              </div>
             </div>
-            <div className="kpi-card-value">{counts.active}</div>
-            <div className="kpi-card-sub">{counts.total} total &middot; {fmtMoney(totals.totalBudget)}/d budget</div>
+            <div className="kpi-card-v2-value">{counts.active}</div>
+            <div className="kpi-card-v2-sub">{counts.total} total &middot; {fmtMoney(totals.totalBudget)}/d budget</div>
           </div>
 
-          <div className="kpi-card">
-            <div className="kpi-card-header">
-              <span className="kpi-card-label">Spend {windowLabel}</span>
-              <DollarSign size={16} className="kpi-card-icon" style={{ color: 'var(--blue-light)' }} />
+          <div className="kpi-card-v2 kpi-card-spend">
+            <div className="kpi-card-v2-glow" style={{ background: 'radial-gradient(circle at 30% 30%, rgba(59,130,246,0.12), transparent 70%)' }} />
+            <div className="kpi-card-v2-header">
+              <span className="kpi-card-v2-label">Spend {windowLabel}</span>
+              <div className="kpi-card-v2-icon" style={{ background: 'rgba(59,130,246,0.15)', color: 'var(--blue-light)' }}>
+                <DollarSign size={14} />
+              </div>
             </div>
-            <div className="kpi-card-value">{fmtMoney(totals.spend)}</div>
-            <div className="kpi-card-sub">{fmtMoney(totals.revenue)} revenue</div>
+            <div className="kpi-card-v2-value">{fmtMoney(totals.spend)}</div>
+            <div className="kpi-card-v2-sub">{fmtMoney(totals.revenue)} revenue</div>
           </div>
 
-          <div className="kpi-card">
-            <div className="kpi-card-header">
-              <span className="kpi-card-label">ROAS {windowLabel}</span>
-              <Target size={16} className="kpi-card-icon" style={{ color: totals.roas >= KPI.roas_target ? 'var(--green)' : totals.roas >= KPI.roas_minimum ? 'var(--yellow)' : 'var(--red)' }} />
+          <div className="kpi-card-v2 kpi-card-roas">
+            <div className="kpi-card-v2-glow" style={{ background: `radial-gradient(circle at 30% 30%, ${totals.roas >= KPI.roas_target ? 'rgba(16,185,129,0.12)' : totals.roas >= KPI.roas_minimum ? 'rgba(245,158,11,0.12)' : 'rgba(239,68,68,0.12)'}, transparent 70%)` }} />
+            <div className="kpi-card-v2-header">
+              <span className="kpi-card-v2-label">ROAS {windowLabel}</span>
+              <div className="kpi-card-v2-icon" style={{ background: totals.roas >= KPI.roas_target ? 'rgba(16,185,129,0.15)' : totals.roas >= KPI.roas_minimum ? 'rgba(245,158,11,0.15)' : 'rgba(239,68,68,0.15)', color: totals.roas >= KPI.roas_target ? 'var(--green)' : totals.roas >= KPI.roas_minimum ? 'var(--yellow)' : 'var(--red)' }}>
+                <Target size={14} />
+              </div>
             </div>
-            <div className={`kpi-card-value ${roasColor(totals.roas)}`}>{fmt(totals.roas)}x</div>
-            <div className="kpi-card-sub">target {KPI.roas_target}x</div>
+            <div className={`kpi-card-v2-value ${roasColor(totals.roas)}`}>{fmt(totals.roas)}x</div>
+            <div className="kpi-card-v2-sub">target {KPI.roas_target}x</div>
+            {/* Mini ROAS bar */}
+            <div className="kpi-roas-bar">
+              <div className="kpi-roas-bar-fill" style={{ width: `${Math.min((totals.roas / KPI.roas_excellent) * 100, 100)}%`, backgroundColor: totals.roas >= KPI.roas_target ? 'var(--green)' : totals.roas >= KPI.roas_minimum ? 'var(--yellow)' : 'var(--red)' }} />
+              <div className="kpi-roas-bar-target" style={{ left: `${(KPI.roas_target / KPI.roas_excellent) * 100}%` }} />
+            </div>
           </div>
 
-          <div className="kpi-card">
-            <div className="kpi-card-header">
-              <span className="kpi-card-label">Purchases {windowLabel}</span>
-              <ShoppingCart size={16} className="kpi-card-icon" style={{ color: 'var(--blue-primary)' }} />
+          <div className="kpi-card-v2 kpi-card-purchases">
+            <div className="kpi-card-v2-glow" style={{ background: 'radial-gradient(circle at 30% 30%, rgba(99,102,241,0.12), transparent 70%)' }} />
+            <div className="kpi-card-v2-header">
+              <span className="kpi-card-v2-label">Purchases {windowLabel}</span>
+              <div className="kpi-card-v2-icon" style={{ background: 'rgba(99,102,241,0.15)', color: 'var(--blue-primary)' }}>
+                <ShoppingCart size={14} />
+              </div>
             </div>
-            <div className="kpi-card-value">{fmtInt(totals.purchases)}</div>
-            <div className={`kpi-card-sub ${cpaColor(totals.cpa)}`}>CPA: {fmtMoney(totals.cpa)}</div>
+            <div className="kpi-card-v2-value">{fmtInt(totals.purchases)}</div>
+            <div className={`kpi-card-v2-sub ${cpaColor(totals.cpa)}`}>CPA: {fmtMoney(totals.cpa)}</div>
+          </div>
+
+          {/* Brain Summary mini-card */}
+          <div className="kpi-card-v2 kpi-card-brain" onClick={() => navigate('/brain')}>
+            <div className="kpi-card-v2-glow" style={{ background: 'radial-gradient(circle at 30% 30%, rgba(139,92,246,0.15), transparent 70%)' }} />
+            <div className="kpi-card-v2-header">
+              <span className="kpi-card-v2-label">Brain Intel</span>
+              <div className="kpi-card-v2-icon" style={{ background: 'rgba(139,92,246,0.15)', color: '#a78bfa' }}>
+                <Brain size={14} />
+              </div>
+            </div>
+            <div className="kpi-card-v2-value" style={{ fontSize: '1.1rem' }}>
+              {brainRecs.length > 0 ? (
+                <span className="d-inline-flex align-center gap-2">
+                  <span>{brainRecs.length}</span>
+                  <span className="kpi-brain-label">recs</span>
+                  {brainInsights.length > 0 && <>
+                    <span className="kpi-brain-sep">/</span>
+                    <span>{brainInsights.length}</span>
+                    <span className="kpi-brain-label">insights</span>
+                  </>}
+                </span>
+              ) : (
+                <span className="text-muted" style={{ fontSize: '0.8rem' }}>No pending</span>
+              )}
+            </div>
+            <div className="kpi-card-v2-sub" style={{ color: '#a78bfa' }}>View Intelligence →</div>
           </div>
         </div>
 
@@ -883,7 +1059,8 @@ export default function AdSetsManager() {
               </thead>
               <tbody>
                 {filtered.map((as, i) => (
-                  <AdSetRow key={as.entity_id || i} adset={as} timeWindow={timeWindow} onRefresh={() => fetchData(true)} />
+                  <AdSetRow key={as.entity_id || i} adset={as} timeWindow={timeWindow} onRefresh={() => fetchData(true)}
+                    brainRecs={recsMap[as.entity_id]} brainInsights={insightsMap[as.entity_id]} />
                 ))}
               </tbody>
             </table>
@@ -925,7 +1102,7 @@ export default function AdSetsManager() {
         .status-pending { background-color: var(--blue-primary) !important; color: white !important; }
         .status-error { background-color: var(--red) !important; color: white !important; }
 
-        /* Header */
+        /* ═══ HEADER ═══ */
         .manager-header {
           display: flex;
           align-items: center;
@@ -935,16 +1112,26 @@ export default function AdSetsManager() {
           position: sticky;
           top: 0;
           z-index: 100;
-          background-color: var(--bg-primary);
-          backdrop-filter: blur(8px);
+          background-color: rgba(17, 24, 39, 0.92);
+          backdrop-filter: blur(12px);
         }
-        .header-logo {
-          width: 36px; height: 36px;
-          border-radius: var(--radius-md);
-          background: linear-gradient(135deg, var(--blue-primary), #8b5cf6);
-          display: flex; align-items: center; justify-content: center;
+        .header-orb-wrap {
+          width: 42px; height: 42px;
           flex-shrink: 0;
         }
+        .header-orb-wrap .account-orb-wrap {
+          width: 42px; height: 42px;
+        }
+        .header-orb-fallback {
+          width: 42px; height: 42px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, var(--blue-primary), #8b5cf6);
+          display: flex; align-items: center; justify-content: center;
+        }
+        .account-orb-wrap {
+          width: 100%; height: 100%;
+        }
+        .header-brain-count { color: #a78bfa; font-weight: 600; }
         .header-divider {
           width: 1px; height: 24px;
           background-color: var(--border-color);
@@ -993,55 +1180,152 @@ export default function AdSetsManager() {
           color: white;
         }
 
-        /* Content */
+        /* ═══ CONTENT ═══ */
         .manager-content {
           max-width: 1600px;
           margin: 0 auto;
           padding: 20px 24px 40px;
         }
 
-        /* KPI Cards */
-        .kpi-cards {
+        /* ═══ KPI CARDS V2 — GLASSMORPHISM ═══ */
+        .kpi-cards-v2 {
           display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 16px;
+          grid-template-columns: repeat(5, 1fr);
+          gap: 14px;
           margin-bottom: 20px;
         }
-        .kpi-card {
-          background-color: var(--bg-secondary);
-          border: 1px solid var(--border-color);
-          border-radius: var(--radius-lg);
-          padding: 16px 20px;
-          transition: border-color var(--transition-fast);
+        .kpi-card-v2 {
+          position: relative;
+          background: rgba(30, 41, 59, 0.5);
+          border: 1px solid rgba(71, 85, 105, 0.35);
+          border-radius: 14px;
+          padding: 16px 18px;
+          overflow: hidden;
+          backdrop-filter: blur(10px);
+          transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
         }
-        .kpi-card:hover { border-color: var(--border-light); }
-        .kpi-card-header {
+        .kpi-card-v2:hover {
+          border-color: rgba(139, 92, 246, 0.3);
+          transform: translateY(-1px);
+          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+        }
+        .kpi-card-v2-glow {
+          position: absolute;
+          top: 0; left: 0; right: 0; bottom: 0;
+          pointer-events: none;
+        }
+        .kpi-card-v2-header {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          margin-bottom: 8px;
+          margin-bottom: 10px;
+          position: relative;
         }
-        .kpi-card-label {
-          font-size: 0.75rem;
+        .kpi-card-v2-label {
+          font-size: 0.6875rem;
           font-weight: 600;
           color: var(--text-tertiary);
           text-transform: uppercase;
-          letter-spacing: 0.05em;
+          letter-spacing: 0.06em;
         }
-        .kpi-card-icon { opacity: 0.8; }
-        .kpi-card-value {
-          font-size: 1.5rem;
+        .kpi-card-v2-icon {
+          width: 28px; height: 28px;
+          border-radius: 8px;
+          display: flex; align-items: center; justify-content: center;
+        }
+        .kpi-card-v2-value {
+          font-size: 1.4rem;
           font-weight: 800;
           color: var(--text-primary);
           line-height: 1.1;
           margin-bottom: 4px;
+          position: relative;
         }
-        .kpi-card-sub {
+        .kpi-card-v2-sub {
           font-size: 0.6875rem;
           color: var(--text-muted);
+          position: relative;
         }
 
-        /* Toolbar */
+        /* ROAS progress bar */
+        .kpi-roas-bar {
+          position: relative;
+          height: 3px;
+          background: rgba(55, 65, 81, 0.5);
+          border-radius: 2px;
+          margin-top: 8px;
+          overflow: visible;
+        }
+        .kpi-roas-bar-fill {
+          height: 100%;
+          border-radius: 2px;
+          transition: width 0.6s ease;
+        }
+        .kpi-roas-bar-target {
+          position: absolute;
+          top: -2px;
+          width: 2px; height: 7px;
+          background: var(--text-muted);
+          border-radius: 1px;
+          opacity: 0.5;
+        }
+
+        /* Brain KPI card */
+        .kpi-card-brain { cursor: pointer; }
+        .kpi-card-brain:hover { border-color: rgba(139, 92, 246, 0.5); }
+        .kpi-brain-label { font-size: 0.65rem; color: var(--text-muted); font-weight: 500; }
+        .kpi-brain-sep { color: var(--text-muted); opacity: 0.4; }
+
+        /* ═══ BRAIN BADGES ON ROWS ═══ */
+        .adset-name-wrap {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .brain-badges {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          flex-shrink: 0;
+        }
+        .brain-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 3px;
+          padding: 1px 6px;
+          border-radius: 10px;
+          font-size: 0.5625rem;
+          font-weight: 700;
+          line-height: 1;
+          white-space: nowrap;
+        }
+        .brain-badge-rec {
+          background: rgba(139, 92, 246, 0.15);
+          color: #a78bfa;
+          border: 1px solid rgba(139, 92, 246, 0.25);
+        }
+        .brain-badge-rec.high {
+          background: rgba(239, 68, 68, 0.12);
+          color: #f87171;
+          border-color: rgba(239, 68, 68, 0.25);
+          animation: badge-pulse 2.5s ease-in-out infinite;
+        }
+        .brain-badge-insight {
+          background: rgba(59, 130, 246, 0.12);
+          color: #60a5fa;
+          border: 1px solid rgba(59, 130, 246, 0.2);
+        }
+        .brain-badge-insight.warn {
+          background: rgba(245, 158, 11, 0.12);
+          color: #fbbf24;
+          border-color: rgba(245, 158, 11, 0.25);
+        }
+        @keyframes badge-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.65; }
+        }
+
+        /* ═══ TOOLBAR ═══ */
         .toolbar {
           display: flex;
           align-items: center;
@@ -1071,7 +1355,7 @@ export default function AdSetsManager() {
         .search-box input::placeholder { color: var(--text-muted); }
         .search-box svg { color: var(--text-muted); flex-shrink: 0; }
 
-        /* Ad Sets Table */
+        /* ═══ TABLE ═══ */
         .adsets-table { font-size: 0.8125rem; }
         .adsets-table thead th { white-space: nowrap; }
         .adsets-table .adset-row { cursor: pointer; }
@@ -1080,7 +1364,7 @@ export default function AdSetsManager() {
         .adsets-table .adset-row.inactive-row { opacity: 0.5; }
         .adsets-table .adset-row.inactive-row:hover { opacity: 0.7; }
         .adset-name-cell {
-          max-width: 280px;
+          max-width: 240px;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
@@ -1110,26 +1394,20 @@ export default function AdSetsManager() {
           background-color: var(--bg-primary) !important;
         }
 
-        /* Ad Set Detail (expanded) */
+        /* ═══ DETAIL (EXPANDED) ═══ */
         .adset-detail {
           padding: 16px 24px 20px;
           border-top: 1px solid var(--border-color);
         }
-
-        /* Detail grid — 2 columns */
         .detail-grid {
           display: grid;
           grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
           gap: 20px;
         }
-
         .detail-left { min-width: 0; }
         .detail-right { min-width: 0; }
 
-        /* Comparison table in detail */
-        .detail-comparison {
-          overflow-x: auto;
-        }
+        .detail-comparison { overflow-x: auto; }
         .comparison-table {
           width: 100%;
           border-collapse: collapse;
@@ -1172,7 +1450,6 @@ export default function AdSetsManager() {
           font-weight: 600;
         }
 
-        /* Detail info bar */
         .detail-info-bar {
           display: flex;
           align-items: center;
@@ -1205,7 +1482,130 @@ export default function AdSetsManager() {
         .ads-section { margin-top: 0; }
         .ads-table { font-size: 0.75rem; }
 
-        /* Creative panel */
+        /* ═══ BRAIN SECTION IN DETAIL ═══ */
+        .detail-brain-section {
+          margin-top: 16px;
+          padding-top: 14px;
+          border-top: 1px solid rgba(139, 92, 246, 0.15);
+        }
+        .detail-brain-header {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 0.6875rem;
+          font-weight: 700;
+          color: #a78bfa;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          margin-bottom: 10px;
+        }
+        .detail-brain-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 14px;
+        }
+        .detail-brain-col-title {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          font-size: 0.625rem;
+          font-weight: 700;
+          color: var(--text-tertiary);
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          margin-bottom: 8px;
+        }
+
+        /* Rec cards in detail */
+        .detail-brain-rec {
+          display: flex;
+          gap: 8px;
+          padding: 8px 10px;
+          background: rgba(139, 92, 246, 0.06);
+          border: 1px solid rgba(139, 92, 246, 0.12);
+          border-radius: 8px;
+          margin-bottom: 6px;
+        }
+        .detail-brain-rec-bar {
+          width: 3px;
+          border-radius: 2px;
+          flex-shrink: 0;
+        }
+        .detail-brain-rec-body { flex: 1; min-width: 0; }
+        .detail-brain-rec-title {
+          font-size: 0.75rem;
+          font-weight: 600;
+          color: var(--text-primary);
+          margin-bottom: 3px;
+        }
+        .detail-brain-rec-meta {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 0.625rem;
+          flex-wrap: wrap;
+        }
+        .detail-brain-rec-action {
+          background: rgba(99, 102, 241, 0.12);
+          color: var(--blue-light);
+          padding: 1px 6px;
+          border-radius: 4px;
+          font-weight: 600;
+          text-transform: capitalize;
+        }
+        .detail-brain-rec-conf {
+          color: var(--green);
+          font-weight: 700;
+        }
+        .detail-brain-rec-priority {
+          font-weight: 700;
+          text-transform: uppercase;
+          font-size: 0.5625rem;
+        }
+        .detail-brain-rec-priority.priority-high { color: var(--red); }
+        .detail-brain-rec-priority.priority-medium { color: var(--yellow); }
+        .detail-brain-rec-priority.priority-low { color: var(--blue-light); }
+        .detail-brain-rec-reason {
+          font-size: 0.6875rem;
+          color: var(--text-muted);
+          margin-top: 4px;
+          line-height: 1.35;
+        }
+
+        /* Insight cards in detail */
+        .detail-brain-insight {
+          display: flex;
+          gap: 8px;
+          padding: 6px 10px;
+          background: rgba(59, 130, 246, 0.05);
+          border: 1px solid rgba(59, 130, 246, 0.1);
+          border-radius: 8px;
+          margin-bottom: 5px;
+        }
+        .detail-brain-insight-dot {
+          width: 6px; height: 6px;
+          border-radius: 50%;
+          margin-top: 5px;
+          flex-shrink: 0;
+        }
+        .detail-brain-insight-body { flex: 1; min-width: 0; }
+        .detail-brain-insight-title {
+          font-size: 0.725rem;
+          font-weight: 600;
+          color: var(--text-primary);
+          margin-bottom: 2px;
+        }
+        .detail-brain-insight-desc {
+          font-size: 0.6875rem;
+          color: var(--text-muted);
+          line-height: 1.3;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+
+        /* ═══ CREATIVE PANEL ═══ */
         .creative-grid {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
@@ -1252,7 +1652,7 @@ export default function AdSetsManager() {
         .copy-variant.selected { border-color: var(--green); background-color: rgba(16,185,129,0.05); }
         .copy-variant:hover { border-color: var(--border-light); }
 
-        /* KPI Legend */
+        /* ═══ KPI LEGEND ═══ */
         .kpi-legend {
           display: flex;
           align-items: center;
@@ -1272,19 +1672,21 @@ export default function AdSetsManager() {
         }
         @keyframes spin { to { transform: rotate(360deg); } }
 
-        /* Responsive */
+        /* ═══ RESPONSIVE ═══ */
         @media (max-width: 1200px) {
           .detail-grid { grid-template-columns: 1fr; }
+          .detail-brain-grid { grid-template-columns: 1fr; }
+          .kpi-cards-v2 { grid-template-columns: repeat(3, 1fr); }
         }
         @media (max-width: 1024px) {
           .manager-header { padding: 12px 16px; flex-wrap: wrap; gap: 8px; }
           .manager-content { padding: 16px; }
           .toolbar { flex-direction: column; align-items: stretch; }
           .search-box { max-width: none; }
-          .kpi-cards { grid-template-columns: repeat(2, 1fr); }
+          .kpi-cards-v2 { grid-template-columns: repeat(2, 1fr); }
         }
         @media (max-width: 640px) {
-          .kpi-cards { grid-template-columns: 1fr; }
+          .kpi-cards-v2 { grid-template-columns: 1fr; }
         }
       `}</style>
     </div>
