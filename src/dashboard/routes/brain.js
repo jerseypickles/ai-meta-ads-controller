@@ -343,25 +343,26 @@ router.get('/recommendations/history', async (req, res) => {
   }
 });
 
-// ═══ FOLLOW-UP STATS ═══
+// ═══ FOLLOW-UP STATS v2 — Multi-phase intelligent tracking ═══
 
 /**
- * GET /api/brain/recommendations/follow-up-stats — Stats agregados de seguimiento
- * Retorna win rate, impacto promedio, desglose por tipo de acción
+ * GET /api/brain/recommendations/follow-up-stats — Rich follow-up data
+ * Returns win rate, multi-phase timelines, AI analyses, multi-metric deltas
  */
 router.get('/recommendations/follow-up-stats', async (req, res) => {
   try {
-    // Recomendaciones aprobadas con follow-up medido
-    const measured = await BrainRecommendation.find({
-      status: 'approved',
-      'follow_up.checked': true
+    // All approved recs (both measured and pending)
+    const allApproved = await BrainRecommendation.find({
+      status: 'approved'
     }).sort({ decided_at: -1 }).lean();
 
-    // Recomendaciones aprobadas pendientes de follow-up
-    const pendingFollowUp = await BrainRecommendation.find({
-      status: 'approved',
-      'follow_up.checked': false
-    }).sort({ decided_at: -1 }).lean();
+    // Split into measured (at least day_7 checked) and in-progress
+    const measured = allApproved.filter(r =>
+      r.follow_up?.checked === true || r.follow_up?.phases?.day_7?.measured
+    );
+    const inProgress = allApproved.filter(r =>
+      !r.follow_up?.checked && !r.follow_up?.phases?.day_7?.measured
+    );
 
     // Stats globales
     const positive = measured.filter(r => r.follow_up?.impact_verdict === 'positive').length;
@@ -369,46 +370,71 @@ router.get('/recommendations/follow-up-stats', async (req, res) => {
     const neutral = measured.filter(r => r.follow_up?.impact_verdict === 'neutral').length;
     const winRate = measured.length > 0 ? Math.round((positive / measured.length) * 100) : 0;
 
-    // Calcular deltas promedio
-    let totalRoasDelta = 0;
-    let totalCpaDelta = 0;
-    let roasDeltaCount = 0;
+    // Calculate average deltas from the best available phase
+    let totalRoasDelta = 0, totalCpaDelta = 0, totalCtrDelta = 0;
+    let deltaCount = 0;
 
     for (const r of measured) {
-      const before = r.follow_up?.metrics_at_recommendation;
-      const after = r.follow_up?.metrics_after;
-      if (before?.roas_7d > 0 && after?.roas_7d > 0) {
-        totalRoasDelta += ((after.roas_7d - before.roas_7d) / before.roas_7d) * 100;
-        roasDeltaCount++;
-      }
-      if (before?.cpa_7d > 0 && after?.cpa_7d > 0) {
-        totalCpaDelta += ((before.cpa_7d - after.cpa_7d) / before.cpa_7d) * 100;
+      // Use the latest phase data, falling back to legacy metrics_after
+      const bestPhase = r.follow_up?.phases?.day_14?.measured ? r.follow_up.phases.day_14
+        : r.follow_up?.phases?.day_7?.measured ? r.follow_up.phases.day_7
+        : null;
+
+      if (bestPhase?.deltas) {
+        totalRoasDelta += bestPhase.deltas.roas_pct || 0;
+        totalCpaDelta += bestPhase.deltas.cpa_pct || 0;
+        totalCtrDelta += bestPhase.deltas.ctr_pct || 0;
+        deltaCount++;
+      } else {
+        // Legacy fallback
+        const before = r.follow_up?.metrics_at_recommendation;
+        const after = r.follow_up?.metrics_after;
+        if (before?.roas_7d > 0 && after?.roas_7d > 0) {
+          totalRoasDelta += ((after.roas_7d - before.roas_7d) / before.roas_7d) * 100;
+          deltaCount++;
+        }
       }
     }
 
-    const avgRoasDelta = roasDeltaCount > 0 ? totalRoasDelta / roasDeltaCount : 0;
-    const avgCpaDelta = roasDeltaCount > 0 ? totalCpaDelta / roasDeltaCount : 0;
+    const avgRoasDelta = deltaCount > 0 ? totalRoasDelta / deltaCount : 0;
+    const avgCpaDelta = deltaCount > 0 ? totalCpaDelta / deltaCount : 0;
+    const avgCtrDelta = deltaCount > 0 ? totalCtrDelta / deltaCount : 0;
 
     // Desglose por tipo de acción
     const byActionType = {};
     for (const r of measured) {
       const at = r.action_type || 'other';
-      if (!byActionType[at]) byActionType[at] = { total: 0, positive: 0, negative: 0, neutral: 0 };
+      if (!byActionType[at]) byActionType[at] = { total: 0, positive: 0, negative: 0, neutral: 0, avg_roas_delta: 0 };
       byActionType[at].total++;
       const verdict = r.follow_up?.impact_verdict || 'neutral';
       if (byActionType[at][verdict] !== undefined) byActionType[at][verdict]++;
+      // Per-action ROAS delta
+      const bestPhase = r.follow_up?.phases?.day_14?.measured ? r.follow_up.phases.day_14
+        : r.follow_up?.phases?.day_7?.measured ? r.follow_up.phases.day_7 : null;
+      if (bestPhase?.deltas?.roas_pct != null) {
+        byActionType[at].avg_roas_delta += bestPhase.deltas.roas_pct;
+      }
+    }
+    // Finalize averages
+    for (const at of Object.keys(byActionType)) {
+      if (byActionType[at].total > 0) {
+        byActionType[at].avg_roas_delta = Math.round((byActionType[at].avg_roas_delta / byActionType[at].total) * 10) / 10;
+      }
     }
 
-    // Timeline (últimas 30 medidas)
+    // Rich timeline (últimas 30 medidas) with phase data and AI analysis
     const timeline = measured.slice(0, 30).map(r => {
       const before = r.follow_up?.metrics_at_recommendation || {};
       const after = r.follow_up?.metrics_after || {};
+      const phases = r.follow_up?.phases || {};
       const roasDelta = before.roas_7d > 0 ? ((after.roas_7d || 0) - before.roas_7d) / before.roas_7d * 100 : 0;
+
       return {
         _id: r._id,
         title: r.title,
         action_type: r.action_type,
         entity_name: r.entity?.entity_name,
+        entity_id: r.entity?.entity_id,
         priority: r.priority,
         confidence_score: r.confidence_score,
         decided_at: r.decided_at,
@@ -416,20 +442,61 @@ router.get('/recommendations/follow-up-stats', async (req, res) => {
         action_executed: r.follow_up?.action_executed,
         impact_verdict: r.follow_up?.impact_verdict,
         impact_summary: r.follow_up?.impact_summary,
+        impact_trend: r.follow_up?.impact_trend,
+        // Before metrics
         roas_before: before.roas_7d || 0,
-        roas_after: after.roas_7d || 0,
-        roas_delta_pct: Math.round(roasDelta * 10) / 10,
         cpa_before: before.cpa_7d || 0,
-        cpa_after: after.cpa_7d || 0,
+        ctr_before: before.ctr_7d || 0,
+        freq_before: before.frequency_7d || 0,
+        purchases_before: before.purchases_7d || 0,
         spend_before: before.spend_7d || 0,
-        spend_after: after.spend_7d || 0
+        // After metrics
+        roas_after: after.roas_7d || 0,
+        cpa_after: after.cpa_7d || 0,
+        ctr_after: after.ctr_7d || 0,
+        freq_after: after.frequency_7d || 0,
+        purchases_after: after.purchases_7d || 0,
+        spend_after: after.spend_7d || 0,
+        // Deltas
+        roas_delta_pct: Math.round(roasDelta * 10) / 10,
+        // Phase progression
+        phases: {
+          day_3: phases.day_3?.measured ? {
+            verdict: phases.day_3.verdict,
+            roas_pct: phases.day_3.deltas?.roas_pct,
+            cpa_pct: phases.day_3.deltas?.cpa_pct,
+            measured_at: phases.day_3.measured_at
+          } : null,
+          day_7: phases.day_7?.measured ? {
+            verdict: phases.day_7.verdict,
+            roas_pct: phases.day_7.deltas?.roas_pct,
+            cpa_pct: phases.day_7.deltas?.cpa_pct,
+            measured_at: phases.day_7.measured_at
+          } : null,
+          day_14: phases.day_14?.measured ? {
+            verdict: phases.day_14.verdict,
+            roas_pct: phases.day_14.deltas?.roas_pct,
+            cpa_pct: phases.day_14.deltas?.cpa_pct,
+            measured_at: phases.day_14.measured_at
+          } : null
+        },
+        // AI analysis
+        ai_analysis: r.follow_up?.ai_analysis?.generated ? {
+          root_cause: r.follow_up.ai_analysis.root_cause,
+          what_worked: r.follow_up.ai_analysis.what_worked,
+          what_didnt: r.follow_up.ai_analysis.what_didnt,
+          lesson_learned: r.follow_up.ai_analysis.lesson_learned,
+          confidence_adjustment: r.follow_up.ai_analysis.confidence_adjustment
+        } : null
       };
     });
 
-    // Pendientes de follow-up
-    const pending = pendingFollowUp.map(r => {
+    // In-progress (approved but not fully measured yet)
+    const pending = inProgress.map(r => {
       const before = r.follow_up?.metrics_at_recommendation || {};
       const hoursAgo = r.decided_at ? Math.round((Date.now() - new Date(r.decided_at).getTime()) / 3600000) : 0;
+      const currentPhase = r.follow_up?.current_phase || 'awaiting_day_3';
+      const phases = r.follow_up?.phases || {};
       return {
         _id: r._id,
         title: r.title,
@@ -438,10 +505,28 @@ router.get('/recommendations/follow-up-stats', async (req, res) => {
         priority: r.priority,
         decided_at: r.decided_at,
         hours_since_approved: hoursAgo,
+        current_phase: currentPhase,
+        action_executed: r.follow_up?.action_executed || false,
         roas_at_approval: before.roas_7d || 0,
-        cpa_at_approval: before.cpa_7d || 0
+        cpa_at_approval: before.cpa_7d || 0,
+        // Early phase data if available
+        day_3: phases.day_3?.measured ? {
+          verdict: phases.day_3.verdict,
+          roas_pct: phases.day_3.deltas?.roas_pct
+        } : null
       };
     });
+
+    // Count AI analyses
+    const aiAnalyzed = measured.filter(r => r.follow_up?.ai_analysis?.generated).length;
+    const lessonsLearned = measured
+      .filter(r => r.follow_up?.ai_analysis?.lesson_learned)
+      .slice(0, 5)
+      .map(r => ({
+        action_type: r.action_type,
+        lesson: r.follow_up.ai_analysis.lesson_learned,
+        verdict: r.follow_up.impact_verdict
+      }));
 
     res.json({
       summary: {
@@ -451,12 +536,16 @@ router.get('/recommendations/follow-up-stats', async (req, res) => {
         neutral,
         win_rate: winRate,
         avg_roas_delta_pct: Math.round(avgRoasDelta * 10) / 10,
-        avg_cpa_improvement_pct: Math.round(avgCpaDelta * 10) / 10,
-        pending_follow_up: pendingFollowUp.length
+        avg_cpa_delta_pct: Math.round(avgCpaDelta * 10) / 10,
+        avg_ctr_delta_pct: Math.round(avgCtrDelta * 10) / 10,
+        pending_follow_up: inProgress.length,
+        ai_analyzed: aiAnalyzed,
+        total_approved: allApproved.length
       },
       by_action_type: byActionType,
       timeline,
-      pending
+      pending,
+      lessons_learned: lessonsLearned
     });
   } catch (error) {
     logger.error(`[BRAIN-API] Error en follow-up stats: ${error.message}`);

@@ -11,6 +11,7 @@ import {
 } from '../api';
 
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
+const ImpactOrb = React.lazy(() => import('../components/ImpactOrb'));
 
 // ═══ CONSTANTES ═══
 
@@ -241,28 +242,54 @@ export default function BrainIntelligence() {
     }
   };
 
-  const handleApproveRec = async (id) => {
+  // Approval modal state
+  const [approvalModal, setApprovalModal] = useState(null); // { id, action: 'approve'|'reject', rec }
+  const [approvalNote, setApprovalNote] = useState('');
+  const approvalNoteRef = useRef(null);
+
+  const openApprovalModal = (id, action, rec) => {
+    setApprovalModal({ id, action, rec });
+    setApprovalNote('');
+    setTimeout(() => approvalNoteRef.current?.focus(), 100);
+  };
+
+  const closeApprovalModal = () => {
+    setApprovalModal(null);
+    setApprovalNote('');
+  };
+
+  const handleConfirmDecision = async () => {
+    if (!approvalModal) return;
+    const { id, action } = approvalModal;
+    const note = approvalNote.trim();
     try {
-      await approveRecommendation(id);
-      setRecommendations(prev => prev.map(r =>
-        r._id === id ? { ...r, status: 'approved', decided_at: new Date().toISOString() } : r
-      ));
+      if (action === 'approve') {
+        await approveRecommendation(id, note);
+        setRecommendations(prev => prev.map(r =>
+          r._id === id ? { ...r, status: 'approved', decided_at: new Date().toISOString(), decision_note: note } : r
+        ));
+      } else {
+        await rejectRecommendation(id, note);
+        setRecommendations(prev => prev.map(r =>
+          r._id === id ? { ...r, status: 'rejected', decided_at: new Date().toISOString(), decision_note: note } : r
+        ));
+      }
       setRecsPendingCount(prev => Math.max(0, prev - 1));
+      closeApprovalModal();
     } catch (err) {
-      console.error('Error approving:', err);
+      console.error(`Error ${action}ing:`, err);
     }
   };
 
-  const handleRejectRec = async (id) => {
-    try {
-      await rejectRecommendation(id);
-      setRecommendations(prev => prev.map(r =>
-        r._id === id ? { ...r, status: 'rejected', decided_at: new Date().toISOString() } : r
-      ));
-      setRecsPendingCount(prev => Math.max(0, prev - 1));
-    } catch (err) {
-      console.error('Error rejecting:', err);
-    }
+  // Legacy quick approve/reject (fallback if modal not used)
+  const handleApproveRec = (id) => {
+    const rec = recommendations.find(r => r._id === id);
+    openApprovalModal(id, 'approve', rec);
+  };
+
+  const handleRejectRec = (id) => {
+    const rec = recommendations.find(r => r._id === id);
+    openApprovalModal(id, 'reject', rec);
   };
 
   const handleGenerateRecs = async () => {
@@ -438,6 +465,64 @@ export default function BrainIntelligence() {
           />
         )}
       </div>
+
+      {/* ═══ APPROVAL MODAL ═══ */}
+      {approvalModal && (
+        <div className="approval-modal-overlay" onClick={closeApprovalModal}>
+          <div className="approval-modal" onClick={e => e.stopPropagation()}>
+            <div className={`approval-modal-header ${approvalModal.action}`}>
+              <span className="approval-modal-icon">
+                {approvalModal.action === 'approve' ? '\u2705' : '\u274C'}
+              </span>
+              <span className="approval-modal-title">
+                {approvalModal.action === 'approve' ? 'Aprobar recomendacion' : 'Rechazar recomendacion'}
+              </span>
+              <button className="approval-modal-close" onClick={closeApprovalModal}>&times;</button>
+            </div>
+            {approvalModal.rec && (
+              <div className="approval-modal-rec-summary">
+                <div className="approval-modal-rec-action">
+                  {(ACTION_TYPE_CONFIG[approvalModal.rec.action_type] || ACTION_TYPE_CONFIG.other).icon}{' '}
+                  {(ACTION_TYPE_CONFIG[approvalModal.rec.action_type] || ACTION_TYPE_CONFIG.other).label}
+                </div>
+                <div className="approval-modal-rec-title">{approvalModal.rec.title}</div>
+                <div className="approval-modal-rec-entity">
+                  {approvalModal.rec.entity?.entity_name || 'Entidad'}
+                </div>
+                {approvalModal.rec.action_detail && (
+                  <div className="approval-modal-rec-detail">{approvalModal.rec.action_detail}</div>
+                )}
+              </div>
+            )}
+            <div className="approval-modal-body">
+              <label className="approval-modal-label">
+                Nota opcional {approvalModal.action === 'reject' ? '(razon del rechazo)' : '(contexto adicional)'}
+              </label>
+              <textarea
+                ref={approvalNoteRef}
+                className="approval-modal-textarea"
+                value={approvalNote}
+                onChange={e => setApprovalNote(e.target.value)}
+                placeholder={approvalModal.action === 'approve'
+                  ? 'Ej: Lo ejecutare manana cuando baje el CPM...'
+                  : 'Ej: Prefiero esperar mas datos antes de pausar...'}
+                rows={3}
+              />
+            </div>
+            <div className="approval-modal-footer">
+              <button className="approval-modal-btn cancel" onClick={closeApprovalModal}>
+                Cancelar
+              </button>
+              <button
+                className={`approval-modal-btn confirm ${approvalModal.action}`}
+                onClick={handleConfirmDecision}
+              >
+                {approvalModal.action === 'approve' ? 'Confirmar aprobacion' : 'Confirmar rechazo'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1010,6 +1095,7 @@ const VERDICT_CONFIG = {
 function FollowUpPanel({ formatTime }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [expandedItem, setExpandedItem] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -1028,41 +1114,78 @@ function FollowUpPanel({ formatTime }) {
   if (loading) return <div className="feed-empty">Cargando seguimiento...</div>;
   if (!data) return <div className="feed-empty">Error al cargar datos de seguimiento.</div>;
 
-  const { summary, by_action_type, timeline, pending } = data;
+  const { summary, by_action_type, timeline, pending, lessons_learned } = data;
+
+  // Compute which phases have data across all timeline items
+  const latestPhases = {
+    day_3: timeline.some(t => t.phases?.day_3),
+    day_7: timeline.some(t => t.phases?.day_7),
+    day_14: timeline.some(t => t.phases?.day_14)
+  };
 
   return (
     <div className="followup-panel">
-      {/* Summary Cards */}
-      <div className="followup-summary">
-        <div className="followup-card highlight">
-          <div className="followup-card-value">{summary.win_rate}%</div>
-          <div className="followup-card-label">Win Rate</div>
+      {/* Hero: ImpactOrb + Summary Stats */}
+      <div className="followup-hero">
+        <div className="followup-hero-orb">
+          <Suspense fallback={<div className="followup-orb-fallback"><span className="followup-orb-pct">{summary.win_rate}%</span></div>}>
+            <ImpactOrb
+              winRate={summary.win_rate}
+              summary={summary}
+              latestPhases={latestPhases}
+            />
+          </Suspense>
         </div>
-        <div className="followup-card">
-          <div className="followup-card-value">{summary.total_measured}</div>
-          <div className="followup-card-label">Medidas</div>
-        </div>
-        <div className="followup-card positive">
-          <div className="followup-card-value">{summary.positive}</div>
-          <div className="followup-card-label">Positivas</div>
-        </div>
-        <div className="followup-card negative">
-          <div className="followup-card-value">{summary.negative}</div>
-          <div className="followup-card-label">Negativas</div>
-        </div>
-        <div className="followup-card">
-          <div className="followup-card-value">
-            {summary.avg_roas_delta_pct > 0 ? '+' : ''}{summary.avg_roas_delta_pct}%
+        <div className="followup-hero-stats">
+          <div className="followup-stat-row">
+            <div className="followup-stat main">
+              <span className="followup-stat-value">{summary.win_rate}%</span>
+              <span className="followup-stat-label">Efectividad</span>
+            </div>
+            <div className="followup-stat">
+              <span className="followup-stat-value">{summary.total_measured}</span>
+              <span className="followup-stat-label">Medidas</span>
+            </div>
+            <div className="followup-stat">
+              <span className="followup-stat-value">{summary.total_approved || 0}</span>
+              <span className="followup-stat-label">Aprobadas</span>
+            </div>
           </div>
-          <div className="followup-card-label">ROAS Promedio</div>
-        </div>
-        <div className="followup-card">
-          <div className="followup-card-value">{summary.pending_follow_up}</div>
-          <div className="followup-card-label">En espera</div>
+          <div className="followup-verdict-row">
+            <span className="followup-verdict-pill positive">{summary.positive} positivas</span>
+            <span className="followup-verdict-pill negative">{summary.negative} negativas</span>
+            <span className="followup-verdict-pill neutral">{summary.neutral} neutrales</span>
+          </div>
+          <div className="followup-delta-row">
+            <div className="followup-delta-item">
+              <span className="followup-delta-label">ROAS</span>
+              <span className={`followup-delta-val ${summary.avg_roas_delta_pct >= 0 ? 'positive' : 'negative'}`}>
+                {summary.avg_roas_delta_pct > 0 ? '+' : ''}{summary.avg_roas_delta_pct}%
+              </span>
+            </div>
+            <div className="followup-delta-item">
+              <span className="followup-delta-label">CPA</span>
+              <span className={`followup-delta-val ${(summary.avg_cpa_delta_pct || 0) <= 0 ? 'positive' : 'negative'}`}>
+                {(summary.avg_cpa_delta_pct || 0) > 0 ? '+' : ''}{summary.avg_cpa_delta_pct || 0}%
+              </span>
+            </div>
+            <div className="followup-delta-item">
+              <span className="followup-delta-label">CTR</span>
+              <span className={`followup-delta-val ${(summary.avg_ctr_delta_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
+                {(summary.avg_ctr_delta_pct || 0) > 0 ? '+' : ''}{summary.avg_ctr_delta_pct || 0}%
+              </span>
+            </div>
+            {summary.pending_follow_up > 0 && (
+              <div className="followup-delta-item pending">
+                <span className="followup-delta-label">En espera</span>
+                <span className="followup-delta-val">{summary.pending_follow_up}</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* By Action Type */}
+      {/* By Action Type — with avg ROAS delta */}
       {Object.keys(by_action_type).length > 0 && (
         <div className="followup-section">
           <h3 className="followup-section-title">Rendimiento por tipo de accion</h3>
@@ -1087,7 +1210,14 @@ function FollowUpPanel({ formatTime }) {
                         <div className="bar-segment negative" style={{ width: `${(stats.negative / stats.total) * 100}%` }} />
                       )}
                     </div>
-                    <span className="followup-action-wr">{wr}% ({stats.total})</span>
+                    <span className="followup-action-wr">
+                      {wr}% ({stats.total})
+                      {stats.avg_roas_delta != null && (
+                        <span className={`followup-action-delta ${stats.avg_roas_delta >= 0 ? 'positive' : 'negative'}`}>
+                          {stats.avg_roas_delta > 0 ? '+' : ''}{stats.avg_roas_delta}%
+                        </span>
+                      )}
+                    </span>
                   </div>
                 </div>
               );
@@ -1096,44 +1226,98 @@ function FollowUpPanel({ formatTime }) {
         </div>
       )}
 
-      {/* Pending Follow-ups */}
-      {pending.length > 0 && (
-        <div className="followup-section">
-          <h3 className="followup-section-title">Aprobadas en espera de medicion</h3>
-          <div className="followup-pending-list">
-            {pending.map(p => (
-              <div key={p._id} className="followup-pending-item">
-                <div className="followup-pending-info">
-                  <span className="followup-pending-title">{p.title}</span>
-                  <span className="followup-pending-entity">{p.entity_name}</span>
+      {/* AI Lessons Learned */}
+      {lessons_learned && lessons_learned.length > 0 && (
+        <div className="followup-section followup-lessons">
+          <h3 className="followup-section-title">Lecciones del Brain</h3>
+          <div className="followup-lessons-list">
+            {lessons_learned.map((l, i) => {
+              const actionCfg = ACTION_TYPE_CONFIG[l.action_type] || ACTION_TYPE_CONFIG.other;
+              const vCfg = VERDICT_CONFIG[l.verdict] || VERDICT_CONFIG.neutral;
+              return (
+                <div key={i} className="followup-lesson-card">
+                  <div className="followup-lesson-header">
+                    <span className="followup-lesson-action">{actionCfg.icon} {actionCfg.label}</span>
+                    <span className="followup-lesson-verdict" style={{ color: vCfg.color }}>{vCfg.icon}</span>
+                  </div>
+                  <div className="followup-lesson-text">{l.lesson}</div>
                 </div>
-                <div className="followup-pending-meta">
-                  <span className="followup-pending-time">Aprobada {formatTime(p.decided_at)}</span>
-                  <span className="followup-pending-hours">{p.hours_since_approved}h</span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* Timeline */}
+      {/* In-Progress (pending measurement) */}
+      {pending.length > 0 && (
+        <div className="followup-section">
+          <h3 className="followup-section-title">En progreso ({pending.length})</h3>
+          <div className="followup-pending-list">
+            {pending.map(p => {
+              const phaseLabel = p.current_phase === 'awaiting_day_3' ? 'Esperando dia 3'
+                : p.current_phase === 'awaiting_day_7' ? 'Esperando dia 7'
+                : p.current_phase === 'awaiting_day_14' ? 'Esperando dia 14'
+                : 'Midiendo...';
+              return (
+                <div key={p._id} className="followup-pending-item">
+                  <div className="followup-pending-info">
+                    <span className="followup-pending-title">{p.title}</span>
+                    <span className="followup-pending-entity">{p.entity_name}</span>
+                  </div>
+                  <div className="followup-pending-meta">
+                    {/* Phase progress dots */}
+                    <div className="followup-phase-dots">
+                      <span className={`phase-dot ${p.day_3 ? 'done' : p.current_phase === 'awaiting_day_3' ? 'active' : ''}`} title="Dia 3">3d</span>
+                      <span className={`phase-dot ${p.current_phase === 'awaiting_day_7' ? 'active' : p.current_phase === 'awaiting_day_14' || p.current_phase === 'complete' ? 'done' : ''}`} title="Dia 7">7d</span>
+                      <span className={`phase-dot ${p.current_phase === 'awaiting_day_14' ? 'active' : p.current_phase === 'complete' ? 'done' : ''}`} title="Dia 14">14d</span>
+                    </div>
+                    <span className="followup-pending-phase">{phaseLabel}</span>
+                    <span className="followup-pending-hours">{p.hours_since_approved}h</span>
+                  </div>
+                  {p.day_3 && (
+                    <div className="followup-pending-early">
+                      Senal temprana: ROAS {p.day_3.roas_pct > 0 ? '+' : ''}{p.day_3.roas_pct}%
+                      <span className={`followup-early-verdict ${p.day_3.verdict}`}>{p.day_3.verdict === 'positive' ? '+++' : p.day_3.verdict === 'negative' ? '---' : '...'}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Timeline — with phase progression and AI analysis */}
       {timeline.length > 0 && (
         <div className="followup-section">
-          <h3 className="followup-section-title">Historial de impacto</h3>
+          <h3 className="followup-section-title">Historial de impacto ({timeline.length})</h3>
           <div className="followup-timeline">
             {timeline.map(item => {
               const vCfg = VERDICT_CONFIG[item.impact_verdict] || VERDICT_CONFIG.neutral;
+              const isExpanded = expandedItem === item._id;
               return (
-                <div key={item._id} className="followup-timeline-item" style={{ borderLeftColor: vCfg.color }}>
+                <div key={item._id}
+                  className={`followup-timeline-item ${isExpanded ? 'expanded' : ''}`}
+                  style={{ borderLeftColor: vCfg.color }}
+                  onClick={() => setExpandedItem(isExpanded ? null : item._id)}
+                >
                   <div className="followup-timeline-header">
                     <span className="followup-timeline-verdict" style={{ color: vCfg.color, backgroundColor: vCfg.bg }}>
                       {vCfg.icon} {vCfg.label}
                     </span>
-                    <span className="followup-timeline-time">{formatTime(item.checked_at)}</span>
+                    <div className="followup-timeline-header-right">
+                      {item.impact_trend && (
+                        <span className={`followup-trend-badge ${item.impact_trend}`}>
+                          {item.impact_trend === 'improving' ? '\u2191' : item.impact_trend === 'declining' ? '\u2193' : '\u2194'}
+                        </span>
+                      )}
+                      <span className="followup-timeline-time">{formatTime(item.checked_at)}</span>
+                    </div>
                   </div>
                   <div className="followup-timeline-title">{item.title}</div>
                   <div className="followup-timeline-entity">{item.entity_name}</div>
+
+                  {/* Multi-metric comparison */}
                   <div className="followup-timeline-metrics">
                     <span className="followup-metric">
                       ROAS: {item.roas_before.toFixed(2)}x
@@ -1150,8 +1334,76 @@ function FollowUpPanel({ formatTime }) {
                         CPA: ${item.cpa_before.toFixed(2)} {'\u2192'} ${item.cpa_after.toFixed(2)}
                       </span>
                     )}
+                    {item.ctr_before > 0 && (
+                      <span className="followup-metric">
+                        CTR: {item.ctr_before.toFixed(2)}% {'\u2192'} {item.ctr_after.toFixed(2)}%
+                      </span>
+                    )}
+                    {item.freq_before > 0 && (
+                      <span className="followup-metric">
+                        Freq: {item.freq_before.toFixed(1)} {'\u2192'} {item.freq_after.toFixed(1)}
+                      </span>
+                    )}
                   </div>
-                  {item.impact_summary && (
+
+                  {/* Phase progression */}
+                  {(item.phases?.day_3 || item.phases?.day_7 || item.phases?.day_14) && (
+                    <div className="followup-phase-timeline">
+                      {['day_3', 'day_7', 'day_14'].map(phase => {
+                        const p = item.phases?.[phase];
+                        if (!p) return <div key={phase} className="followup-phase-node empty"><span className="phase-label">{phase.replace('day_', '')}d</span></div>;
+                        const pVCfg = VERDICT_CONFIG[p.verdict] || VERDICT_CONFIG.neutral;
+                        return (
+                          <div key={phase} className="followup-phase-node" style={{ borderColor: pVCfg.color }}>
+                            <span className="phase-label">{phase.replace('day_', '')}d</span>
+                            <span className="phase-roas" style={{ color: (p.roas_pct || 0) >= 0 ? '#10b981' : '#ef4444' }}>
+                              {(p.roas_pct || 0) > 0 ? '+' : ''}{p.roas_pct || 0}%
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Expanded: AI Analysis */}
+                  {isExpanded && item.ai_analysis && (
+                    <div className="followup-ai-analysis">
+                      <div className="followup-ai-header">Analisis del Brain</div>
+                      {item.ai_analysis.root_cause && (
+                        <div className="followup-ai-field">
+                          <span className="followup-ai-label">Causa raiz</span>
+                          <span className="followup-ai-text">{item.ai_analysis.root_cause}</span>
+                        </div>
+                      )}
+                      {item.ai_analysis.what_worked && item.ai_analysis.what_worked !== 'N/A' && (
+                        <div className="followup-ai-field positive">
+                          <span className="followup-ai-label">Funciono</span>
+                          <span className="followup-ai-text">{item.ai_analysis.what_worked}</span>
+                        </div>
+                      )}
+                      {item.ai_analysis.what_didnt && item.ai_analysis.what_didnt !== 'N/A' && (
+                        <div className="followup-ai-field negative">
+                          <span className="followup-ai-label">No funciono</span>
+                          <span className="followup-ai-text">{item.ai_analysis.what_didnt}</span>
+                        </div>
+                      )}
+                      {item.ai_analysis.lesson_learned && (
+                        <div className="followup-ai-field lesson">
+                          <span className="followup-ai-label">Leccion</span>
+                          <span className="followup-ai-text">{item.ai_analysis.lesson_learned}</span>
+                        </div>
+                      )}
+                      {item.ai_analysis.confidence_adjustment != null && (
+                        <div className="followup-ai-confidence">
+                          Ajuste confianza: <span className={item.ai_analysis.confidence_adjustment >= 0 ? 'positive' : 'negative'}>
+                            {item.ai_analysis.confidence_adjustment > 0 ? '+' : ''}{item.ai_analysis.confidence_adjustment}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {item.impact_summary && !isExpanded && (
                     <div className="followup-timeline-summary">{item.impact_summary}</div>
                   )}
                 </div>
@@ -1165,7 +1417,7 @@ function FollowUpPanel({ formatTime }) {
         <div className="feed-empty">
           <div className="feed-empty-icon">{'\uD83D\uDCCA'}</div>
           <p>Sin datos de seguimiento aun.</p>
-          <p className="feed-empty-hint">Aprueba recomendaciones y el Brain medira su impacto automaticamente despues de 24h.</p>
+          <p className="feed-empty-hint">Aprueba recomendaciones y el Brain medira su impacto en 3 fases: dia 3, dia 7, y dia 14.</p>
         </div>
       )}
     </div>

@@ -86,7 +86,7 @@ const brainRecommendationSchema = new mongoose.Schema({
   decided_at: { type: Date, default: null },
   decision_note: { type: String, default: '' },  // Nota opcional del usuario
 
-  // Follow-up: ¿se ejecutó la acción?
+  // Follow-up: ¿se ejecutó la acción? (legacy single-check fields kept for backward compat)
   follow_up: {
     checked: { type: Boolean, default: false },
     checked_at: { type: Date, default: null },
@@ -99,26 +99,116 @@ const brainRecommendationSchema = new mongoose.Schema({
       cpa_7d: Number,
       spend_7d: Number,
       frequency_7d: Number,
+      ctr_7d: Number,
       purchases_7d: Number,
+      purchase_value_7d: Number,
+      add_to_cart_7d: Number,
+      initiate_checkout_7d: Number,
+      daily_budget: Number,
       status: String
     },
 
-    // Métricas después (medidas en follow-up)
+    // Métricas después (medidas en follow-up) — populated by last completed phase
     metrics_after: {
       roas_7d: Number,
       cpa_7d: Number,
       spend_7d: Number,
       frequency_7d: Number,
+      ctr_7d: Number,
       purchases_7d: Number,
+      purchase_value_7d: Number,
+      add_to_cart_7d: Number,
+      initiate_checkout_7d: Number,
+      daily_budget: Number,
       status: String,
       measured_at: Date
     },
 
-    // Impacto calculado
-    impact_summary: { type: String, default: '' },  // "ROAS mejoró de 0.8x a 2.1x tras pausar"
+    // ═══ MULTI-PHASE MEASUREMENT ═══
+    // Each phase captures a snapshot at increasing intervals post-approval
+    phases: {
+      // Phase 1: Early signal — 3 days after approval
+      day_3: {
+        measured: { type: Boolean, default: false },
+        measured_at: Date,
+        metrics: {
+          roas_7d: Number, cpa_7d: Number, spend_7d: Number,
+          frequency_7d: Number, ctr_7d: Number, purchases_7d: Number,
+          purchase_value_7d: Number, add_to_cart_7d: Number,
+          initiate_checkout_7d: Number, daily_budget: Number, status: String
+        },
+        deltas: {
+          roas_pct: Number, cpa_pct: Number, spend_pct: Number,
+          ctr_pct: Number, frequency_pct: Number, purchases_delta: Number
+        },
+        verdict: { type: String, enum: ['positive', 'negative', 'neutral', 'too_early', null], default: null }
+      },
+      // Phase 2: Stabilized — 7 days after approval
+      day_7: {
+        measured: { type: Boolean, default: false },
+        measured_at: Date,
+        metrics: {
+          roas_7d: Number, cpa_7d: Number, spend_7d: Number,
+          frequency_7d: Number, ctr_7d: Number, purchases_7d: Number,
+          purchase_value_7d: Number, add_to_cart_7d: Number,
+          initiate_checkout_7d: Number, daily_budget: Number, status: String
+        },
+        deltas: {
+          roas_pct: Number, cpa_pct: Number, spend_pct: Number,
+          ctr_pct: Number, frequency_pct: Number, purchases_delta: Number
+        },
+        verdict: { type: String, enum: ['positive', 'negative', 'neutral', null], default: null }
+      },
+      // Phase 3: Full impact — 14 days after approval
+      day_14: {
+        measured: { type: Boolean, default: false },
+        measured_at: Date,
+        metrics: {
+          roas_7d: Number, cpa_7d: Number, spend_7d: Number,
+          frequency_7d: Number, ctr_7d: Number, purchases_7d: Number,
+          purchase_value_7d: Number, add_to_cart_7d: Number,
+          initiate_checkout_7d: Number, daily_budget: Number, status: String
+        },
+        deltas: {
+          roas_pct: Number, cpa_pct: Number, spend_pct: Number,
+          ctr_pct: Number, frequency_pct: Number, purchases_delta: Number
+        },
+        verdict: { type: String, enum: ['positive', 'negative', 'neutral', null], default: null }
+      }
+    },
+
+    // Current phase: which measurement we're waiting for next
+    current_phase: {
+      type: String,
+      enum: ['awaiting_day_3', 'awaiting_day_7', 'awaiting_day_14', 'complete'],
+      default: 'awaiting_day_3'
+    },
+
+    // ═══ AI-POWERED IMPACT ANALYSIS ═══
+    // Claude analyzes the before/after data to explain WHY the action worked or not
+    ai_analysis: {
+      generated: { type: Boolean, default: false },
+      generated_at: Date,
+      root_cause: String,        // "La fatiga creativa era la causa principal — CTR recuperó 35% con los nuevos ads"
+      what_worked: String,       // "El refresh de creativos redujo frequency de 4.2 a 2.1 y recuperó CTR"
+      what_didnt: String,        // "CPA no mejoró pese al mejor CTR — posible problema de landing page persistente"
+      lesson_learned: String,    // "Para este tipo de ad set (retarget), refresh cada 14 días es necesario"
+      confidence_adjustment: Number,  // +10 or -15 — how much to adjust Brain confidence for this action_type
+      tokens_used: Number
+    },
+
+    // Impacto calculado (final — set from last completed phase or legacy single-check)
+    impact_summary: { type: String, default: '' },
     impact_verdict: {
       type: String,
       enum: ['positive', 'negative', 'neutral', 'pending', null],
+      default: null
+    },
+
+    // Trend across phases: is the impact improving, stable, or declining over time?
+    impact_trend: {
+      type: String,
+      enum: ['improving', 'stable', 'declining', null],
       default: null
     }
   },

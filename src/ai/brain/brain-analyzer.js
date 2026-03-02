@@ -1217,22 +1217,32 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // FOLLOW-UP ENGINE — Mide impacto de recomendaciones aprobadas
+  // FOLLOW-UP ENGINE v2 — Multi-phase intelligent impact tracking
+  // Measures at 3d, 7d, 14d with multi-metric analysis + AI diagnosis
   // ═══════════════════════════════════════════════════════════════
 
   /**
-   * Revisa recomendaciones aprobadas y mide si la acción fue ejecutada + impacto.
-   * Llamado en cada ciclo de datos (cada 10 min) pero solo actúa si hay
-   * recomendaciones aprobadas hace >24h sin follow-up.
+   * Multi-phase follow-up engine.
+   * Called every 10 min. Checks all approved recs and advances their
+   * measurement phase when enough time has elapsed.
+   *
+   * Phase timeline (from decided_at):
+   *   3d → day_3 measurement (early signal)
+   *   7d → day_7 measurement (stabilized)
+   *  14d → day_14 measurement (full impact) + AI analysis
    */
   async followUpApprovedRecommendations() {
     try {
-      // Buscar recomendaciones aprobadas sin follow-up, aprobadas hace >24h
-      const oneDayAgo = new Date(Date.now() - 24 * 3600000);
+      // Find approved recs that still have phases to measure
       const approvedRecs = await BrainRecommendation.find({
         status: 'approved',
-        'follow_up.checked': false,
-        decided_at: { $lte: oneDayAgo }
+        decided_at: { $ne: null },
+        $or: [
+          { 'follow_up.current_phase': { $exists: false } },
+          { 'follow_up.current_phase': { $in: ['awaiting_day_3', 'awaiting_day_7', 'awaiting_day_14'] } },
+          // Legacy: recs without current_phase field (pre-upgrade)
+          { 'follow_up.checked': false, 'follow_up.current_phase': { $exists: false } }
+        ]
       }).lean();
 
       if (approvedRecs.length === 0) return 0;
@@ -1241,113 +1251,384 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
       const snapshotMap = {};
       for (const s of snapshots) snapshotMap[s.entity_id] = s;
 
-      let followedUp = 0;
+      let phasesCompleted = 0;
 
       for (const rec of approvedRecs) {
-        const snap = snapshotMap[rec.entity.entity_id];
+        const snap = snapshotMap[rec.entity?.entity_id];
         if (!snap) continue;
 
+        const hoursSinceApproval = (Date.now() - new Date(rec.decided_at).getTime()) / 3600000;
+        const phase = rec.follow_up?.current_phase || 'awaiting_day_3';
+
+        // Determine which phase to measure based on elapsed time
+        let targetPhase = null;
+        if (phase === 'awaiting_day_3' && hoursSinceApproval >= 72) {
+          targetPhase = 'day_3';
+        } else if (phase === 'awaiting_day_7' && hoursSinceApproval >= 168) {
+          targetPhase = 'day_7';
+        } else if (phase === 'awaiting_day_14' && hoursSinceApproval >= 336) {
+          targetPhase = 'day_14';
+        }
+
+        if (!targetPhase) continue;
+
+        // Detect if action was executed
+        const actionExecuted = this._detectActionExecution(rec, snap);
+
+        // Capture current metrics snapshot
         const m7d = snap.metrics?.last_7d || {};
+        const currentMetrics = {
+          roas_7d: m7d.roas || 0,
+          cpa_7d: m7d.cpa || 0,
+          spend_7d: m7d.spend || 0,
+          frequency_7d: m7d.frequency || 0,
+          ctr_7d: m7d.ctr || 0,
+          purchases_7d: m7d.purchases || 0,
+          purchase_value_7d: m7d.purchase_value || 0,
+          add_to_cart_7d: m7d.add_to_cart || 0,
+          initiate_checkout_7d: m7d.initiate_checkout || 0,
+          daily_budget: snap.daily_budget || 0,
+          status: snap.status
+        };
+
+        // Calculate deltas vs metrics_at_recommendation
         const prev = rec.follow_up?.metrics_at_recommendation || {};
+        const deltas = this._calculateDeltas(prev, currentMetrics);
 
-        // Detectar si la acción fue ejecutada
-        let actionExecuted = false;
-        if (rec.action_type === 'pause') {
-          actionExecuted = ['PAUSED', 'ADSET_PAUSED', 'CAMPAIGN_PAUSED'].includes(snap.status);
-        } else if (rec.action_type === 'scale_up') {
-          actionExecuted = (snap.daily_budget || 0) > (prev.spend_7d / 7 || 0);
-        } else if (rec.action_type === 'scale_down') {
-          actionExecuted = (snap.daily_budget || 0) < (prev.spend_7d / 7 || 0);
-        } else if (rec.action_type === 'reactivate') {
-          actionExecuted = snap.status === 'ACTIVE' && prev.status !== 'ACTIVE';
-        } else {
-          // Para otros tipos, simplemente medir el cambio
-          actionExecuted = true; // Asumimos que se hizo algo
+        // Determine verdict for this phase
+        const verdict = this._computePhaseVerdict(rec, targetPhase, deltas, actionExecuted);
+
+        // Build update object
+        const nextPhase = targetPhase === 'day_3' ? 'awaiting_day_7'
+          : targetPhase === 'day_7' ? 'awaiting_day_14'
+          : 'complete';
+
+        const updateObj = {
+          [`follow_up.phases.${targetPhase}.measured`]: true,
+          [`follow_up.phases.${targetPhase}.measured_at`]: new Date(),
+          [`follow_up.phases.${targetPhase}.metrics`]: currentMetrics,
+          [`follow_up.phases.${targetPhase}.deltas`]: deltas,
+          [`follow_up.phases.${targetPhase}.verdict`]: verdict,
+          'follow_up.current_phase': nextPhase,
+          'follow_up.action_executed': actionExecuted,
+          'follow_up.execution_detected_at': actionExecuted && !rec.follow_up?.execution_detected_at ? new Date() : (rec.follow_up?.execution_detected_at || null),
+          'follow_up.metrics_after': { ...currentMetrics, measured_at: new Date() },
+          updated_at: new Date()
+        };
+
+        // On final phase or day_7+, set the overall verdict + summary
+        if (targetPhase === 'day_14' || targetPhase === 'day_7') {
+          const impactSummary = this._buildImpactSummary(rec, targetPhase, deltas, currentMetrics, prev, actionExecuted);
+          updateObj['follow_up.impact_summary'] = impactSummary;
+          updateObj['follow_up.impact_verdict'] = verdict;
+          updateObj['follow_up.checked'] = true;
+          updateObj['follow_up.checked_at'] = new Date();
         }
 
-        // Calcular impacto
-        let impactSummary = '';
-        let impactVerdict = 'neutral';
-
-        if (rec.action_type === 'pause' && actionExecuted) {
-          // Impacto en la cuenta general
-          impactSummary = `Ad set "${rec.entity.entity_name}" fue pausado. ROAS de cuenta al momento: ${prev.roas_7d?.toFixed(2)}x.`;
-          impactVerdict = 'positive'; // Pausar un bajo rendimiento es generalmente positivo
-        } else if (prev.roas_7d && prev.roas_7d > 0) {
-          const roasChange = ((m7d.roas || 0) - prev.roas_7d) / prev.roas_7d * 100;
-          if (roasChange > 10) {
-            impactVerdict = 'positive';
-            impactSummary = `ROAS mejoró de ${prev.roas_7d.toFixed(2)}x a ${(m7d.roas||0).toFixed(2)}x (+${roasChange.toFixed(0)}%). Compras: ${prev.purchases_7d||0} → ${m7d.purchases||0}.`;
-          } else if (roasChange < -10) {
-            impactVerdict = 'negative';
-            impactSummary = `ROAS bajó de ${prev.roas_7d.toFixed(2)}x a ${(m7d.roas||0).toFixed(2)}x (${roasChange.toFixed(0)}%). Puede ser volatilidad transitoria.`;
-          } else {
-            impactVerdict = 'neutral';
-            impactSummary = `ROAS se mantuvo estable: ${prev.roas_7d.toFixed(2)}x → ${(m7d.roas||0).toFixed(2)}x. Sin cambio significativo aún.`;
-          }
-        } else {
-          impactSummary = `Datos insuficientes para medir impacto. Métricas actuales: ROAS=${(m7d.roas||0).toFixed(2)}x, Spend=$${(m7d.spend||0).toFixed(0)}.`;
+        // Compute impact trend across completed phases
+        if (targetPhase !== 'day_3') {
+          const trend = this._computeImpactTrend(rec, targetPhase, deltas);
+          updateObj['follow_up.impact_trend'] = trend;
         }
 
-        // Guardar follow-up
-        await BrainRecommendation.updateOne(
-          { _id: rec._id },
-          {
-            $set: {
-              'follow_up.checked': true,
-              'follow_up.checked_at': new Date(),
-              'follow_up.action_executed': actionExecuted,
-              'follow_up.execution_detected_at': actionExecuted ? new Date() : null,
-              'follow_up.metrics_after': {
-                roas_7d: m7d.roas || 0,
-                cpa_7d: m7d.cpa || 0,
-                spend_7d: m7d.spend || 0,
-                frequency_7d: m7d.frequency || 0,
-                purchases_7d: m7d.purchases || 0,
-                status: snap.status,
-                measured_at: new Date()
-              },
-              'follow_up.impact_summary': impactSummary,
-              'follow_up.impact_verdict': impactVerdict,
-              updated_at: new Date()
-            }
-          }
-        );
-
-        // Crear insight de follow-up si la acción fue ejecutada
-        if (actionExecuted) {
-          try {
-            await BrainInsight.create({
-              insight_type: 'follow_up',
-              severity: impactVerdict === 'positive' ? 'info' : impactVerdict === 'negative' ? 'medium' : 'low',
-              title: `Seguimiento: ${rec.title}`,
-              body: `**Recomendación aprobada:** ${rec.action_detail}\n\n**Estado:** ${actionExecuted ? 'Acción ejecutada' : 'Acción no detectada'}\n\n**Impacto:** ${impactSummary}`,
-              entities: [rec.entity],
-              generated_by: 'hybrid',
-              data_points: {
-                recommendation_id: rec._id.toString(),
-                action_type: rec.action_type,
-                impact_verdict: impactVerdict,
-                roas_before: prev.roas_7d,
-                roas_after: m7d.roas || 0
-              }
-            });
-          } catch (insightErr) {
-            logger.error(`[BRAIN-RECS] Error creando insight de follow-up: ${insightErr.message}`);
-          }
+        // Mark complete on day_14
+        if (targetPhase === 'day_14') {
+          updateObj['follow_up.checked'] = true;
+          updateObj['follow_up.checked_at'] = new Date();
         }
 
-        followedUp++;
+        await BrainRecommendation.updateOne({ _id: rec._id }, { $set: updateObj });
+
+        // Create follow-up insight on day_7 and day_14
+        if (targetPhase === 'day_7' || targetPhase === 'day_14') {
+          await this._createFollowUpInsight(rec, targetPhase, verdict, deltas, currentMetrics, prev, actionExecuted);
+        }
+
+        // Run AI analysis on day_14 (final phase)
+        if (targetPhase === 'day_14') {
+          this._runAIImpactAnalysis(rec, snap, deltas, verdict).catch(err =>
+            logger.warn(`[FOLLOW-UP] AI analysis error (non-fatal): ${err.message}`)
+          );
+        }
+
+        phasesCompleted++;
       }
 
-      if (followedUp > 0) {
-        logger.info(`[BRAIN-RECS] Follow-up: ${followedUp} recomendaciones revisadas`);
+      if (phasesCompleted > 0) {
+        logger.info(`[FOLLOW-UP] ${phasesCompleted} phase measurements completed`);
       }
-      return followedUp;
+      return phasesCompleted;
     } catch (error) {
-      logger.error(`[BRAIN-RECS] Error en follow-up: ${error.message}`);
+      logger.error(`[FOLLOW-UP] Error: ${error.message}`);
       return 0;
     }
+  }
+
+  /**
+   * Detect if the recommended action was actually executed in Meta.
+   * Uses budget comparison with the saved daily_budget (not derived from spend).
+   */
+  _detectActionExecution(rec, snap) {
+    const prev = rec.follow_up?.metrics_at_recommendation || {};
+    const prevBudget = prev.daily_budget || (prev.spend_7d ? prev.spend_7d / 7 : 0);
+
+    switch (rec.action_type) {
+      case 'pause':
+        return ['PAUSED', 'ADSET_PAUSED', 'CAMPAIGN_PAUSED'].includes(snap.status);
+      case 'scale_up':
+        return (snap.daily_budget || 0) > prevBudget * 1.05;
+      case 'scale_down':
+        return (snap.daily_budget || 0) < prevBudget * 0.95;
+      case 'reactivate':
+        return snap.status === 'ACTIVE' && prev.status !== 'ACTIVE';
+      case 'creative_refresh': {
+        // Count active ads — if more than before, fresh creatives were added
+        const prevAds = prev.active_ads || 0;
+        const currentAds = snap.active_ads || snap.ads_count || 0;
+        return currentAds > prevAds || (snap.metrics?.last_3d?.ctr || 0) > (prev.ctr_7d || 0) * 1.1;
+      }
+      default:
+        return true; // For monitor/restructure/bid_change, assume executed
+    }
+  }
+
+  /**
+   * Calculate percentage deltas between before (recommendation time) and current metrics.
+   */
+  _calculateDeltas(prev, current) {
+    const pctDelta = (cur, pre) => pre > 0 ? ((cur - pre) / pre) * 100 : 0;
+    return {
+      roas_pct: Math.round(pctDelta(current.roas_7d, prev.roas_7d) * 10) / 10,
+      cpa_pct: Math.round(pctDelta(current.cpa_7d, prev.cpa_7d) * 10) / 10,
+      spend_pct: Math.round(pctDelta(current.spend_7d, prev.spend_7d) * 10) / 10,
+      ctr_pct: Math.round(pctDelta(current.ctr_7d, prev.ctr_7d) * 10) / 10,
+      frequency_pct: Math.round(pctDelta(current.frequency_7d, prev.frequency_7d) * 10) / 10,
+      purchases_delta: (current.purchases_7d || 0) - (prev.purchases_7d || 0)
+    };
+  }
+
+  /**
+   * Determine the verdict for a measurement phase.
+   * day_3 = more lenient (too_early if marginal), day_7/14 = strict.
+   */
+  _computePhaseVerdict(rec, phase, deltas, actionExecuted) {
+    // Pause actions: positive if executed (stopped bleeding)
+    if (rec.action_type === 'pause' && actionExecuted) return 'positive';
+
+    // For day_3, be lenient — changes need time
+    if (phase === 'day_3') {
+      if (deltas.roas_pct > 15) return 'positive';
+      if (deltas.roas_pct < -20) return 'negative';
+      return 'too_early';
+    }
+
+    // Multi-signal verdict for day_7 and day_14
+    let score = 0;
+    // ROAS is king
+    if (deltas.roas_pct > 15) score += 3;
+    else if (deltas.roas_pct > 5) score += 1;
+    else if (deltas.roas_pct < -15) score -= 3;
+    else if (deltas.roas_pct < -5) score -= 1;
+
+    // CPA improvement (lower is better — so negative delta is good)
+    if (deltas.cpa_pct < -10) score += 2;
+    else if (deltas.cpa_pct > 15) score -= 1;
+
+    // CTR improvement
+    if (deltas.ctr_pct > 15) score += 1;
+    else if (deltas.ctr_pct < -20) score -= 1;
+
+    // Purchase volume
+    if (deltas.purchases_delta > 5) score += 1;
+    else if (deltas.purchases_delta < -5) score -= 1;
+
+    // Frequency (lower is better for saturation-related actions)
+    if (['creative_refresh', 'restructure'].includes(rec.action_type)) {
+      if (deltas.frequency_pct < -15) score += 1;
+      else if (deltas.frequency_pct > 20) score -= 1;
+    }
+
+    if (score >= 3) return 'positive';
+    if (score <= -2) return 'negative';
+    return 'neutral';
+  }
+
+  /**
+   * Build a rich impact summary text with multi-metric data.
+   */
+  _buildImpactSummary(rec, phase, deltas, current, prev, actionExecuted) {
+    const phaseLabel = phase === 'day_7' ? '7 días' : '14 días';
+    const parts = [];
+
+    if (rec.action_type === 'pause' && actionExecuted) {
+      return `Ad set "${rec.entity.entity_name}" pausado correctamente. ROAS al momento: ${(prev.roas_7d || 0).toFixed(2)}x. Budget liberado: $${(prev.daily_budget || prev.spend_7d / 7 || 0).toFixed(0)}/día.`;
+    }
+
+    // ROAS delta
+    if (prev.roas_7d > 0) {
+      const dir = deltas.roas_pct >= 0 ? '+' : '';
+      parts.push(`ROAS: ${(prev.roas_7d).toFixed(2)}x → ${(current.roas_7d).toFixed(2)}x (${dir}${deltas.roas_pct}%)`);
+    }
+    // CPA delta
+    if (prev.cpa_7d > 0) {
+      const dir = deltas.cpa_pct >= 0 ? '+' : '';
+      parts.push(`CPA: $${(prev.cpa_7d).toFixed(2)} → $${(current.cpa_7d).toFixed(2)} (${dir}${deltas.cpa_pct}%)`);
+    }
+    // Purchases
+    parts.push(`Compras: ${prev.purchases_7d || 0} → ${current.purchases_7d || 0} (${deltas.purchases_delta >= 0 ? '+' : ''}${deltas.purchases_delta})`);
+    // CTR
+    if (prev.ctr_7d > 0) {
+      parts.push(`CTR: ${(prev.ctr_7d).toFixed(2)}% → ${(current.ctr_7d).toFixed(2)}%`);
+    }
+    // Frequency
+    if (prev.frequency_7d > 0) {
+      parts.push(`Freq: ${(prev.frequency_7d).toFixed(1)} → ${(current.frequency_7d).toFixed(1)}`);
+    }
+
+    const execLabel = actionExecuted ? 'Acción ejecutada' : 'Acción no detectada';
+    return `[${phaseLabel}] ${execLabel}. ${parts.join(' | ')}`;
+  }
+
+  /**
+   * Compute trend across phases: is impact improving, stable, or declining over time?
+   */
+  _computeImpactTrend(rec, currentPhase, currentDeltas) {
+    const phases = rec.follow_up?.phases || {};
+    const prevPhase = currentPhase === 'day_7' ? phases.day_3 : phases.day_7;
+    if (!prevPhase?.deltas) return null;
+
+    const prevRoas = prevPhase.deltas.roas_pct || 0;
+    const currRoas = currentDeltas.roas_pct || 0;
+    const improvement = currRoas - prevRoas;
+
+    if (improvement > 10) return 'improving';
+    if (improvement < -10) return 'declining';
+    return 'stable';
+  }
+
+  /**
+   * Create a rich follow-up insight in the feed with phase-specific data.
+   */
+  async _createFollowUpInsight(rec, phase, verdict, deltas, current, prev, actionExecuted) {
+    try {
+      const phaseLabel = phase === 'day_7' ? '7d' : '14d';
+      const verdictEmoji = verdict === 'positive' ? '✅' : verdict === 'negative' ? '❌' : '➖';
+      const title = `${verdictEmoji} Seguimiento ${phaseLabel}: ${rec.entity.entity_name}`;
+
+      let body = `**Recomendación:** ${rec.action_detail}\n`;
+      body += `**Acción:** ${actionExecuted ? 'Ejecutada' : 'No detectada'}\n\n`;
+
+      // Multi-metric comparison table
+      body += `**Impacto a ${phaseLabel}:**\n`;
+      if (prev.roas_7d > 0) body += `- ROAS: ${(prev.roas_7d).toFixed(2)}x → ${(current.roas_7d).toFixed(2)}x (${deltas.roas_pct > 0 ? '+' : ''}${deltas.roas_pct}%)\n`;
+      if (prev.cpa_7d > 0) body += `- CPA: $${(prev.cpa_7d).toFixed(2)} → $${(current.cpa_7d).toFixed(2)} (${deltas.cpa_pct > 0 ? '+' : ''}${deltas.cpa_pct}%)\n`;
+      body += `- Compras: ${prev.purchases_7d || 0} → ${current.purchases_7d || 0}\n`;
+      if (prev.ctr_7d > 0) body += `- CTR: ${(prev.ctr_7d).toFixed(2)}% → ${(current.ctr_7d).toFixed(2)}%\n`;
+      if (prev.frequency_7d > 0) body += `- Frequency: ${(prev.frequency_7d).toFixed(1)} → ${(current.frequency_7d).toFixed(1)}\n`;
+
+      // Funnel if available
+      if (current.add_to_cart_7d > 0) {
+        body += `\n**Funnel:** ${current.add_to_cart_7d} ATC → ${current.initiate_checkout_7d || 0} IC → ${current.purchases_7d || 0} compras\n`;
+      }
+
+      await BrainInsight.create({
+        insight_type: 'follow_up',
+        severity: verdict === 'positive' ? 'info' : verdict === 'negative' ? 'high' : 'low',
+        title,
+        body,
+        entities: [rec.entity],
+        generated_by: 'hybrid',
+        data_points: {
+          recommendation_id: rec._id.toString(),
+          action_type: rec.action_type,
+          phase,
+          impact_verdict: verdict,
+          roas_before: prev.roas_7d,
+          roas_after: current.roas_7d,
+          roas_delta_pct: deltas.roas_pct,
+          cpa_before: prev.cpa_7d,
+          cpa_after: current.cpa_7d,
+          cpa_delta_pct: deltas.cpa_pct,
+          purchases_before: prev.purchases_7d,
+          purchases_after: current.purchases_7d
+        }
+      });
+    } catch (err) {
+      logger.error(`[FOLLOW-UP] Error creating insight: ${err.message}`);
+    }
+  }
+
+  /**
+   * AI-powered impact analysis (runs on day_14 — the final phase).
+   * Claude analyzes the before/after data and explains WHY the action
+   * worked or didn't, what lesson to learn, and confidence adjustment.
+   */
+  async _runAIImpactAnalysis(rec, snap, deltas, verdict) {
+    const prev = rec.follow_up?.metrics_at_recommendation || {};
+    const phases = rec.follow_up?.phases || {};
+    const m7d = snap.metrics?.last_7d || {};
+
+    const prompt = `Analiza el impacto de esta recomendación de ads que fue aprobada hace 14 días.
+
+RECOMENDACIÓN ORIGINAL:
+- Acción: ${rec.action_type} — "${rec.action_detail}"
+- Prioridad: ${rec.priority} | Confianza: ${rec.confidence_score}%
+- Razón original: ${rec.body?.substring(0, 300) || 'N/A'}
+
+MÉTRICAS AL MOMENTO DE LA RECOMENDACIÓN:
+ROAS=${(prev.roas_7d||0).toFixed(2)}x, CPA=$${(prev.cpa_7d||0).toFixed(2)}, CTR=${(prev.ctr_7d||0).toFixed(2)}%, Freq=${(prev.frequency_7d||0).toFixed(1)}, Compras=${prev.purchases_7d||0}, Budget=$${(prev.daily_budget||0).toFixed(0)}/día
+
+EVOLUCIÓN POR FASES:
+${phases.day_3?.measured ? `Día 3: ROAS ${(phases.day_3.deltas?.roas_pct||0) > 0 ? '+' : ''}${phases.day_3.deltas?.roas_pct||0}%, CPA ${(phases.day_3.deltas?.cpa_pct||0) > 0 ? '+' : ''}${phases.day_3.deltas?.cpa_pct||0}%, Veredicto: ${phases.day_3.verdict}` : 'Día 3: No medido'}
+${phases.day_7?.measured ? `Día 7: ROAS ${(phases.day_7.deltas?.roas_pct||0) > 0 ? '+' : ''}${phases.day_7.deltas?.roas_pct||0}%, CPA ${(phases.day_7.deltas?.cpa_pct||0) > 0 ? '+' : ''}${phases.day_7.deltas?.cpa_pct||0}%, Veredicto: ${phases.day_7.verdict}` : 'Día 7: No medido'}
+Día 14: ROAS ${deltas.roas_pct > 0 ? '+' : ''}${deltas.roas_pct}%, CPA ${deltas.cpa_pct > 0 ? '+' : ''}${deltas.cpa_pct}%, CTR ${deltas.ctr_pct > 0 ? '+' : ''}${deltas.ctr_pct}%, Freq ${deltas.frequency_pct > 0 ? '+' : ''}${deltas.frequency_pct}%, Compras ${deltas.purchases_delta >= 0 ? '+' : ''}${deltas.purchases_delta}
+
+MÉTRICAS ACTUALES (14d después):
+ROAS=${(m7d.roas||0).toFixed(2)}x, CPA=$${(m7d.cpa||0).toFixed(2)}, CTR=${(m7d.ctr||0).toFixed(2)}%, Freq=${(m7d.frequency||0).toFixed(1)}, Compras=${m7d.purchases||0}
+
+VEREDICTO FINAL: ${verdict}
+
+Responde SOLO con JSON:
+{
+  "root_cause": "Explica la causa raíz del resultado (por qué funcionó o no funcionó la acción)",
+  "what_worked": "Qué aspecto de la acción tuvo efecto positivo (o 'N/A' si no funcionó)",
+  "what_didnt": "Qué aspecto no mejoró o empeoró (o 'N/A' si todo mejoró)",
+  "lesson_learned": "Una lección concreta y accionable para futuras recomendaciones similares",
+  "confidence_adjustment": número entre -20 y +20 (cuánto ajustar la confianza del Brain para este tipo de acción)
+}`;
+
+    const response = await this.anthropic.messages.create({
+      model: config.claude.model,
+      max_tokens: 1000,
+      messages: [{ role: 'user', content: prompt }],
+      system: 'Eres un analista de Meta Ads. Analiza resultados de optimización. Sé directo y específico. Responde SOLO con JSON válido.'
+    });
+
+    const text = response.content[0]?.text || '';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return;
+
+    const analysis = JSON.parse(jsonMatch[0]);
+    const tokensUsed = (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0);
+
+    await BrainRecommendation.updateOne(
+      { _id: rec._id },
+      {
+        $set: {
+          'follow_up.ai_analysis.generated': true,
+          'follow_up.ai_analysis.generated_at': new Date(),
+          'follow_up.ai_analysis.root_cause': analysis.root_cause || '',
+          'follow_up.ai_analysis.what_worked': analysis.what_worked || '',
+          'follow_up.ai_analysis.what_didnt': analysis.what_didnt || '',
+          'follow_up.ai_analysis.lesson_learned': analysis.lesson_learned || '',
+          'follow_up.ai_analysis.confidence_adjustment': Math.max(-20, Math.min(20, analysis.confidence_adjustment || 0)),
+          'follow_up.ai_analysis.tokens_used': tokensUsed,
+          updated_at: new Date()
+        }
+      }
+    );
+
+    logger.info(`[FOLLOW-UP] AI analysis completed for "${rec.title}" — adjustment: ${analysis.confidence_adjustment || 0}`);
   }
 
   /**
