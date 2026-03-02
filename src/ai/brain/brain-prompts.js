@@ -2,6 +2,7 @@ const moment = require('moment-timezone');
 const kpiTargets = require('../../../config/kpi-targets');
 const deepResearchPriors = require('../../../config/deep-research-priors');
 
+const safetyGuards = require('../../../config/safety-guards');
 const TIMEZONE = process.env.TIMEZONE || 'America/New_York';
 
 /**
@@ -32,7 +33,7 @@ KPIs OBJETIVO:
 
 REGLAS CRITICAS:
 1. COORDINACION: Cada entidad solo puede recibir UNA recomendacion. No recomiendes scale_up y pause para el mismo ad set.
-2. ATTRIBUTION LAG: Datos de hoy/3d estan INCOMPLETOS. Usa 7d como referencia principal, 14d para confirmar tendencias.
+2. ATTRIBUTION LAG: Datos de hoy/3d estan INCOMPLETOS. Usa 7d como referencia principal, 14d/30d para confirmar tendencias a largo plazo y detectar estacionalidad.
 3. LEARNING PHASE: Nunca toques entidades en learning phase. Estan protegidas.
 4. COOLDOWNS: No recomiendes cambios en entidades con cooldown activo o en medicion.
 5. FEEDBACK LOOP: Revisa los resultados de tus acciones pasadas ANTES de decidir. Repite lo que funciono, evita lo que fallo.
@@ -147,25 +148,75 @@ function buildUserPrompt({
   aiCreations,
   strategicDirectives,
   learnerSummary,
-  aiManagerFeedback
+  aiManagerFeedback,
+  recommendationHistory
 }) {
   const now = moment().tz(TIMEZONE);
   const hourET = now.hours();
 
+  // === SEASONALITY CHECK ===
+  const todayStr = now.format('MM-DD');
+  const seasonalEvents = kpiTargets.seasonal_events || [];
+  const activeSeasonalEvents = seasonalEvents.filter(ev => {
+    if (ev.date) return ev.date === todayStr;
+    if (ev.start && ev.end) return todayStr >= ev.start && todayStr <= ev.end;
+    return false;
+  });
+  const upcomingEvents = seasonalEvents.filter(ev => {
+    const evDate = ev.date || ev.start;
+    if (!evDate) return false;
+    const daysUntil = ((new Date(`${now.format('YYYY')}-${evDate}`) - new Date(now.format('YYYY-MM-DD'))) / 86400000);
+    return daysUntil > 0 && daysUntil <= 14;
+  });
+
   let prompt = `FECHA Y HORA: ${now.format('YYYY-MM-DD HH:mm')} ET (hora ${hourET})
 ${hourET < 10 ? 'NOTA: Es temprano, datos de pacing de hoy son poco confiables.' : ''}
 ${hourET >= 15 ? 'NOTA: Tarde — datos de pacing de hoy son fiables.' : ''}
-
 `;
 
+  // Seasonality context
+  if (activeSeasonalEvents.length > 0) {
+    prompt += `\nEVENTO ESTACIONAL ACTIVO: ${activeSeasonalEvents.map(e => `${e.name} (budget multiplier: ${e.budget_multiplier}x)`).join(', ')}
+NOTA: Durante eventos estacionales es normal y esperado gastar mas. Se puede ser mas agresivo con budgets.\n`;
+  }
+  if (upcomingEvents.length > 0) {
+    prompt += `\nEVENTOS ESTACIONALES PROXIMOS (14 dias): ${upcomingEvents.map(e => `${e.name} (${e.date || e.start})`).join(', ')}
+NOTA: Prepara la cuenta para el aumento de demanda. Considera escalar ad sets ganadores proactivamente.\n`;
+  }
+
+  prompt += '\n';
+
+
   // === RESUMEN DE CUENTA ===
+  const acctSpend30d = accountOverview.spend_30d || 0;
+  const acctAov = acctSpend30d > 0 && accountOverview.roas_30d > 0
+    ? (acctSpend30d * accountOverview.roas_30d) // revenue30d approximation
+    : 0;
+
   prompt += `═══ RESUMEN DE CUENTA ═══
 Budget diario total: $${(accountOverview.total_daily_budget || 0).toFixed(0)}
 Gasto hoy: $${(accountOverview.today_spend || 0).toFixed(0)} (${accountOverview.total_daily_budget > 0 ? ((accountOverview.today_spend / accountOverview.total_daily_budget) * 100).toFixed(0) : 0}% del budget)
 ROAS: Hoy ${(accountOverview.today_roas || 0).toFixed(2)}x | 3d ${(accountOverview.roas_3d || 0).toFixed(2)}x | 7d ${(accountOverview.roas_7d || 0).toFixed(2)}x | 14d ${(accountOverview.roas_14d || 0).toFixed(2)}x | 30d ${(accountOverview.roas_30d || 0).toFixed(2)}x
+Spend: 14d $${(accountOverview.spend_14d || 0).toFixed(0)} | 30d $${acctSpend30d.toFixed(0)}
 Ad sets activos: ${accountOverview.active_adsets || 0} | Pausados: ${accountOverview.paused_adsets || 0}
+`;
+
+  // === BUDGET / PACING MENSUAL ===
+  const dayOfMonth = now.date();
+  const daysInMonth = now.daysInMonth();
+  const dailyTarget = kpiTargets.pacing?.daily_spend_target || kpiTargets.daily_spend_target || 3000;
+  const monthlyTarget = dailyTarget * daysInMonth;
+  const monthlyExpectedSoFar = dailyTarget * dayOfMonth;
+  const budgetCeiling = safetyGuards.budget_ceiling_daily || 5000;
+  // Estimate month-to-date spend from 30d (rough)
+  const mtdSpendEst = acctSpend30d > 0 ? (acctSpend30d / 30 * dayOfMonth) : 0;
+  const monthlyPacingPct = monthlyExpectedSoFar > 0 ? (mtdSpendEst / monthlyExpectedSoFar * 100).toFixed(0) : '--';
+
+  prompt += `Budget mensual: ~$${monthlyTarget.toLocaleString()} target ($${dailyTarget}/dia x ${daysInMonth}d) | Dia ${dayOfMonth}/${daysInMonth}
+Budget ceiling diario: $${budgetCeiling} | Pacing mensual estimado: ${monthlyPacingPct}%
 
 `;
+
 
   // === AD SETS ===
   const activeAdSets = (adSetSnapshots || []).filter(s => s.status === 'ACTIVE');
@@ -177,17 +228,25 @@ Ad sets activos: ${accountOverview.active_adsets || 0} | Pausados: ${accountOver
       const m7 = s.metrics?.last_7d || {};
       const m3 = s.metrics?.last_3d || {};
       const m14 = s.metrics?.last_14d || {};
+      const m30 = s.metrics?.last_30d || {};
       const mt = s.metrics?.today || {};
       const pacing = s.daily_budget > 0 && hourET > 0
         ? ((mt.spend || 0) / (s.daily_budget * (hourET / 24)) * 100).toFixed(0)
         : '--';
 
+      // AOV = Average Order Value (purchase_value / purchases)
+      const aov7d = (m7.purchases || 0) > 0 ? (m7.purchase_value || 0) / m7.purchases : 0;
+      const aov30d = (m30.purchases || 0) > 0 ? (m30.purchase_value || 0) / m30.purchases : 0;
+
       prompt += `[${s.entity_id}] ${s.entity_name}
   Budget: $${s.daily_budget || 0}/dia | Gasto hoy: $${(mt.spend || 0).toFixed(0)} | Pacing: ${pacing}%
-  ROAS: hoy ${(mt.roas || mt.purchase_value && mt.spend ? (mt.purchase_value / mt.spend).toFixed(2) : '0.00')}x | 3d ${(m3.roas || 0).toFixed(2)}x | 7d ${(m7.roas || 0).toFixed(2)}x | 14d ${(m14.roas || 0).toFixed(2)}x
-  CPA: 7d $${(m7.cpa || 0).toFixed(2)} | Compras 7d: ${m7.purchases || 0}
-  CTR: 7d ${(m7.ctr || 0).toFixed(2)}% | Frecuencia 7d: ${(m7.frequency || 0).toFixed(2)}
-  Impressiones 7d: ${m7.impressions || 0} | Clicks 7d: ${m7.clicks || 0} | Spend 7d: $${(m7.spend || 0).toFixed(0)}
+  ROAS: hoy ${(mt.roas || mt.purchase_value && mt.spend ? (mt.purchase_value / mt.spend).toFixed(2) : '0.00')}x | 3d ${(m3.roas || 0).toFixed(2)}x | 7d ${(m7.roas || 0).toFixed(2)}x | 14d ${(m14.roas || 0).toFixed(2)}x | 30d ${(m30.roas || 0).toFixed(2)}x
+  CPA: 7d $${(m7.cpa || 0).toFixed(2)} | 14d $${(m14.cpa || 0).toFixed(2)} | 30d $${(m30.cpa || 0).toFixed(2)}
+  Compras: 7d ${m7.purchases || 0} | 14d ${m14.purchases || 0} | 30d ${m30.purchases || 0}
+  AOV: 7d $${aov7d.toFixed(2)} | 30d $${aov30d.toFixed(2)}
+  CTR: 7d ${(m7.ctr || 0).toFixed(2)}% | Frecuencia 7d: ${(m7.frequency || 0).toFixed(2)} | 14d: ${(m14.frequency || 0).toFixed(2)}
+  Funnel 7d: ATC=${m7.add_to_cart || 0} → IC=${m7.initiate_checkout || 0} → Compras=${m7.purchases || 0}${(m7.add_to_cart || 0) > 0 ? ` (ATC→Purchase: ${((m7.purchases || 0) / m7.add_to_cart * 100).toFixed(0)}%)` : ''}
+  Impressiones 7d: ${m7.impressions || 0} | Clicks 7d: ${m7.clicks || 0} | Spend 7d: $${(m7.spend || 0).toFixed(0)} | Spend 30d: $${(m30.spend || 0).toFixed(0)}
 `;
     }
     prompt += '\n';
@@ -198,7 +257,8 @@ Ad sets activos: ${accountOverview.active_adsets || 0} | Pausados: ${accountOver
     for (const s of pausedAdSets.slice(0, 10)) {
       const m7 = s.metrics?.last_7d || {};
       const m14 = s.metrics?.last_14d || {};
-      prompt += `[${s.entity_id}] ${s.entity_name} — ROAS 7d: ${(m7.roas || 0).toFixed(2)}x, 14d: ${(m14.roas || 0).toFixed(2)}x, CPA: $${(m7.cpa || 0).toFixed(2)}, Spend 7d: $${(m7.spend || 0).toFixed(0)}\n`;
+      const m30 = s.metrics?.last_30d || {};
+      prompt += `[${s.entity_id}] ${s.entity_name} — ROAS 7d: ${(m7.roas || 0).toFixed(2)}x, 14d: ${(m14.roas || 0).toFixed(2)}x, 30d: ${(m30.roas || 0).toFixed(2)}x, CPA 7d: $${(m7.cpa || 0).toFixed(2)}, Compras 30d: ${m30.purchases || 0}, Spend 30d: $${(m30.spend || 0).toFixed(0)}\n`;
     }
     prompt += '\n';
   }
@@ -395,6 +455,37 @@ Ad sets activos: ${accountOverview.active_adsets || 0} | Pausados: ${accountOver
       prompt += `IMPORTANTE: Estos ad sets NO deben pausarse. Si sus metricas declinan, primero agrega creativos nuevos del banco.\n`;
       prompt += lowCreativeAdSets.join('\n') + '\n';
     }
+  }
+
+  // === HISTORIAL DE DECISIONES DEL USUARIO ===
+  if (recommendationHistory && recommendationHistory.length > 0) {
+    const approved = recommendationHistory.filter(r => r.status === 'approved');
+    const rejected = recommendationHistory.filter(r => r.status === 'rejected');
+
+    prompt += `\n═══ HISTORIAL DE DECISIONES DEL USUARIO (aprobaciones/rechazos) ═══\n`;
+    prompt += `Total: ${approved.length} aprobadas, ${rejected.length} rechazadas (ultimas 30)\n`;
+
+    if (approved.length > 0) {
+      prompt += `\nAPROBADAS (el usuario confio en estas):\n`;
+      for (const r of approved.slice(0, 15)) {
+        const daysAgo = r.decided_at ? Math.round((Date.now() - new Date(r.decided_at).getTime()) / 86400000) : '?';
+        const impact = r.follow_up?.impact_verdict || 'sin medir';
+        const roasDelta = (r.follow_up?.metrics_after?.roas_7d && r.follow_up?.metrics_at_recommendation?.roas_7d)
+          ? `ROAS: ${r.follow_up.metrics_at_recommendation.roas_7d.toFixed(2)}x -> ${r.follow_up.metrics_after.roas_7d.toFixed(2)}x`
+          : '';
+        prompt += `- [${daysAgo}d ago] ${r.action_type} en ${r.entity?.entity_name || 'N/A'}: "${r.title}" | impacto: ${impact} ${roasDelta}\n`;
+      }
+    }
+
+    if (rejected.length > 0) {
+      prompt += `\nRECHAZADAS (el usuario NO quiso estas — evita patrones similares):\n`;
+      for (const r of rejected.slice(0, 10)) {
+        const daysAgo = r.decided_at ? Math.round((Date.now() - new Date(r.decided_at).getTime()) / 86400000) : '?';
+        prompt += `- [${daysAgo}d ago] ${r.action_type} en ${r.entity?.entity_name || 'N/A'}: "${r.title}" | nota: ${r.decision_note || 'sin nota'}\n`;
+      }
+    }
+
+    prompt += `INSTRUCCION: Aprende de las preferencias del usuario. Repite patrones de acciones aprobadas. Evita recomendar acciones que el usuario ha rechazado consistentemente.\n`;
   }
 
   prompt += `\n═══ GENERA TUS RECOMENDACIONES AHORA ═══

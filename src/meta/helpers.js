@@ -32,6 +32,42 @@ function extractPurchaseCount(actions) {
 }
 
 /**
+ * Extrae el conteo de add_to_cart del pixel de Meta.
+ */
+function extractAddToCartCount(actions) {
+  if (!actions || !Array.isArray(actions)) return 0;
+  const atc = actions.find(a =>
+    a.action_type === 'offsite_conversion.fb_pixel_add_to_cart' ||
+    a.action_type === 'add_to_cart'
+  );
+  return atc ? parseInt(atc.value) : 0;
+}
+
+/**
+ * Extrae el conteo de initiate_checkout del pixel de Meta.
+ */
+function extractInitiateCheckoutCount(actions) {
+  if (!actions || !Array.isArray(actions)) return 0;
+  const ic = actions.find(a =>
+    a.action_type === 'offsite_conversion.fb_pixel_initiate_checkout' ||
+    a.action_type === 'initiate_checkout'
+  );
+  return ic ? parseInt(ic.value) : 0;
+}
+
+/**
+ * Extrae el valor de add_to_cart del pixel de Meta.
+ */
+function extractAddToCartValue(actionValues) {
+  if (!actionValues || !Array.isArray(actionValues)) return 0;
+  const atc = actionValues.find(a =>
+    a.action_type === 'offsite_conversion.fb_pixel_add_to_cart' ||
+    a.action_type === 'add_to_cart'
+  );
+  return atc ? parseFloat(atc.value) : 0;
+}
+
+/**
  * Extrae CPA de cost_per_action_type de Meta.
  */
 function extractCPA(costPerAction) {
@@ -60,6 +96,11 @@ function parseInsightRow(insight) {
   // This matches what Meta Ads Manager shows by default as "Link Clicks"
   const linkClicks = parseInt(insight.inline_link_clicks || 0);
 
+  // Pixel funnel metrics
+  const addToCart = extractAddToCartCount(insight.actions);
+  const addToCartValue = extractAddToCartValue(insight.action_values);
+  const initiateCheckout = extractInitiateCheckoutCount(insight.actions);
+
   return {
     spend,
     impressions: parseInt(insight.impressions || 0),
@@ -72,7 +113,10 @@ function parseInsightRow(insight) {
     roas: spend > 0 ? purchaseValue / spend : 0,
     cpa: purchases > 0 ? spend / purchases : 0,
     reach: parseInt(insight.reach || 0),
-    frequency: parseFloat(insight.frequency || 0)
+    frequency: parseFloat(insight.frequency || 0),
+    add_to_cart: addToCart,
+    add_to_cart_value: addToCartValue,
+    initiate_checkout: initiateCheckout
   };
 }
 
@@ -166,6 +210,9 @@ function getTimeRanges() {
 module.exports = {
   extractPurchaseValue,
   extractPurchaseCount,
+  extractAddToCartCount,
+  extractInitiateCheckoutCount,
+  extractAddToCartValue,
   extractCPA,
   parseInsightRow,
   calculateROASTrend,

@@ -14,6 +14,7 @@ const AgentReport = require('../../db/models/AgentReport');
 const ActionLog = require('../../db/models/ActionLog');
 const CreativeAsset = require('../../db/models/CreativeAsset');
 const AICreation = require('../../db/models/AICreation');
+const BrainRecommendation = require('../../db/models/BrainRecommendation');
 const StrategicDirective = require('../../db/models/StrategicDirective');
 const logger = require('../../utils/logger');
 
@@ -81,7 +82,8 @@ class UnifiedBrain {
         aiCreations: sharedData.aiCreations,
         strategicDirectives: sharedData.strategicDirectives,
         learnerSummary,
-        aiManagerFeedback: sharedData.aiManagerFeedback
+        aiManagerFeedback: sharedData.aiManagerFeedback,
+        recommendationHistory: sharedData.recommendationHistory
       });
 
       logger.info(`[BRAIN] Prompt enviado a Claude: ${userPrompt.length} chars`);
@@ -310,7 +312,17 @@ class UnifiedBrain {
       logger.warn(`[BRAIN] Error cargando feedback del AI Manager: ${e.message}`);
     }
 
-    logger.info(`[BRAIN] Datos cargados: ${adSetSnapshots.length} ad sets, ${adSnapshots.length} ads, ${campaignSnapshots.length} campanas, ${activeCooldowns.length} cooldowns`);
+    // Load recommendation approval/rejection history for Brain learning
+    let recommendationHistory = [];
+    try {
+      recommendationHistory = await BrainRecommendation.find({
+        status: { $in: ['approved', 'rejected'] }
+      }).sort({ decided_at: -1 }).limit(30).lean();
+    } catch (e) {
+      logger.warn(`[BRAIN] Error cargando historial de recomendaciones: ${e.message}`);
+    }
+
+    logger.info(`[BRAIN] Datos cargados: ${adSetSnapshots.length} ad sets, ${adSnapshots.length} ads, ${campaignSnapshots.length} campanas, ${activeCooldowns.length} cooldowns, ${recommendationHistory.length} rec history`);
 
     return {
       cycleId,
@@ -324,7 +336,8 @@ class UnifiedBrain {
       creativeAssets,
       aiCreations,
       strategicDirectives,
-      aiManagerFeedback
+      aiManagerFeedback,
+      recommendationHistory
     };
   }
 

@@ -12,7 +12,11 @@ const metricsWindowSchema = new mongoose.Schema({
   roas: { type: Number, default: 0 },
   cpa: { type: Number, default: 0 },
   reach: { type: Number, default: 0 },
-  frequency: { type: Number, default: 0 }
+  frequency: { type: Number, default: 0 },
+  // Pixel funnel metrics
+  add_to_cart: { type: Number, default: 0 },
+  add_to_cart_value: { type: Number, default: 0 },
+  initiate_checkout: { type: Number, default: 0 }
 }, { _id: false });
 
 const metricSnapshotSchema = new mongoose.Schema({

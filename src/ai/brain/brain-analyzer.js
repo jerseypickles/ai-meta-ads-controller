@@ -1,6 +1,8 @@
 const Anthropic = require('@anthropic-ai/sdk');
+const moment = require('moment-timezone');
 const config = require('../../../config');
 const kpiTargets = require('../../../config/kpi-targets');
+const safetyGuards = require('../../../config/safety-guards');
 const { getLatestSnapshots, getAccountOverview, getRecentActions } = require('../../db/queries');
 const BrainMemory = require('../../db/models/BrainMemory');
 const BrainInsight = require('../../db/models/BrainInsight');
@@ -691,19 +693,20 @@ Responde con un JSON object:
    */
   async chat(userMessage) {
     // 1. Cargar datos actuales para contexto
-    const [adsetSnapshots, accountOverview, recentInsights, chatHistory, activeRecs] = await Promise.all([
+    const [adsetSnapshots, accountOverview, recentInsights, chatHistory, activeRecs, recHistory] = await Promise.all([
       getLatestSnapshots('adset'),
       getAccountOverview(),
       BrainInsight.find({}).sort({ created_at: -1 }).limit(10).lean(),
       BrainChat.find({}).sort({ created_at: -1 }).limit(20).lean(),
-      BrainRecommendation.find({ status: { $in: ['pending', 'approved'] } }).sort({ created_at: -1 }).limit(10).lean()
+      BrainRecommendation.find({ status: { $in: ['pending', 'approved'] } }).sort({ created_at: -1 }).limit(10).lean(),
+      BrainRecommendation.find({ status: { $in: ['approved', 'rejected'] } }).sort({ decided_at: -1 }).limit(20).lean()
     ]);
 
     // 2. Guardar mensaje del usuario
     await BrainChat.create({ role: 'user', content: userMessage });
 
     // 3. Construir contexto
-    const context = this._buildChatContext(adsetSnapshots, accountOverview, recentInsights, activeRecs);
+    const context = this._buildChatContext(adsetSnapshots, accountOverview, recentInsights, activeRecs, recHistory);
 
     // 4. Construir historial de conversación
     const messages = [];
@@ -723,12 +726,23 @@ Responde con un JSON object:
 DATOS ACTUALES DE LAS CAMPAÑAS:
 ${context}
 
+CAPACIDADES DE DATOS:
+- Métricas por ventana: hoy, 3d, 7d, 14d, 30d (usa 7d como referencia principal, 14d/30d para tendencias largo plazo)
+- Funnel del pixel: Add to Cart → Initiate Checkout → Purchase (disponible cuando hay datos)
+- AOV (Average Order Value) por ad set
+- Calendario estacional configurado (eventos clave de ecommerce)
+- Budget mensual y pacing
+- Historial de recomendaciones aprobadas/rechazadas por el usuario y su impacto medido
+- KPIs objetivo configurados
+
 REGLAS:
 1. Responde en ESPAÑOL, de forma profesional pero accesible.
 2. Usa datos específicos cuando respondas — nombres de ad sets, números, métricas reales.
-3. Si no tienes la información, dilo honestamente.
+3. Si no tienes la información exacta, dilo honestamente pero indica qué datos SI tienes que pueden ayudar.
 4. Puedes sugerir acciones pero aclara que el Brain las ejecutaría si se aprueban.
-5. Sé conciso pero completo.`
+5. Sé conciso pero completo.
+6. Cuando analices tendencias, usa datos de 14d/30d para contexto histórico, no solo 7d.
+7. Menciona el funnel (ATC→IC→Purchase) cuando sea relevante para diagnosticar problemas de conversión.`
     });
 
     const assistantMessage = response.content[0]?.text || '';
@@ -772,10 +786,11 @@ REGLAS:
       ]);
 
       // 2. Cargar memorias y insights recientes para contexto
-      const [memories, recentInsights, previousRecs] = await Promise.all([
+      const [memories, recentInsights, previousRecs, decidedRecs] = await Promise.all([
         BrainMemory.find({}).lean(),
         BrainInsight.find({}).sort({ created_at: -1 }).limit(30).lean(),
-        BrainRecommendation.find({ status: 'pending' }).lean()
+        BrainRecommendation.find({ status: 'pending' }).lean(),
+        BrainRecommendation.find({ status: { $in: ['approved', 'rejected'] } }).sort({ decided_at: -1 }).limit(20).lean()
       ]);
 
       const memoryMap = {};
@@ -784,7 +799,7 @@ REGLAS:
       // 3. Construir prompt con datos 7d estables
       const prompt = this._buildRecommendationPrompt(
         adsetSnapshots, accountOverview, recentActions,
-        memoryMap, recentInsights, previousRecs
+        memoryMap, recentInsights, previousRecs, decidedRecs
       );
 
       // 4. Llamar a Claude para recomendaciones
@@ -898,7 +913,7 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
   /**
    * Construye prompt para recomendaciones con datos estables 7d.
    */
-  _buildRecommendationPrompt(snapshots, accountOverview, recentActions, memoryMap, recentInsights, previousRecs) {
+  _buildRecommendationPrompt(snapshots, accountOverview, recentActions, memoryMap, recentInsights, previousRecs, decidedRecs = []) {
     let prompt = `## DATOS DE CUENTA (7 DÍAS)\n`;
     prompt += `ROAS 7d: ${accountOverview.roas_7d?.toFixed(2)}x | Target: ${kpiTargets.roas_target}x | Mínimo: ${kpiTargets.roas_minimum}x\n`;
     prompt += `ROAS 3d: ${accountOverview.roas_3d?.toFixed(2)}x\n`;
@@ -913,12 +928,20 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
     for (const s of active) {
       const m7d = s.metrics?.last_7d || {};
       const m3d = s.metrics?.last_3d || {};
+      const m14d = s.metrics?.last_14d || {};
+      const m30d = s.metrics?.last_30d || {};
       const mem = memoryMap[s.entity_id];
       const trend = mem?.trends || {};
+      const aov7d = (m7d.purchases || 0) > 0 ? ((m7d.purchase_value || 0) / m7d.purchases).toFixed(2) : 'N/A';
 
       prompt += `### ${s.entity_name} [${s.entity_id}]\n`;
-      prompt += `  7d: ROAS=${(m7d.roas||0).toFixed(2)}x, Spend=$${(m7d.spend||0).toFixed(0)}, CPA=$${(m7d.cpa||0).toFixed(2)}, CTR=${(m7d.ctr||0).toFixed(2)}%, Freq=${(m7d.frequency||0).toFixed(1)}, Purchases=${m7d.purchases||0}\n`;
+      prompt += `  7d: ROAS=${(m7d.roas||0).toFixed(2)}x, Spend=$${(m7d.spend||0).toFixed(0)}, CPA=$${(m7d.cpa||0).toFixed(2)}, CTR=${(m7d.ctr||0).toFixed(2)}%, Freq=${(m7d.frequency||0).toFixed(1)}, Purchases=${m7d.purchases||0}, AOV=$${aov7d}\n`;
       prompt += `  3d: ROAS=${(m3d.roas||0).toFixed(2)}x, Spend=$${(m3d.spend||0).toFixed(0)}\n`;
+      prompt += `  14d: ROAS=${(m14d.roas||0).toFixed(2)}x, CPA=$${(m14d.cpa||0).toFixed(2)}, Purchases=${m14d.purchases||0}\n`;
+      prompt += `  30d: ROAS=${(m30d.roas||0).toFixed(2)}x, Spend=$${(m30d.spend||0).toFixed(0)}, Purchases=${m30d.purchases||0}\n`;
+      if ((m7d.add_to_cart || 0) > 0) {
+        prompt += `  Funnel 7d: ATC=${m7d.add_to_cart} → IC=${m7d.initiate_checkout||0} → Purchase=${m7d.purchases||0}\n`;
+      }
       prompt += `  Budget: $${s.daily_budget||0}/día\n`;
       if (trend.roas_direction && trend.roas_direction !== 'unknown') {
         prompt += `  Tendencia ROAS: ${trend.roas_direction}`;
@@ -958,17 +981,20 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
       prompt += `\n`;
     }
 
-    // Recomendaciones anteriores que fueron aprobadas/rechazadas (para que el Brain aprenda)
-    const decidedRecs = previousRecs.filter(r => r.status === 'approved' || r.status === 'rejected');
-    // Actually, load from DB the recently decided ones
     prompt += `## HISTORIAL DE DECISIONES DEL USUARIO\n`;
     prompt += `(El usuario aprueba o rechaza las recomendaciones. Aprende de sus preferencias.)\n`;
-    // This will be enhanced — for now, note previous pending ones
-    if (previousRecs.length > 0) {
-      prompt += `Recomendaciones pendientes que serán reemplazadas por este ciclo:\n`;
-      for (const r of previousRecs.slice(0, 5)) {
-        prompt += `- [${r.priority}] ${r.title} (estado: ${r.status})\n`;
+    if (decidedRecs.length > 0) {
+      const approved = decidedRecs.filter(r => r.status === 'approved');
+      const rejected = decidedRecs.filter(r => r.status === 'rejected');
+      prompt += `Total: ${approved.length} aprobadas, ${rejected.length} rechazadas\n`;
+      for (const r of decidedRecs.slice(0, 15)) {
+        const daysAgo = r.decided_at ? Math.round((Date.now() - new Date(r.decided_at).getTime()) / 86400000) : '?';
+        const impact = r.follow_up?.impact_verdict || 'sin medir';
+        prompt += `- [${r.status}/${daysAgo}d ago] ${r.action_type} en ${r.entity?.entity_name || 'N/A'}: "${r.title}" | impacto: ${impact}\n`;
       }
+      prompt += `INSTRUCCION: Repite patrones de acciones aprobadas. Evita patrones de acciones rechazadas.\n`;
+    } else {
+      prompt += `Sin historial de decisiones aún.\n`;
     }
     prompt += `\n`;
 
@@ -1162,26 +1188,68 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
   }
 
   /**
-   * Construir contexto compacto para el chat.
+   * Construir contexto enriquecido para el chat.
+   * Incluye: 14d/30d metrics, AOV, funnel, seasonality, budget, rec history.
    */
-  _buildChatContext(snapshots, accountOverview, recentInsights, activeRecs = []) {
-    let ctx = `## CUENTA\n`;
-    ctx += `ROAS 7d: ${accountOverview.roas_7d?.toFixed(2)}x | ROAS 3d: ${accountOverview.roas_3d?.toFixed(2)}x | Spend hoy: $${accountOverview.today_spend?.toFixed(0)} | Revenue hoy: $${accountOverview.today_revenue?.toFixed(0)}\n`;
-    ctx += `Ad sets: ${accountOverview.active_adsets} activos, ${accountOverview.paused_adsets} pausados, ${accountOverview.total_adsets} total\n\n`;
+  _buildChatContext(snapshots, accountOverview, recentInsights, activeRecs = [], recHistory = []) {
+    const TIMEZONE = process.env.TIMEZONE || 'America/New_York';
+    const now = moment().tz(TIMEZONE);
+
+    let ctx = `## CUENTA (${now.format('YYYY-MM-DD HH:mm')} ET)\n`;
+    ctx += `ROAS: hoy ${(accountOverview.today_roas||0).toFixed(2)}x | 3d ${(accountOverview.roas_3d||0).toFixed(2)}x | 7d ${(accountOverview.roas_7d||0).toFixed(2)}x | 14d ${(accountOverview.roas_14d||0).toFixed(2)}x | 30d ${(accountOverview.roas_30d||0).toFixed(2)}x\n`;
+    ctx += `Spend hoy: $${(accountOverview.today_spend||0).toFixed(0)} | Revenue hoy: $${(accountOverview.today_revenue||0).toFixed(0)}\n`;
+    ctx += `Spend 14d: $${(accountOverview.spend_14d||0).toFixed(0)} | Spend 30d: $${(accountOverview.spend_30d||0).toFixed(0)}\n`;
+    ctx += `Ad sets: ${accountOverview.active_adsets} activos, ${accountOverview.paused_adsets} pausados, ${accountOverview.total_adsets} total\n`;
+
+    // Monthly budget context
+    const dayOfMonth = now.date();
+    const daysInMonth = now.daysInMonth();
+    const dailyTarget = kpiTargets.pacing?.daily_spend_target || kpiTargets.daily_spend_target || 3000;
+    const monthlyTarget = dailyTarget * daysInMonth;
+    const budgetCeiling = safetyGuards.budget_ceiling_daily || 5000;
+    ctx += `Budget: $${dailyTarget}/dia target, $${budgetCeiling}/dia ceiling, ~$${monthlyTarget.toLocaleString()}/mes target (dia ${dayOfMonth}/${daysInMonth})\n`;
+
+    // Seasonality
+    const todayStr = now.format('MM-DD');
+    const seasonalEvents = kpiTargets.seasonal_events || [];
+    const activeEvents = seasonalEvents.filter(ev => {
+      if (ev.date) return ev.date === todayStr;
+      if (ev.start && ev.end) return todayStr >= ev.start && todayStr <= ev.end;
+      return false;
+    });
+    if (activeEvents.length > 0) {
+      ctx += `EVENTO ESTACIONAL ACTIVO: ${activeEvents.map(e => `${e.name} (${e.budget_multiplier}x)`).join(', ')}\n`;
+    }
+    ctx += '\n';
+
+    // KPI targets
+    ctx += `## KPIs OBJETIVO\n`;
+    ctx += `ROAS target: ${kpiTargets.roas_target}x (min: ${kpiTargets.roas_minimum}x, excelente: ${kpiTargets.roas_excellent}x) | CPA target: $${kpiTargets.cpa_target} (max: $${kpiTargets.cpa_maximum})\n\n`;
 
     ctx += `## AD SETS ACTIVOS\n`;
     const active = snapshots.filter(s => s.status === 'ACTIVE').sort((a, b) => (b.metrics?.last_7d?.spend || 0) - (a.metrics?.last_7d?.spend || 0));
     for (const s of active) {
-      const m = s.metrics?.last_7d || {};
-      ctx += `- ${s.entity_name} [${s.entity_id}]: ROAS=${(m.roas||0).toFixed(2)}x, Spend=$${(m.spend||0).toFixed(0)}, CPA=$${(m.cpa||0).toFixed(2)}, CTR=${(m.ctr||0).toFixed(2)}%, Freq=${(m.frequency||0).toFixed(1)}, Purchases=${m.purchases||0}, Budget=$${s.daily_budget||0}/d\n`;
+      const m7 = s.metrics?.last_7d || {};
+      const m14 = s.metrics?.last_14d || {};
+      const m30 = s.metrics?.last_30d || {};
+      const aov7d = (m7.purchases || 0) > 0 ? ((m7.purchase_value || 0) / m7.purchases).toFixed(2) : 'N/A';
+      ctx += `- ${s.entity_name} [${s.entity_id}]:\n`;
+      ctx += `  ROAS: 7d=${(m7.roas||0).toFixed(2)}x, 14d=${(m14.roas||0).toFixed(2)}x, 30d=${(m30.roas||0).toFixed(2)}x\n`;
+      ctx += `  CPA: 7d=$${(m7.cpa||0).toFixed(2)}, 30d=$${(m30.cpa||0).toFixed(2)} | AOV 7d: $${aov7d}\n`;
+      ctx += `  Spend: 7d=$${(m7.spend||0).toFixed(0)}, 30d=$${(m30.spend||0).toFixed(0)} | Budget=$${s.daily_budget||0}/d\n`;
+      ctx += `  CTR=${(m7.ctr||0).toFixed(2)}%, Freq=${(m7.frequency||0).toFixed(1)}, Purchases 7d=${m7.purchases||0}, 30d=${m30.purchases||0}\n`;
+      if ((m7.add_to_cart || 0) > 0 || (m7.initiate_checkout || 0) > 0) {
+        ctx += `  Funnel 7d: ATC=${m7.add_to_cart||0} → IC=${m7.initiate_checkout||0} → Purchase=${m7.purchases||0}\n`;
+      }
     }
 
     const paused = snapshots.filter(s => ['PAUSED', 'ADSET_PAUSED', 'CAMPAIGN_PAUSED'].includes(s.status));
     if (paused.length > 0) {
       ctx += `\n## AD SETS PAUSADOS\n`;
       for (const s of paused) {
-        const m = s.metrics?.last_7d || {};
-        ctx += `- ${s.entity_name}: ROAS=${(m.roas||0).toFixed(2)}x, Spend=$${(m.spend||0).toFixed(0)} (último 7d)\n`;
+        const m7 = s.metrics?.last_7d || {};
+        const m30 = s.metrics?.last_30d || {};
+        ctx += `- ${s.entity_name}: ROAS 7d=${(m7.roas||0).toFixed(2)}x, 30d=${(m30.roas||0).toFixed(2)}x, Spend 30d=$${(m30.spend||0).toFixed(0)}, Compras 30d=${m30.purchases||0}\n`;
       }
     }
 
@@ -1197,6 +1265,19 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
       for (const r of activeRecs) {
         ctx += `- [${r.priority}/${r.status}] ${r.title} — ${r.action_detail}\n`;
         if (r.follow_up?.impact_summary) ctx += `  Follow-up: ${r.follow_up.impact_summary}\n`;
+      }
+    }
+
+    // Recommendation approval/rejection history
+    if (recHistory && recHistory.length > 0) {
+      const approved = recHistory.filter(r => r.status === 'approved');
+      const rejected = recHistory.filter(r => r.status === 'rejected');
+      ctx += `\n## HISTORIAL DE DECISIONES DEL USUARIO\n`;
+      ctx += `Aprobadas: ${approved.length} | Rechazadas: ${rejected.length} (ultimas 20)\n`;
+      for (const r of recHistory.slice(0, 10)) {
+        const daysAgo = r.decided_at ? Math.round((Date.now() - new Date(r.decided_at).getTime()) / 86400000) : '?';
+        const impact = r.follow_up?.impact_verdict || 'sin medir';
+        ctx += `- [${r.status}] ${r.action_type} en ${r.entity?.entity_name || 'N/A'} (${daysAgo}d ago) — impacto: ${impact}\n`;
       }
     }
 
