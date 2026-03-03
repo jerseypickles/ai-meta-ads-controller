@@ -6,6 +6,7 @@ const BrainMemory = require('../../db/models/BrainMemory');
 const BrainChat = require('../../db/models/BrainChat');
 const BrainRecommendation = require('../../db/models/BrainRecommendation');
 const BrainKnowledgeSnapshot = require('../../db/models/BrainKnowledgeSnapshot');
+const MetricSnapshot = require('../../db/models/MetricSnapshot');
 const ActionLog = require('../../db/models/ActionLog');
 const SystemConfig = require('../../db/models/SystemConfig');
 const logger = require('../../utils/logger');
@@ -681,6 +682,109 @@ router.get('/knowledge/history', async (req, res) => {
     });
   } catch (error) {
     logger.error(`[BRAIN-API] Error en knowledge history: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══ CREATIVE / AD PERFORMANCE TRACKING ═══
+
+/**
+ * GET /api/brain/creative-performance
+ * Returns all ads across all ad sets with metrics, trend analysis,
+ * and a Brain verdict (good/bad/watch/new) based on 7d performance.
+ */
+router.get('/creative-performance', async (req, res) => {
+  try {
+    // Get latest snapshot per ad (only ACTIVE/PAUSED)
+    const adSnapshots = await MetricSnapshot.aggregate([
+      { $match: { entity_type: 'ad' } },
+      { $sort: { entity_id: 1, snapshot_at: -1 } },
+      { $group: { _id: '$entity_id', doc: { $first: '$$ROOT' } } },
+      { $replaceRoot: { newRoot: '$doc' } },
+      { $match: { status: { $in: ['ACTIVE', 'PAUSED'] } } },
+      { $sort: { 'metrics.last_7d.spend': -1 } }
+    ]);
+
+    // Get latest snapshot per adset for context (budget, name)
+    const adsetSnapshots = await MetricSnapshot.aggregate([
+      { $match: { entity_type: 'adset' } },
+      { $sort: { entity_id: 1, snapshot_at: -1 } },
+      { $group: { _id: '$entity_id', doc: { $first: '$$ROOT' } } },
+      { $replaceRoot: { newRoot: '$doc' } }
+    ]);
+    const adsetMap = {};
+    for (const s of adsetSnapshots) {
+      adsetMap[s.entity_id] = { name: s.entity_name, daily_budget: s.daily_budget || 0 };
+    }
+
+    // Compute account-level averages for 7d (for comparison)
+    let totalSpend7d = 0, totalRevenue7d = 0, totalCTR7d = 0, ctrCount = 0;
+    for (const ad of adSnapshots) {
+      const m7 = ad.metrics?.last_7d || {};
+      totalSpend7d += m7.spend || 0;
+      totalRevenue7d += m7.purchase_value || 0;
+      if (m7.ctr > 0) { totalCTR7d += m7.ctr; ctrCount++; }
+    }
+    const accountAvgROAS = totalSpend7d > 0 ? totalRevenue7d / totalSpend7d : 0;
+    const accountAvgCTR = ctrCount > 0 ? totalCTR7d / ctrCount : 0;
+
+    // Build response
+    const ads = adSnapshots.map(ad => {
+      const m7 = ad.metrics?.last_7d || {};
+      const m3 = ad.metrics?.last_3d || {};
+      const mT = ad.metrics?.today || {};
+
+      // Trend: compare 3d vs 7d ROAS
+      const roas7 = m7.roas || 0;
+      const roas3 = m3.roas || 0;
+      let trend = 'stable';
+      if (roas7 > 0) {
+        const ratio = roas3 / roas7;
+        if (ratio > 1.15) trend = 'improving';
+        else if (ratio < 0.85) trend = 'declining';
+      }
+
+      // Brain verdict
+      let verdict = 'new'; // default for ads with no spend
+      const spend7 = m7.spend || 0;
+      if (spend7 >= 5) {
+        if (roas7 >= accountAvgROAS * 1.2 && (m7.ctr || 0) >= accountAvgCTR * 0.8) {
+          verdict = 'good';
+        } else if (roas7 < accountAvgROAS * 0.5 || (m7.frequency || 0) >= 3.5) {
+          verdict = 'bad';
+        } else {
+          verdict = 'watch';
+        }
+      }
+
+      return {
+        ad_id: ad.entity_id,
+        ad_name: ad.entity_name,
+        status: ad.status,
+        adset_id: ad.parent_id,
+        adset_name: adsetMap[ad.parent_id]?.name || ad.parent_id,
+        snapshot_at: ad.snapshot_at,
+        metrics: {
+          today: { spend: mT.spend || 0, roas: mT.roas || 0, purchases: mT.purchases || 0, ctr: mT.ctr || 0 },
+          last_3d: { spend: m3.spend || 0, roas: m3.roas || 0, purchases: m3.purchases || 0, ctr: m3.ctr || 0, frequency: m3.frequency || 0 },
+          last_7d: {
+            spend: m7.spend || 0, roas: m7.roas || 0, purchases: m7.purchases || 0,
+            ctr: m7.ctr || 0, cpa: m7.cpa || 0, frequency: m7.frequency || 0,
+            impressions: m7.impressions || 0, cpm: m7.cpm || 0
+          }
+        },
+        trend,
+        verdict
+      };
+    });
+
+    res.json({
+      ads,
+      account_avg: { roas_7d: Math.round(accountAvgROAS * 100) / 100, ctr_7d: Math.round(accountAvgCTR * 100) / 100 },
+      total: ads.length
+    });
+  } catch (error) {
+    logger.error(`[BRAIN-API] Error en creative-performance: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });

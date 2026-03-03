@@ -7,7 +7,7 @@ import {
   clearBrainChatHistory, getBrainStats, getBrainRecommendations,
   approveRecommendation, rejectRecommendation,
   triggerBrainRecommendations, getFollowUpStats,
-  getPolicyState, getKnowledgeHistory, logout
+  getPolicyState, getKnowledgeHistory, getCreativePerformance, logout
 } from '../api';
 
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
@@ -38,7 +38,7 @@ const SEVERITY_CONFIG = {
 
 export default function BrainIntelligence() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('feed'); // 'feed' | 'recs' | 'followup' | 'knowledge' | 'chat'
+  const [activeTab, setActiveTab] = useState('feed'); // 'feed' | 'recs' | 'followup' | 'knowledge' | 'creatives' | 'chat'
   const [insights, setInsights] = useState([]);
   const [insightsTotal, setInsightsTotal] = useState(0);
   const [insightsPage, setInsightsPage] = useState(1);
@@ -397,6 +397,12 @@ export default function BrainIntelligence() {
           Conocimiento
         </button>
         <button
+          className={`brain-tab ${activeTab === 'creatives' ? 'active' : ''}`}
+          onClick={() => setActiveTab('creatives')}
+        >
+          Creativos
+        </button>
+        <button
           className={`brain-tab ${activeTab === 'chat' ? 'active' : ''}`}
           onClick={() => setActiveTab('chat')}
         >
@@ -449,6 +455,8 @@ export default function BrainIntelligence() {
           <FollowUpPanel formatTime={formatTime} />
         ) : activeTab === 'knowledge' ? (
           <KnowledgePanel formatTime={formatTime} />
+        ) : activeTab === 'creatives' ? (
+          <CreativesPanel formatTime={formatTime} />
         ) : (
           <ChatPanel
             messages={chatMessages}
@@ -1921,6 +1929,190 @@ function KnowledgePanel({ formatTime }) {
           <p className="feed-empty-hint">A medida que se ejecuten acciones y se mida su impacto, el Brain acumulara conocimiento aqui.</p>
         </div>
       )}
+    </div>
+  );
+}
+
+// ═══ CREATIVES PANEL ═══
+
+const CREATIVE_VERDICT = {
+  good: { icon: '✅', label: 'Buen rendimiento', color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+  bad:  { icon: '🔴', label: 'Bajo rendimiento', color: '#ef4444', bg: 'rgba(239,68,68,0.12)' },
+  watch:{ icon: '👁️', label: 'Monitorear', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
+  new:  { icon: '🆕', label: 'Sin datos', color: '#6b7280', bg: 'rgba(107,114,128,0.12)' }
+};
+
+function CreativesPanel({ formatTime }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [sortBy, setSortBy] = useState('spend');
+  const [filterVerdict, setFilterVerdict] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('all');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await getCreativePerformance();
+        setData(res);
+      } catch (err) { console.error('Creative performance error:', err); }
+      finally { setLoading(false); }
+    })();
+  }, []);
+
+  if (loading) return <div className="d-flex align-center justify-center p-4 text-muted"><div className="loading" /> Cargando creativos...</div>;
+  if (!data || !data.ads || data.ads.length === 0) {
+    return (
+      <div className="feed-empty">
+        <div className="feed-empty-icon">🎨</div>
+        <p>No hay datos de creativos todavia.</p>
+        <p className="feed-empty-hint">Cuando los ads tengan metricas, el Brain analizara el rendimiento de cada creativo aqui.</p>
+      </div>
+    );
+  }
+
+  const accountAvg = data.account_avg || {};
+
+  // Filter
+  let filtered = data.ads;
+  if (filterVerdict !== 'all') filtered = filtered.filter(a => a.verdict === filterVerdict);
+  if (filterStatus !== 'all') filtered = filtered.filter(a => a.status === filterStatus);
+
+  // Sort
+  filtered = [...filtered].sort((a, b) => {
+    const m7a = a.metrics?.last_7d || {};
+    const m7b = b.metrics?.last_7d || {};
+    if (sortBy === 'spend') return (m7b.spend || 0) - (m7a.spend || 0);
+    if (sortBy === 'roas') return (m7b.roas || 0) - (m7a.roas || 0);
+    if (sortBy === 'ctr') return (m7b.ctr || 0) - (m7a.ctr || 0);
+    if (sortBy === 'cpa') return (m7a.cpa || 0) - (m7b.cpa || 0);
+    if (sortBy === 'purchases') return (m7b.purchases || 0) - (m7a.purchases || 0);
+    return 0;
+  });
+
+  // Summary stats
+  const verdictCounts = { good: 0, bad: 0, watch: 0, new: 0 };
+  for (const ad of data.ads) verdictCounts[ad.verdict] = (verdictCounts[ad.verdict] || 0) + 1;
+
+  const fmtMoney = (v) => v != null ? `$${v.toFixed(2)}` : '$0.00';
+  const fmtPct = (v) => v != null ? `${v.toFixed(2)}%` : '0.00%';
+  const fmtNum = (v, d = 2) => v != null ? v.toFixed(d) : '0';
+
+  return (
+    <div className="creatives-panel">
+      {/* Summary hero */}
+      <div className="creatives-hero">
+        <div className="creatives-hero-stat">
+          <span className="creatives-hero-value" style={{ color: '#10b981' }}>{verdictCounts.good}</span>
+          <span className="creatives-hero-label">Buenos</span>
+        </div>
+        <div className="creatives-hero-stat">
+          <span className="creatives-hero-value" style={{ color: '#f59e0b' }}>{verdictCounts.watch}</span>
+          <span className="creatives-hero-label">Monitorear</span>
+        </div>
+        <div className="creatives-hero-stat">
+          <span className="creatives-hero-value" style={{ color: '#ef4444' }}>{verdictCounts.bad}</span>
+          <span className="creatives-hero-label">Bajo rend.</span>
+        </div>
+        <div className="creatives-hero-stat">
+          <span className="creatives-hero-value" style={{ color: '#6b7280' }}>{verdictCounts.new}</span>
+          <span className="creatives-hero-label">Sin datos</span>
+        </div>
+        <div className="creatives-hero-stat creatives-hero-ref">
+          <span className="creatives-hero-value">{fmtNum(accountAvg.roas_7d)}x</span>
+          <span className="creatives-hero-label">ROAS promedio</span>
+        </div>
+        <div className="creatives-hero-stat creatives-hero-ref">
+          <span className="creatives-hero-value">{fmtPct(accountAvg.ctr_7d)}</span>
+          <span className="creatives-hero-label">CTR promedio</span>
+        </div>
+      </div>
+
+      {/* Filters & Sort */}
+      <div className="creatives-filters">
+        <div className="d-flex gap-2 align-center">
+          <select className="creatives-select" value={filterVerdict} onChange={(e) => setFilterVerdict(e.target.value)}>
+            <option value="all">Todos los veredictos</option>
+            <option value="good">✅ Buenos</option>
+            <option value="watch">👁️ Monitorear</option>
+            <option value="bad">🔴 Bajo rendimiento</option>
+            <option value="new">🆕 Sin datos</option>
+          </select>
+          <select className="creatives-select" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+            <option value="all">Todos los status</option>
+            <option value="ACTIVE">Active</option>
+            <option value="PAUSED">Paused</option>
+          </select>
+        </div>
+        <div className="d-flex gap-2 align-center">
+          <span className="text-xs text-tertiary">Ordenar:</span>
+          {['spend', 'roas', 'ctr', 'cpa', 'purchases'].map(s => (
+            <button key={s} onClick={() => setSortBy(s)}
+              className={`creatives-sort-btn ${sortBy === s ? 'active' : ''}`}>
+              {s === 'spend' ? 'Gasto' : s === 'roas' ? 'ROAS' : s === 'ctr' ? 'CTR' : s === 'cpa' ? 'CPA' : 'Compras'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Ads table */}
+      <div className="creatives-table-wrap">
+        <table className="creatives-table">
+          <thead>
+            <tr>
+              <th>Ad</th>
+              <th>Ad Set</th>
+              <th>Status</th>
+              <th>Veredicto</th>
+              <th style={{ textAlign: 'right' }}>Spend 7d</th>
+              <th style={{ textAlign: 'right' }}>ROAS 7d</th>
+              <th style={{ textAlign: 'right' }}>Compras 7d</th>
+              <th style={{ textAlign: 'right' }}>CPA 7d</th>
+              <th style={{ textAlign: 'right' }}>CTR 7d</th>
+              <th style={{ textAlign: 'right' }}>Freq 7d</th>
+              <th>Tendencia</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map(ad => {
+              const m7 = ad.metrics?.last_7d || {};
+              const vc = CREATIVE_VERDICT[ad.verdict] || CREATIVE_VERDICT.new;
+              const roasClass = m7.roas >= (accountAvg.roas_7d || 0) * 1.2 ? 'cv-good' : m7.roas < (accountAvg.roas_7d || 0) * 0.5 ? 'cv-bad' : '';
+              const freqClass = (m7.frequency || 0) >= 3.5 ? 'cv-bad' : (m7.frequency || 0) >= 2.5 ? 'cv-warn' : '';
+              const trendIcon = ad.trend === 'improving' ? '📈' : ad.trend === 'declining' ? '📉' : '➡️';
+
+              return (
+                <tr key={ad.ad_id}>
+                  <td className="creatives-ad-name" title={ad.ad_name}>
+                    {ad.ad_name.length > 35 ? ad.ad_name.substring(0, 35) + '...' : ad.ad_name}
+                  </td>
+                  <td className="text-tertiary text-xs">{ad.adset_name?.length > 20 ? ad.adset_name.substring(0, 20) + '...' : ad.adset_name}</td>
+                  <td>
+                    <span className={`creatives-status ${ad.status === 'ACTIVE' ? 'active' : 'paused'}`}>
+                      {ad.status === 'ACTIVE' ? 'Active' : 'Paused'}
+                    </span>
+                  </td>
+                  <td>
+                    <span className="creatives-verdict" style={{ background: vc.bg, color: vc.color }}>
+                      {vc.icon} {vc.label}
+                    </span>
+                  </td>
+                  <td style={{ textAlign: 'right' }} className="font-mono">{fmtMoney(m7.spend)}</td>
+                  <td style={{ textAlign: 'right' }} className={`font-mono font-bold ${roasClass}`}>{fmtNum(m7.roas)}x</td>
+                  <td style={{ textAlign: 'right' }} className="font-mono">{m7.purchases || 0}</td>
+                  <td style={{ textAlign: 'right' }} className="font-mono">{m7.cpa > 0 ? fmtMoney(m7.cpa) : '—'}</td>
+                  <td style={{ textAlign: 'right' }} className="font-mono">{fmtPct(m7.ctr)}</td>
+                  <td style={{ textAlign: 'right' }} className={`font-mono ${freqClass}`}>{fmtNum(m7.frequency)}</td>
+                  <td className="text-center">{trendIcon}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="text-xs text-tertiary" style={{ marginTop: '8px', textAlign: 'right' }}>
+        {filtered.length} de {data.ads.length} ads — Datos de los ultimos snapshots
+      </div>
     </div>
   );
 }

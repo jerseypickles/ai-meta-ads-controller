@@ -332,4 +332,11 @@ export const getKnowledgeHistory = async (days = 30) => {
   return response.data;
 };
 
+// ═══ BRAIN — Creative Performance Tracking ═══
+
+export const getCreativePerformance = async () => {
+  const response = await api.get('/api/brain/creative-performance');
+  return response.data;
+};
+
 export default api;
