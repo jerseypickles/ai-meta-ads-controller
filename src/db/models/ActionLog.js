@@ -12,7 +12,7 @@ const actionLogSchema = new mongoose.Schema({
     type: String,
     enum: [
       'scale_up', 'scale_down', 'pause', 'reactivate', 'kill_switch',
-      'duplicate_adset', 'create_ad', 'update_bid_strategy',
+      'duplicate_adset', 'create_ad', 'add_ad', 'update_bid_strategy',
       'update_ad_status', 'move_budget', 'update_ad_creative', 'delete'
     ],
     required: true
@@ -31,7 +31,7 @@ const actionLogSchema = new mongoose.Schema({
   evidence_points: [{ type: String }],
   research_context: { type: String, default: '' },
   confidence: { type: String, enum: ['high', 'medium', 'low'] },
-  agent_type: { type: String, enum: ['scaling', 'performance', 'creative', 'pacing', 'ai_manager', 'brain'], default: null, index: true },
+  agent_type: { type: String, enum: ['scaling', 'performance', 'creative', 'pacing', 'ai_manager', 'brain', 'manual'], default: null, index: true },
   // Campos para acciones avanzadas
   target_entity_id: { type: String, default: null },
   target_entity_name: { type: String, default: null },

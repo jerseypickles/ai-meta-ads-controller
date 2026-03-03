@@ -1964,8 +1964,8 @@ function CreativesPanel({ formatTime }) {
     return (
       <div className="feed-empty">
         <div className="feed-empty-icon">🎨</div>
-        <p>No hay datos de creativos todavia.</p>
-        <p className="feed-empty-hint">Cuando los ads tengan metricas, el Brain analizara el rendimiento de cada creativo aqui.</p>
+        <p>No hay creativos manuales todavia.</p>
+        <p className="feed-empty-hint">Cuando subas creativos desde Ad Sets Manager, el Brain rastreara su rendimiento aqui con metricas de 3 dias.</p>
       </div>
     );
   }
@@ -1979,13 +1979,13 @@ function CreativesPanel({ formatTime }) {
 
   // Sort
   filtered = [...filtered].sort((a, b) => {
-    const m7a = a.metrics?.last_7d || {};
-    const m7b = b.metrics?.last_7d || {};
-    if (sortBy === 'spend') return (m7b.spend || 0) - (m7a.spend || 0);
-    if (sortBy === 'roas') return (m7b.roas || 0) - (m7a.roas || 0);
-    if (sortBy === 'ctr') return (m7b.ctr || 0) - (m7a.ctr || 0);
-    if (sortBy === 'cpa') return (m7a.cpa || 0) - (m7b.cpa || 0);
-    if (sortBy === 'purchases') return (m7b.purchases || 0) - (m7a.purchases || 0);
+    const m3a = a.metrics?.last_3d || {};
+    const m3b = b.metrics?.last_3d || {};
+    if (sortBy === 'spend') return (m3b.spend || 0) - (m3a.spend || 0);
+    if (sortBy === 'roas') return (m3b.roas || 0) - (m3a.roas || 0);
+    if (sortBy === 'ctr') return (m3b.ctr || 0) - (m3a.ctr || 0);
+    if (sortBy === 'cpa') return (m3a.cpa || 0) - (m3b.cpa || 0);
+    if (sortBy === 'purchases') return (m3b.purchases || 0) - (m3a.purchases || 0);
     return 0;
   });
 
@@ -2018,12 +2018,12 @@ function CreativesPanel({ formatTime }) {
           <span className="creatives-hero-label">Sin datos</span>
         </div>
         <div className="creatives-hero-stat creatives-hero-ref">
-          <span className="creatives-hero-value">{fmtNum(accountAvg.roas_7d)}x</span>
-          <span className="creatives-hero-label">ROAS promedio</span>
+          <span className="creatives-hero-value">{fmtNum(accountAvg.roas_3d)}x</span>
+          <span className="creatives-hero-label">ROAS prom 3d</span>
         </div>
         <div className="creatives-hero-stat creatives-hero-ref">
-          <span className="creatives-hero-value">{fmtPct(accountAvg.ctr_7d)}</span>
-          <span className="creatives-hero-label">CTR promedio</span>
+          <span className="creatives-hero-value">{fmtPct(accountAvg.ctr_3d)}</span>
+          <span className="creatives-hero-label">CTR prom 3d</span>
         </div>
       </div>
 
@@ -2063,21 +2063,21 @@ function CreativesPanel({ formatTime }) {
               <th>Ad Set</th>
               <th>Status</th>
               <th>Veredicto</th>
-              <th style={{ textAlign: 'right' }}>Spend 7d</th>
-              <th style={{ textAlign: 'right' }}>ROAS 7d</th>
-              <th style={{ textAlign: 'right' }}>Compras 7d</th>
-              <th style={{ textAlign: 'right' }}>CPA 7d</th>
-              <th style={{ textAlign: 'right' }}>CTR 7d</th>
-              <th style={{ textAlign: 'right' }}>Freq 7d</th>
+              <th style={{ textAlign: 'right' }}>Spend 3d</th>
+              <th style={{ textAlign: 'right' }}>ROAS 3d</th>
+              <th style={{ textAlign: 'right' }}>Compras 3d</th>
+              <th style={{ textAlign: 'right' }}>CPA 3d</th>
+              <th style={{ textAlign: 'right' }}>CTR 3d</th>
+              <th style={{ textAlign: 'right' }}>Freq 3d</th>
               <th>Tendencia</th>
             </tr>
           </thead>
           <tbody>
             {filtered.map(ad => {
-              const m7 = ad.metrics?.last_7d || {};
+              const m3 = ad.metrics?.last_3d || {};
               const vc = CREATIVE_VERDICT[ad.verdict] || CREATIVE_VERDICT.new;
-              const roasClass = m7.roas >= (accountAvg.roas_7d || 0) * 1.2 ? 'cv-good' : m7.roas < (accountAvg.roas_7d || 0) * 0.5 ? 'cv-bad' : '';
-              const freqClass = (m7.frequency || 0) >= 3.5 ? 'cv-bad' : (m7.frequency || 0) >= 2.5 ? 'cv-warn' : '';
+              const roasClass = m3.roas >= (accountAvg.roas_3d || 0) * 1.2 ? 'cv-good' : m3.roas < (accountAvg.roas_3d || 0) * 0.5 ? 'cv-bad' : '';
+              const freqClass = (m3.frequency || 0) >= 3.5 ? 'cv-bad' : (m3.frequency || 0) >= 2.5 ? 'cv-warn' : '';
               const trendIcon = ad.trend === 'improving' ? '📈' : ad.trend === 'declining' ? '📉' : '➡️';
 
               return (
@@ -2096,12 +2096,12 @@ function CreativesPanel({ formatTime }) {
                       {vc.icon} {vc.label}
                     </span>
                   </td>
-                  <td style={{ textAlign: 'right' }} className="font-mono">{fmtMoney(m7.spend)}</td>
-                  <td style={{ textAlign: 'right' }} className={`font-mono font-bold ${roasClass}`}>{fmtNum(m7.roas)}x</td>
-                  <td style={{ textAlign: 'right' }} className="font-mono">{m7.purchases || 0}</td>
-                  <td style={{ textAlign: 'right' }} className="font-mono">{m7.cpa > 0 ? fmtMoney(m7.cpa) : '—'}</td>
-                  <td style={{ textAlign: 'right' }} className="font-mono">{fmtPct(m7.ctr)}</td>
-                  <td style={{ textAlign: 'right' }} className={`font-mono ${freqClass}`}>{fmtNum(m7.frequency)}</td>
+                  <td style={{ textAlign: 'right' }} className="font-mono">{fmtMoney(m3.spend)}</td>
+                  <td style={{ textAlign: 'right' }} className={`font-mono font-bold ${roasClass}`}>{fmtNum(m3.roas)}x</td>
+                  <td style={{ textAlign: 'right' }} className="font-mono">{m3.purchases || 0}</td>
+                  <td style={{ textAlign: 'right' }} className="font-mono">{m3.cpa > 0 ? fmtMoney(m3.cpa) : '—'}</td>
+                  <td style={{ textAlign: 'right' }} className="font-mono">{fmtPct(m3.ctr)}</td>
+                  <td style={{ textAlign: 'right' }} className={`font-mono ${freqClass}`}>{fmtNum(m3.frequency)}</td>
                   <td className="text-center">{trendIcon}</td>
                 </tr>
               );

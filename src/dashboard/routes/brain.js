@@ -690,22 +690,26 @@ router.get('/knowledge/history', async (req, res) => {
 
 /**
  * GET /api/brain/creative-performance
- * Returns all ads across all ad sets with metrics, trend analysis,
- * and a Brain verdict (good/bad/watch/new) based on 7d performance.
+ * Returns ONLY manually uploaded ads (created via manual upload flow)
+ * with 3d metrics, trend analysis, and Brain verdict.
+ * Manual ads are identified by "[Manual Upload]" in the ad name.
  */
 router.get('/creative-performance', async (req, res) => {
   try {
-    // Get latest snapshot per ad (only ACTIVE/PAUSED)
+    // Get latest snapshot per ad — only manual uploads (name contains "[Manual Upload]")
     const adSnapshots = await MetricSnapshot.aggregate([
       { $match: { entity_type: 'ad' } },
       { $sort: { entity_id: 1, snapshot_at: -1 } },
       { $group: { _id: '$entity_id', doc: { $first: '$$ROOT' } } },
       { $replaceRoot: { newRoot: '$doc' } },
-      { $match: { status: { $in: ['ACTIVE', 'PAUSED'] } } },
-      { $sort: { 'metrics.last_7d.spend': -1 } }
+      { $match: {
+        status: { $in: ['ACTIVE', 'PAUSED'] },
+        entity_name: { $regex: '\\[Manual Upload\\]' }
+      }},
+      { $sort: { 'metrics.last_3d.spend': -1 } }
     ]);
 
-    // Get latest snapshot per adset for context (budget, name)
+    // Get latest snapshot per adset for context (name)
     const adsetSnapshots = await MetricSnapshot.aggregate([
       { $match: { entity_type: 'adset' } },
       { $sort: { entity_id: 1, snapshot_at: -1 } },
@@ -717,40 +721,39 @@ router.get('/creative-performance', async (req, res) => {
       adsetMap[s.entity_id] = { name: s.entity_name, daily_budget: s.daily_budget || 0 };
     }
 
-    // Compute account-level averages for 7d (for comparison)
-    let totalSpend7d = 0, totalRevenue7d = 0, totalCTR7d = 0, ctrCount = 0;
+    // Compute averages across manual ads for 3d (for comparison)
+    let totalSpend3d = 0, totalRevenue3d = 0, totalCTR3d = 0, ctrCount = 0;
     for (const ad of adSnapshots) {
-      const m7 = ad.metrics?.last_7d || {};
-      totalSpend7d += m7.spend || 0;
-      totalRevenue7d += m7.purchase_value || 0;
-      if (m7.ctr > 0) { totalCTR7d += m7.ctr; ctrCount++; }
+      const m3 = ad.metrics?.last_3d || {};
+      totalSpend3d += m3.spend || 0;
+      totalRevenue3d += m3.purchase_value || 0;
+      if (m3.ctr > 0) { totalCTR3d += m3.ctr; ctrCount++; }
     }
-    const accountAvgROAS = totalSpend7d > 0 ? totalRevenue7d / totalSpend7d : 0;
-    const accountAvgCTR = ctrCount > 0 ? totalCTR7d / ctrCount : 0;
+    const avgROAS3d = totalSpend3d > 0 ? totalRevenue3d / totalSpend3d : 0;
+    const avgCTR3d = ctrCount > 0 ? totalCTR3d / ctrCount : 0;
 
     // Build response
     const ads = adSnapshots.map(ad => {
-      const m7 = ad.metrics?.last_7d || {};
       const m3 = ad.metrics?.last_3d || {};
       const mT = ad.metrics?.today || {};
 
-      // Trend: compare 3d vs 7d ROAS
-      const roas7 = m7.roas || 0;
+      // Trend: compare today vs 3d ROAS
       const roas3 = m3.roas || 0;
+      const roasToday = mT.roas || 0;
       let trend = 'stable';
-      if (roas7 > 0) {
-        const ratio = roas3 / roas7;
-        if (ratio > 1.15) trend = 'improving';
-        else if (ratio < 0.85) trend = 'declining';
+      if (roas3 > 0) {
+        const ratio = roasToday / roas3;
+        if (ratio > 1.2) trend = 'improving';
+        else if (ratio < 0.7) trend = 'declining';
       }
 
-      // Brain verdict
+      // Brain verdict based on 3d metrics
       let verdict = 'new'; // default for ads with no spend
-      const spend7 = m7.spend || 0;
-      if (spend7 >= 5) {
-        if (roas7 >= accountAvgROAS * 1.2 && (m7.ctr || 0) >= accountAvgCTR * 0.8) {
+      const spend3 = m3.spend || 0;
+      if (spend3 >= 3) {
+        if (roas3 >= avgROAS3d * 1.2 && (m3.ctr || 0) >= avgCTR3d * 0.8) {
           verdict = 'good';
-        } else if (roas7 < accountAvgROAS * 0.5 || (m7.frequency || 0) >= 3.5) {
+        } else if (roas3 < avgROAS3d * 0.5 || (m3.frequency || 0) >= 3.5) {
           verdict = 'bad';
         } else {
           verdict = 'watch';
@@ -766,11 +769,10 @@ router.get('/creative-performance', async (req, res) => {
         snapshot_at: ad.snapshot_at,
         metrics: {
           today: { spend: mT.spend || 0, roas: mT.roas || 0, purchases: mT.purchases || 0, ctr: mT.ctr || 0 },
-          last_3d: { spend: m3.spend || 0, roas: m3.roas || 0, purchases: m3.purchases || 0, ctr: m3.ctr || 0, frequency: m3.frequency || 0 },
-          last_7d: {
-            spend: m7.spend || 0, roas: m7.roas || 0, purchases: m7.purchases || 0,
-            ctr: m7.ctr || 0, cpa: m7.cpa || 0, frequency: m7.frequency || 0,
-            impressions: m7.impressions || 0, cpm: m7.cpm || 0
+          last_3d: {
+            spend: m3.spend || 0, roas: m3.roas || 0, purchases: m3.purchases || 0,
+            ctr: m3.ctr || 0, cpa: m3.cpa || 0, frequency: m3.frequency || 0,
+            impressions: m3.impressions || 0, cpm: m3.cpm || 0
           }
         },
         trend,
@@ -780,7 +782,7 @@ router.get('/creative-performance', async (req, res) => {
 
     res.json({
       ads,
-      account_avg: { roas_7d: Math.round(accountAvgROAS * 100) / 100, ctr_7d: Math.round(accountAvgCTR * 100) / 100 },
+      account_avg: { roas_3d: Math.round(avgROAS3d * 100) / 100, ctr_3d: Math.round(avgCTR3d * 100) / 100 },
       total: ads.length
     });
   } catch (error) {
