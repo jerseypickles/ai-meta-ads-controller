@@ -206,6 +206,38 @@ export const getCreativePreviewUrl = (filenameOrId, filename) => {
   return `${BASE_URL}/uploads/creatives/${fname}`;
 };
 
+// ═══ MANUAL CREATIVE UPLOAD ═══
+
+export const generateCopyForUpload = async (imageFile, productHint = '') => {
+  const formData = new FormData();
+  formData.append('image', imageFile);
+  if (productHint) formData.append('product_hint', productHint);
+  const response = await api.post('/api/ai-ops/generate-copy-for-upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000
+  });
+  return response.data;
+};
+
+export const uploadAndCreateAd = async ({ adsetId, imageFile, uploadedFile, headline, primaryText, linkUrl, description, cta }) => {
+  const formData = new FormData();
+  formData.append('adset_id', adsetId);
+  formData.append('headline', headline);
+  formData.append('primary_text', primaryText);
+  formData.append('link_url', linkUrl);
+  if (description) formData.append('description', description);
+  if (cta) formData.append('cta', cta);
+  if (imageFile) formData.append('image', imageFile);
+  else if (uploadedFile) formData.append('uploaded_file', uploadedFile);
+  const response = await api.post('/api/ai-ops/upload-and-create-ad', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 15000
+  });
+  const data = response.data;
+  if (data.job_id) return pollForCompletion(`/api/ai-ops/upload-ad-status/${data.job_id}`, 3000, 300000);
+  return data;
+};
+
 // ═══ BRAIN — Intelligence Feed & Chat ═══
 
 export const getBrainInsights = async (page = 1, limit = 20, filters = {}) => {

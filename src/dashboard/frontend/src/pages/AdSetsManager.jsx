@@ -8,7 +8,8 @@ import {
   Power, Plus, Send, X, Trash2,
   LogOut, Search, ShoppingCart, BarChart3,
   Clock, Zap, AlertTriangle, ArrowUpDown,
-  Calendar, Target, Activity, Lightbulb, Sparkles
+  Calendar, Target, Activity, Lightbulb, Sparkles,
+  Upload, Image, Link, Type
 } from 'lucide-react';
 import {
   getAllAdSets, getAdsForAdSet, getAccountOverview,
@@ -16,7 +17,8 @@ import {
   refreshLiveCache, connectSSE,
   pauseEntity, deleteEntity, getAvailableCreatives,
   addAdToAdSet, generateAdCopy, getCreativePreviewUrl, logout,
-  getBrainRecommendations, getBrainInsights
+  getBrainRecommendations, getBrainInsights,
+  generateCopyForUpload, uploadAndCreateAd
 } from '../api';
 
 const AccountOrb = lazy(() => import('../components/AccountOrb'));
@@ -206,121 +208,298 @@ const AdRow = ({ ad, timeWindow, onAction }) => {
 };
 
 /* ══════════════════════════════════════════
-   ADD CREATIVE PANEL
+   ADD CREATIVE PANEL — Manual Upload
+   Upload image → AI generates headline + primary text →
+   User fills link URL, description, CTA → Create Ad in Meta
    ══════════════════════════════════════════ */
 
+const CTA_OPTIONS = [
+  { value: 'SHOP_NOW', label: 'Shop Now' },
+  { value: 'LEARN_MORE', label: 'Learn More' },
+  { value: 'BUY_NOW', label: 'Buy Now' },
+  { value: 'ORDER_NOW', label: 'Order Now' },
+  { value: 'GET_OFFER', label: 'Get Offer' },
+  { value: 'SIGN_UP', label: 'Sign Up' },
+  { value: 'SUBSCRIBE', label: 'Subscribe' },
+  { value: 'CONTACT_US', label: 'Contact Us' },
+];
+
 const AddCreativePanel = ({ adsetId, onClose, onSuccess }) => {
-  const [assets, setAssets] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState(null);
+  // Step tracking: 'upload' → 'review' → 'done'
+  const [step, setStep] = useState('upload');
   const [error, setError] = useState(null);
+
+  // Upload state
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
+  const [productHint, setProductHint] = useState('');
   const [generatingCopy, setGeneratingCopy] = useState(false);
-  const [generatedCopy, setGeneratedCopy] = useState(null);
+
+  // Review state (AI-generated + manual fields)
+  const [headlines, setHeadlines] = useState([]);
+  const [bodies, setBodies] = useState([]);
   const [selectedVariant, setSelectedVariant] = useState(0);
+  const [editedHeadline, setEditedHeadline] = useState('');
+  const [editedBody, setEditedBody] = useState('');
+  const [linkUrl, setLinkUrl] = useState('');
+  const [description, setDescription] = useState('');
+  const [cta, setCta] = useState('SHOP_NOW');
+  const [uploadedFile, setUploadedFile] = useState(null);
+
+  // Creating state
   const [creating, setCreating] = useState(false);
   const [result, setResult] = useState(null);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = await getAvailableCreatives(adsetId);
-        setAssets(data.assets || []);
-      } catch (err) { setError(err.message); }
-      finally { setLoading(false); }
-    })();
-  }, [adsetId]);
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImageFile(file);
+    setError(null);
+    const reader = new FileReader();
+    reader.onload = (ev) => setImagePreview(ev.target.result);
+    reader.readAsDataURL(file);
+  };
 
-  const selectedAsset = assets.find(a => a._id === selected);
-  const availableAssets = assets.filter(a => !a.already_in_adset);
+  const handleDrop = (e) => {
+    e.preventDefault();
+    const file = e.dataTransfer?.files?.[0];
+    if (!file || !file.type.startsWith('image/')) return;
+    setImageFile(file);
+    setError(null);
+    const reader = new FileReader();
+    reader.onload = (ev) => setImagePreview(ev.target.result);
+    reader.readAsDataURL(file);
+  };
 
   const handleGenerateCopy = async () => {
-    if (!selected) return;
-    setGeneratingCopy(true); setError(null); setGeneratedCopy(null);
+    if (!imageFile) { setError('Select an image first'); return; }
+    setGeneratingCopy(true); setError(null);
     try {
-      const res = await generateAdCopy(adsetId, selected);
-      setGeneratedCopy({ headlines: res.headlines, bodies: res.bodies });
+      const res = await generateCopyForUpload(imageFile, productHint);
+      setHeadlines(res.headlines || []);
+      setBodies(res.bodies || []);
+      setUploadedFile(res.uploaded_file || null);
       setSelectedVariant(0);
+      setEditedHeadline(res.headlines?.[0] || '');
+      setEditedBody(res.bodies?.[0] || '');
+      setStep('review');
     } catch (err) { setError(err.message); }
     finally { setGeneratingCopy(false); }
   };
 
+  const handleVariantSelect = (i) => {
+    setSelectedVariant(i);
+    setEditedHeadline(headlines[i] || '');
+    setEditedBody(bodies[i] || '');
+  };
+
   const handleCreate = async () => {
-    if (!selected || !generatedCopy) return;
+    if (!editedHeadline.trim()) { setError('Headline is required'); return; }
+    if (!editedBody.trim()) { setError('Primary text is required'); return; }
+    if (!linkUrl.trim()) { setError('Link URL is required'); return; }
     setCreating(true); setError(null);
     try {
-      const hl = generatedCopy.headlines[selectedVariant];
-      const bd = generatedCopy.bodies[selectedVariant];
-      const res = await addAdToAdSet(adsetId, selected, hl, bd);
+      const res = await uploadAndCreateAd({
+        adsetId,
+        imageFile: uploadedFile ? null : imageFile,
+        uploadedFile: uploadedFile || null,
+        headline: editedHeadline.trim(),
+        primaryText: editedBody.trim(),
+        linkUrl: linkUrl.trim(),
+        description: description.trim(),
+        cta
+      });
       setResult(res.result || res);
+      setStep('done');
       onSuccess?.();
     } catch (err) { setError(err.message); }
     finally { setCreating(false); }
   };
 
   return (
-    <div className="card" style={{ borderColor: 'rgba(16,185,129,0.2)', marginTop: '12px' }}>
+    <div className="card upload-creative-panel" style={{ borderColor: 'rgba(16,185,129,0.2)', marginTop: '12px' }}>
       <div className="card-header" style={{ paddingBottom: '8px', marginBottom: '12px' }}>
         <div className="d-flex align-center gap-2">
-          <Plus size={14} style={{ color: 'var(--green)' }} />
+          <Upload size={14} style={{ color: 'var(--green)' }} />
           <span className="font-bold text-sm" style={{ color: 'var(--green)' }}>
-            {!generatedCopy ? 'SELECT CREATIVE' : 'REVIEW COPY'}
+            {step === 'upload' ? 'UPLOAD CREATIVE' : step === 'review' ? 'REVIEW & CONFIGURE' : 'AD CREATED'}
           </span>
-          {generatedCopy && (
-            <button onClick={() => { setGeneratedCopy(null); setError(null); }} className="btn btn-secondary btn-sm">Back</button>
+          {step === 'review' && (
+            <button onClick={() => { setStep('upload'); setError(null); }} className="btn btn-secondary btn-sm">Back</button>
           )}
         </div>
         <button onClick={onClose} className="btn btn-ghost btn-icon"><X size={16} /></button>
       </div>
 
-      {loading && <p className="text-muted text-sm">Loading creatives...</p>}
       {error && <div className="alert alert-danger" style={{ padding: '8px 12px', fontSize: '13px' }}>{error}</div>}
-      {result && <div className="alert alert-success" style={{ padding: '8px 12px', fontSize: '13px' }}><CheckCircle size={14} style={{ marginRight: '6px' }} />{result.ads_created} ad(s) created</div>}
 
-      {!result && !loading && !generatedCopy && (
+      {/* ─── STEP 1: Upload Image ─── */}
+      {step === 'upload' && (
         <>
-          <div className="creative-grid">
-            {availableAssets.map(asset => (
-              <div key={asset._id} onClick={() => setSelected(asset._id)}
-                className={`creative-thumb ${selected === asset._id ? 'selected' : ''}`}>
-                <div className="creative-thumb-img">
-                  <img src={getCreativePreviewUrl(asset.filename)} alt=""
-                    onError={(e) => { e.target.style.display = 'none'; }} />
-                </div>
-                <div className="creative-thumb-name">{asset.original_name}</div>
+          <div
+            className={`upload-dropzone ${imagePreview ? 'has-image' : ''}`}
+            onDrop={handleDrop}
+            onDragOver={(e) => e.preventDefault()}
+            onClick={() => !imagePreview && document.getElementById(`file-input-${adsetId}`).click()}
+          >
+            {imagePreview ? (
+              <div className="upload-preview">
+                <img src={imagePreview} alt="Preview" />
+                <button
+                  className="btn btn-secondary btn-sm upload-change-btn"
+                  onClick={(e) => { e.stopPropagation(); setImageFile(null); setImagePreview(null); }}
+                >
+                  <X size={12} /> Remove
+                </button>
               </div>
-            ))}
-            {availableAssets.length === 0 && <p className="text-muted text-sm" style={{ gridColumn: '1/-1', textAlign: 'center', padding: '20px 0' }}>No available creatives</p>}
+            ) : (
+              <div className="upload-placeholder">
+                <Image size={28} style={{ color: 'var(--text-muted)', marginBottom: '8px' }} />
+                <span className="text-sm text-muted">Drop image here or click to select</span>
+                <span className="text-xs text-tertiary">JPG, PNG, GIF, WebP (max 30MB)</span>
+              </div>
+            )}
+            <input
+              id={`file-input-${adsetId}`}
+              type="file"
+              accept="image/jpeg,image/png,image/gif,image/webp"
+              onChange={handleFileSelect}
+              style={{ display: 'none' }}
+            />
           </div>
-          {selected && (
-            <button onClick={handleGenerateCopy} disabled={generatingCopy} className="btn btn-primary w-full" style={{ marginTop: '12px' }}>
-              {generatingCopy ? <><RefreshCw size={14} className="loading-spin" /> Generating...</> : <><Brain size={14} /> Generate Ad Copy</>}
-            </button>
-          )}
+
+          <div style={{ marginTop: '10px' }}>
+            <label className="text-xs text-tertiary font-semibold" style={{ marginBottom: '4px', display: 'block' }}>
+              Product hint (optional — helps AI write better copy)
+            </label>
+            <input
+              type="text"
+              className="upload-input"
+              placeholder="e.g. Spicy Dill Pickles, Jersey Pickles sampler pack..."
+              value={productHint}
+              onChange={(e) => setProductHint(e.target.value)}
+            />
+          </div>
+
+          <button
+            onClick={handleGenerateCopy}
+            disabled={!imageFile || generatingCopy}
+            className="btn btn-primary w-full"
+            style={{ marginTop: '12px' }}
+          >
+            {generatingCopy
+              ? <><RefreshCw size={14} className="loading-spin" /> AI is analyzing image...</>
+              : <><Brain size={14} /> Generate Ad Copy with AI</>
+            }
+          </button>
         </>
       )}
 
-      {!result && generatedCopy && (
+      {/* ─── STEP 2: Review Copy + Manual Fields ─── */}
+      {step === 'review' && (
         <>
-          {selectedAsset && (
+          {/* Image thumbnail */}
+          {imagePreview && (
             <div className="d-flex align-center gap-3 mb-3" style={{ padding: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--radius-md)' }}>
-              <img src={getCreativePreviewUrl(selectedAsset.filename)} alt="" style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '6px' }}
-                onError={(e) => { e.target.style.display = 'none'; }} />
-              <span className="font-semibold text-sm">{selectedAsset.original_name}</span>
+              <img src={imagePreview} alt="" style={{ width: '48px', height: '48px', objectFit: 'cover', borderRadius: '6px' }} />
+              <span className="font-semibold text-sm">{imageFile?.name || 'Uploaded image'}</span>
             </div>
           )}
-          <div className="d-flex flex-column gap-2 mb-3">
-            {generatedCopy.headlines.map((headline, i) => (
-              <div key={i} onClick={() => setSelectedVariant(i)}
-                className={`copy-variant ${selectedVariant === i ? 'selected' : ''}`}>
-                <div className="font-bold text-sm">{headline}</div>
-                <div className="text-sm text-tertiary" style={{ marginTop: '4px' }}>{generatedCopy.bodies[i] || ''}</div>
-              </div>
+
+          {/* AI-generated variants selector */}
+          <label className="text-xs text-tertiary font-semibold" style={{ marginBottom: '6px', display: 'block' }}>
+            <Sparkles size={11} style={{ marginRight: '4px' }} />AI-Generated Copy (select a variant, then edit)
+          </label>
+          <div className="d-flex gap-2 mb-3" style={{ overflowX: 'auto' }}>
+            {headlines.map((hl, i) => (
+              <button
+                key={i}
+                onClick={() => handleVariantSelect(i)}
+                className={`copy-variant-btn ${selectedVariant === i ? 'selected' : ''}`}
+              >
+                <div className="font-bold text-xs" style={{ marginBottom: '2px' }}>{hl}</div>
+                <div className="text-xs text-tertiary" style={{ lineHeight: 1.3 }}>{(bodies[i] || '').substring(0, 60)}...</div>
+              </button>
             ))}
           </div>
-          <button onClick={handleCreate} disabled={creating} className="btn btn-success w-full">
-            {creating ? <><RefreshCw size={14} className="loading-spin" /> Creating...</> : <><Send size={14} /> Create Ad</>}
+
+          {/* Editable headline */}
+          <div className="upload-field">
+            <label className="text-xs text-tertiary font-semibold">
+              <Type size={11} /> Headline <span className="text-green">(AI)</span>
+            </label>
+            <input
+              type="text"
+              className="upload-input"
+              value={editedHeadline}
+              onChange={(e) => setEditedHeadline(e.target.value)}
+              maxLength={40}
+              placeholder="Headline (max 40 chars)"
+            />
+            <span className="text-xs text-tertiary" style={{ textAlign: 'right' }}>{editedHeadline.length}/40</span>
+          </div>
+
+          {/* Editable primary text */}
+          <div className="upload-field">
+            <label className="text-xs text-tertiary font-semibold">
+              <Type size={11} /> Primary Text <span className="text-green">(AI)</span>
+            </label>
+            <textarea
+              className="upload-input upload-textarea"
+              value={editedBody}
+              onChange={(e) => setEditedBody(e.target.value)}
+              rows={3}
+              placeholder="Primary text (ad body)"
+            />
+          </div>
+
+          {/* Manual fields */}
+          <div className="upload-field">
+            <label className="text-xs text-tertiary font-semibold">
+              <Link size={11} /> Link URL <span className="text-danger">*</span>
+            </label>
+            <input
+              type="url"
+              className="upload-input"
+              value={linkUrl}
+              onChange={(e) => setLinkUrl(e.target.value)}
+              placeholder="https://yourstore.com/product"
+            />
+          </div>
+
+          <div className="upload-field">
+            <label className="text-xs text-tertiary font-semibold">Description (optional)</label>
+            <input
+              type="text"
+              className="upload-input"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Short description under headline"
+            />
+          </div>
+
+          <div className="upload-field">
+            <label className="text-xs text-tertiary font-semibold">Call to Action</label>
+            <select className="upload-input upload-select" value={cta} onChange={(e) => setCta(e.target.value)}>
+              {CTA_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+
+          <button onClick={handleCreate} disabled={creating} className="btn btn-success w-full" style={{ marginTop: '8px' }}>
+            {creating
+              ? <><RefreshCw size={14} className="loading-spin" /> Creating ad in Meta...</>
+              : <><Send size={14} /> Create Ad in Meta</>
+            }
           </button>
         </>
+      )}
+
+      {/* ─── STEP 3: Done ─── */}
+      {step === 'done' && result && (
+        <div className="alert alert-success" style={{ padding: '10px 14px', fontSize: '13px' }}>
+          <CheckCircle size={14} style={{ marginRight: '6px' }} />
+          Ad created: <strong>{result.ad_name || result.headline}</strong>
+        </div>
       )}
     </div>
   );

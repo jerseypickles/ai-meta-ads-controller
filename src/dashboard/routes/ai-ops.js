@@ -1,5 +1,8 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const ActionLog = require('../../db/models/ActionLog');
 const AgentReport = require('../../db/models/AgentReport');
 const AICreation = require('../../db/models/AICreation');
@@ -10,6 +13,29 @@ const CreativeAsset = require('../../db/models/CreativeAsset');
 const { getMetaClient } = require('../../meta/client');
 const { parseInsightRow, getTimeRanges, parseBudget } = require('../../meta/helpers');
 const logger = require('../../utils/logger');
+const config = require('../../../config');
+
+// Multer config for manual creative uploads
+const UPLOAD_DIR = path.join(config.system.uploadsDir, 'creatives');
+const manualUploadStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+    cb(null, UPLOAD_DIR);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E6)}`;
+    const ext = path.extname(file.originalname);
+    cb(null, `manual-${uniqueSuffix}${ext}`);
+  }
+});
+const manualUpload = multer({
+  storage: manualUploadStorage,
+  fileFilter: (req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    cb(null, allowed.includes(file.mimetype));
+  },
+  limits: { fileSize: 30 * 1024 * 1024 } // 30MB
+});
 
 // In-memory store for background refresh jobs
 const refreshJobs = new Map();
@@ -1219,6 +1245,204 @@ Return ONLY valid JSON, no markdown:
     };
   }
 }
+
+// ═══ MANUAL CREATIVE UPLOAD + AD CREATION ═══
+
+/**
+ * POST /api/ai-ops/generate-copy-for-upload
+ * Accepts an uploaded image (multipart) and generates headline + primary_text with Claude.
+ * The image is analyzed by Claude Vision to produce relevant copy.
+ * Does NOT create the ad — just returns copy for user review.
+ */
+router.post('/generate-copy-for-upload', manualUpload.single('image'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Image file required' });
+
+  try {
+    const Anthropic = require('@anthropic-ai/sdk');
+    const client = new Anthropic({ apiKey: config.claude.apiKey });
+
+    // Read image as base64 for Claude Vision
+    const imageBuffer = fs.readFileSync(req.file.path);
+    const base64Image = imageBuffer.toString('base64');
+    const mediaType = req.file.mimetype;
+
+    const productHint = req.body.product_hint || '';
+
+    const response = await client.messages.create({
+      model: config.claude.model,
+      max_tokens: 800,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: mediaType, data: base64Image }
+          },
+          {
+            type: 'text',
+            text: `You are writing ad copy for a Meta (Facebook/Instagram) ad.
+${productHint ? `Product context: ${productHint}` : 'Analyze the image to understand the product.'}
+
+Generate 3 headline + body (primary text) variants for A/B testing.
+
+Rules:
+- Headlines: short, punchy, scroll-stopping. MAX 40 characters. In English for US audience.
+- Each headline must be a DIFFERENT angle: benefit, urgency, curiosity, social proof, humor, etc.
+- Bodies (primary_text): 2-3 sentences. Hook + benefit + CTA. In English. Different tones per variant.
+- This is a food/ecommerce brand — be casual, fun, crave-inducing.
+- Base your copy on what you SEE in the image — the product, colors, mood, setting.
+
+Return ONLY valid JSON, no markdown:
+{
+  "headlines": ["Headline 1", "Headline 2", "Headline 3"],
+  "bodies": ["Body text 1", "Body text 2", "Body text 3"]
+}`
+          }
+        ]
+      }]
+    });
+
+    const text = response.content[0]?.text || '';
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No JSON in Claude response');
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    res.json({
+      success: true,
+      headlines: parsed.headlines || ['Fresh & Delicious'],
+      bodies: parsed.bodies || ['Try our handcrafted products today!'],
+      uploaded_file: req.file.filename
+    });
+  } catch (err) {
+    logger.error(`[AI-OPS] generate-copy-for-upload error: ${err.message}`);
+    // Return fallback copy so user can still proceed
+    res.json({
+      success: true,
+      headlines: ['Try It Today', 'You Need This', 'Discover Something New'],
+      bodies: [
+        'Handcrafted with love and the freshest ingredients. Order now and taste the difference!',
+        'Once you try it, you won\'t go back. Shop today!',
+        'Your new favorite is waiting. Get it delivered to your door.'
+      ],
+      uploaded_file: req.file.filename,
+      fallback: true
+    });
+  }
+});
+
+/**
+ * POST /api/ai-ops/upload-and-create-ad
+ * Full flow: upload image to Meta + create ad creative + create ad.
+ * Accepts multipart form OR references a previously uploaded file.
+ *
+ * Required fields: adset_id, link_url, headline, primary_text
+ * Optional fields: description, cta (default SHOP_NOW), uploaded_file (if image already uploaded via generate-copy)
+ * File field: image (if not using uploaded_file)
+ */
+const uploadAdJobs = new Map();
+
+router.post('/upload-and-create-ad', manualUpload.single('image'), async (req, res) => {
+  const { adset_id, link_url, headline, primary_text, description, cta, uploaded_file } = req.body;
+
+  if (!adset_id) return res.status(400).json({ error: 'adset_id required' });
+  if (!link_url) return res.status(400).json({ error: 'link_url required' });
+  if (!headline) return res.status(400).json({ error: 'headline required' });
+  if (!primary_text) return res.status(400).json({ error: 'primary_text required' });
+
+  // Determine image file path
+  let imagePath;
+  if (req.file) {
+    imagePath = req.file.path;
+  } else if (uploaded_file) {
+    imagePath = path.join(UPLOAD_DIR, uploaded_file);
+    if (!fs.existsSync(imagePath)) return res.status(400).json({ error: 'Uploaded file not found. Upload again.' });
+  } else {
+    return res.status(400).json({ error: 'Image file required (upload or provide uploaded_file reference)' });
+  }
+
+  const jobId = `upload_ad_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+  uploadAdJobs.set(jobId, { status: 'running', startedAt: Date.now() });
+
+  // Clean old jobs
+  for (const [id, job] of uploadAdJobs) {
+    if (Date.now() - job.startedAt > REFRESH_JOB_TTL) uploadAdJobs.delete(id);
+  }
+
+  res.json({ job_id: jobId, status: 'running' });
+
+  // Background execution
+  (async () => {
+    try {
+      const meta = getMetaClient();
+
+      // Step 1: Upload image to Meta
+      logger.info(`[AI-OPS] Uploading manual creative to Meta...`);
+      const upload = await meta.uploadImage(imagePath);
+      const imageHash = upload.image_hash;
+
+      // Step 2: Get page_id
+      const pageId = await meta.getPageId();
+
+      // Step 3: Create ad creative
+      const creative = await meta.createAdCreative({
+        page_id: pageId,
+        image_hash: imageHash,
+        headline: headline,
+        body: primary_text,
+        description: description || '',
+        cta: cta || 'SHOP_NOW',
+        link_url: link_url
+      });
+
+      // Step 4: Create ad (ACTIVE)
+      const adName = `${headline} [Manual Upload]`;
+      const ad = await meta.createAd(adset_id, creative.creative_id, adName, 'ACTIVE');
+
+      logger.info(`[AI-OPS] Manual ad created: ${adName} in ${adset_id}`);
+
+      // Step 5: Log action
+      await ActionLog.create({
+        entity_type: 'adset',
+        entity_id: adset_id,
+        action: 'add_ad',
+        after_value: ad.ad_id,
+        reasoning: `Manual upload: created ad "${adName}"`,
+        agent_type: 'manual',
+        confidence: 'high',
+        success: true
+      });
+
+      uploadAdJobs.set(jobId, {
+        status: 'completed',
+        startedAt: uploadAdJobs.get(jobId).startedAt,
+        result: {
+          ad_id: ad.ad_id,
+          creative_id: creative.creative_id,
+          ad_name: adName,
+          headline,
+          primary_text,
+          image_hash: imageHash
+        }
+      });
+    } catch (err) {
+      logger.error(`[AI-OPS] upload-and-create-ad error: ${err.message}`);
+      uploadAdJobs.set(jobId, {
+        status: 'failed',
+        startedAt: uploadAdJobs.get(jobId).startedAt,
+        error: err.message
+      });
+    }
+  })();
+});
+
+router.get('/upload-ad-status/:jobId', (req, res) => {
+  const job = uploadAdJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  const elapsed = Math.round((Date.now() - job.startedAt) / 1000);
+  if (job.status === 'running') return res.json({ status: 'running', elapsed_seconds: elapsed });
+  if (job.status === 'completed') return res.json({ status: 'completed', elapsed_seconds: elapsed, result: job.result });
+  return res.json({ status: 'failed', elapsed_seconds: elapsed, error: job.error });
+});
 
 module.exports = router;
 module.exports.refreshAIOpsMetrics = refreshAIOpsMetrics;

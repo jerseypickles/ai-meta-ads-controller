@@ -5096,3 +5096,144 @@ a:hover {
 .knowledge-day-verdict-labels .negative {
   color: var(--red);
 }
+
+/* ═══════════════════════════════════════════
+   UPLOAD CREATIVE PANEL
+   ═══════════════════════════════════════════ */
+
+.upload-creative-panel {
+  max-width: 100%;
+}
+
+.upload-dropzone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-md);
+  padding: 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.upload-dropzone:hover {
+  border-color: var(--green);
+  background: rgba(16, 185, 129, 0.04);
+}
+
+.upload-dropzone.has-image {
+  cursor: default;
+  padding: 8px;
+  border-style: solid;
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.upload-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.upload-preview {
+  position: relative;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.upload-preview img {
+  max-height: 180px;
+  max-width: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.upload-change-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 11px !important;
+  padding: 3px 8px !important;
+  opacity: 0.85;
+}
+
+.upload-change-btn:hover {
+  opacity: 1;
+}
+
+.upload-field {
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.upload-field label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.upload-input {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-family: inherit;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.upload-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.upload-textarea {
+  resize: vertical;
+  min-height: 60px;
+  line-height: 1.4;
+}
+
+.upload-select {
+  appearance: auto;
+  cursor: pointer;
+}
+
+.text-green {
+  color: var(--green);
+}
+
+.text-danger {
+  color: var(--red);
+}
+
+/* Copy variant selector buttons */
+.copy-variant-btn {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  cursor: pointer;
+  text-align: left;
+  min-width: 140px;
+  max-width: 200px;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.copy-variant-btn:hover {
+  border-color: var(--primary);
+}
+
+.copy-variant-btn.selected {
+  border-color: var(--green);
+  background: rgba(16, 185, 129, 0.08);
+}
