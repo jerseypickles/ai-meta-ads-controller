@@ -1,4 +1,5 @@
 const ActionLog = require('../../db/models/ActionLog');
+const BrainRecommendation = require('../../db/models/BrainRecommendation');
 const CreativeAsset = require('../../db/models/CreativeAsset');
 const logger = require('../../utils/logger');
 
@@ -13,16 +14,17 @@ class ImpactContextBuilder {
    * @returns {Object} { feedbackText, pendingText, summary, patterns }
    */
   async build() {
-    const [measured, pending, creativeAssets] = await Promise.all([
+    const [measured, pending, creativeAssets, trackingRecs] = await Promise.all([
       this._loadMeasuredActions(30),
       this._loadPendingActions(),
-      CreativeAsset.find({ status: 'active' }).lean().catch(() => [])
+      CreativeAsset.find({ status: 'active' }).lean().catch(() => []),
+      this._loadTrackingRecommendations()
     ]);
 
     const processed = this._processActions(measured);
     const patterns = this._extractPatterns(processed);
     const creativePerformance = this._extractCreativePerformance(processed, creativeAssets);
-    const pendingEntities = this._extractPendingEntities(pending);
+    const pendingEntities = this._extractPendingEntities(pending, trackingRecs);
 
     const summary = {
       total_measured: processed.length,
@@ -40,7 +42,7 @@ class ImpactContextBuilder {
       : 0;
 
     const feedbackText = this._buildFeedbackText(processed, summary, patterns, creativePerformance);
-    const pendingText = this._buildPendingText(pending, pendingEntities);
+    const pendingText = this._buildPendingText(pending, pendingEntities, trackingRecs);
 
     return {
       feedbackText,
@@ -49,6 +51,7 @@ class ImpactContextBuilder {
       patterns,
       creativePerformance,
       pendingEntities,
+      trackingRecs,
       processedActions: processed
     };
   }
@@ -176,8 +179,32 @@ class ImpactContextBuilder {
     return styleMap;
   }
 
-  _extractPendingEntities(pending) {
-    return new Set(pending.map(a => a.entity_id));
+  /**
+   * Load approved BrainRecommendations still in active follow-up tracking.
+   * These entities should NOT receive new recommendations.
+   */
+  async _loadTrackingRecommendations() {
+    try {
+      return await BrainRecommendation.find({
+        status: 'approved',
+        decided_at: { $ne: null },
+        'follow_up.current_phase': { $in: ['awaiting_day_3', 'awaiting_day_7', 'awaiting_day_14'] }
+      }).lean();
+    } catch (e) {
+      logger.warn(`[IMPACT] Error loading tracking recommendations: ${e.message}`);
+      return [];
+    }
+  }
+
+  _extractPendingEntities(pending, trackingRecs = []) {
+    const entityIds = new Set(pending.map(a => a.entity_id));
+    // Also block entities with approved recs in active follow-up
+    for (const rec of trackingRecs) {
+      if (rec.entity?.entity_id) {
+        entityIds.add(rec.entity.entity_id);
+      }
+    }
+    return entityIds;
   }
 
   _buildFeedbackText(processed, summary, patterns, creativePerformance) {
@@ -232,32 +259,49 @@ INSTRUCCIONES DE APRENDIZAJE:
 - Si un estilo de creativo tiene mejor tasa de exito, prioriza ese estilo al recomendar create_ad.`;
   }
 
-  _buildPendingText(pending, pendingEntities) {
-    if (pending.length === 0) return '';
+  _buildPendingText(pending, pendingEntities, trackingRecs = []) {
+    if (pending.length === 0 && trackingRecs.length === 0) return '';
 
-    const lines = pending.map(a => {
-      const hoursElapsed = Math.round((Date.now() - new Date(a.executed_at).getTime()) / (1000 * 60 * 60));
-      const daysElapsed = (hoursElapsed / 24).toFixed(1);
-      const hoursLeftFor7d = Math.max(0, 168 - hoursElapsed); // 7 days = 168 hours
-      const has3d = a.impact_measured === true;
-      const checkpoint = has3d ? `3d medido, esperando 7d (${hoursLeftFor7d}h)` : `midiendo (${Math.max(0, 72 - hoursElapsed)}h para 3d)`;
-      const after1d = a.metrics_after_1d || {};
-      let partial = '';
-      if (after1d.roas_7d > 0) {
-        const before = a.metrics_at_execution || {};
-        const delta1d = before.roas_7d > 0
-          ? ((after1d.roas_7d - before.roas_7d) / before.roas_7d * 100).toFixed(1)
-          : 'N/A';
-        partial = ` | parcial 24h: ROAS ${after1d.roas_7d.toFixed(2)}x (${delta1d}%)`;
-      }
-      return `- ${a.entity_name} (${a.entity_id}): ${a.action} hace ${daysElapsed}d, ${checkpoint}${partial}`;
-    }).join('\n');
+    let text = '';
+
+    if (pending.length > 0) {
+      const lines = pending.map(a => {
+        const hoursElapsed = Math.round((Date.now() - new Date(a.executed_at).getTime()) / (1000 * 60 * 60));
+        const daysElapsed = (hoursElapsed / 24).toFixed(1);
+        const hoursLeftFor7d = Math.max(0, 168 - hoursElapsed); // 7 days = 168 hours
+        const has3d = a.impact_measured === true;
+        const checkpoint = has3d ? `3d medido, esperando 7d (${hoursLeftFor7d}h)` : `midiendo (${Math.max(0, 72 - hoursElapsed)}h para 3d)`;
+        const after1d = a.metrics_after_1d || {};
+        let partial = '';
+        if (after1d.roas_7d > 0) {
+          const before = a.metrics_at_execution || {};
+          const delta1d = before.roas_7d > 0
+            ? ((after1d.roas_7d - before.roas_7d) / before.roas_7d * 100).toFixed(1)
+            : 'N/A';
+          partial = ` | parcial 24h: ROAS ${after1d.roas_7d.toFixed(2)}x (${delta1d}%)`;
+        }
+        return `- ${a.entity_name} (${a.entity_id}): ${a.action} hace ${daysElapsed}d, ${checkpoint}${partial}`;
+      }).join('\n');
+
+      text += `\n\nACCIONES EN MEDICION (NO TOCAR estas entidades):\n${lines}`;
+    }
+
+    // Include approved recs in active follow-up tracking
+    if (trackingRecs.length > 0) {
+      const trackingLines = trackingRecs.map(r => {
+        const daysAgo = r.decided_at ? Math.round((Date.now() - new Date(r.decided_at).getTime()) / 86400000) : '?';
+        const phase = r.follow_up?.current_phase || 'awaiting_day_3';
+        const executed = r.follow_up?.action_executed ? 'ejecutada' : 'pendiente ejecucion';
+        return `- ${r.entity?.entity_name || 'N/A'} (${r.entity?.entity_id || 'N/A'}): ${r.action_type} aprobada hace ${daysAgo}d, fase: ${phase}, ${executed}`;
+      }).join('\n');
+
+      text += `\n\nRECOMENDACIONES APROBADAS EN SEGUIMIENTO (NO TOCAR estas entidades):\n${trackingLines}`;
+    }
 
     const entityIds = [...pendingEntities];
+    text += `\nIMPORTANTE: Las siguientes entidades estan siendo medidas o en seguimiento. NO recomiendes cambios en ellas hasta que la medicion termine: ${entityIds.join(', ')}`;
 
-    return `\n\nACCIONES EN MEDICION (NO TOCAR estas entidades):
-${lines}
-IMPORTANTE: Las siguientes entidades estan siendo medidas. NO recomiendes cambios en ellas hasta que la medicion termine: ${entityIds.join(', ')}`;
+    return text;
   }
 }
 

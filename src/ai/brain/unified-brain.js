@@ -227,8 +227,24 @@ class UnifiedBrain {
       // 10. Aplicar directivas estrategicas
       const withDirectives = this._applyStrategicDirectives(allScoredRecs, sharedData.strategicDirectives);
 
+      // 10b. Dedup: enforce one recommendation per entity — keep highest policy_score
+      const dedupedRecs = [];
+      const seenEntityIds = new Set();
+      const sortedForDedup = [...withDirectives].sort((a, b) => (b.policy_score || 0) - (a.policy_score || 0));
+      for (const rec of sortedForDedup) {
+        if (rec.entity_id && seenEntityIds.has(rec.entity_id)) {
+          logger.info(`[BRAIN] Dedup: descartada segunda rec para ${rec.entity_name} (${rec.action}, score ${(rec.policy_score || 0).toFixed(2)})`);
+          continue;
+        }
+        if (rec.entity_id) seenEntityIds.add(rec.entity_id);
+        dedupedRecs.push(rec);
+      }
+      if (dedupedRecs.length < withDirectives.length) {
+        logger.info(`[BRAIN] Dedup: ${withDirectives.length} -> ${dedupedRecs.length} (${withDirectives.length - dedupedRecs.length} duplicadas eliminadas)`);
+      }
+
       // 11. Ordenar por score y limitar
-      const finalRecs = withDirectives
+      const finalRecs = dedupedRecs
         .sort((a, b) => (b.policy_score || 0) - (a.policy_score || 0))
         .slice(0, unifiedPolicyConfig.max_recommendations_per_cycle || 12);
 
