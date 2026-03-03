@@ -18,6 +18,9 @@ class DiagnosticEngine {
 
   constructor() {
     this.benchmarks = deepResearchPriors.benchmarks?.food_ecommerce_2025 || {};
+    this.seasonalMultipliers = deepResearchPriors.benchmarks?.seasonal_cpm_multipliers || {};
+    this.funnelThresholds = deepResearchPriors.funnel_diagnosis?.stages || {};
+    this.creativeLifespan = deepResearchPriors.creative_strategy?.fatigue_detection?.creative_lifespan || {};
     this.kpi = kpiTargets;
   }
 
@@ -51,15 +54,21 @@ class DiagnosticEngine {
       const fatigue = this._diagnoseCreativeFatigue(m7d, m14d, m30d, memory, ads);
       const saturation = this._diagnoseAudienceSaturation(m7d, m14d, m30d, memory);
       const efficiency = this._diagnoseEfficiency(m7d, m14d, m30d, mToday, accountOverview);
+      const benchmarkComparison = this._diagnoseBenchmarks(m7d);
+      const funnelGrades = this._gradeFunnelThresholds(funnel);
+      const creativeLifespan = this._diagnoseCreativeLifespan(ads);
       const overall = this._computeOverallDiagnosis(funnel, fatigue, saturation, efficiency, m7d, snap);
 
       diagnostics[snap.entity_id] = {
         entity_id: snap.entity_id,
         entity_name: snap.entity_name,
         funnel,
+        funnel_grades: funnelGrades,
         fatigue,
         saturation,
         efficiency,
+        benchmark_comparison: benchmarkComparison,
+        creative_lifespan: creativeLifespan,
         overall,
         active_ads: ads.filter(a => a.status === 'ACTIVE').length,
         total_ads: ads.length
@@ -629,6 +638,342 @@ class DiagnosticEngine {
   }
 
   // ═══════════════════════════════════════════════════════════════
+  // 6. BENCHMARK COMPARISON
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Compara métricas actuales contra benchmarks de la industria (food_ecommerce_2025).
+   * Aplica multiplicador estacional al benchmark de CPM.
+   */
+  _diagnoseBenchmarks(m7d) {
+    const signals = [];
+    const seasonalMultiplier = this._getCurrentSeasonalMultiplier();
+
+    // --- CPM vs benchmark (ajustado por temporada) ---
+    const cpm7d = m7d.cpm || 0;
+    const cpmRange = this.benchmarks.cpm_range;
+    if (cpm7d > 0 && cpmRange) {
+      const adjustedLow = cpmRange.low * seasonalMultiplier;
+      const adjustedMedian = cpmRange.median * seasonalMultiplier;
+      const adjustedHigh = cpmRange.high * seasonalMultiplier;
+
+      let cpmStatus;
+      if (cpm7d < adjustedLow * 0.8) cpmStatus = 'well_below';
+      else if (cpm7d < adjustedLow) cpmStatus = 'below';
+      else if (cpm7d <= adjustedHigh) cpmStatus = 'within_range';
+      else if (cpm7d <= adjustedHigh * 1.3) cpmStatus = 'above';
+      else cpmStatus = 'well_above';
+
+      const deviationPct = adjustedMedian > 0 ? ((cpm7d - adjustedMedian) / adjustedMedian * 100) : 0;
+
+      signals.push({
+        metric: 'CPM',
+        value: +cpm7d.toFixed(2),
+        benchmark_low: +adjustedLow.toFixed(2),
+        benchmark_median: +adjustedMedian.toFixed(2),
+        benchmark_high: +adjustedHigh.toFixed(2),
+        seasonal_multiplier: seasonalMultiplier,
+        status: cpmStatus,
+        deviation_pct: +deviationPct.toFixed(1),
+        severity: (cpmStatus === 'well_above') ? 'high' : (cpmStatus === 'above' ? 'medium' : 'ok')
+      });
+    }
+
+    // --- CPA vs benchmark ---
+    const cpa7d = m7d.cpa || 0;
+    const cpaRange = this.benchmarks.cpa_range;
+    if (cpa7d > 0 && cpaRange) {
+      let cpaStatus;
+      if (cpa7d < cpaRange.low) cpaStatus = 'below';
+      else if (cpa7d <= cpaRange.median) cpaStatus = 'good';
+      else if (cpa7d <= cpaRange.high) cpaStatus = 'above_median';
+      else cpaStatus = 'above_range';
+
+      const deviationPct = cpaRange.median > 0 ? ((cpa7d - cpaRange.median) / cpaRange.median * 100) : 0;
+
+      signals.push({
+        metric: 'CPA',
+        value: +cpa7d.toFixed(2),
+        benchmark_low: cpaRange.low,
+        benchmark_median: cpaRange.median,
+        benchmark_high: cpaRange.high,
+        status: cpaStatus,
+        deviation_pct: +deviationPct.toFixed(1),
+        severity: (cpaStatus === 'above_range') ? 'high' : (cpaStatus === 'above_median' ? 'medium' : 'ok')
+      });
+    }
+
+    // --- ROAS vs benchmark ---
+    const roas7d = m7d.roas || 0;
+    const roasRange = this.benchmarks.roas_range;
+    if (roas7d > 0 && roasRange) {
+      let roasStatus;
+      if (roas7d >= roasRange.high) roasStatus = 'excellent';
+      else if (roas7d >= roasRange.median) roasStatus = 'good';
+      else if (roas7d >= roasRange.low) roasStatus = 'below_median';
+      else roasStatus = 'below_range';
+
+      const deviationPct = roasRange.median > 0 ? ((roas7d - roasRange.median) / roasRange.median * 100) : 0;
+
+      signals.push({
+        metric: 'ROAS',
+        value: +roas7d.toFixed(2),
+        benchmark_low: roasRange.low,
+        benchmark_median: roasRange.median,
+        benchmark_high: roasRange.high,
+        status: roasStatus,
+        deviation_pct: +deviationPct.toFixed(1),
+        severity: (roasStatus === 'below_range') ? 'high' : (roasStatus === 'below_median' ? 'medium' : 'ok')
+      });
+    }
+
+    // --- CTR vs benchmark ---
+    const ctr7d = m7d.ctr || 0;
+    const ctrRange = this.benchmarks.ctr_range;
+    if (ctr7d > 0 && ctrRange) {
+      let ctrStatus;
+      if (ctr7d >= ctrRange.high) ctrStatus = 'excellent';
+      else if (ctr7d >= ctrRange.median) ctrStatus = 'good';
+      else if (ctr7d >= ctrRange.low) ctrStatus = 'below_median';
+      else ctrStatus = 'below_range';
+
+      const deviationPct = ctrRange.median > 0 ? ((ctr7d - ctrRange.median) / ctrRange.median * 100) : 0;
+
+      signals.push({
+        metric: 'CTR',
+        value: +ctr7d.toFixed(2),
+        benchmark_low: ctrRange.low,
+        benchmark_median: ctrRange.median,
+        benchmark_high: ctrRange.high,
+        status: ctrStatus,
+        deviation_pct: +deviationPct.toFixed(1),
+        severity: (ctrStatus === 'below_range') ? 'high' : (ctrStatus === 'below_median' ? 'medium' : 'ok')
+      });
+    }
+
+    // Count issues
+    const issues = signals.filter(s => s.severity !== 'ok');
+    return {
+      signals,
+      issues_count: issues.length,
+      seasonal_multiplier: seasonalMultiplier,
+      quarter: this._getCurrentQuarter()
+    };
+  }
+
+  /**
+   * Determina el multiplicador estacional de CPM basado en el trimestre actual.
+   */
+  _getCurrentSeasonalMultiplier() {
+    const now = new Date();
+    const month = now.getMonth() + 1; // 1-12
+    const day = now.getDate();
+
+    // Q4 BFCM: Nov 15 - Dec 5 approx
+    if ((month === 11 && day >= 15) || (month === 12 && day <= 5)) {
+      return this.seasonalMultipliers.q4_bfcm || 2.0;
+    }
+    // Q4 holiday: Dec 6-31
+    if (month === 12 && day > 5) {
+      return this.seasonalMultipliers.q4_holiday || 1.5;
+    }
+    // Q4 early: Oct 1 - Nov 14
+    if (month === 10 || (month === 11 && day < 15)) {
+      return this.seasonalMultipliers.q4_early || 1.3;
+    }
+    // Q1: Jan-Mar
+    if (month >= 1 && month <= 3) {
+      return this.seasonalMultipliers.q1 || 0.85;
+    }
+    // Q2: Apr-Jun
+    if (month >= 4 && month <= 6) {
+      return this.seasonalMultipliers.q2 || 1.0;
+    }
+    // Q3: Jul-Sep
+    return this.seasonalMultipliers.q3 || 1.05;
+  }
+
+  _getCurrentQuarter() {
+    const month = new Date().getMonth() + 1;
+    if (month <= 3) return 'Q1';
+    if (month <= 6) return 'Q2';
+    if (month <= 9) return 'Q3';
+    return 'Q4';
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 7. FUNNEL THRESHOLD GRADING
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Compara tasas de funnel contra umbrales de la config (healthy/problem).
+   * Genera señales de severidad automáticas cuando las tasas caen bajo el umbral.
+   */
+  _gradeFunnelThresholds(funnelDiagnosis) {
+    const grades = [];
+    const rates = funnelDiagnosis.rates;
+
+    // Click → ATC: healthy >5%, problem <2%
+    const clickToAtcThreshold = this.funnelThresholds.click_to_atc;
+    if (rates.click_to_atc_7d > 0 && clickToAtcThreshold) {
+      const healthyVal = parseFloat(clickToAtcThreshold.healthy?.replace(/[>%]/g, '')) || 5;
+      const problemVal = parseFloat(clickToAtcThreshold.problem?.replace(/[<%]/g, '')) || 2;
+
+      let grade;
+      if (rates.click_to_atc_7d >= healthyVal) grade = 'healthy';
+      else if (rates.click_to_atc_7d >= problemVal) grade = 'warning';
+      else grade = 'problem';
+
+      grades.push({
+        stage: 'click_to_atc',
+        rate: rates.click_to_atc_7d,
+        healthy_threshold: healthyVal,
+        problem_threshold: problemVal,
+        grade,
+        severity: grade === 'problem' ? 'high' : (grade === 'warning' ? 'medium' : 'ok'),
+        action: grade !== 'healthy' ? clickToAtcThreshold.action : null
+      });
+    }
+
+    // ATC → IC: healthy >50%, problem <25%
+    const atcToIcThreshold = this.funnelThresholds.atc_to_ic;
+    if (rates.atc_to_ic_7d > 0 && atcToIcThreshold) {
+      const healthyVal = parseFloat(atcToIcThreshold.healthy?.replace(/[>%]/g, '')) || 50;
+      const problemVal = parseFloat(atcToIcThreshold.problem?.replace(/[<%]/g, '')) || 25;
+
+      let grade;
+      if (rates.atc_to_ic_7d >= healthyVal) grade = 'healthy';
+      else if (rates.atc_to_ic_7d >= problemVal) grade = 'warning';
+      else grade = 'problem';
+
+      grades.push({
+        stage: 'atc_to_ic',
+        rate: rates.atc_to_ic_7d,
+        healthy_threshold: healthyVal,
+        problem_threshold: problemVal,
+        grade,
+        severity: grade === 'problem' ? 'high' : (grade === 'warning' ? 'medium' : 'ok'),
+        action: grade !== 'healthy' ? atcToIcThreshold.action : null
+      });
+    }
+
+    // IC → Purchase: healthy >60%, problem <30%
+    const icToPurchaseThreshold = this.funnelThresholds.ic_to_purchase;
+    if (rates.ic_to_purchase_7d > 0 && icToPurchaseThreshold) {
+      const healthyVal = parseFloat(icToPurchaseThreshold.healthy?.replace(/[>%]/g, '')) || 60;
+      const problemVal = parseFloat(icToPurchaseThreshold.problem?.replace(/[<%]/g, '')) || 30;
+
+      let grade;
+      if (rates.ic_to_purchase_7d >= healthyVal) grade = 'healthy';
+      else if (rates.ic_to_purchase_7d >= problemVal) grade = 'warning';
+      else grade = 'problem';
+
+      grades.push({
+        stage: 'ic_to_purchase',
+        rate: rates.ic_to_purchase_7d,
+        healthy_threshold: healthyVal,
+        problem_threshold: problemVal,
+        grade,
+        severity: grade === 'problem' ? 'high' : (grade === 'warning' ? 'medium' : 'ok'),
+        action: grade !== 'healthy' ? icToPurchaseThreshold.action : null
+      });
+    }
+
+    const problems = grades.filter(g => g.grade === 'problem');
+    const warnings = grades.filter(g => g.grade === 'warning');
+
+    return {
+      grades,
+      problems_count: problems.length,
+      warnings_count: warnings.length,
+      worst_stage: problems.length > 0 ? problems[0].stage : (warnings.length > 0 ? warnings[0].stage : null)
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 8. CREATIVE LIFESPAN TRACKING
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Calcula la edad de cada ad activo y genera señales de refresh proactivas.
+   * Basado en creative_lifespan: 14d early fatigue, 21d moderate, 28d+ severe.
+   */
+  _diagnoseCreativeLifespan(ads) {
+    const activeAds = ads.filter(a => a.status === 'ACTIVE');
+    if (activeAds.length === 0) {
+      return { ads: [], needs_refresh: false, oldest_days: 0, avg_age_days: 0 };
+    }
+
+    const now = new Date();
+    const adAges = [];
+
+    for (const ad of activeAds) {
+      // Use created_time or start_time if available
+      const createdAt = ad.created_time || ad.start_time || ad.created_at;
+      if (!createdAt) continue;
+
+      const createdDate = new Date(createdAt);
+      const ageDays = Math.floor((now - createdDate) / (1000 * 60 * 60 * 24));
+
+      let lifespanStatus;
+      let severity;
+      if (ageDays >= 28) {
+        lifespanStatus = 'severe_fatigue';
+        severity = 'critical';
+      } else if (ageDays >= 21) {
+        lifespanStatus = 'moderate_fatigue';
+        severity = 'high';
+      } else if (ageDays >= 14) {
+        lifespanStatus = 'early_fatigue';
+        severity = 'medium';
+      } else if (ageDays >= 7) {
+        lifespanStatus = 'peak_performance';
+        severity = 'ok';
+      } else {
+        lifespanStatus = 'learning';
+        severity = 'ok';
+      }
+
+      adAges.push({
+        ad_id: ad.entity_id || ad.id,
+        ad_name: ad.entity_name || ad.name || 'Unknown',
+        age_days: ageDays,
+        status: lifespanStatus,
+        severity,
+        needs_refresh: ageDays >= 14
+      });
+    }
+
+    // Sort oldest first
+    adAges.sort((a, b) => b.age_days - a.age_days);
+
+    const oldestDays = adAges.length > 0 ? adAges[0].age_days : 0;
+    const avgAge = adAges.length > 0 ? Math.round(adAges.reduce((s, a) => s + a.age_days, 0) / adAges.length) : 0;
+    const needsRefresh = adAges.some(a => a.needs_refresh);
+    const urgentCount = adAges.filter(a => a.severity === 'critical' || a.severity === 'high').length;
+
+    return {
+      ads: adAges,
+      needs_refresh: needsRefresh,
+      urgent_refresh_count: urgentCount,
+      oldest_days: oldestDays,
+      avg_age_days: avgAge,
+      summary: this._buildLifespanSummary(adAges, oldestDays, urgentCount)
+    };
+  }
+
+  _buildLifespanSummary(adAges, oldestDays, urgentCount) {
+    if (adAges.length === 0) return 'Sin ads activos para analizar.';
+    if (urgentCount > 0) {
+      return `${urgentCount} ad${urgentCount > 1 ? 's' : ''} con ${oldestDays}+ días activo${urgentCount > 1 ? 's' : ''} — refresh urgente recomendado.`;
+    }
+    if (oldestDays >= 14) {
+      return `Ad más antiguo tiene ${oldestDays} días — entrando en zona de fatiga temprana.`;
+    }
+    return `Ads frescos (más antiguo: ${oldestDays} días). Sin urgencia de refresh.`;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   // HELPERS
   // ═══════════════════════════════════════════════════════════════
 
@@ -670,6 +1015,19 @@ class DiagnosticEngine {
         text += '\n';
       }
 
+      // Funnel Grades (threshold enforcement)
+      if (d.funnel_grades && d.funnel_grades.grades.length > 0) {
+        const nonHealthy = d.funnel_grades.grades.filter(g => g.grade !== 'healthy');
+        if (nonHealthy.length > 0) {
+          text += `  Funnel Grades: `;
+          text += nonHealthy.map(g => `${g.stage}=${g.rate}% [${g.grade.toUpperCase()} — healthy:>${g.healthy_threshold}%, problem:<${g.problem_threshold}%]`).join(' | ');
+          text += '\n';
+          for (const g of nonHealthy) {
+            if (g.action) text += `    → ${g.stage}: ${g.action}\n`;
+          }
+        }
+      }
+
       // Fatigue
       if (d.fatigue.score > 10) {
         text += `  Fatiga: ${d.fatigue.level} (${d.fatigue.score}/100)`;
@@ -677,6 +1035,20 @@ class DiagnosticEngine {
           text += ` — ${d.fatigue.signals.map(s => s.signal).join(', ')}`;
         }
         text += ` | ${d.active_ads} ads activos\n`;
+      }
+
+      // Creative Lifespan
+      if (d.creative_lifespan && d.creative_lifespan.needs_refresh) {
+        text += `  Creative Lifespan: ${d.creative_lifespan.summary}`;
+        if (d.creative_lifespan.urgent_refresh_count > 0) {
+          text += ` [${d.creative_lifespan.urgent_refresh_count} URGENTE]`;
+        }
+        text += '\n';
+        // Show top 3 oldest ads
+        const oldestAds = d.creative_lifespan.ads.filter(a => a.needs_refresh).slice(0, 3);
+        for (const ad of oldestAds) {
+          text += `    → "${ad.ad_name}" — ${ad.age_days}d activo (${ad.status})\n`;
+        }
       }
 
       // Saturation
@@ -692,6 +1064,16 @@ class DiagnosticEngine {
       text += `  Eficiencia: ROAS ${d.efficiency.roas_status} (trend: ${d.efficiency.roas_trend}) | vs cuenta: ${d.efficiency.relative_performance}`;
       if (d.efficiency.aov_7d > 0) text += ` | AOV: $${d.efficiency.aov_7d}`;
       text += '\n';
+
+      // Benchmark Comparison
+      if (d.benchmark_comparison && d.benchmark_comparison.signals.length > 0) {
+        const benchIssues = d.benchmark_comparison.signals.filter(s => s.severity !== 'ok');
+        if (benchIssues.length > 0) {
+          text += `  Benchmarks (${d.benchmark_comparison.quarter}, seasonal×${d.benchmark_comparison.seasonal_multiplier}): `;
+          text += benchIssues.map(s => `${s.metric}=$${s.metric === 'ROAS' ? '' : ''}${s.value}${s.metric === 'CTR' ? '%' : (s.metric === 'ROAS' ? 'x' : '')} [${s.status} — ${s.deviation_pct > 0 ? '+' : ''}${s.deviation_pct}% vs median]`).join(' | ');
+          text += '\n';
+        }
+      }
 
       // Summary
       if (d.overall.summary) {
@@ -709,6 +1091,9 @@ class DiagnosticEngine {
     text += `4. Si ROAS_CRITICAL + sin funnel leak + sin fatiga → Entonces sí considerar scale_down o pause como último recurso.\n`;
     text += `5. Si TOP_PERFORMER + healthy → Candidato a scale_up (máx 20% por cambio).\n`;
     text += `6. Siempre diagnostica el POR QUÉ antes del QUÉ HACER. El diagnóstico te dice la causa probable.\n`;
+    text += `7. BENCHMARKS: Las métricas se comparan contra food_ecommerce_2025 con ajuste estacional. Si CPM está "well_above" con seasonal multiplier ya aplicado, es señal real de problema.\n`;
+    text += `8. FUNNEL GRADES: Click→ATC <5% = problema de landing page. ATC→IC <50% = fricción en checkout. IC→Purchase <60% = problema de pago. Seguir la acción recomendada.\n`;
+    text += `9. CREATIVE LIFESPAN: Ads con >14d necesitan evaluación, >21d refresh recomendado, >28d refresh urgente. La edad del ad es un predictor de fatiga ANTES de que se vea en métricas.\n`;
 
     return text;
   }
