@@ -3038,8 +3038,75 @@ a:hover {
   color: var(--blue-light);
 }
 
+/* ═══ STRUCTURED SECTIONS (diagnosis, outcome, risk) ═══ */
+
+.rec-structured-section {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+  border-left: 3px solid;
+}
+
+.rec-section-diagnosis {
+  background: rgba(139, 92, 246, 0.06);
+  border-left-color: #8b5cf6;
+}
+
+.rec-section-outcome {
+  background: rgba(16, 185, 129, 0.06);
+  border-left-color: #10b981;
+}
+
+.rec-section-risk {
+  background: rgba(239, 68, 68, 0.06);
+  border-left-color: #ef4444;
+}
+
+.rec-section-icon {
+  font-size: 0.9rem;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.rec-section-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.rec-section-label {
+  display: block;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
+}
+
+.rec-section-diagnosis .rec-section-label { color: #a78bfa; }
+.rec-section-outcome .rec-section-label { color: #34d399; }
+.rec-section-risk .rec-section-label { color: #f87171; }
+
+.rec-section-text {
+  display: block;
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
 .rec-body-text {
   margin-bottom: var(--spacing-md);
+}
+
+.rec-body-extra {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
 }
 
 /* ═══ SUPPORTING DATA GRID ═══ */
@@ -3064,6 +3131,21 @@ a:hover {
   border-color: var(--border-light);
 }
 
+.rec-data-item.good {
+  border-color: rgba(16, 185, 129, 0.3);
+  background: rgba(16, 185, 129, 0.06);
+}
+
+.rec-data-item.bad {
+  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.rec-data-item.warn {
+  border-color: rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.06);
+}
+
 .rec-data-item.account-ref {
   border: 1px dashed var(--border-color);
 }
@@ -3083,6 +3165,17 @@ a:hover {
   font-weight: 700;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
+}
+
+.rec-data-item.good .rec-data-value { color: #10b981; }
+.rec-data-item.bad .rec-data-value { color: #ef4444; }
+.rec-data-item.warn .rec-data-value { color: #f59e0b; }
+
+.rec-data-ref {
+  display: block;
+  font-size: 0.56rem;
+  color: var(--text-muted);
+  margin-top: 2px;
 }
 
 /* ═══ FOLLOW-UP INFO ═══ */

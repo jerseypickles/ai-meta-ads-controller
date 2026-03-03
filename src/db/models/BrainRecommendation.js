@@ -44,7 +44,10 @@ const brainRecommendationSchema = new mongoose.Schema({
 
   // Contenido de la recomendación
   title: { type: String, required: true },         // "Pausar BROAD 5 — ROAS 0.8x con $120 gastados"
-  body: { type: String, required: true },           // Análisis completo con datos de soporte
+  diagnosis: { type: String, default: '' },        // Causa raíz en 1 frase: "Fatiga creativa — CTR cayó 35% en 7d"
+  expected_outcome: { type: String, default: '' }, // Qué esperas si se ejecuta: "ROAS debería recuperar a ~2.5x"
+  risk: { type: String, default: '' },             // Riesgo de no actuar: "Seguirá quemando $17/día sin retorno"
+  body: { type: String, default: '' },             // Contexto adicional breve (puede estar vacío)
   action_detail: { type: String, required: true },  // "Pausar ad set BROAD 5 (ID: 123456)"
 
   // Datos de soporte cuantitativos

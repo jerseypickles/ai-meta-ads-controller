@@ -1019,11 +1019,13 @@ REGLAS CRÍTICAS:
 5. Si una recomendación anterior fue expirada y la situación no cambió, puedes repetirla (el usuario puede no haberla visto).
 6. Si la situación cambió respecto a recomendaciones anteriores, menciónalo: "Actualización: antes recomendé X pero ahora..."
 7. Si un ad set está funcionando bien, NO recomiendes cambios. "Si funciona, no lo toques."
-8. DIAGNÓSTICO CAUSAL: En el "body" de cada recomendación, SIEMPRE explica la CAUSA RAÍZ:
-   - Si ROAS es bajo, ¿es por funnel leak, fatiga creativa, saturación de audiencia, o estacionalidad?
-   - Si CTR es alto pero 0 conversiones → problema de landing page, NO del ad
-   - Nunca digas solo "ROAS bajo, pausar". Diagnostica POR QUÉ y actúa sobre la causa.
-9. USA LOS DIAGNÓSTICOS: Cuando hay datos de diagnóstico pre-computados, úsalos para informar tu decisión.
+8. USA LOS DIAGNÓSTICOS: Cuando hay datos de diagnóstico pre-computados, úsalos para informar tu decisión.
+
+REGLAS DE FATIGA CREATIVA (OBLIGATORIO):
+- Si un ad set tiene diagnóstico de fatiga >= 30/100, DEBES generar una recomendación creative_refresh para ese ad set.
+- Señales clave de fatiga: CTR declinando >20% vs 30d, frequency >= 2.5, CPM subiendo >30%, pocos ads activos (<3).
+- No pausar un ad set por bajo ROAS si la causa raíz es fatiga creativa — recomendar creative_refresh primero.
+- Cuando recomiendes creative_refresh, especifica: cuántos ads nuevos agregar, qué ángulos probar, y si hay que pausar ads fatigados.
 
 FORMATO DE RESPUESTA — JSON array:
 [
@@ -1032,9 +1034,12 @@ FORMATO DE RESPUESTA — JSON array:
     "action_type": "pause|scale_up|scale_down|reactivate|restructure|creative_refresh|bid_change|monitor",
     "entity_id": "id_del_adset",
     "entity_name": "nombre",
-    "title": "Título corto y claro (máx 80 chars)",
-    "body": "Análisis completo en español: por qué recomiendas esto, qué datos lo respaldan, qué esperas que pase si se ejecuta (2-3 párrafos)",
+    "title": "Título corto y directo (máx 80 chars)",
+    "diagnosis": "Causa raíz en 1 frase (ej: 'Fatiga creativa — CTR cayó 35% en 7d con frequency 3.8')",
     "action_detail": "Acción específica: 'Pausar ad set BROAD 5' o 'Aumentar budget de BROAD 2 de $15 a $20/día'",
+    "expected_outcome": "Qué esperas que pase si se ejecuta (1 frase, ej: 'ROAS debería recuperar a ~2.5x en 5-7 días')",
+    "risk": "Riesgo de NO actuar (1 frase, ej: 'Seguirá quemando $17/día sin retorno')",
+    "body": "Contexto adicional breve si es necesario (1-2 frases). Puede estar vacío si diagnosis+expected_outcome+risk ya explican todo.",
     "confidence": "high|medium|low",
     "confidence_score": 75,
     "supporting_data": {
@@ -1193,6 +1198,9 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
             entity_name: item.entity_name || snap?.entity_name || item.entity_id
           },
           title: item.title || 'Recomendación',
+          diagnosis: item.diagnosis || '',
+          expected_outcome: item.expected_outcome || '',
+          risk: item.risk || '',
           body: item.body || '',
           action_detail: item.action_detail || '',
           confidence: item.confidence || 'medium',
@@ -1209,7 +1217,7 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
             days_declining: item.supporting_data?.days_declining || 0
           }
         };
-      }).filter(r => r.body.length > 0 && r.entity.entity_id);
+      }).filter(r => r.entity.entity_id && (r.diagnosis || r.body));
     } catch (parseErr) {
       logger.error(`[BRAIN-RECS] Error parseando respuesta: ${parseErr.message}`);
       return [];

@@ -1025,21 +1025,63 @@ function RecommendationCard({ rec, expanded, onToggle, onApprove, onReject, onDi
 
         {expanded && (
           <div className="rec-body">
+            {/* Structured diagnosis section */}
+            {rec.diagnosis && (
+              <div className="rec-structured-section rec-section-diagnosis">
+                <span className="rec-section-icon">{'\uD83D\uDD0D'}</span>
+                <div className="rec-section-content">
+                  <span className="rec-section-label">Causa raiz</span>
+                  <span className="rec-section-text">{rec.diagnosis}</span>
+                </div>
+              </div>
+            )}
+
             <div className="rec-action-detail">
               <strong>Accion:</strong> {rec.action_detail}
             </div>
 
-            <div className="rec-body-text markdown-body">
-              <ReactMarkdown>{rec.body}</ReactMarkdown>
-            </div>
+            {rec.expected_outcome && (
+              <div className="rec-structured-section rec-section-outcome">
+                <span className="rec-section-icon">{'\uD83C\uDFAF'}</span>
+                <div className="rec-section-content">
+                  <span className="rec-section-label">Resultado esperado</span>
+                  <span className="rec-section-text">{rec.expected_outcome}</span>
+                </div>
+              </div>
+            )}
 
-            {/* Supporting data */}
+            {rec.risk && (
+              <div className="rec-structured-section rec-section-risk">
+                <span className="rec-section-icon">{'\u26A0\uFE0F'}</span>
+                <div className="rec-section-content">
+                  <span className="rec-section-label">Riesgo si no actuas</span>
+                  <span className="rec-section-text">{rec.risk}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Extra context (body) — only show if there's meaningful content */}
+            {rec.body && !rec.diagnosis && (
+              <div className="rec-body-text markdown-body">
+                <ReactMarkdown>{rec.body}</ReactMarkdown>
+              </div>
+            )}
+            {rec.body && rec.diagnosis && rec.body.length > 10 && (
+              <div className="rec-body-text rec-body-extra">
+                <ReactMarkdown>{rec.body}</ReactMarkdown>
+              </div>
+            )}
+
+            {/* Supporting data — visual comparison grid */}
             {rec.supporting_data && (
               <div className="rec-data-grid">
                 {rec.supporting_data.current_roas_7d > 0 && (
-                  <div className="rec-data-item">
+                  <div className={`rec-data-item ${rec.supporting_data.account_avg_roas_7d > 0 && rec.supporting_data.current_roas_7d < rec.supporting_data.account_avg_roas_7d * 0.7 ? 'bad' : rec.supporting_data.current_roas_7d >= rec.supporting_data.account_avg_roas_7d ? 'good' : ''}`}>
                     <span className="rec-data-label">ROAS 7d</span>
                     <span className="rec-data-value">{rec.supporting_data.current_roas_7d.toFixed(2)}x</span>
+                    {rec.supporting_data.account_avg_roas_7d > 0 && (
+                      <span className="rec-data-ref">cuenta: {rec.supporting_data.account_avg_roas_7d.toFixed(2)}x</span>
+                    )}
                   </div>
                 )}
                 {rec.supporting_data.current_cpa_7d > 0 && (
@@ -1055,9 +1097,15 @@ function RecommendationCard({ rec, expanded, onToggle, onApprove, onReject, onDi
                   </div>
                 )}
                 {rec.supporting_data.current_frequency_7d > 0 && (
-                  <div className="rec-data-item">
+                  <div className={`rec-data-item ${rec.supporting_data.current_frequency_7d >= 3.5 ? 'bad' : rec.supporting_data.current_frequency_7d >= 2.5 ? 'warn' : ''}`}>
                     <span className="rec-data-label">Freq 7d</span>
                     <span className="rec-data-value">{rec.supporting_data.current_frequency_7d.toFixed(1)}</span>
+                  </div>
+                )}
+                {rec.supporting_data.current_ctr_7d > 0 && (
+                  <div className="rec-data-item">
+                    <span className="rec-data-label">CTR 7d</span>
+                    <span className="rec-data-value">{rec.supporting_data.current_ctr_7d.toFixed(2)}%</span>
                   </div>
                 )}
                 {rec.supporting_data.current_purchases_7d > 0 && (
@@ -1066,10 +1114,14 @@ function RecommendationCard({ rec, expanded, onToggle, onApprove, onReject, onDi
                     <span className="rec-data-value">{rec.supporting_data.current_purchases_7d}</span>
                   </div>
                 )}
-                {rec.supporting_data.account_avg_roas_7d > 0 && (
-                  <div className="rec-data-item account-ref">
-                    <span className="rec-data-label">ROAS cuenta</span>
-                    <span className="rec-data-value">{rec.supporting_data.account_avg_roas_7d.toFixed(2)}x</span>
+                {rec.supporting_data.trend_direction && rec.supporting_data.trend_direction !== 'unknown' && (
+                  <div className={`rec-data-item ${rec.supporting_data.trend_direction === 'declining' ? 'bad' : rec.supporting_data.trend_direction === 'improving' ? 'good' : ''}`}>
+                    <span className="rec-data-label">Tendencia</span>
+                    <span className="rec-data-value">
+                      {rec.supporting_data.trend_direction === 'declining' ? '\u2198 Bajando' :
+                       rec.supporting_data.trend_direction === 'improving' ? '\u2197 Subiendo' : '\u2192 Estable'}
+                      {rec.supporting_data.days_declining > 0 && ` (${rec.supporting_data.days_declining}d)`}
+                    </span>
                   </div>
                 )}
               </div>
