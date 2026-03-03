@@ -83,6 +83,9 @@ async function _getSnapshotFallback(reason) {
 }
 
 // ── Core fetch function (used by both HTTP endpoint and background refresh) ──
+// Hard deadline: if the entire fetch takes longer than this, abort and fall back to snapshots
+const FETCH_DEADLINE_MS = 25000; // 25 seconds — well under Render's 30s proxy timeout
+
 async function _fetchLiveAdSets() {
   const meta = getMetaClient();
 
@@ -96,14 +99,30 @@ async function _fetchLiveAdSets() {
     return _getSnapshotFallback(`api_busy: ${busy.label}`);
   }
 
+  // Deadline timer — abort everything if we're running too long
+  const deadline = Date.now() + FETCH_DEADLINE_MS;
+  const checkDeadline = (label) => {
+    if (Date.now() > deadline) {
+      throw new Error(`DEADLINE_EXCEEDED at ${label}`);
+    }
+  };
+
+  // Live endpoint uses 3 windows (today, 3d, 7d) — fast enough for real-time display.
+  // The full 5-window data (14d, 30d) is available via snapshots from the data-collector.
   const timeRanges = getTimeRanges();
+  const liveWindows = { today: timeRanges.today, last_3d: timeRanges.last_3d, last_7d: timeRanges.last_7d };
 
-  // 1. Get all ad sets — try account-level first (1 call), fall back to campaign→adsets (N+1)
-  const campaigns = await meta.getCampaigns();
-  const campaignMap = {};
-  for (const c of campaigns) campaignMap[c.id] = c;
+  // 1. Get campaigns + ad sets in parallel where possible
+  let campaigns, campaignMap = {}, adSetMap = {};
 
-  const adSetMap = {};
+  try {
+    campaigns = await meta.getCampaigns();
+    for (const c of campaigns) campaignMap[c.id] = c;
+    checkDeadline('after_campaigns');
+  } catch (err) {
+    if (err.message.startsWith('DEADLINE_EXCEEDED')) throw err;
+    return _getSnapshotFallback(`campaigns_error: ${err.message}`);
+  }
 
   try {
     // Fast path: single account-level query
@@ -112,7 +131,9 @@ async function _fetchLiveAdSets() {
       const campaign = campaignMap[as.campaign_id] || { name: 'Unknown', id: as.campaign_id };
       adSetMap[as.id] = { ...as, campaign_name: campaign.name };
     }
+    checkDeadline('after_adsets');
   } catch (err) {
+    if (err.message.startsWith('DEADLINE_EXCEEDED')) throw err;
     // Check if this is a rate limit error — fall back to snapshots immediately
     const metaError = err.response?.data?.error;
     if (metaError?.code === 17 || metaError?.code === 4) {
@@ -121,12 +142,14 @@ async function _fetchLiveAdSets() {
     // Fallback: campaign-by-campaign (works on all account types)
     logger.warn(`[LIVE] getAllAdSets() failed (${err.message}), falling back to campaign-based fetch`);
     for (const c of campaigns) {
+      checkDeadline('campaign_loop');
       try {
         const adSets = await meta.getAdSets(c.id);
         for (const as of adSets) {
           adSetMap[as.id] = { ...as, campaign_name: c.name, campaign_id: c.id };
         }
       } catch (e) {
+        if (e.message.startsWith('DEADLINE_EXCEEDED')) throw e;
         const eCode = e.response?.data?.error?.code;
         if (eCode === 17 || eCode === 4) {
           return _getSnapshotFallback('rate_limited_on_campaign_adsets');
@@ -141,25 +164,37 @@ async function _fetchLiveAdSets() {
     return _getSnapshotFallback('no_adsets_from_api');
   }
 
-  // 2. Get insights for ALL ad sets in bulk (5 API calls, one per time window)
+  // 2. Fetch insights for all time windows IN PARALLEL (3 concurrent calls instead of 5 sequential)
   const adSetInsights = {};
-  for (const [window, range] of Object.entries(timeRanges)) {
-    try {
-      const rows = await meta.getAccountInsights('adset', range);
+  const insightEntries = Object.entries(liveWindows);
+
+  const insightResults = await Promise.allSettled(
+    insightEntries.map(([window, range]) =>
+      meta.getAccountInsights('adset', range)
+        .then(rows => ({ window, rows }))
+    )
+  );
+
+  for (const result of insightResults) {
+    if (result.status === 'fulfilled') {
+      const { window, rows } = result.value;
       for (const row of rows) {
         const asid = row.adset_id;
         if (!adSetInsights[asid]) adSetInsights[asid] = {};
         adSetInsights[asid][window] = parseInsightRow(row);
       }
-    } catch (err) {
-      const eCode = err.response?.data?.error?.code;
+    } else {
+      const err = result.reason;
+      const eCode = err?.response?.data?.error?.code;
       if (eCode === 17 || eCode === 4) {
-        logger.warn(`[LIVE] Rate limited on insights — continuing with partial data`);
-        break; // Stop fetching more windows, use what we have
+        logger.warn(`[LIVE] Rate limited on parallel insights — using partial data`);
+      } else {
+        logger.warn(`[LIVE] Parallel insight fetch failed: ${err?.message}`);
       }
-      logger.warn(`[LIVE] Error fetching adset insights for ${window}: ${err.message}`);
     }
   }
+
+  checkDeadline('after_insights');
 
   // 3. Build response array
   const emptyMetrics = {
@@ -169,7 +204,7 @@ async function _fetchLiveAdSets() {
 
   const adsets = Object.entries(adSetMap).map(([id, as]) => {
     const metrics = {};
-    for (const window of Object.keys(timeRanges)) {
+    for (const window of Object.keys(liveWindows)) {
       metrics[window] = adSetInsights[id]?.[window] || { ...emptyMetrics };
     }
 
@@ -345,22 +380,52 @@ router.get('/stream', (req, res) => {
 });
 
 // GET /api/metrics/adsets/live — All ad sets with metrics fetched LIVE from Meta API
+// Route-level timeout: ensures we ALWAYS respond within 28s (under Render's 30s proxy limit)
+const ROUTE_TIMEOUT_MS = 28000;
+
 router.get('/adsets/live', async (req, res) => {
+  let responded = false;
+  const safeRespond = (fn) => {
+    if (responded) return;
+    responded = true;
+    fn();
+  };
+
+  // Hard timeout: if _fetchLiveAdSets hangs beyond deadline, respond with fallback
+  const timeoutHandle = setTimeout(async () => {
+    safeRespond(async () => {
+      logger.warn(`[LIVE] Route timeout after ${ROUTE_TIMEOUT_MS}ms — falling back to snapshots`);
+      try {
+        const snapshots = await getLatestSnapshots('adset');
+        res.json({
+          adsets: snapshots.map(_mapSnapshot),
+          cached: false,
+          fallback: true,
+          fallback_reason: 'route_timeout'
+        });
+      } catch (fallbackErr) {
+        res.status(500).json({ error: 'Timeout fetching live data and snapshot fallback failed' });
+      }
+    });
+  }, ROUTE_TIMEOUT_MS);
+
   try {
     const now = Date.now();
     const forceRefresh = req.query.force === 'true';
 
     // Return cached data if fresh enough
     if (!forceRefresh && _liveCache.adsets && (now - _liveCache.ts) < LIVE_CACHE_TTL) {
-      return res.json({
+      clearTimeout(timeoutHandle);
+      return safeRespond(() => res.json({
         adsets: _liveCache.adsets,
         cached: true,
         fetched_at: new Date(_liveCache.ts).toISOString(),
         age_seconds: Math.round((now - _liveCache.ts) / 1000)
-      });
+      }));
     }
 
     const result = await _fetchLiveAdSets();
+    clearTimeout(timeoutHandle);
     const adsets = result.adsets;
 
     // Only update cache if we got live data (not a fallback)
@@ -379,28 +444,31 @@ router.get('/adsets/live', async (req, res) => {
       });
     }
 
-    res.json({
+    safeRespond(() => res.json({
       adsets,
       cached: result.fallback,
       fallback: result.fallback || false,
       fallback_reason: result.fallback_reason || null,
       fetched_at: new Date().toISOString(),
       age_seconds: 0
-    });
+    }));
   } catch (error) {
+    clearTimeout(timeoutHandle);
     logger.error(`[LIVE] Error fetching live ad sets: ${error.message}`);
-    // Fallback to snapshots if live fetch fails
-    try {
-      const snapshots = await getLatestSnapshots('adset');
-      res.json({
-        adsets: snapshots.map(_mapSnapshot),
-        cached: false,
-        fallback: true,
-        fallback_reason: error.message
-      });
-    } catch (fallbackErr) {
-      res.status(500).json({ error: error.message });
-    }
+    // Fallback to snapshots if live fetch fails (including DEADLINE_EXCEEDED)
+    safeRespond(async () => {
+      try {
+        const snapshots = await getLatestSnapshots('adset');
+        res.json({
+          adsets: snapshots.map(_mapSnapshot),
+          cached: false,
+          fallback: true,
+          fallback_reason: error.message
+        });
+      } catch (fallbackErr) {
+        res.status(500).json({ error: error.message });
+      }
+    });
   }
 });
 

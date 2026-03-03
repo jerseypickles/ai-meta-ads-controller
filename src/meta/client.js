@@ -28,13 +28,13 @@ class MetaClient {
       reservoir: 1000,
       reservoirRefreshAmount: 1000,
       reservoirRefreshInterval: 60 * 60 * 1000, // 1 hour
-      maxConcurrent: 2,
-      minTime: 1000 // 1s between calls — adaptive throttling adjusts dynamically
+      maxConcurrent: 4, // Allow parallel insight window fetches (3 concurrent + 1 buffer)
+      minTime: 500 // 500ms between calls — adaptive throttling adjusts dynamically
     });
 
     this.client = axios.create({
       baseURL: this.baseUrl,
-      timeout: 120000
+      timeout: 30000 // 30s per-request timeout — prevents single calls from hanging indefinitely
     });
 
     // Log rate limit warnings

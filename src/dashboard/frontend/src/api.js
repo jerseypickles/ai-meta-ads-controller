@@ -107,7 +107,7 @@ export const runAIManager = async () => {
 
 export const getAllAdSets = async (force = false) => {
   const params = force ? { force: 'true' } : {};
-  const response = await api.get('/api/metrics/adsets/live', { params, timeout: 120000 });
+  const response = await api.get('/api/metrics/adsets/live', { params, timeout: 35000 });
   return response.data; // { adsets: [...], cached, fetched_at, age_seconds }
 };
 
