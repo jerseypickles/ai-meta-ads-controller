@@ -983,7 +983,11 @@ REGLAS:
               cpa_7d: m7d.cpa || 0,
               spend_7d: m7d.spend || 0,
               frequency_7d: m7d.frequency || 0,
+              ctr_7d: m7d.ctr || 0,
               purchases_7d: m7d.purchases || 0,
+              purchase_value_7d: m7d.purchase_value || 0,
+              daily_budget: snap?.daily_budget || 0,
+              active_ads: snap?.ads_count || 0,
               status: snap?.status || 'UNKNOWN'
             }
           });
@@ -1393,22 +1397,34 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
    */
   _detectActionExecution(rec, snap) {
     const prev = rec.follow_up?.metrics_at_recommendation || {};
-    const prevBudget = prev.daily_budget || (prev.spend_7d ? prev.spend_7d / 7 : 0);
+    const prevBudget = prev.daily_budget || 0;
+    const currentBudget = snap.daily_budget || 0;
 
     switch (rec.action_type) {
       case 'pause':
         return ['PAUSED', 'ADSET_PAUSED', 'CAMPAIGN_PAUSED'].includes(snap.status);
       case 'scale_up':
-        return (snap.daily_budget || 0) > prevBudget * 1.05;
+        // If we have both budgets, compare directly; if prev missing (legacy), check status change
+        if (prevBudget > 0) return currentBudget > prevBudget * 1.05;
+        // Legacy fallback: compare current budget to spend_7d/7 estimate
+        const estBudgetUp = prev.spend_7d ? prev.spend_7d / 7 : 0;
+        return estBudgetUp > 0 ? currentBudget > estBudgetUp * 1.15 : false;
       case 'scale_down':
-        return (snap.daily_budget || 0) < prevBudget * 0.95;
+        if (prevBudget > 0) return currentBudget < prevBudget * 0.95;
+        const estBudgetDown = prev.spend_7d ? prev.spend_7d / 7 : 0;
+        return estBudgetDown > 0 ? currentBudget < estBudgetDown * 0.85 : false;
       case 'reactivate':
         return snap.status === 'ACTIVE' && prev.status !== 'ACTIVE';
       case 'creative_refresh': {
         // Count active ads — if more than before, fresh creatives were added
         const prevAds = prev.active_ads || 0;
         const currentAds = snap.active_ads || snap.ads_count || 0;
-        return currentAds > prevAds || (snap.metrics?.last_3d?.ctr || 0) > (prev.ctr_7d || 0) * 1.1;
+        // If we have ad counts, compare; also check CTR improvement as secondary signal
+        if (prevAds > 0 && currentAds > prevAds) return true;
+        // CTR improvement > 10% as signal of fresh creatives
+        if (prev.ctr_7d > 0 && (snap.metrics?.last_3d?.ctr || 0) > prev.ctr_7d * 1.1) return true;
+        // If no prev data at all (legacy), we can't detect — return false instead of wrong positive
+        return false;
       }
       default:
         return true; // For monitor/restructure/bid_change, assume executed

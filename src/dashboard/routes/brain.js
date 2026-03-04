@@ -316,6 +316,29 @@ router.post('/recommendations/:id/reject', async (req, res) => {
 });
 
 /**
+ * POST /api/brain/recommendations/:id/mark-executed — Marcar manualmente como ejecutada
+ * Para cuando el usuario ya ejecutó la acción en Meta Ads directamente.
+ */
+router.post('/recommendations/:id/mark-executed', async (req, res) => {
+  try {
+    const rec = await BrainRecommendation.findById(req.params.id);
+    if (!rec) return res.status(404).json({ error: 'Recomendación no encontrada' });
+    if (rec.status !== 'approved') return res.status(400).json({ error: 'Solo se pueden marcar recomendaciones aprobadas' });
+
+    await BrainRecommendation.updateOne({ _id: rec._id }, { $set: {
+      'follow_up.action_executed': true,
+      'follow_up.execution_detected_at': new Date(),
+      updated_at: new Date()
+    }});
+
+    logger.info(`[BRAIN-API] Recomendación marcada como ejecutada manualmente: ${rec.title}`);
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
  * POST /api/brain/recommendations/generate — Trigger manual de ciclo de recomendaciones
  */
 router.post('/recommendations/generate', async (req, res) => {

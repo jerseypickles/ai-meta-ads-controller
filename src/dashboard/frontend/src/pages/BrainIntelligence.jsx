@@ -5,7 +5,7 @@ import {
   getBrainInsights, markInsightRead, markAllInsightsRead,
   triggerBrainAnalysis, sendBrainChat, getBrainChatHistory,
   clearBrainChatHistory, getBrainStats, getBrainRecommendations,
-  approveRecommendation, rejectRecommendation,
+  approveRecommendation, rejectRecommendation, markRecommendationExecuted,
   triggerBrainRecommendations, getFollowUpStats,
   getPolicyState, getKnowledgeHistory, getCreativePerformance, logout
 } from '../api';
@@ -1196,6 +1196,25 @@ function RecommendationCard({ rec, expanded, onToggle, onApprove, onReject, onDi
                     <span className={`rec-tracker-exec ${followUp.action_executed ? 'done' : 'waiting'}`}>
                       {followUp.action_executed ? '✅ Ejecutada' : '⏳ Pendiente ejecucion'}
                     </span>
+                    {!followUp.action_executed && (
+                      <button
+                        className="rec-btn-mark-executed"
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          try {
+                            await markRecommendationExecuted(rec._id);
+                            setRecommendations(prev => prev.map(r =>
+                              r._id === rec._id
+                                ? { ...r, follow_up: { ...r.follow_up, action_executed: true, execution_detected_at: new Date().toISOString() } }
+                                : r
+                            ));
+                          } catch (err) { console.error('Error marking executed:', err); }
+                        }}
+                        title="Ya hice este cambio en Meta Ads"
+                      >
+                        Marcar ejecutada
+                      </button>
+                    )}
                     <span className="rec-tracker-time">{daysAgo}</span>
                   </div>
                   <div className="rec-tracker-phases">
@@ -1279,19 +1298,19 @@ function FollowUpPanel({ formatTime }) {
   const [loading, setLoading] = useState(true);
   const [expandedItem, setExpandedItem] = useState(null);
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        const result = await getFollowUpStats();
-        setData(result);
-      } catch (err) {
-        console.error('Error loading follow-up stats:', err);
-      } finally {
-        setLoading(false);
-      }
-    })();
+  const loadFollowUpStats = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await getFollowUpStats();
+      setData(result);
+    } catch (err) {
+      console.error('Error loading follow-up stats:', err);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => { loadFollowUpStats(); }, [loadFollowUpStats]);
 
   if (loading) return <div className="feed-empty">Cargando seguimiento...</div>;
   if (!data) return <div className="feed-empty">Error al cargar datos de seguimiento.</div>;
@@ -1514,6 +1533,20 @@ function FollowUpPanel({ formatTime }) {
                     <span className={`followup-exec-badge ${p.action_executed ? 'executed' : 'not-executed'}`}>
                       {p.action_executed ? '\u2705 Ejecutada' : '\u23F3 Pendiente ejecucion'}
                     </span>
+                    {!p.action_executed && (
+                      <button
+                        className="rec-btn-mark-executed"
+                        onClick={async () => {
+                          try {
+                            await markRecommendationExecuted(p._id);
+                            loadFollowUpStats();
+                          } catch (err) { console.error('Error marking executed:', err); }
+                        }}
+                        title="Ya hice este cambio en Meta Ads"
+                      >
+                        Marcar ejecutada
+                      </button>
+                    )}
                     <span className="followup-pending-phase">{phaseLabel}</span>
                   </div>
 

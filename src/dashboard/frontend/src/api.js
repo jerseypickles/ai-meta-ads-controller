@@ -305,6 +305,11 @@ export const rejectRecommendation = async (id, note = '') => {
   return response.data;
 };
 
+export const markRecommendationExecuted = async (id) => {
+  const response = await api.post(`/api/brain/recommendations/${id}/mark-executed`);
+  return response.data;
+};
+
 export const triggerBrainRecommendations = async () => {
   const response = await api.post('/api/brain/recommendations/generate', {}, { timeout: 120000 });
   return response.data;
