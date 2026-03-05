@@ -17,14 +17,16 @@ const BrainKnowledgeOrb = React.lazy(() => import('../components/BrainKnowledgeO
 // ═══ CONSTANTES ═══
 
 const INSIGHT_TYPE_CONFIG = {
-  anomaly:       { icon: '⚡', label: 'Anomalía', color: '#ef4444' },
-  trend:         { icon: '📈', label: 'Tendencia', color: '#3b82f6' },
-  opportunity:   { icon: '💡', label: 'Oportunidad', color: '#10b981' },
-  warning:       { icon: '⚠️', label: 'Alerta', color: '#f59e0b' },
-  milestone:     { icon: '🏆', label: 'Hito', color: '#8b5cf6' },
-  status_change: { icon: '🔄', label: 'Cambio', color: '#6366f1' },
-  summary:       { icon: '📊', label: 'Resumen', color: '#06b6d4' },
-  follow_up:     { icon: '🔗', label: 'Seguimiento', color: '#ec4899' }
+  anomaly:        { icon: '⚡', label: 'Anomalía', color: '#ef4444' },
+  trend:          { icon: '📈', label: 'Tendencia', color: '#3b82f6' },
+  opportunity:    { icon: '💡', label: 'Oportunidad', color: '#10b981' },
+  warning:        { icon: '⚠️', label: 'Alerta', color: '#f59e0b' },
+  milestone:      { icon: '🏆', label: 'Hito', color: '#8b5cf6' },
+  status_change:  { icon: '🔄', label: 'Cambio', color: '#6366f1' },
+  summary:        { icon: '📊', label: 'Resumen', color: '#06b6d4' },
+  follow_up:      { icon: '🔗', label: 'Seguimiento', color: '#ec4899' },
+  brain_thinking: { icon: '💭', label: 'Pensamiento', color: '#a78bfa' },
+  brain_activity: { icon: '🧠', label: 'Actividad', color: '#818cf8' }
 };
 
 const SEVERITY_CONFIG = {
@@ -602,7 +604,7 @@ function FeedPanel({
         </div>
       </div>
 
-      {/* Insights List */}
+      {/* Insights List — separated by urgency */}
       <div className="insights-list">
         {loadingInsights ? (
           <div className="feed-empty">
@@ -615,21 +617,58 @@ function FeedPanel({
             <p>El Brain aún no ha generado insights.</p>
             <p className="feed-empty-hint">Ejecuta un análisis o espera al próximo ciclo de datos.</p>
           </div>
-        ) : (
-          insights.map((insight, idx) => (
-            <InsightCard
-              key={insight._id}
-              insight={insight}
-              expanded={expandedId === insight._id}
-              animDelay={idx * 0.05}
-              onToggle={() => {
-                setExpandedId(expandedId === insight._id ? null : insight._id);
-                onInsightClick(insight);
-              }}
-              formatTime={formatTime}
-            />
-          ))
-        )}
+        ) : (() => {
+          const urgent = insights.filter(i => i.severity === 'critical' || i.severity === 'high');
+          const info = insights.filter(i => i.severity !== 'critical' && i.severity !== 'high');
+          return (
+            <>
+              {urgent.length > 0 && (
+                <div className="feed-urgency-section">
+                  <div className="feed-section-header urgent">
+                    <span className="feed-section-dot urgent" />
+                    <span>Requiere atención ({urgent.length})</span>
+                  </div>
+                  {urgent.map((insight, idx) => (
+                    <InsightCard
+                      key={insight._id}
+                      insight={insight}
+                      expanded={expandedId === insight._id}
+                      animDelay={idx * 0.05}
+                      onToggle={() => {
+                        setExpandedId(expandedId === insight._id ? null : insight._id);
+                        onInsightClick(insight);
+                      }}
+                      formatTime={formatTime}
+                    />
+                  ))}
+                </div>
+              )}
+              {info.length > 0 && (
+                <div className="feed-urgency-section">
+                  {urgent.length > 0 && (
+                    <div className="feed-section-header informative">
+                      <span className="feed-section-dot informative" />
+                      <span>Informativo ({info.length})</span>
+                    </div>
+                  )}
+                  {info.map((insight, idx) => (
+                    <InsightCard
+                      key={insight._id}
+                      insight={insight}
+                      expanded={expandedId === insight._id}
+                      animDelay={(urgent.length + idx) * 0.05}
+                      onToggle={() => {
+                        setExpandedId(expandedId === insight._id ? null : insight._id);
+                        onInsightClick(insight);
+                      }}
+                      formatTime={formatTime}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       {/* Pagination */}
@@ -666,7 +705,7 @@ function InsightCard({ insight, expanded, onToggle, formatTime, animDelay = 0 })
 
   return (
     <div
-      className={`insight-card ${!insight.read ? 'unread' : ''} ${expanded ? 'expanded' : ''} severity-${insight.severity || 'medium'}`}
+      className={`insight-card ${!insight.read ? 'unread' : ''} ${expanded ? 'expanded' : ''} severity-${insight.severity || 'medium'} insight-type-${insight.insight_type || 'anomaly'}`}
       onClick={onToggle}
       style={{
         '--card-accent': typeCfg.color,
@@ -697,6 +736,9 @@ function InsightCard({ insight, expanded, onToggle, formatTime, animDelay = 0 })
               {insight.follows_up && (
                 <span className="insight-tag followup">Seguimiento</span>
               )}
+              {insight.diagnosis && (
+                <span className="insight-tag diagnosis">{insight.diagnosis}</span>
+              )}
             </div>
             {/* Entity badges - prominent */}
             {insight.entities && insight.entities.length > 0 && (
@@ -723,7 +765,7 @@ function InsightCard({ insight, expanded, onToggle, formatTime, animDelay = 0 })
         <div className="insight-right">
           <span className="insight-time">{formatTime(insight.created_at)}</span>
           <span className={`insight-source source-${insight.generated_by}`}>
-            {insight.generated_by === 'ai' ? 'IA' : insight.generated_by === 'hybrid' ? 'Hybrid' : 'Math'}
+            {insight.generated_by === 'ai' ? 'IA' : insight.generated_by === 'hybrid' ? 'Hybrid' : insight.generated_by === 'brain' ? 'Brain' : 'Math'}
           </span>
         </div>
       </div>
@@ -741,6 +783,13 @@ function InsightCard({ insight, expanded, onToggle, formatTime, animDelay = 0 })
                   <span className="dp-value">{typeof v === 'number' ? v.toFixed(2) : String(v)}</span>
                 </span>
               ))}
+            </div>
+          )}
+          {insight.related_recommendation && (
+            <div className="insight-rec-link">
+              <span className="rec-link-icon">📋</span>
+              <span>Recomendación pendiente vinculada</span>
+              <span className="rec-link-arrow">→ Recomendaciones</span>
             </div>
           )}
           {insight.follow_up_count > 0 && (

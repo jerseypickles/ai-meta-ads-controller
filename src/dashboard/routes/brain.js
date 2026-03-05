@@ -33,7 +33,9 @@ router.get('/insights', async (req, res) => {
     if (req.query.entity_id) filter['entities.entity_id'] = req.query.entity_id;
 
     const [insights, total] = await Promise.all([
-      BrainInsight.find(filter).sort({ created_at: -1 }).skip(skip).limit(limit).lean(),
+      BrainInsight.find(filter).sort({ created_at: -1 }).skip(skip).limit(limit)
+        .populate('related_recommendation', 'title action_type status entity priority')
+        .lean(),
       BrainInsight.countDocuments(filter)
     ]);
 

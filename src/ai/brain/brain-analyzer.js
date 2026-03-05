@@ -110,12 +110,26 @@ class BrainAnalyzer {
       // 6. Verificar si toca resumen periódico (cada ~6 horas)
       const summaryCreated = await this._maybeSummary(adsetSnapshots, accountOverview);
 
+      // 7. Generar brain_activity insight (resumen de este ciclo)
+      const activityCreated = await this._generateBrainActivity(
+        adsetSnapshots, findings, insightsCreated, accountOverview
+      );
+
+      // 8. Generar brain_thinking insights (por qué NO actuó en entidades estables)
+      const thinkingCreated = await this._generateBrainThinking(
+        adsetSnapshots, findings, memoryMap, diagnostics
+      );
+
+      // 9. Conectar insights con recomendaciones pendientes
+      await this._linkInsightsToRecommendations();
+
+      const totalCreated = insightsCreated + (summaryCreated ? 1 : 0) + activityCreated + thinkingCreated;
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      logger.info(`[BRAIN-ANALYZER] Completado en ${elapsed}s — ${findings.length} hallazgos, ${insightsCreated + (summaryCreated ? 1 : 0)} insights generados`);
+      logger.info(`[BRAIN-ANALYZER] Completado en ${elapsed}s — ${findings.length} hallazgos, ${totalCreated} insights generados`);
 
       return {
         findings: findings.length,
-        insights_created: insightsCreated + (summaryCreated ? 1 : 0),
+        insights_created: totalCreated,
         elapsed: `${elapsed}s`
       };
     } catch (error) {
@@ -418,12 +432,23 @@ class BrainAnalyzer {
       // Parsear la respuesta JSON de insights
       const insights = this._parseInsightResponse(text, filtered, previousMap);
 
-      // Guardar cada insight
+      // Guardar cada insight (with diagnosis label if available)
       let created = 0;
       for (const insight of insights) {
         try {
+          // Attach diagnosis label from diagnostic engine if available
+          let diagnosisLabel = null;
+          for (const e of (insight.entities || [])) {
+            const diag = diagnostics[e.entity_id];
+            if (diag && diag.overall?.labels?.length > 0) {
+              diagnosisLabel = diag.overall.labels.join(' + ');
+              break;
+            }
+          }
+
           const doc = await BrainInsight.create({
             ...insight,
+            diagnosis: diagnosisLabel,
             generated_by: 'hybrid',
             ai_model: config.claude.model,
             tokens_used: Math.ceil(tokensUsed / insights.length)
@@ -795,6 +820,235 @@ IMPORTANTE: Responde SOLO con el JSON array, sin texto adicional ni markdown.`;
     }
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  // BRAIN ACTIVITY — Resumen de cada ciclo de análisis
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Genera un insight brain_activity al final de cada ciclo de análisis.
+   * Muestra qué analizó el Brain, cuántos hallazgos encontró, cuántos insights creó.
+   * Solo genera si hubo actividad significativa (hallazgos > 0 o es el primer ciclo del día).
+   */
+  async _generateBrainActivity(snapshots, findings, insightsCreated, accountOverview) {
+    try {
+      // Cooldown: máximo 1 brain_activity cada 30 minutos
+      const recentActivity = await BrainInsight.findOne({
+        insight_type: 'brain_activity',
+        created_at: { $gte: new Date(Date.now() - 30 * 60000) }
+      }).lean();
+      if (recentActivity) return 0;
+
+      const activeAdsets = snapshots.filter(s => s.status === 'ACTIVE');
+      const pausedAdsets = snapshots.filter(s => ['PAUSED', 'ADSET_PAUSED', 'CAMPAIGN_PAUSED'].includes(s.status));
+      const totalSpend = activeAdsets.reduce((sum, s) => sum + (s.metrics?.last_7d?.spend || 0), 0);
+      const avgRoas = activeAdsets.length > 0
+        ? activeAdsets.reduce((sum, s) => sum + (s.metrics?.last_7d?.roas || 0), 0) / activeAdsets.length
+        : 0;
+
+      // Count entities in cooldown (had insights in last 2h)
+      const recentInsights = await BrainInsight.find({
+        created_at: { $gte: new Date(Date.now() - 2 * 3600000) },
+        insight_type: { $nin: ['brain_activity', 'brain_thinking', 'summary'] }
+      }).lean();
+      const cooldownEntityIds = new Set();
+      for (const ri of recentInsights) {
+        for (const e of (ri.entities || [])) cooldownEntityIds.add(e.entity_id);
+      }
+
+      // Count pending recs
+      const pendingRecs = await BrainRecommendation.countDocuments({ status: 'pending' });
+
+      const findingTypes = {};
+      for (const f of findings) {
+        findingTypes[f.type] = (findingTypes[f.type] || 0) + 1;
+      }
+
+      const body = [
+        `**Entidades escaneadas:** ${snapshots.length} (${activeAdsets.length} activos, ${pausedAdsets.length} pausados)`,
+        `**Hallazgos detectados:** ${findings.length}${findings.length > 0 ? ` — ${Object.entries(findingTypes).map(([t, c]) => `${c} ${t}`).join(', ')}` : ''}`,
+        `**Insights generados:** ${insightsCreated}`,
+        `**Entidades en cooldown:** ${cooldownEntityIds.size} (con insights recientes, no re-analizadas)`,
+        `**Recs pendientes:** ${pendingRecs}`,
+        '',
+        `**Estado cuenta:** ROAS 7d ${accountOverview.roas_7d?.toFixed(2) || 'N/A'}x | Spend total 7d $${totalSpend.toFixed(0)} | Avg ROAS ${avgRoas.toFixed(2)}x`
+      ].join('\n');
+
+      await BrainInsight.create({
+        insight_type: 'brain_activity',
+        severity: 'info',
+        title: findings.length > 0
+          ? `Ciclo completado: ${findings.length} hallazgo${findings.length > 1 ? 's' : ''}, ${insightsCreated} insight${insightsCreated > 1 ? 's' : ''}`
+          : 'Ciclo completado: sin hallazgos significativos',
+        body,
+        entities: [{ entity_type: 'account', entity_id: 'account', entity_name: 'Cuenta' }],
+        data_points: {
+          entities_scanned: snapshots.length,
+          active: activeAdsets.length,
+          paused: pausedAdsets.length,
+          findings: findings.length,
+          insights_created: insightsCreated,
+          in_cooldown: cooldownEntityIds.size,
+          pending_recs: pendingRecs,
+          account_roas_7d: +(accountOverview.roas_7d?.toFixed(2) || 0)
+        },
+        generated_by: 'brain'
+      });
+
+      return 1;
+    } catch (err) {
+      logger.warn(`[BRAIN-ANALYZER] Error generando brain_activity: ${err.message}`);
+      return 0;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // BRAIN THINKING — Por qué el Brain decidió NO actuar
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Genera insights brain_thinking para entidades donde el Brain analizó
+   * pero decidió NO generar un insight ni recomendación. Explica POR QUÉ.
+   * Solo genera cada ~4 horas y agrupa varias entidades en un solo insight.
+   */
+  async _generateBrainThinking(snapshots, findings, memoryMap, diagnostics) {
+    try {
+      // Cooldown: máximo 1 brain_thinking cada 4 horas
+      const recentThinking = await BrainInsight.findOne({
+        insight_type: 'brain_thinking',
+        created_at: { $gte: new Date(Date.now() - 4 * 3600000) }
+      }).lean();
+      if (recentThinking) return 0;
+
+      const activeAdsets = snapshots.filter(s => s.status === 'ACTIVE' && (s.metrics?.last_7d?.spend || 0) >= this.thresholds.min_spend_for_analysis);
+
+      // Find entities that had NO findings (Brain looked at them but found nothing significant)
+      const findingEntityIds = new Set(findings.map(f => f.entity?.entity_id));
+      const stableEntities = activeAdsets.filter(s => !findingEntityIds.has(s.entity_id) && memoryMap[s.entity_id]);
+
+      if (stableEntities.length === 0) return 0;
+
+      // Categorize why each entity was deemed stable
+      const reasons = { within_range: [], in_cooldown: [], improving: [], stable_good: [] };
+
+      const recentInsights = await BrainInsight.find({
+        created_at: { $gte: new Date(Date.now() - 2 * 3600000) },
+        insight_type: { $nin: ['brain_activity', 'brain_thinking', 'summary'] }
+      }).lean();
+      const cooldownEntityIds = new Set();
+      for (const ri of recentInsights) {
+        for (const e of (ri.entities || [])) cooldownEntityIds.add(e.entity_id);
+      }
+
+      for (const snap of stableEntities) {
+        const memory = memoryMap[snap.entity_id];
+        const m7d = snap.metrics?.last_7d || {};
+        const rm = memory?.remembered_metrics || {};
+        const name = snap.entity_name;
+        const roas = m7d.roas?.toFixed(2) || 'N/A';
+
+        if (cooldownEntityIds.has(snap.entity_id)) {
+          reasons.in_cooldown.push(`${name} (ROAS ${roas}x) — insight generado recientemente, en periodo de observación`);
+        } else if (memory?.trends?.roas_direction === 'improving') {
+          reasons.improving.push(`${name} (ROAS ${roas}x, mejorando ${memory.trends.consecutive_improve_days || 0} ciclos)`);
+        } else if ((m7d.roas || 0) >= kpiTargets.roas_target) {
+          reasons.stable_good.push(`${name} (ROAS ${roas}x) — por encima del target ${kpiTargets.roas_target}x`);
+        } else {
+          // Within normal variation range
+          const roasDelta = rm.roas_7d > 0 ? Math.abs(((m7d.roas || 0) - rm.roas_7d) / rm.roas_7d * 100) : 0;
+          reasons.within_range.push(`${name} (ROAS ${roas}x, cambio ${roasDelta.toFixed(0)}% — bajo umbral ${this.thresholds.roas_change_pct}%)`);
+        }
+      }
+
+      const sections = [];
+      if (reasons.stable_good.length > 0) {
+        sections.push(`**Funcionando bien (sin tocar):**\n${reasons.stable_good.map(r => `- ${r}`).join('\n')}`);
+      }
+      if (reasons.improving.length > 0) {
+        sections.push(`**Mejorando (observando tendencia):**\n${reasons.improving.map(r => `- ${r}`).join('\n')}`);
+      }
+      if (reasons.within_range.length > 0) {
+        sections.push(`**Cambios dentro del rango normal:**\n${reasons.within_range.map(r => `- ${r}`).join('\n')}`);
+      }
+      if (reasons.in_cooldown.length > 0) {
+        sections.push(`**En cooldown (insight reciente):**\n${reasons.in_cooldown.map(r => `- ${r}`).join('\n')}`);
+      }
+
+      const body = `El Brain analizó ${stableEntities.length} ad sets activos y decidió **no generar alertas** para ellos. Razones:\n\n${sections.join('\n\n')}`;
+
+      await BrainInsight.create({
+        insight_type: 'brain_thinking',
+        severity: 'info',
+        title: `${stableEntities.length} ad sets estables — sin acción necesaria`,
+        body,
+        entities: [{ entity_type: 'account', entity_id: 'account', entity_name: 'Cuenta' }],
+        data_points: {
+          stable_count: stableEntities.length,
+          stable_good: reasons.stable_good.length,
+          improving: reasons.improving.length,
+          within_range: reasons.within_range.length,
+          in_cooldown: reasons.in_cooldown.length
+        },
+        generated_by: 'brain'
+      });
+
+      return 1;
+    } catch (err) {
+      logger.warn(`[BRAIN-ANALYZER] Error generando brain_thinking: ${err.message}`);
+      return 0;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // LINK INSIGHTS ↔ RECOMMENDATIONS
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Conecta insights recientes con recomendaciones pendientes para la misma entidad.
+   * Permite mostrar "Ver recomendación" en el feed.
+   */
+  async _linkInsightsToRecommendations() {
+    try {
+      // Get pending recommendations
+      const pendingRecs = await BrainRecommendation.find({ status: 'pending' }).lean();
+      if (pendingRecs.length === 0) return;
+
+      // Build map: entity_id → rec
+      const recsByEntity = {};
+      for (const rec of pendingRecs) {
+        if (rec.entity?.entity_id) {
+          recsByEntity[rec.entity.entity_id] = rec._id;
+        }
+      }
+
+      // Get recent unlinked insights (last 24h, no related_recommendation yet)
+      const recentInsights = await BrainInsight.find({
+        created_at: { $gte: new Date(Date.now() - 24 * 3600000) },
+        related_recommendation: null,
+        insight_type: { $nin: ['brain_activity', 'brain_thinking', 'summary'] }
+      }).lean();
+
+      let linked = 0;
+      for (const insight of recentInsights) {
+        for (const entity of (insight.entities || [])) {
+          if (recsByEntity[entity.entity_id]) {
+            await BrainInsight.updateOne(
+              { _id: insight._id },
+              { $set: { related_recommendation: recsByEntity[entity.entity_id] } }
+            );
+            linked++;
+            break; // One rec per insight
+          }
+        }
+      }
+
+      if (linked > 0) {
+        logger.info(`[BRAIN-ANALYZER] ${linked} insights vinculados con recomendaciones pendientes`);
+      }
+    } catch (err) {
+      logger.warn(`[BRAIN-ANALYZER] Error vinculando insights↔recs: ${err.message}`);
+    }
+  }
+
   /**
    * Resumen periódico: cada ~6 horas genera un overview general.
    */
@@ -820,28 +1074,40 @@ IMPORTANTE: Responde SOLO con el JSON array, sin texto adicional ni markdown.`;
       .sort((a, b) => (a.metrics?.last_7d?.roas || 0) - (b.metrics?.last_7d?.roas || 0))
       .slice(0, 5);
 
-    let summaryPrompt = `Genera un RESUMEN EJECUTIVO breve del estado actual de las campañas de Meta Ads.
+    // Count problems
+    const problemAdsets = activeAdsets.filter(s => {
+      const m = s.metrics?.last_7d || {};
+      return (m.roas || 0) < kpiTargets.roas_minimum || (m.frequency || 0) >= kpiTargets.frequency_warning;
+    });
+
+    let summaryPrompt = `Genera un RESUMEN EJECUTIVO ESTRUCTURADO del estado actual de las campañas de Meta Ads.
 
 ## DATOS DE CUENTA
-- ROAS 7d: ${accountOverview.roas_7d?.toFixed(2)}x (target: ${kpiTargets.roas_target}x)
+- ROAS 7d: ${accountOverview.roas_7d?.toFixed(2)}x (target: ${kpiTargets.roas_target}x, mínimo: ${kpiTargets.roas_minimum}x)
 - ROAS 3d: ${accountOverview.roas_3d?.toFixed(2)}x
 - Spend hoy: $${accountOverview.today_spend?.toFixed(0)}
 - Revenue hoy: $${accountOverview.today_revenue?.toFixed(0)}
 - Ad sets activos: ${accountOverview.active_adsets} | Pausados: ${accountOverview.paused_adsets} | Total: ${accountOverview.total_adsets}
+- Ad sets con problemas: ${problemAdsets.length}
 
 ## TOP 5 PERFORMERS (7d ROAS)
-${topPerformers.map(s => `- ${s.entity_name}: ROAS ${(s.metrics?.last_7d?.roas || 0).toFixed(2)}x, Spend $${(s.metrics?.last_7d?.spend || 0).toFixed(0)}, ${s.metrics?.last_7d?.purchases || 0} compras`).join('\n')}
+${topPerformers.map(s => `- ${s.entity_name}: ROAS ${(s.metrics?.last_7d?.roas || 0).toFixed(2)}x, Spend $${(s.metrics?.last_7d?.spend || 0).toFixed(0)}, ${s.metrics?.last_7d?.purchases || 0} compras, Freq ${(s.metrics?.last_7d?.frequency || 0).toFixed(1)}`).join('\n')}
 
 ## PEORES 5 (con spend >$10)
-${worstPerformers.map(s => `- ${s.entity_name}: ROAS ${(s.metrics?.last_7d?.roas || 0).toFixed(2)}x, Spend $${(s.metrics?.last_7d?.spend || 0).toFixed(0)}, ${s.metrics?.last_7d?.purchases || 0} compras`).join('\n')}
+${worstPerformers.map(s => `- ${s.entity_name}: ROAS ${(s.metrics?.last_7d?.roas || 0).toFixed(2)}x, Spend $${(s.metrics?.last_7d?.spend || 0).toFixed(0)}, ${s.metrics?.last_7d?.purchases || 0} compras, Freq ${(s.metrics?.last_7d?.frequency || 0).toFixed(1)}`).join('\n')}
 
 ${lastSummary ? `\n## RESUMEN ANTERIOR (${lastSummary.created_at.toISOString().split('T')[0]})\n"${lastSummary.title}"\n${lastSummary.body.substring(0, 300)}...` : ''}
 
-Responde con un JSON object:
+FORMATO OBLIGATORIO — Responde con un JSON con EXACTAMENTE estas 4 secciones:
 {
   "title": "Título corto del resumen (máx 80 chars)",
-  "body": "Resumen ejecutivo en 2-3 párrafos en español"
-}`;
+  "estado_general": "1-2 oraciones: salud general de la cuenta, ROAS vs target, tendencia",
+  "top_performers": "Lista breve de 2-3 ad sets que mejor funcionan y por qué",
+  "problemas_activos": "Lista de problemas actuales: ad sets bajo mínimo ROAS, frecuencia alta, etc. Si no hay problemas, decir 'Sin problemas críticos'",
+  "proximos_pasos": "1-3 acciones sugeridas para las próximas horas/día"
+}
+
+IMPORTANTE: Responde SOLO con el JSON, sin texto adicional ni markdown.`;
 
     try {
       const response = await this.anthropic.messages.create({
@@ -860,12 +1126,28 @@ Responde con un JSON object:
       const parsed = JSON.parse(jsonText);
       const tokensUsed = (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0);
 
+      // Build structured body from the 4 sections
+      const structuredBody = [
+        parsed.estado_general ? `**Estado general**\n${parsed.estado_general}` : null,
+        parsed.top_performers ? `**Top performers**\n${parsed.top_performers}` : null,
+        parsed.problemas_activos ? `**Problemas activos**\n${parsed.problemas_activos}` : null,
+        parsed.proximos_pasos ? `**Próximos pasos**\n${parsed.proximos_pasos}` : null,
+      ].filter(Boolean).join('\n\n');
+
       await BrainInsight.create({
         insight_type: 'summary',
         severity: 'info',
         title: parsed.title || 'Resumen de cuenta',
-        body: parsed.body || '',
+        body: structuredBody || parsed.body || '',
         entities: [{ entity_type: 'account', entity_id: 'account', entity_name: 'Cuenta' }],
+        data_points: {
+          roas_7d: +(accountOverview.roas_7d?.toFixed(2) || 0),
+          roas_3d: +(accountOverview.roas_3d?.toFixed(2) || 0),
+          active_adsets: accountOverview.active_adsets,
+          problem_adsets: problemAdsets.length,
+          today_spend: +(accountOverview.today_spend?.toFixed(0) || 0),
+          today_revenue: +(accountOverview.today_revenue?.toFixed(0) || 0)
+        },
         generated_by: 'ai',
         ai_model: config.claude.model,
         tokens_used: tokensUsed,

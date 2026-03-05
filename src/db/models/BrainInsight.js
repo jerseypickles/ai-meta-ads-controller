@@ -17,7 +17,9 @@ const brainInsightSchema = new mongoose.Schema({
       'milestone',         // Logro notable (ROAS récord, etc.)
       'status_change',     // Cambio de estado (pausado, reactivado, etc.)
       'summary',           // Resumen periódico del estado general
-      'follow_up'          // Seguimiento de un insight anterior
+      'follow_up',         // Seguimiento de un insight anterior
+      'brain_thinking',    // Razonamiento del Brain — por qué decidió NO actuar
+      'brain_activity'     // Actividad del Brain — resumen de ciclo, qué analizó/hizo
     ],
     required: true,
     index: true
@@ -43,6 +45,12 @@ const brainInsightSchema = new mongoose.Schema({
   body: { type: String, required: true },           // Análisis completo por IA
   data_points: { type: mongoose.Schema.Types.Mixed, default: {} },  // Datos numéricos de soporte
 
+  // Diagnóstico computado (CREATIVE_FATIGUE, FUNNEL_LEAK, AUDIENCE_SATURATED, etc.)
+  diagnosis: { type: String, default: null },
+
+  // Recomendación pendiente relacionada (link insight ↔ rec)
+  related_recommendation: { type: mongoose.Schema.Types.ObjectId, ref: 'BrainRecommendation', default: null },
+
   // Seguimiento / continuidad
   follows_up: { type: mongoose.Schema.Types.ObjectId, ref: 'BrainInsight', default: null },  // Insight anterior al que da seguimiento
   follow_up_count: { type: Number, default: 0 },   // Cuántos follow-ups tiene este insight
@@ -52,7 +60,7 @@ const brainInsightSchema = new mongoose.Schema({
   // Metadata de generación
   generated_by: {
     type: String,
-    enum: ['math', 'ai', 'hybrid'],                // Quién generó: detección matemática, IA, o ambos
+    enum: ['math', 'ai', 'hybrid', 'brain'],        // Quién generó: detección matemática, IA, ambos, o sistema Brain
     default: 'hybrid'
   },
   ai_model: { type: String, default: null },        // Modelo usado si fue IA
