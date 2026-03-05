@@ -2017,7 +2017,7 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
 
   /**
    * Determine the verdict for a measurement phase.
-   * day_3 = more lenient (too_early if marginal), day_7/14 = strict.
+   * day_3 = more lenient (neutral if marginal), day_7/14 = strict.
    */
   _computePhaseVerdict(rec, phase, deltas, actionExecuted) {
     // Pause actions: positive if executed (stopped bleeding)
@@ -2027,7 +2027,7 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
     if (phase === 'day_3') {
       if (deltas.roas_pct > 15) return 'positive';
       if (deltas.roas_pct < -20) return 'negative';
-      return 'too_early';
+      return 'neutral';
     }
 
     // Multi-signal verdict for day_7 and day_14

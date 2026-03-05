@@ -4290,6 +4290,42 @@ a:hover {
   color: var(--text-muted);
 }
 
+/* ═══ Current Absolute Metrics (post-day-3 measurement) ═══ */
+
+.followup-current-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: rgba(59, 130, 246, 0.04);
+  border-radius: var(--radius-sm);
+}
+
+.followup-current-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.followup-current-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.followup-current-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.followup-current-value.good { color: var(--green); }
+.followup-current-value.ok { color: var(--blue-primary); }
+.followup-current-value.bad { color: var(--red); }
+
 /* ═══ New Creative Metrics (creative_refresh follow-up) ═══ */
 
 .followup-new-ad-section {

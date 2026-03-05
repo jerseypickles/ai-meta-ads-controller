@@ -1348,7 +1348,7 @@ function RecommendationCard({ rec, expanded, onToggle, onApprove, onReject, onDi
                       </span>
                     )}
                     <span className={`rec-tracker-signal-verdict ${phases.day_3.verdict}`}>
-                      {phases.day_3.verdict === 'positive' ? '✅' : phases.day_3.verdict === 'negative' ? '❌' : phases.day_3.verdict === 'too_early' ? '⏳' : '➖'}
+                      {phases.day_3.verdict === 'positive' ? '✅' : phases.day_3.verdict === 'negative' ? '❌' : '➖'}
                     </span>
                   </div>
                 )}
@@ -1643,25 +1643,56 @@ function FollowUpPanel({ formatTime, onApprovalAction }) {
 
                   {/* Early signal from day 3 */}
                   {p.day_3 && (
-                    <div className="followup-pending-early">
-                      <span className="followup-early-label">Senal dia 3:</span>
-                      <span className={`followup-early-metric ${(p.day_3.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
-                        ROAS {p.day_3.roas_pct > 0 ? '+' : ''}{p.day_3.roas_pct}%
-                      </span>
-                      {p.day_3.cpa_pct != null && (
-                        <span className={`followup-early-metric ${(p.day_3.cpa_pct || 0) <= 0 ? 'positive' : 'negative'}`}>
-                          CPA {p.day_3.cpa_pct > 0 ? '+' : ''}{p.day_3.cpa_pct}%
+                    <>
+                      <div className="followup-pending-early">
+                        <span className="followup-early-label">Senal dia 3:</span>
+                        <span className={`followup-early-metric ${(p.day_3.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
+                          ROAS {p.day_3.roas_pct > 0 ? '+' : ''}{p.day_3.roas_pct}%
                         </span>
-                      )}
-                      {p.day_3.ctr_pct != null && (
-                        <span className={`followup-early-metric ${(p.day_3.ctr_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
-                          CTR {p.day_3.ctr_pct > 0 ? '+' : ''}{p.day_3.ctr_pct}%
+                        {p.day_3.cpa_pct != null && (
+                          <span className={`followup-early-metric ${(p.day_3.cpa_pct || 0) <= 0 ? 'positive' : 'negative'}`}>
+                            CPA {p.day_3.cpa_pct > 0 ? '+' : ''}{p.day_3.cpa_pct}%
+                          </span>
+                        )}
+                        {p.day_3.ctr_pct != null && p.day_3.ctr_pct !== 0 && (
+                          <span className={`followup-early-metric ${(p.day_3.ctr_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
+                            CTR {p.day_3.ctr_pct > 0 ? '+' : ''}{p.day_3.ctr_pct}%
+                          </span>
+                        )}
+                        <span className={`followup-early-verdict ${p.day_3.verdict}`}>
+                          {p.day_3.verdict === 'positive' ? '\u2705' : p.day_3.verdict === 'negative' ? '\u274C' : '\u2796'}
                         </span>
+                      </div>
+                      {/* Absolute current metrics after day 3 */}
+                      {p.day_3.current_roas > 0 && (
+                        <div className="followup-current-metrics">
+                          <div className="followup-current-metric">
+                            <span className="followup-current-label">ROAS actual</span>
+                            <span className={`followup-current-value ${p.day_3.current_roas >= 3 ? 'good' : p.day_3.current_roas >= 1.5 ? 'ok' : 'bad'}`}>
+                              {p.day_3.current_roas.toFixed(2)}x
+                            </span>
+                          </div>
+                          <div className="followup-current-metric">
+                            <span className="followup-current-label">CPA actual</span>
+                            <span className="followup-current-value">${p.day_3.current_cpa?.toFixed(2) || '—'}</span>
+                          </div>
+                          <div className="followup-current-metric">
+                            <span className="followup-current-label">Spend 7d</span>
+                            <span className="followup-current-value">${p.day_3.current_spend?.toFixed(0) || '—'}</span>
+                          </div>
+                          <div className="followup-current-metric">
+                            <span className="followup-current-label">Compras 7d</span>
+                            <span className="followup-current-value">{p.day_3.current_purchases || 0}</span>
+                          </div>
+                          {p.day_3.current_budget > 0 && (
+                            <div className="followup-current-metric">
+                              <span className="followup-current-label">Budget</span>
+                              <span className="followup-current-value">${p.day_3.current_budget}/d</span>
+                            </div>
+                          )}
+                        </div>
                       )}
-                      <span className={`followup-early-verdict ${p.day_3.verdict}`}>
-                        {p.day_3.verdict === 'positive' ? '\u2705' : p.day_3.verdict === 'negative' ? '\u274C' : p.day_3.verdict === 'too_early' ? '\u23F3' : '\u2796'}
-                      </span>
-                    </div>
+                    </>
                   )}
 
                   {/* New creative individual metrics (creative_refresh only) */}

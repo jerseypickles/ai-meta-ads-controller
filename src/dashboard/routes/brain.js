@@ -632,6 +632,12 @@ router.get('/recommendations/follow-up-stats', async (req, res) => {
           roas_pct: phases.day_3.deltas?.roas_pct,
           cpa_pct: phases.day_3.deltas?.cpa_pct,
           ctr_pct: phases.day_3.deltas?.ctr_pct,
+          // Absolute current metrics from day 3 measurement
+          current_roas: phases.day_3.metrics?.roas_7d || 0,
+          current_cpa: phases.day_3.metrics?.cpa_7d || 0,
+          current_spend: phases.day_3.metrics?.spend_7d || 0,
+          current_purchases: phases.day_3.metrics?.purchases_7d || 0,
+          current_budget: phases.day_3.metrics?.daily_budget || 0,
           new_ad_metrics: phases.day_3.new_ad_metrics || null
         } : null,
         // New ad info (for creative_refresh tracking)
