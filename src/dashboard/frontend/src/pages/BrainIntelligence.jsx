@@ -1530,89 +1530,187 @@ function FollowUpPanel({ formatTime, onApprovalAction }) {
 
       {/* In-Progress (pending measurement) */}
       {pending.length > 0 && (
-        <div className="followup-section">
-          <h3 className="followup-section-title">En progreso ({pending.length})</h3>
+        <div className="followup-section followup-active-section">
+          <h3 className="followup-section-title">
+            <span className="followup-active-pulse" />
+            Monitoreando ({pending.length})
+          </h3>
           <div className="followup-pending-list">
             {pending.map(p => {
               const actionCfg = ACTION_TYPE_CONFIG[p.action_type] || ACTION_TYPE_CONFIG.other;
-              const phaseLabel = p.current_phase === 'awaiting_day_3' ? 'Esperando dia 3'
-                : p.current_phase === 'awaiting_day_7' ? 'Esperando dia 7'
-                : p.current_phase === 'awaiting_day_14' ? 'Esperando dia 14'
-                : 'Midiendo...';
               const daysAgo = p.hours_since_approved >= 24
                 ? `${Math.floor(p.hours_since_approved / 24)}d ${p.hours_since_approved % 24}h`
                 : `${p.hours_since_approved}h`;
               const priorityColor = p.priority === 'urgente' ? '#ef4444' : p.priority === 'evaluar' ? '#f59e0b' : '#3b82f6';
+
+              // Phase progress calculation
+              const phaseIdx = p.current_phase === 'awaiting_day_3' ? 0
+                : p.current_phase === 'awaiting_day_7' ? 1
+                : p.current_phase === 'awaiting_day_14' ? 2 : 3;
+              const phases = [
+                { key: 'day_3', label: '3d', done: phaseIdx > 0, active: phaseIdx === 0, data: p.day_3 },
+                { key: 'day_7', label: '7d', done: phaseIdx > 1, active: phaseIdx === 1, data: null },
+                { key: 'day_14', label: '14d', done: phaseIdx > 2, active: phaseIdx === 2, data: null },
+              ];
+
+              // Determine card accent based on day_3 verdict
+              const d3Verdict = p.day_3?.verdict;
+              const cardAccent = d3Verdict === 'positive' ? 'var(--green)' : d3Verdict === 'negative' ? 'var(--red)' : 'var(--blue-primary)';
+
               return (
-                <div key={p._id} className="followup-pending-item">
-                  {/* Header row: action type + entity + phase dots */}
-                  <div className="followup-pending-header">
-                    <div className="followup-pending-action-badge" style={{ borderLeftColor: priorityColor }}>
-                      <span className="followup-pending-action-icon">{actionCfg.icon}</span>
-                      <span className="followup-pending-action-label">{actionCfg.label}</span>
+                <div key={p._id} className={`followup-card ${d3Verdict ? `verdict-${d3Verdict}` : ''}`}>
+                  {/* Top bar with action type and timing */}
+                  <div className="followup-card-topbar">
+                    <div className="followup-card-action" style={{ color: priorityColor }}>
+                      <span>{actionCfg.icon}</span>
+                      <span>{actionCfg.label}</span>
                     </div>
-                    <div className="followup-pending-right">
-                      <div className="followup-phase-dots">
-                        <span className={`phase-dot ${p.day_3 ? 'done' : p.current_phase === 'awaiting_day_3' ? 'active' : ''}`} title="Dia 3">3d</span>
-                        <span className={`phase-dot ${p.current_phase === 'awaiting_day_7' ? 'active' : p.current_phase === 'awaiting_day_14' || p.current_phase === 'complete' ? 'done' : ''}`} title="Dia 7">7d</span>
-                        <span className={`phase-dot ${p.current_phase === 'awaiting_day_14' ? 'active' : p.current_phase === 'complete' ? 'done' : ''}`} title="Dia 14">14d</span>
-                      </div>
-                      <span className="followup-pending-hours">{daysAgo}</span>
+                    <div className="followup-card-timing">
+                      <span className="followup-card-elapsed">{daysAgo}</span>
+                      <span className={`followup-card-exec ${p.action_executed ? 'done' : ''}`}>
+                        {p.action_executed ? '\u2713' : '\u23F3'}
+                      </span>
                     </div>
                   </div>
 
-                  {/* Title + entity */}
-                  <div className="followup-pending-info">
-                    <span className="followup-pending-title">{p.title}</span>
-                    <span className="followup-pending-entity">{p.entity_name}</span>
+                  {/* Entity name + title */}
+                  <div className="followup-card-identity">
+                    <span className="followup-card-entity">{p.entity_name}</span>
+                    <span className="followup-card-title">{p.title}</span>
                   </div>
 
-                  {/* Metrics at approval snapshot */}
-                  <div className="followup-pending-snapshot">
-                    {p.roas_at_approval > 0 && (
-                      <div className="followup-snap-metric">
-                        <span className="followup-snap-label">ROAS</span>
-                        <span className="followup-snap-value">{p.roas_at_approval.toFixed(2)}x</span>
-                      </div>
-                    )}
-                    {p.cpa_at_approval > 0 && (
-                      <div className="followup-snap-metric">
-                        <span className="followup-snap-label">CPA</span>
-                        <span className="followup-snap-value">${p.cpa_at_approval.toFixed(2)}</span>
-                      </div>
-                    )}
-                    {p.ctr_at_approval > 0 && (
-                      <div className="followup-snap-metric">
-                        <span className="followup-snap-label">CTR</span>
-                        <span className="followup-snap-value">{p.ctr_at_approval.toFixed(2)}%</span>
-                      </div>
-                    )}
-                    {p.spend_at_approval > 0 && (
-                      <div className="followup-snap-metric">
-                        <span className="followup-snap-label">Spend 7d</span>
-                        <span className="followup-snap-value">${p.spend_at_approval.toFixed(0)}</span>
-                      </div>
-                    )}
-                    {p.daily_budget_at_approval > 0 && (
-                      <div className="followup-snap-metric">
-                        <span className="followup-snap-label">Budget</span>
-                        <span className="followup-snap-value">${p.daily_budget_at_approval.toFixed(0)}/d</span>
-                      </div>
-                    )}
-                    {p.frequency_at_approval > 0 && (
-                      <div className="followup-snap-metric">
-                        <span className="followup-snap-label">Freq</span>
-                        <span className="followup-snap-value">{p.frequency_at_approval.toFixed(1)}</span>
-                      </div>
-                    )}
+                  {/* Visual phase timeline */}
+                  <div className="followup-phase-track">
+                    {phases.map((ph, i) => (
+                      <React.Fragment key={ph.key}>
+                        {i > 0 && <div className={`followup-phase-connector ${ph.done ? 'done' : ''}`} />}
+                        <div className={`followup-phase-node-v2 ${ph.done ? 'done' : ph.active ? 'active' : ''}`}>
+                          <span className="followup-phase-circle">
+                            {ph.done ? '\u2713' : ph.active ? '\u25CF' : '\u25CB'}
+                          </span>
+                          <span className="followup-phase-label-v2">{ph.label}</span>
+                          {ph.data && (
+                            <span className={`followup-phase-delta ${(ph.data.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
+                              {(ph.data.roas_pct || 0) > 0 ? '+' : ''}{ph.data.roas_pct}%
+                            </span>
+                          )}
+                        </div>
+                      </React.Fragment>
+                    ))}
                   </div>
 
-                  {/* Status row: execution + phase + note */}
-                  <div className="followup-pending-status-row">
-                    <span className={`followup-exec-badge ${p.action_executed ? 'executed' : 'not-executed'}`}>
-                      {p.action_executed ? '\u2705 Ejecutada' : '\u23F3 Pendiente ejecucion'}
-                    </span>
-                    {!p.action_executed && (
+                  {/* Before → After comparison */}
+                  {p.day_3 && p.day_3.current_roas > 0 && (
+                    <div className="followup-comparison">
+                      <div className="followup-compare-col before">
+                        <span className="followup-compare-header">Al aprobar</span>
+                        <div className="followup-compare-grid">
+                          <div className="followup-compare-item">
+                            <span className="followup-compare-label">ROAS</span>
+                            <span className="followup-compare-val">{p.roas_at_approval.toFixed(2)}x</span>
+                          </div>
+                          <div className="followup-compare-item">
+                            <span className="followup-compare-label">CPA</span>
+                            <span className="followup-compare-val">${p.cpa_at_approval.toFixed(2)}</span>
+                          </div>
+                          {p.daily_budget_at_approval > 0 && (
+                            <div className="followup-compare-item">
+                              <span className="followup-compare-label">Budget</span>
+                              <span className="followup-compare-val">${p.daily_budget_at_approval.toFixed(0)}/d</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="followup-compare-arrow">
+                        <span className={`followup-arrow-icon ${(p.day_3.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>{'\u2192'}</span>
+                      </div>
+                      <div className="followup-compare-col after">
+                        <span className="followup-compare-header">Dia 3</span>
+                        <div className="followup-compare-grid">
+                          <div className="followup-compare-item">
+                            <span className="followup-compare-label">ROAS</span>
+                            <span className={`followup-compare-val highlight ${p.day_3.current_roas >= 3 ? 'good' : p.day_3.current_roas >= 1.5 ? 'ok' : 'bad'}`}>
+                              {p.day_3.current_roas.toFixed(2)}x
+                            </span>
+                          </div>
+                          <div className="followup-compare-item">
+                            <span className="followup-compare-label">CPA</span>
+                            <span className="followup-compare-val highlight">${p.day_3.current_cpa?.toFixed(2) || '\u2014'}</span>
+                          </div>
+                          {p.day_3.current_budget > 0 && (
+                            <div className="followup-compare-item">
+                              <span className="followup-compare-label">Budget</span>
+                              <span className="followup-compare-val highlight">${p.day_3.current_budget}/d</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Metrics at approval (when no day_3 data yet) */}
+                  {!p.day_3 && (
+                    <div className="followup-pending-snapshot">
+                      {p.roas_at_approval > 0 && (
+                        <div className="followup-snap-metric">
+                          <span className="followup-snap-label">ROAS</span>
+                          <span className="followup-snap-value">{p.roas_at_approval.toFixed(2)}x</span>
+                        </div>
+                      )}
+                      {p.cpa_at_approval > 0 && (
+                        <div className="followup-snap-metric">
+                          <span className="followup-snap-label">CPA</span>
+                          <span className="followup-snap-value">${p.cpa_at_approval.toFixed(2)}</span>
+                        </div>
+                      )}
+                      {p.spend_at_approval > 0 && (
+                        <div className="followup-snap-metric">
+                          <span className="followup-snap-label">Spend 7d</span>
+                          <span className="followup-snap-value">${p.spend_at_approval.toFixed(0)}</span>
+                        </div>
+                      )}
+                      {p.daily_budget_at_approval > 0 && (
+                        <div className="followup-snap-metric">
+                          <span className="followup-snap-label">Budget</span>
+                          <span className="followup-snap-value">${p.daily_budget_at_approval.toFixed(0)}/d</span>
+                        </div>
+                      )}
+                      {p.frequency_at_approval > 0 && (
+                        <div className="followup-snap-metric">
+                          <span className="followup-snap-label">Freq</span>
+                          <span className="followup-snap-value">{p.frequency_at_approval.toFixed(1)}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Day 3 signal deltas (shown even with before/after comparison) */}
+                  {p.day_3 && (
+                    <div className="followup-signal-bar">
+                      <span className="followup-signal-label">Dia 3</span>
+                      <span className={`followup-signal-chip ${(p.day_3.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
+                        ROAS {p.day_3.roas_pct > 0 ? '+' : ''}{p.day_3.roas_pct}%
+                      </span>
+                      {p.day_3.cpa_pct != null && (
+                        <span className={`followup-signal-chip ${(p.day_3.cpa_pct || 0) <= 0 ? 'positive' : 'negative'}`}>
+                          CPA {p.day_3.cpa_pct > 0 ? '+' : ''}{p.day_3.cpa_pct}%
+                        </span>
+                      )}
+                      {p.day_3.ctr_pct != null && p.day_3.ctr_pct !== 0 && (
+                        <span className={`followup-signal-chip ${(p.day_3.ctr_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
+                          CTR {p.day_3.ctr_pct > 0 ? '+' : ''}{p.day_3.ctr_pct}%
+                        </span>
+                      )}
+                      <span className="followup-signal-verdict">
+                        {d3Verdict === 'positive' ? '\u2705' : d3Verdict === 'negative' ? '\u274C' : '\u2796'}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Execution status (only when not executed) */}
+                  {!p.action_executed && (
+                    <div className="followup-exec-row">
+                      <span className="followup-exec-badge not-executed">{'\u23F3'} Pendiente ejecucion</span>
                       <button
                         className="rec-btn-mark-executed"
                         onClick={async () => {
@@ -1625,74 +1723,12 @@ function FollowUpPanel({ formatTime, onApprovalAction }) {
                       >
                         Marcar ejecutada
                       </button>
-                    )}
-                    <span className="followup-pending-phase">{phaseLabel}</span>
-                  </div>
-
-                  {/* Decision note */}
-                  {p.decision_note && (
-                    <div className="followup-pending-note">
-                      <span className="followup-note-icon">{'\uD83D\uDCDD'}</span> {p.decision_note}
                     </div>
                   )}
 
                   {/* Action detail */}
                   {p.action_detail && (
                     <div className="followup-pending-detail">{p.action_detail}</div>
-                  )}
-
-                  {/* Early signal from day 3 */}
-                  {p.day_3 && (
-                    <>
-                      <div className="followup-pending-early">
-                        <span className="followup-early-label">Senal dia 3:</span>
-                        <span className={`followup-early-metric ${(p.day_3.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
-                          ROAS {p.day_3.roas_pct > 0 ? '+' : ''}{p.day_3.roas_pct}%
-                        </span>
-                        {p.day_3.cpa_pct != null && (
-                          <span className={`followup-early-metric ${(p.day_3.cpa_pct || 0) <= 0 ? 'positive' : 'negative'}`}>
-                            CPA {p.day_3.cpa_pct > 0 ? '+' : ''}{p.day_3.cpa_pct}%
-                          </span>
-                        )}
-                        {p.day_3.ctr_pct != null && p.day_3.ctr_pct !== 0 && (
-                          <span className={`followup-early-metric ${(p.day_3.ctr_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
-                            CTR {p.day_3.ctr_pct > 0 ? '+' : ''}{p.day_3.ctr_pct}%
-                          </span>
-                        )}
-                        <span className={`followup-early-verdict ${p.day_3.verdict}`}>
-                          {p.day_3.verdict === 'positive' ? '\u2705' : p.day_3.verdict === 'negative' ? '\u274C' : '\u2796'}
-                        </span>
-                      </div>
-                      {/* Absolute current metrics after day 3 */}
-                      {p.day_3.current_roas > 0 && (
-                        <div className="followup-current-metrics">
-                          <div className="followup-current-metric">
-                            <span className="followup-current-label">ROAS actual</span>
-                            <span className={`followup-current-value ${p.day_3.current_roas >= 3 ? 'good' : p.day_3.current_roas >= 1.5 ? 'ok' : 'bad'}`}>
-                              {p.day_3.current_roas.toFixed(2)}x
-                            </span>
-                          </div>
-                          <div className="followup-current-metric">
-                            <span className="followup-current-label">CPA actual</span>
-                            <span className="followup-current-value">${p.day_3.current_cpa?.toFixed(2) || '—'}</span>
-                          </div>
-                          <div className="followup-current-metric">
-                            <span className="followup-current-label">Spend 7d</span>
-                            <span className="followup-current-value">${p.day_3.current_spend?.toFixed(0) || '—'}</span>
-                          </div>
-                          <div className="followup-current-metric">
-                            <span className="followup-current-label">Compras 7d</span>
-                            <span className="followup-current-value">{p.day_3.current_purchases || 0}</span>
-                          </div>
-                          {p.day_3.current_budget > 0 && (
-                            <div className="followup-current-metric">
-                              <span className="followup-current-label">Budget</span>
-                              <span className="followup-current-value">${p.day_3.current_budget}/d</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </>
                   )}
 
                   {/* New creative individual metrics (creative_refresh only) */}
