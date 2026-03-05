@@ -876,6 +876,7 @@ const AdSetRow = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights, trac
   const hasHighPriority = brainRecs?.some(r => r.priority === 'high');
   const hasCriticalInsight = brainInsights?.some(i => i.severity === 'critical' || i.severity === 'warning');
   const hasExecution = trackingRecs?.some(r => r.follow_up?.action_executed);
+  const pendingCreativeRefresh = trackingRecs?.find(r => r.action_type === 'creative_refresh' && !r.follow_up?.action_executed);
 
   return (
     <>
@@ -889,8 +890,14 @@ const AdSetRow = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights, trac
         <td className="primary">
           <div className="adset-name-wrap">
             <div className="adset-name-cell">{adset.entity_name || adset.entity_id}</div>
-            {(recCount > 0 || insightCount > 0 || trackingCount > 0) && (
+            {(recCount > 0 || insightCount > 0 || trackingCount > 0 || pendingCreativeRefresh) && (
               <span className="brain-badges">
+                {pendingCreativeRefresh && (
+                  <span className="brain-badge brain-badge-needs-creative" title="Falta creativo — rec aprobada pendiente de ejecucion">
+                    <Upload size={9} />
+                    <span>Falta creativo</span>
+                  </span>
+                )}
                 {trackingCount > 0 && (
                   <span className={`brain-badge brain-badge-tracking ${hasExecution ? 'executed' : ''}`} title={`${trackingCount} en seguimiento`}>
                     <Activity size={9} />
@@ -1647,6 +1654,12 @@ export default function AdSetsManager() {
           background: rgba(16, 185, 129, 0.2);
           color: #10b981;
           border-color: rgba(16, 185, 129, 0.4);
+        }
+        .brain-badge-needs-creative {
+          background: rgba(245, 158, 11, 0.15);
+          color: #f59e0b;
+          border: 1px solid rgba(245, 158, 11, 0.35);
+          animation: badge-pulse 2s ease-in-out infinite;
         }
         @keyframes badge-pulse {
           0%, 100% { opacity: 1; }
