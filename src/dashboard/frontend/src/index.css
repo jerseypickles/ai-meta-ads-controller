@@ -4164,6 +4164,56 @@ a:hover {
   color: var(--text-muted);
 }
 
+/* ═══ New Rec Badge (inside follow-up pending items) ═══ */
+
+.followup-new-rec-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border-left: 2px solid #f59e0b;
+  background: rgba(245, 158, 11, 0.08);
+  font-size: 12px;
+}
+
+.followup-new-rec-icon {
+  font-size: 13px;
+}
+
+.followup-new-rec-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.followup-new-rec-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-weight: 600;
+}
+
+.followup-new-rec-title {
+  font-size: 12px;
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.followup-new-rec-arrow {
+  font-size: 11px;
+  color: #f59e0b;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
 /* ═══ Timeline ═══ */
 
 .followup-timeline {

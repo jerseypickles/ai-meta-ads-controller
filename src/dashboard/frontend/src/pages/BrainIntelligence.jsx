@@ -1613,6 +1613,21 @@ function FollowUpPanel({ formatTime }) {
                       </span>
                     </div>
                   )}
+
+                  {/* New recommendation linked to this follow-up */}
+                  {p.new_recommendation && (
+                    <div className="followup-new-rec-badge">
+                      <span className="followup-new-rec-icon">{'\u26A1'}</span>
+                      <div className="followup-new-rec-info">
+                        <span className="followup-new-rec-label">Nueva recomendacion disponible:</span>
+                        <span className="followup-new-rec-title">
+                          {(ACTION_TYPE_CONFIG[p.new_recommendation.action_type] || ACTION_TYPE_CONFIG.other).icon}{' '}
+                          {p.new_recommendation.title}
+                        </span>
+                      </div>
+                      <span className="followup-new-rec-arrow">{'\u2192'} Recomendaciones</span>
+                    </div>
+                  )}
                 </div>
               );
             })}

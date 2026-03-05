@@ -516,6 +516,26 @@ router.get('/recommendations/follow-up-stats', async (req, res) => {
     });
 
     // In-progress (approved but not fully measured yet)
+    // Find pending recs that reference these follow-ups (new rec for same ad set)
+    const inProgressIds = inProgress.map(r => r._id);
+    const linkedPendingRecs = await BrainRecommendation.find({
+      status: 'pending',
+      'related_follow_up.rec_id': { $in: inProgressIds }
+    }).lean();
+
+    const linkedRecsMap = {};
+    for (const lr of linkedPendingRecs) {
+      const fuId = lr.related_follow_up?.rec_id?.toString();
+      if (fuId) {
+        linkedRecsMap[fuId] = {
+          _id: lr._id,
+          title: lr.title,
+          action_type: lr.action_type,
+          priority: lr.priority
+        };
+      }
+    }
+
     const pending = inProgress.map(r => {
       const before = r.follow_up?.metrics_at_recommendation || {};
       const hoursAgo = r.decided_at ? Math.round((Date.now() - new Date(r.decided_at).getTime()) / 3600000) : 0;
@@ -550,7 +570,9 @@ router.get('/recommendations/follow-up-stats', async (req, res) => {
           roas_pct: phases.day_3.deltas?.roas_pct,
           cpa_pct: phases.day_3.deltas?.cpa_pct,
           ctr_pct: phases.day_3.deltas?.ctr_pct
-        } : null
+        } : null,
+        // New pending rec linked to this follow-up (if any)
+        new_recommendation: linkedRecsMap[r._id.toString()] || null
       };
     });
 
