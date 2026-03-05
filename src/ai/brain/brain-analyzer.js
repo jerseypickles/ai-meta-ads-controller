@@ -11,6 +11,7 @@ const BrainRecommendation = require('../../db/models/BrainRecommendation');
 const BrainCycleMemory = require('../../db/models/BrainCycleMemory');
 const DiagnosticEngine = require('./diagnostic-engine');
 const BrainTemporalPattern = require('../../db/models/BrainTemporalPattern');
+const DataCollector = require('../../meta/data-collector');
 const logger = require('../../utils/logger');
 
 /**
@@ -989,7 +990,18 @@ REGLAS:
     logger.info('[BRAIN-RECS] Iniciando ciclo de recomendaciones...');
 
     try {
-      // 1. Cargar datos actuales
+      // 0. Refrescar datos de Meta antes de generar recomendaciones
+      //    Garantiza que Claude vea métricas actuales, no snapshots de horas atrás.
+      try {
+        logger.info('[BRAIN-RECS] Refrescando datos de Meta antes de generar recomendaciones...');
+        const collector = new DataCollector();
+        const collectResult = await collector.collect();
+        logger.info(`[BRAIN-RECS] Datos frescos: ${collectResult.snapshots} snapshots en ${collectResult.elapsed}`);
+      } catch (collectErr) {
+        logger.warn(`[BRAIN-RECS] Error refrescando datos (continuando con snapshots existentes): ${collectErr.message}`);
+      }
+
+      // 1. Cargar datos actuales (ahora frescos)
       const [adsetSnapshots, accountOverview, recentActions] = await Promise.all([
         getLatestSnapshots('adset'),
         getAccountOverview(),
