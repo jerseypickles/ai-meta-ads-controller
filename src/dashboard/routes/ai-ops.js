@@ -1426,10 +1426,12 @@ router.post('/upload-and-create-ad', manualUpload.single('image'), async (req, r
           await BrainRecommendation.updateOne({ _id: pendingRec._id }, { $set: {
             'follow_up.action_executed': true,
             'follow_up.execution_detected_at': new Date(),
+            'follow_up.new_ad_id': ad.ad_id,
+            'follow_up.new_ad_name': adName,
             updated_at: new Date()
           }});
           linkedRec = { id: pendingRec._id, title: pendingRec.title };
-          logger.info(`[AI-OPS] Auto-linked upload to Brain recommendation: "${pendingRec.title}"`);
+          logger.info(`[AI-OPS] Auto-linked upload to Brain recommendation: "${pendingRec.title}" (ad_id: ${ad.ad_id})`);
         }
       } catch (linkErr) {
         logger.warn(`[AI-OPS] Error auto-linking recommendation (non-fatal): ${linkErr.message}`);

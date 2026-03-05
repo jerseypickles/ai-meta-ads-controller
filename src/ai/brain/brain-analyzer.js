@@ -1761,6 +1761,16 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
       const snapshotMap = {};
       for (const s of snapshots) snapshotMap[s.entity_id] = s;
 
+      // Fetch ad-level snapshots for creative_refresh tracking (new ad metrics)
+      const hasCreativeRefresh = approvedRecs.some(r => r.action_type === 'creative_refresh' && r.follow_up?.new_ad_id);
+      let adSnapshotMap = {};
+      if (hasCreativeRefresh) {
+        try {
+          const adSnaps = await getLatestSnapshots('ad');
+          for (const s of adSnaps) adSnapshotMap[s.entity_id] = s;
+        } catch { /* non-fatal */ }
+      }
+
       let phasesCompleted = 0;
 
       for (const rec of approvedRecs) {
@@ -1819,6 +1829,29 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
           status: snap.status
         };
 
+        // Capture new ad individual metrics (creative_refresh only)
+        let newAdMetrics = null;
+        if (rec.action_type === 'creative_refresh' && rec.follow_up?.new_ad_id) {
+          const adSnap = adSnapshotMap[rec.follow_up.new_ad_id];
+          if (adSnap) {
+            const adWindow = useShortWindow ? (adSnap.metrics?.last_3d || {}) : (adSnap.metrics?.last_7d || {});
+            newAdMetrics = {
+              ad_id: rec.follow_up.new_ad_id,
+              ad_name: adSnap.entity_name || rec.follow_up.new_ad_name || '',
+              status: adSnap.status,
+              roas: adWindow.roas || 0,
+              cpa: adWindow.cpa || 0,
+              ctr: adWindow.ctr || 0,
+              spend: adWindow.spend || 0,
+              impressions: adWindow.impressions || 0,
+              clicks: adWindow.clicks || 0,
+              purchases: adWindow.purchases || 0,
+              purchase_value: adWindow.purchase_value || 0,
+              frequency: adWindow.frequency || 0
+            };
+          }
+        }
+
         // Calculate deltas vs metrics_at_recommendation
         const prev = rec.follow_up?.metrics_at_recommendation || {};
         const deltas = this._calculateDeltas(prev, currentMetrics);
@@ -1837,6 +1870,7 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
           [`follow_up.phases.${targetPhase}.metrics`]: currentMetrics,
           [`follow_up.phases.${targetPhase}.deltas`]: deltas,
           [`follow_up.phases.${targetPhase}.verdict`]: verdict,
+          ...(newAdMetrics ? { [`follow_up.phases.${targetPhase}.new_ad_metrics`]: newAdMetrics } : {}),
           'follow_up.current_phase': nextPhase,
           'follow_up.action_executed': actionExecuted,
           'follow_up.execution_detected_at': actionExecuted && !rec.follow_up?.execution_detected_at ? new Date() : (rec.follow_up?.execution_detected_at || null),

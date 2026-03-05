@@ -1664,6 +1664,54 @@ function FollowUpPanel({ formatTime, onApprovalAction }) {
                     </div>
                   )}
 
+                  {/* New creative individual metrics (creative_refresh only) */}
+                  {p.new_ad_name && (
+                    <div className="followup-new-ad-section">
+                      <div className="followup-new-ad-header">
+                        <span>{'\uD83C\uDFA8'}</span>
+                        <span>Creativo nuevo: {p.new_ad_name}</span>
+                      </div>
+                      {p.day_3?.new_ad_metrics ? (
+                        <div className="followup-new-ad-metrics">
+                          <div className="followup-new-ad-metric">
+                            <span className="followup-new-ad-label">ROAS</span>
+                            <span className={`followup-new-ad-value ${p.day_3.new_ad_metrics.roas >= 3 ? 'good' : p.day_3.new_ad_metrics.roas >= 1.5 ? 'ok' : 'bad'}`}>
+                              {(p.day_3.new_ad_metrics.roas || 0).toFixed(2)}x
+                            </span>
+                          </div>
+                          <div className="followup-new-ad-metric">
+                            <span className="followup-new-ad-label">CTR</span>
+                            <span className={`followup-new-ad-value ${p.day_3.new_ad_metrics.ctr >= 1.5 ? 'good' : p.day_3.new_ad_metrics.ctr >= 0.8 ? 'ok' : 'bad'}`}>
+                              {(p.day_3.new_ad_metrics.ctr || 0).toFixed(2)}%
+                            </span>
+                          </div>
+                          <div className="followup-new-ad-metric">
+                            <span className="followup-new-ad-label">CPA</span>
+                            <span className="followup-new-ad-value">
+                              ${(p.day_3.new_ad_metrics.cpa || 0).toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="followup-new-ad-metric">
+                            <span className="followup-new-ad-label">Spend</span>
+                            <span className="followup-new-ad-value">${(p.day_3.new_ad_metrics.spend || 0).toFixed(0)}</span>
+                          </div>
+                          <div className="followup-new-ad-metric">
+                            <span className="followup-new-ad-label">Clicks</span>
+                            <span className="followup-new-ad-value">{p.day_3.new_ad_metrics.clicks || 0}</span>
+                          </div>
+                          <div className="followup-new-ad-metric">
+                            <span className="followup-new-ad-label">Compras</span>
+                            <span className="followup-new-ad-value">{p.day_3.new_ad_metrics.purchases || 0}</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="followup-new-ad-waiting">
+                          Metricas disponibles en la medicion dia 3
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* New recommendation inlined from Brain */}
                   {p.new_recommendation && (
                     <div className="followup-inline-rec">

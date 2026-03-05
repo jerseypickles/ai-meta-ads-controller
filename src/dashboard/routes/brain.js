@@ -542,19 +542,22 @@ router.get('/recommendations/follow-up-stats', async (req, res) => {
             verdict: phases.day_3.verdict,
             roas_pct: phases.day_3.deltas?.roas_pct,
             cpa_pct: phases.day_3.deltas?.cpa_pct,
-            measured_at: phases.day_3.measured_at
+            measured_at: phases.day_3.measured_at,
+            new_ad_metrics: phases.day_3.new_ad_metrics || null
           } : null,
           day_7: phases.day_7?.measured ? {
             verdict: phases.day_7.verdict,
             roas_pct: phases.day_7.deltas?.roas_pct,
             cpa_pct: phases.day_7.deltas?.cpa_pct,
-            measured_at: phases.day_7.measured_at
+            measured_at: phases.day_7.measured_at,
+            new_ad_metrics: phases.day_7.new_ad_metrics || null
           } : null,
           day_14: phases.day_14?.measured ? {
             verdict: phases.day_14.verdict,
             roas_pct: phases.day_14.deltas?.roas_pct,
             cpa_pct: phases.day_14.deltas?.cpa_pct,
-            measured_at: phases.day_14.measured_at
+            measured_at: phases.day_14.measured_at,
+            new_ad_metrics: phases.day_14.new_ad_metrics || null
           } : null
         },
         // AI analysis
@@ -628,8 +631,12 @@ router.get('/recommendations/follow-up-stats', async (req, res) => {
           verdict: phases.day_3.verdict,
           roas_pct: phases.day_3.deltas?.roas_pct,
           cpa_pct: phases.day_3.deltas?.cpa_pct,
-          ctr_pct: phases.day_3.deltas?.ctr_pct
+          ctr_pct: phases.day_3.deltas?.ctr_pct,
+          new_ad_metrics: phases.day_3.new_ad_metrics || null
         } : null,
+        // New ad info (for creative_refresh tracking)
+        new_ad_id: r.follow_up?.new_ad_id || null,
+        new_ad_name: r.follow_up?.new_ad_name || null,
         // New pending rec linked to this follow-up (if any)
         new_recommendation: linkedRecsMap[r._id.toString()] || null
       };
