@@ -56,9 +56,10 @@ router.get('/campaigns', async (req, res) => {
 // ═══ LIVE ENDPOINTS — fetch directly from Meta API with smart caching ═══
 
 // Shared live cache with configurable TTL
+// Meta refreshes insights every ~15 min; structural changes (status, budget) are instant.
+// 120s TTL balances freshness vs API calls. Force refresh bypasses cache.
 let _liveCache = { adsets: null, ts: 0, refreshing: false };
-const LIVE_CACHE_TTL = 60 * 1000; // 60 seconds — Meta refreshes insights every ~15 min
-                                    // but structural changes (status, budget) are instant
+const LIVE_CACHE_TTL = 120 * 1000; // 120 seconds
 
 // SSE clients list for real-time push
 const _sseClients = new Set();
@@ -89,14 +90,17 @@ const FETCH_DEADLINE_MS = 25000; // 25 seconds — well under Render's 30s proxy
 async function _fetchLiveAdSets() {
   const meta = getMetaClient();
 
-  // Pre-flight checks: skip live fetch if we know it will fail
+  // Pre-flight: skip only if truly rate-limited (not just because data-collector is running).
+  // Meta allows concurrent reads; data-collector shouldn't block live dashboard queries.
   if (meta.isRateLimited()) {
     return _getSnapshotFallback('rate_limited');
   }
 
-  const busy = meta.isBusy();
-  if (busy) {
-    return _getSnapshotFallback(`api_busy: ${busy.label}`);
+  // Only fall back if API usage is critically high (>80%), not because of busy flag.
+  // data-collector and live fetch can coexist — Bottleneck serializes the actual calls.
+  const usage = meta.getRateLimitUsage();
+  if (usage && usage.max > 80) {
+    return _getSnapshotFallback(`api_usage_critical: ${usage.max}%`);
   }
 
   // Deadline timer — abort everything if we're running too long
@@ -248,7 +252,8 @@ async function _fetchLiveAdSets() {
 
 // ── Background refresh loop — proactively keeps cache fresh and pushes to SSE clients ──
 let _bgRefreshTimer = null;
-const BG_REFRESH_INTERVAL = 60 * 1000; // 60 seconds
+const BG_REFRESH_INTERVAL = 3 * 60 * 1000; // 3 minutes — Meta insights refresh ~every 15 min
+                                              // polling faster wastes API calls without fresher data
 
 async function _backgroundRefresh() {
   if (_liveCache.refreshing) return; // Skip if already refreshing
@@ -271,19 +276,16 @@ async function _backgroundRefresh() {
   _liveCache.refreshing = true;
 
   try {
-    // Check rate limit before refreshing — skip if > 75% usage
+    // Check rate limit before refreshing — skip only if critically high
     const meta = getMetaClient();
-    const usage = meta.getRateLimitUsage();
-    if (usage && usage.max > 75) {
-      logger.info(`[LIVE-BG] Skipping refresh — API usage at ${usage.max}%`);
+    if (meta.isRateLimited()) {
+      logger.info('[LIVE-BG] Skipping refresh — rate limited');
       _liveCache.refreshing = false;
       return;
     }
-
-    // Skip if another process (data-collector) is busy with the API
-    const busy = meta.isBusy();
-    if (busy) {
-      logger.info(`[LIVE-BG] Skipping refresh — API busy: ${busy.label}`);
+    const usage = meta.getRateLimitUsage();
+    if (usage && usage.max > 80) {
+      logger.info(`[LIVE-BG] Skipping refresh — API usage critical at ${usage.max}%`);
       _liveCache.refreshing = false;
       return;
     }

@@ -911,6 +911,8 @@ export default function AdSetsManager() {
   const [fetchMeta, setFetchMeta] = useState(null);
   const [sseConnected, setSseConnected] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
+  const [, setAgeTick] = useState(0); // forces re-render so data-age updates
+  useEffect(() => { const t = setInterval(() => setAgeTick(k => k + 1), 30000); return () => clearInterval(t); }, []);
 
   // Brain Intelligence data
   const [brainRecs, setBrainRecs] = useState([]);
@@ -944,7 +946,7 @@ export default function AdSetsManager() {
     es.onopen = () => setSseConnected(true);
     const fallbackInterval = setInterval(() => {
       if (!sseConnected) fetchData();
-    }, 60000);
+    }, 180000); // 3 min — aligned with backend BG_REFRESH_INTERVAL
     return () => { es.close(); clearInterval(fallbackInterval); setSseConnected(false); };
   }, [fetchData]);
 
@@ -1141,6 +1143,13 @@ export default function AdSetsManager() {
                   <span> &middot; polling</span>
                 )}
                 {fetchMeta?.fallback && ' · snapshot'}
+                {fetchMeta?.fetched_at && (() => {
+                  const ageSec = Math.round((Date.now() - new Date(fetchMeta.fetched_at).getTime()) / 1000);
+                  const ageMin = Math.floor(ageSec / 60);
+                  const label = ageSec < 60 ? `${ageSec}s` : `${ageMin}m`;
+                  const freshClass = ageSec < 120 ? 'fresh' : ageSec < 300 ? 'stale' : 'old';
+                  return <span className={`data-age data-age-${freshClass}`}> · <Clock size={9} style={{ verticalAlign: 'middle' }} /> {label}</span>;
+                })()}
               </span>
             </span>
           </div>
@@ -1411,6 +1420,10 @@ export default function AdSetsManager() {
           0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16,185,129,0.4); }
           50% { opacity: 0.7; box-shadow: 0 0 0 4px rgba(16,185,129,0); }
         }
+        .data-age { font-weight: 600; opacity: 1; }
+        .data-age-fresh { color: var(--green); }
+        .data-age-stale { color: #f59e0b; }
+        .data-age-old { color: var(--red); }
 
         /* Time Window Selector */
         .time-selector {

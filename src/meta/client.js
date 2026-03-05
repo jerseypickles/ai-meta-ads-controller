@@ -16,10 +16,11 @@ class MetaClient {
     this.baseUrl = `https://graph.facebook.com/${this.apiVersion}`;
     this._tokenLoaded = false;
 
-    // In-memory cache for insights (TTL 90s) — Meta refreshes insights ~every 15 min
-    // but we use a shorter TTL so data feels fresh when user force-refreshes
+    // In-memory cache for insights — must expire BEFORE live cache TTL (120s)
+    // so a live refresh always gets fresh data from Meta, not stale cache.
+    // Meta refreshes insights ~every 15 min; structural changes (budget, status) are instant.
     this._insightsCache = new Map();
-    this._insightsCacheTTL = 90 * 1000; // 90 seconds
+    this._insightsCacheTTL = 55 * 1000; // 55 seconds — expires before live cache (120s)
 
     // Rate limiter: Standard tier allows 190,000 + 400*active_ads per hour.
     // We cap at 1,000/hour locally (very safe), with adaptive throttling via headers.
