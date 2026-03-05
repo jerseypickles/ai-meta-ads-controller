@@ -222,6 +222,16 @@ const brainRecommendationSchema = new mongoose.Schema({
   // Si esta recomendación reemplaza/actualiza una anterior
   supersedes: { type: mongoose.Schema.Types.ObjectId, ref: 'BrainRecommendation', default: null },
 
+  // Referencia al follow-up activo del mismo ad set (si existe)
+  related_follow_up: {
+    rec_id: { type: mongoose.Schema.Types.ObjectId, ref: 'BrainRecommendation', default: null },
+    title: { type: String, default: null },
+    action_type: { type: String, default: null },
+    current_phase: { type: String, default: null },
+    day_3_verdict: { type: String, default: null },
+    decided_at: { type: Date, default: null }
+  },
+
   // Metadata de generación
   generated_by: {
     type: String,

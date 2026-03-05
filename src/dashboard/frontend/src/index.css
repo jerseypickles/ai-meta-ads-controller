@@ -3221,6 +3221,87 @@ a:hover {
   line-height: 1.5;
 }
 
+/* ═══ FOLLOW-UP CONTEXT BADGE (on new recs linked to active follow-up) ═══ */
+
+.rec-followup-context {
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 10px;
+  border-left: 3px solid rgba(107, 114, 128, 0.4);
+  background: rgba(107, 114, 128, 0.06);
+}
+
+.rec-followup-context.negative {
+  border-left-color: #ef4444;
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.rec-followup-context.positive {
+  border-left-color: #10b981;
+  background: rgba(16, 185, 129, 0.06);
+}
+
+.rec-followup-context.neutral,
+.rec-followup-context.too_early {
+  border-left-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.rec-followup-context-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+}
+
+.rec-followup-context-icon {
+  font-size: 12px;
+}
+
+.rec-followup-context-title {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.rec-followup-context-phase {
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-color);
+  color: var(--text-tertiary);
+}
+
+.rec-followup-context-verdict {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 0.74rem;
+}
+
+.rec-followup-verdict-badge {
+  color: var(--text-secondary);
+}
+
+.rec-followup-verdict-badge.negative {
+  color: #ef4444;
+}
+
+.rec-followup-verdict-badge.positive {
+  color: #10b981;
+}
+
+.rec-followup-verdict-badge.neutral {
+  color: #f59e0b;
+}
+
+.rec-followup-context-action {
+  color: var(--text-tertiary);
+  font-size: 0.72rem;
+}
+
 /* ═══ ACTION BAR (approve/reject/discuss) ═══ */
 
 .rec-action-bar {

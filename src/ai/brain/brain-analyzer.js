@@ -935,10 +935,16 @@ REGLAS:
         logger.warn(`[BRAIN-RECS] Diagnostic engine error (non-fatal): ${diagErr.message}`);
       }
 
-      // 3. Construir prompt con datos 7d estables
+      // 2.7. Cargar follow-ups activos (para prompt context + deduplicación posterior)
+      const activeFollowUps = await BrainRecommendation.find({
+        status: 'approved',
+        'follow_up.current_phase': { $in: ['awaiting_day_3', 'awaiting_day_7', 'awaiting_day_14'] }
+      }).lean();
+
+      // 3. Construir prompt con datos 7d estables + contexto de follow-ups
       const prompt = this._buildRecommendationPrompt(
         adsetSnapshots, accountOverview, recentActions,
-        memoryMap, recentInsights, previousRecs, decidedRecs, diagnostics
+        memoryMap, recentInsights, previousRecs, decidedRecs, diagnostics, activeFollowUps
       );
 
       // 4. Llamar a Claude para recomendaciones
@@ -964,15 +970,60 @@ REGLAS:
         logger.info(`[BRAIN-RECS] ${expired.modifiedCount} recomendaciones anteriores expiradas`);
       }
 
-      // 7. Guardar nuevas recomendaciones
+      // 6.5. Construir mapa de follow-ups activos para deduplicación
+      const followUpMap = {};
+      for (const fu of activeFollowUps) {
+        if (fu.entity?.entity_id) {
+          followUpMap[fu.entity.entity_id] = {
+            rec_id: fu._id,
+            title: fu.title,
+            action_type: fu.action_type,
+            current_phase: fu.follow_up?.current_phase || 'awaiting_day_3',
+            day_3_verdict: fu.follow_up?.phases?.day_3?.verdict || null,
+            day_3_roas_pct: fu.follow_up?.phases?.day_3?.deltas?.roas_pct || null,
+            decided_at: fu.decided_at
+          };
+        }
+      }
+
+      // 7. Guardar nuevas recomendaciones (con deduplicación vs follow-ups activos)
       let created = 0;
+      let skipped = 0;
       for (const rec of recs) {
         try {
+          const entityId = rec.entity?.entity_id;
+          const existingFU = entityId ? followUpMap[entityId] : null;
+
+          // Deduplicación: no crear recs redundantes para ad sets en seguimiento
+          if (existingFU) {
+            const phase = existingFU.current_phase;
+            const sameAction = existingFU.action_type === rec.action_type;
+            const day3Measured = phase !== 'awaiting_day_3';
+            const day3Negative = existingFU.day_3_verdict === 'negative';
+
+            if (!day3Measured) {
+              // Antes de día 3: bloquear siempre — no hay datos aún
+              logger.info(`[BRAIN-RECS] Skipped: ${rec.entity?.entity_name} — en seguimiento (${phase}), sin datos aún`);
+              skipped++;
+              continue;
+            }
+
+            if (sameAction && !day3Negative) {
+              // Misma acción + día 3 no fue negativo: bloquear (dejar que siga el seguimiento)
+              logger.info(`[BRAIN-RECS] Skipped: ${rec.entity?.entity_name} — misma acción (${rec.action_type}) en seguimiento, día 3: ${existingFU.day_3_verdict}`);
+              skipped++;
+              continue;
+            }
+
+            // Permitida: acción diferente O misma acción con día 3 negativo
+            logger.info(`[BRAIN-RECS] Allowed: ${rec.entity?.entity_name} — ${sameAction ? 'escalada (día 3 negativo)' : 'acción diferente'} vs follow-up (${existingFU.action_type})`);
+          }
+
           // Capturar snapshot de métricas al momento de la recomendación
-          const snap = adsetSnapshots.find(s => s.entity_id === rec.entity.entity_id);
+          const snap = adsetSnapshots.find(s => s.entity_id === entityId);
           const m7d = snap?.metrics?.last_7d || {};
 
-          await BrainRecommendation.create({
+          const createData = {
             ...rec,
             cycle_id: cycleId,
             generated_by: 'ai',
@@ -990,11 +1041,29 @@ REGLAS:
               active_ads: snap?.ads_count || 0,
               status: snap?.status || 'UNKNOWN'
             }
-          });
+          };
+
+          // Adjuntar referencia al follow-up activo si existe
+          if (existingFU) {
+            createData.related_follow_up = {
+              rec_id: existingFU.rec_id,
+              title: existingFU.title,
+              action_type: existingFU.action_type,
+              current_phase: existingFU.current_phase,
+              day_3_verdict: existingFU.day_3_verdict,
+              decided_at: existingFU.decided_at
+            };
+          }
+
+          await BrainRecommendation.create(createData);
           created++;
         } catch (saveErr) {
           logger.error(`[BRAIN-RECS] Error guardando recomendación: ${saveErr.message}`);
         }
+      }
+
+      if (skipped > 0) {
+        logger.info(`[BRAIN-RECS] ${skipped} recomendaciones filtradas por deduplicación con follow-ups activos`);
       }
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -1066,7 +1135,7 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
   /**
    * Construye prompt para recomendaciones con datos estables 7d.
    */
-  _buildRecommendationPrompt(snapshots, accountOverview, recentActions, memoryMap, recentInsights, previousRecs, decidedRecs = [], diagnostics = {}) {
+  _buildRecommendationPrompt(snapshots, accountOverview, recentActions, memoryMap, recentInsights, previousRecs, decidedRecs = [], diagnostics = {}, activeFollowUps = []) {
     let prompt = `## DATOS DE CUENTA (7 DÍAS)\n`;
     prompt += `ROAS 7d: ${accountOverview.roas_7d?.toFixed(2)}x | Target: ${kpiTargets.roas_target}x | Mínimo: ${kpiTargets.roas_minimum}x\n`;
     prompt += `ROAS 3d: ${accountOverview.roas_3d?.toFixed(2)}x\n`;
@@ -1169,6 +1238,26 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
       prompt += `Sin historial de decisiones aún.\n`;
     }
     prompt += `\n`;
+
+    // Ad sets en seguimiento activo — evitar recs redundantes
+    if (activeFollowUps.length > 0) {
+      prompt += `## AD SETS EN SEGUIMIENTO ACTIVO\n`;
+      prompt += `Estas entidades tienen recomendaciones aprobadas en medición de impacto.\n`;
+      prompt += `REGLA: NO generes recomendaciones para ad sets que están "awaiting_day_3" (sin datos aún).\n`;
+      prompt += `Para ad sets con día 3 medido: solo genera si tienes una acción DIFERENTE o si el veredicto fue negativo (escalada).\n\n`;
+      for (const fu of activeFollowUps) {
+        const hoursAgo = fu.decided_at ? Math.round((Date.now() - new Date(fu.decided_at).getTime()) / 3600000) : '?';
+        const phase = fu.follow_up?.current_phase || 'awaiting_day_3';
+        const day3 = fu.follow_up?.phases?.day_3;
+        let phaseInfo = phase;
+        if (day3?.measured) {
+          phaseInfo = `día 3 medido: ${day3.verdict || 'sin veredicto'}`;
+          if (day3.deltas?.roas_pct != null) phaseInfo += ` (ROAS ${day3.deltas.roas_pct > 0 ? '+' : ''}${day3.deltas.roas_pct.toFixed(0)}%)`;
+        }
+        prompt += `- ${fu.entity?.entity_name || 'N/A'} [${fu.entity?.entity_id}]: ${fu.action_type} aprobado hace ${Math.round(hoursAgo/24)}d — ${phaseInfo}\n`;
+      }
+      prompt += `\n`;
+    }
 
     prompt += `Genera recomendaciones accionables basándote en los datos 7d. Si no hay acciones claras que tomar, devuelve un array vacío [].`;
 

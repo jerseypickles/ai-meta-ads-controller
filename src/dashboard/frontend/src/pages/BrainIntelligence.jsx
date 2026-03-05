@@ -1033,6 +1033,35 @@ function RecommendationCard({ rec, expanded, onToggle, onApprove, onReject, onDi
 
         {expanded && (
           <div className="rec-body">
+            {/* Related follow-up context badge */}
+            {rec.related_follow_up?.rec_id && (
+              <div className={`rec-followup-context ${rec.related_follow_up.day_3_verdict || 'pending'}`}>
+                <div className="rec-followup-context-header">
+                  <span className="rec-followup-context-icon">{'\uD83D\uDD17'}</span>
+                  <span className="rec-followup-context-title">
+                    Seguimiento previo: "{rec.related_follow_up.title}"
+                  </span>
+                  <span className="rec-followup-context-phase">
+                    {rec.related_follow_up.current_phase === 'awaiting_day_7' ? 'dia 3 medido' :
+                     rec.related_follow_up.current_phase === 'awaiting_day_14' ? 'dia 7 medido' :
+                     rec.related_follow_up.current_phase === 'complete' ? 'completo' : 'dia 3'}
+                  </span>
+                </div>
+                {rec.related_follow_up.day_3_verdict && (
+                  <div className="rec-followup-context-verdict">
+                    <span className={`rec-followup-verdict-badge ${rec.related_follow_up.day_3_verdict}`}>
+                      {rec.related_follow_up.day_3_verdict === 'negative' ? '\u274C' :
+                       rec.related_follow_up.day_3_verdict === 'positive' ? '\u2705' : '\u2796'}
+                      {' '}Veredicto dia 3: {rec.related_follow_up.day_3_verdict === 'negative' ? 'negativo' :
+                       rec.related_follow_up.day_3_verdict === 'positive' ? 'positivo' : 'neutral'}
+                    </span>
+                    <span className="rec-followup-context-action">
+                      Accion previa: {ACTION_TYPE_CONFIG[rec.related_follow_up.action_type]?.label || rec.related_follow_up.action_type}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
             {/* Structured diagnosis section */}
             {rec.diagnosis && (
               <div className="rec-structured-section rec-section-diagnosis">
