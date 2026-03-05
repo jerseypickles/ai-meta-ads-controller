@@ -111,10 +111,10 @@ async function _fetchLiveAdSets() {
     }
   };
 
-  // Live endpoint uses 3 windows (today, 3d, 7d) — fast enough for real-time display.
-  // The full 5-window data (14d, 30d) is available via snapshots from the data-collector.
+  // Live endpoint uses 4 windows (today, 3d, 7d, 14d) — fetched in parallel.
+  // 30d is available via snapshots from the data-collector.
   const timeRanges = getTimeRanges();
-  const liveWindows = { today: timeRanges.today, last_3d: timeRanges.last_3d, last_7d: timeRanges.last_7d };
+  const liveWindows = { today: timeRanges.today, last_3d: timeRanges.last_3d, last_7d: timeRanges.last_7d, last_14d: timeRanges.last_14d };
 
   // 1. Get campaigns + ad sets in parallel where possible
   let campaigns, campaignMap = {}, adSetMap = {};
@@ -168,7 +168,7 @@ async function _fetchLiveAdSets() {
     return _getSnapshotFallback('no_adsets_from_api');
   }
 
-  // 2. Fetch insights for all time windows IN PARALLEL (3 concurrent calls instead of 5 sequential)
+  // 2. Fetch insights for all time windows IN PARALLEL (4 concurrent calls)
   const adSetInsights = {};
   const insightEntries = Object.entries(liveWindows);
 
