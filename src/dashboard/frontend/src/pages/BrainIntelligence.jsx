@@ -452,7 +452,7 @@ export default function BrainIntelligence() {
             formatTime={formatTime}
           />
         ) : activeTab === 'followup' ? (
-          <FollowUpPanel formatTime={formatTime} />
+          <FollowUpPanel formatTime={formatTime} onApprovalAction={openApprovalModal} />
         ) : activeTab === 'knowledge' ? (
           <KnowledgePanel formatTime={formatTime} />
         ) : activeTab === 'creatives' ? (
@@ -789,7 +789,7 @@ function RecommendationsPanel({
 }) {
   const [expandedId, setExpandedId] = useState(null);
 
-  const pendingRecs = recommendations.filter(r => r.status === 'pending');
+  const pendingRecs = recommendations.filter(r => r.status === 'pending' && !r.related_follow_up?.rec_id);
   // Approved with active follow-up (not yet fully measured)
   const trackingRecs = recommendations.filter(r =>
     r.status === 'approved' && !r.follow_up?.checked && r.follow_up?.current_phase !== 'complete'
@@ -1322,7 +1322,7 @@ const VERDICT_CONFIG = {
   neutral:  { icon: '\u2796', label: 'Neutral', color: '#6b7280', bg: 'rgba(107,114,128,0.12)' }
 };
 
-function FollowUpPanel({ formatTime }) {
+function FollowUpPanel({ formatTime, onApprovalAction }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expandedItem, setExpandedItem] = useState(null);
@@ -1614,18 +1614,50 @@ function FollowUpPanel({ formatTime }) {
                     </div>
                   )}
 
-                  {/* New recommendation linked to this follow-up */}
+                  {/* New recommendation inlined from Brain */}
                   {p.new_recommendation && (
-                    <div className="followup-new-rec-badge">
-                      <span className="followup-new-rec-icon">{'\u26A1'}</span>
-                      <div className="followup-new-rec-info">
-                        <span className="followup-new-rec-label">Nueva recomendacion disponible:</span>
-                        <span className="followup-new-rec-title">
-                          {(ACTION_TYPE_CONFIG[p.new_recommendation.action_type] || ACTION_TYPE_CONFIG.other).icon}{' '}
-                          {p.new_recommendation.title}
-                        </span>
+                    <div className="followup-inline-rec">
+                      <div className="followup-inline-rec-header">
+                        <span className="followup-inline-rec-badge">{'\u26A1'} Nueva sugerencia del Brain</span>
                       </div>
-                      <span className="followup-new-rec-arrow">{'\u2192'} Recomendaciones</span>
+                      <div className="followup-inline-rec-title">
+                        {(ACTION_TYPE_CONFIG[p.new_recommendation.action_type] || ACTION_TYPE_CONFIG.other).icon}{' '}
+                        {p.new_recommendation.title}
+                      </div>
+                      {p.new_recommendation.diagnosis && (
+                        <div className="followup-inline-rec-detail">
+                          <span className="followup-inline-rec-detail-label">Causa raiz:</span> {p.new_recommendation.diagnosis}
+                        </div>
+                      )}
+                      {p.new_recommendation.action_detail && (
+                        <div className="followup-inline-rec-detail">
+                          <span className="followup-inline-rec-detail-label">Accion:</span> {p.new_recommendation.action_detail}
+                        </div>
+                      )}
+                      {p.new_recommendation.expected_outcome && (
+                        <div className="followup-inline-rec-detail outcome">
+                          <span className="followup-inline-rec-detail-label">Resultado esperado:</span> {p.new_recommendation.expected_outcome}
+                        </div>
+                      )}
+                      {p.new_recommendation.risk && (
+                        <div className="followup-inline-rec-detail risk">
+                          <span className="followup-inline-rec-detail-label">Riesgo:</span> {p.new_recommendation.risk}
+                        </div>
+                      )}
+                      <div className="followup-inline-rec-actions">
+                        <button
+                          className="rec-btn approve"
+                          onClick={() => onApprovalAction && onApprovalAction(p.new_recommendation._id, 'approve', p.new_recommendation)}
+                        >
+                          Aprobar
+                        </button>
+                        <button
+                          className="rec-btn reject"
+                          onClick={() => onApprovalAction && onApprovalAction(p.new_recommendation._id, 'reject', p.new_recommendation)}
+                        >
+                          Rechazar
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>

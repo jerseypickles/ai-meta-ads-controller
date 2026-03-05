@@ -531,7 +531,13 @@ router.get('/recommendations/follow-up-stats', async (req, res) => {
           _id: lr._id,
           title: lr.title,
           action_type: lr.action_type,
-          priority: lr.priority
+          priority: lr.priority,
+          diagnosis: lr.diagnosis || '',
+          expected_outcome: lr.expected_outcome || '',
+          risk: lr.risk || '',
+          action_detail: lr.action_detail || '',
+          confidence_score: lr.confidence_score || 50,
+          supporting_data: lr.supporting_data || null
         };
       }
     }
