@@ -40,6 +40,18 @@ const brainMemorySchema = new mongoose.Schema({
     consecutive_improve_days: { type: Number, default: 0 }
   },
 
+  // Historial de acciones ejecutadas en esta entidad con resultado medido
+  // Permite al Brain aprender qué funciona para CADA entidad específica
+  action_history: [{
+    action_type: { type: String, required: true },   // scale_up, pause, creative_refresh, etc.
+    executed_at: { type: Date, required: true },
+    result: { type: String, enum: ['improved', 'worsened', 'neutral'], required: true },
+    roas_delta_pct: { type: Number, default: 0 },    // +12.5 o -8.3
+    cpa_delta_pct: { type: Number, default: 0 },
+    context: { type: String, default: '' },           // "high_frequency", "declining_roas", etc.
+    _id: false
+  }],
+
   // Contadores de insights generados para esta entidad
   insights_generated: { type: Number, default: 0 },
   last_insight_at: { type: Date, default: null },

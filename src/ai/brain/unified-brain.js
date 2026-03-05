@@ -18,6 +18,7 @@ const AICreation = require('../../db/models/AICreation');
 const BrainRecommendation = require('../../db/models/BrainRecommendation');
 const BrainCycleMemory = require('../../db/models/BrainCycleMemory');
 const BrainMemory = require('../../db/models/BrainMemory');
+const BrainTemporalPattern = require('../../db/models/BrainTemporalPattern');
 const StrategicDirective = require('../../db/models/StrategicDirective');
 const logger = require('../../utils/logger');
 
@@ -68,6 +69,18 @@ class UnifiedBrain {
       // 4. Construir contexto de impacto
       const impactContext = await this.impactBuilder.build();
 
+      // 4.5. Validar hipótesis pendientes de ciclos anteriores
+      let validatedHypotheses = null;
+      try {
+        validatedHypotheses = await this._validateHypotheses(
+          sharedData.cycleMemories,
+          sharedData.accountOverview,
+          sharedData.adSetSnapshots
+        );
+      } catch (hypErr) {
+        logger.warn(`[BRAIN] Error validando hipótesis (non-fatal): ${hypErr.message}`);
+      }
+
       // 5. Construir resumen del learner para Claude
       const learnerState = await this.learner.loadState();
       const learnerSummary = this._buildLearnerSummary(learnerState, learningResult);
@@ -112,7 +125,10 @@ class UnifiedBrain {
         aiManagerFeedback: sharedData.aiManagerFeedback,
         recommendationHistory: sharedData.recommendationHistory,
         cycleMemories: sharedData.cycleMemories,
-        diagnosticContext
+        diagnosticContext,
+        validatedHypotheses,
+        memories: sharedData.memories,
+        temporalPatterns: sharedData.temporalPatterns
       });
 
       logger.info(`[BRAIN] Prompt enviado a Claude: ${userPrompt.length} chars`);
@@ -391,6 +407,14 @@ class UnifiedBrain {
       logger.warn(`[BRAIN] Error cargando BrainMemory: ${e.message}`);
     }
 
+    // Load temporal patterns for day-of-week context
+    let temporalPatterns = [];
+    try {
+      temporalPatterns = await BrainTemporalPattern.find({ pattern_type: 'day_of_week', level: 'account' }).lean();
+    } catch (e) {
+      logger.warn(`[BRAIN] Error cargando temporal patterns: ${e.message}`);
+    }
+
     logger.info(`[BRAIN] Datos cargados: ${adSetSnapshots.length} ad sets, ${adSnapshots.length} ads, ${campaignSnapshots.length} campanas, ${activeCooldowns.length} cooldowns, ${recommendationHistory.length} rec history, ${cycleMemories.length} cycle memories`);
 
     return {
@@ -408,7 +432,8 @@ class UnifiedBrain {
       aiManagerFeedback,
       recommendationHistory,
       cycleMemories,
-      memories
+      memories,
+      temporalPatterns
     };
   }
 
@@ -1223,6 +1248,120 @@ class UnifiedBrain {
    * Hace una llamada ligera a Claude pidiendo un resumen de conclusiones
    * para que el Brain recuerde su razonamiento entre ciclos.
    */
+  /**
+   * Validates active hypotheses from previous cycles against current data.
+   * Returns { confirmed: [...], rejected: [...], still_active: [...] }
+   */
+  async _validateHypotheses(cycleMemories, accountOverview, adSetSnapshots) {
+    if (!cycleMemories || cycleMemories.length === 0) return null;
+
+    // Collect all active hypotheses across recent cycle memories
+    const activeHypotheses = [];
+    for (const mem of cycleMemories) {
+      for (const h of (mem.hypotheses || [])) {
+        if (h.status === 'active') {
+          activeHypotheses.push({
+            hypothesis: h.hypothesis,
+            proposed_action: h.proposed_action,
+            cycle_id: mem.cycle_id,
+            created_at: mem.created_at,
+            mem_id: mem._id
+          });
+        }
+      }
+    }
+
+    if (activeHypotheses.length === 0) return null;
+
+    // Build context summary for Claude to validate against
+    const activeAdSets = (adSetSnapshots || []).filter(s => s.status === 'ACTIVE');
+    const adSetSummary = activeAdSets.slice(0, 10).map(s => {
+      const m7d = s.metrics?.last_7d || {};
+      return `${s.entity_name}: ROAS ${(m7d.roas||0).toFixed(2)}x, CPA $${(m7d.cpa||0).toFixed(0)}, CTR ${(m7d.ctr||0).toFixed(2)}%, Freq ${(m7d.frequency||0).toFixed(1)}, Purchases ${m7d.purchases||0}`;
+    }).join('\n');
+
+    const hypList = activeHypotheses.map((h, i) => {
+      const hoursAgo = Math.round((Date.now() - new Date(h.created_at).getTime()) / 3600000);
+      return `${i + 1}. "${h.hypothesis}" (propuesta: ${h.proposed_action}) — formulada hace ${hoursAgo}h`;
+    }).join('\n');
+
+    const prompt = `Tienes hipótesis pendientes de validar con datos actuales.
+
+HIPÓTESIS ACTIVAS:
+${hypList}
+
+DATOS ACTUALES:
+ROAS 7d: ${(accountOverview.roas_7d||0).toFixed(2)}x | 3d: ${(accountOverview.roas_3d||0).toFixed(2)}x
+Ad sets activos: ${accountOverview.active_adsets || 0}
+
+AD SETS:
+${adSetSummary}
+
+Para cada hipótesis, evalúa si los datos actuales la confirman, refutan, o si necesita más tiempo.
+
+Responde SOLO con JSON válido:
+{
+  "validations": [
+    { "index": 1, "status": "confirmed|rejected|still_active", "reason": "Explicación breve basada en datos" }
+  ]
+}`;
+
+    try {
+      const response = await this.anthropic.messages.create({
+        model: config.claude.model,
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: prompt }]
+      });
+
+      const text = response.content[0]?.text || '';
+      let cleaned = text.trim();
+      if (cleaned.startsWith('```')) cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+      const parsed = JSON.parse(cleaned);
+
+      const result = { confirmed: [], rejected: [], still_active: [] };
+
+      for (const v of (parsed.validations || [])) {
+        const idx = (v.index || 1) - 1;
+        const hyp = activeHypotheses[idx];
+        if (!hyp) continue;
+
+        const status = v.status || 'still_active';
+        const bucket = status === 'confirmed' ? result.confirmed
+          : status === 'rejected' ? result.rejected
+          : result.still_active;
+
+        bucket.push({
+          hypothesis: hyp.hypothesis,
+          status,
+          reason: v.reason || '',
+          cycle_id: hyp.cycle_id
+        });
+
+        // Update the hypothesis status in DB
+        if (status === 'confirmed' || status === 'rejected') {
+          await BrainCycleMemory.updateOne(
+            { _id: hyp.mem_id, 'hypotheses.hypothesis': hyp.hypothesis },
+            { $set: {
+              'hypotheses.$.status': status,
+              'hypotheses.$.validated_at': new Date(),
+              'hypotheses.$.validation_result': v.reason
+            }}
+          );
+        }
+      }
+
+      const total = result.confirmed.length + result.rejected.length + result.still_active.length;
+      if (total > 0) {
+        logger.info(`[BRAIN] Hipótesis validadas: ${result.confirmed.length} confirmadas, ${result.rejected.length} rechazadas, ${result.still_active.length} pendientes`);
+      }
+
+      return result;
+    } catch (err) {
+      logger.warn(`[BRAIN] Error parseando validación de hipótesis: ${err.message}`);
+      return null;
+    }
+  }
+
   async _saveCycleMemory(cycleId, parsed, recommendations, accountOverview, originalResponse) {
     try {
       // Construir resumen de lo que se recomendó
@@ -1294,7 +1433,8 @@ REGLAS:
         hypotheses: (memoryData.hypotheses || []).slice(0, 3).map(h => ({
           hypothesis: String(h.hypothesis || '').substring(0, 200),
           proposed_action: String(h.proposed_action || '').substring(0, 150),
-          status: 'active'
+          status: 'active',
+          created_cycle_id: cycleId
         })),
         snapshot: {
           roas_7d: accountOverview.roas_7d || 0,

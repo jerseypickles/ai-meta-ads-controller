@@ -154,7 +154,10 @@ function buildUserPrompt({
   aiManagerFeedback,
   recommendationHistory,
   cycleMemories,
-  diagnosticContext
+  diagnosticContext,
+  validatedHypotheses,
+  memories,
+  temporalPatterns
 }) {
   const now = moment().tz(TIMEZONE);
   const hourET = now.hours();
@@ -221,6 +224,30 @@ NOTA: Prepara la cuenta para el aumento de demanda. Considera escalar ad sets ga
     prompt += `\nINSTRUCCION DE MEMORIA: Revisa tus conclusiones anteriores. Si una hipótesis sigue sin validar, intenta verificarla con datos actuales. Si una conclusión ya no aplica (datos cambiaron), descártala. Mantén coherencia con tu análisis previo a menos que los datos indiquen lo contrario.\n\n`;
   }
 
+  // === VALIDATED HYPOTHESES ===
+  if (validatedHypotheses && (validatedHypotheses.confirmed?.length > 0 || validatedHypotheses.rejected?.length > 0)) {
+    prompt += `═══ HIPÓTESIS VALIDADAS (loop científico) ═══\n`;
+    if (validatedHypotheses.confirmed.length > 0) {
+      prompt += `CONFIRMADAS (usar como conocimiento confiable):\n`;
+      for (const h of validatedHypotheses.confirmed) {
+        prompt += `  ✓ "${h.hypothesis}" — ${h.reason}\n`;
+      }
+    }
+    if (validatedHypotheses.rejected.length > 0) {
+      prompt += `RECHAZADAS (NO repetir estas ideas):\n`;
+      for (const h of validatedHypotheses.rejected) {
+        prompt += `  ✗ "${h.hypothesis}" — ${h.reason}\n`;
+      }
+    }
+    if (validatedHypotheses.still_active?.length > 0) {
+      prompt += `PENDIENTES (necesitan más datos):\n`;
+      for (const h of validatedHypotheses.still_active) {
+        prompt += `  ⟳ "${h.hypothesis}" — ${h.reason}\n`;
+      }
+    }
+    prompt += `INSTRUCCION: Las hipótesis confirmadas son conocimiento validado — úsalas con confianza. Las rechazadas son errores anteriores — NO las repitas. Genera nuevas hipótesis solo si tienes evidencia.\n\n`;
+  }
+
   // === RESUMEN DE CUENTA ===
   const acctSpend30d = accountOverview.spend_30d || 0;
   const acctAov = acctSpend30d > 0 && accountOverview.roas_30d > 0
@@ -252,6 +279,12 @@ Budget ceiling diario: $${budgetCeiling} | Pacing mensual estimado: ${monthlyPac
 `;
 
 
+  // Build memory map for action history per entity
+  const memMap = {};
+  if (memories && memories.length > 0) {
+    for (const m of memories) memMap[m.entity_id] = m;
+  }
+
   // === AD SETS ===
   const activeAdSets = (adSetSnapshots || []).filter(s => s.status === 'ACTIVE');
   const pausedAdSets = (adSetSnapshots || []).filter(s => s.status === 'PAUSED');
@@ -282,6 +315,17 @@ Budget ceiling diario: $${budgetCeiling} | Pacing mensual estimado: ${monthlyPac
   Funnel 7d: ATC=${m7.add_to_cart || 0} → IC=${m7.initiate_checkout || 0} → Compras=${m7.purchases || 0}${(m7.add_to_cart || 0) > 0 ? ` (ATC→Purchase: ${((m7.purchases || 0) / m7.add_to_cart * 100).toFixed(0)}%)` : ''}
   Impressiones 7d: ${m7.impressions || 0} | Clicks 7d: ${m7.clicks || 0} | Spend 7d: $${(m7.spend || 0).toFixed(0)} | Spend 30d: $${(m30.spend || 0).toFixed(0)}
 `;
+      // Action history for this entity
+      const entityMem = memMap[s.entity_id];
+      if (entityMem?.action_history && entityMem.action_history.length > 0) {
+        const histStr = entityMem.action_history.slice(-5).map(h => {
+          const daysAgo = Math.round((Date.now() - new Date(h.executed_at).getTime()) / 86400000);
+          const sign = h.roas_delta_pct > 0 ? '+' : '';
+          const emoji = h.result === 'improved' ? '✓' : h.result === 'worsened' ? '✗' : '—';
+          return `${emoji}${h.action_type}(${sign}${h.roas_delta_pct.toFixed(0)}% ROAS, ${daysAgo}d ago)`;
+        }).join(' | ');
+        prompt += `  Historial: ${histStr}\n`;
+      }
     }
     prompt += '\n';
   }
@@ -467,6 +511,24 @@ Budget ceiling diario: $${budgetCeiling} | Pacing mensual estimado: ${monthlyPac
     prompt += `${learnerSummary}\n`;
   }
 
+  // === TEMPORAL PATTERNS ===
+  const validTemporalPatterns = (temporalPatterns || []).filter(p => (p.metrics?.sample_count || 0) >= 4);
+  if (validTemporalPatterns.length > 0) {
+    const todayKey = moment().tz(TIMEZONE).format('dddd').toLowerCase();
+    const dayNames = { monday: 'Lunes', tuesday: 'Martes', wednesday: 'Miércoles', thursday: 'Jueves', friday: 'Viernes', saturday: 'Sábado', sunday: 'Domingo' };
+    const dayOrder = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+
+    prompt += `\n═══ PATRONES TEMPORALES APRENDIDOS ═══\n`;
+    prompt += `Rendimiento típico por día de semana (${validTemporalPatterns[0].metrics.sample_count}+ semanas):\n`;
+    const sorted = validTemporalPatterns.sort((a, b) => dayOrder.indexOf(a.pattern_key) - dayOrder.indexOf(b.pattern_key));
+    for (const p of sorted) {
+      const m = p.metrics;
+      const isToday = p.pattern_key === todayKey;
+      prompt += `${isToday ? '→ ' : '  '}${dayNames[p.pattern_key] || p.pattern_key}: ROAS ${m.avg_roas.toFixed(2)}x, CPA $${m.avg_cpa.toFixed(0)}, CTR ${m.avg_ctr.toFixed(2)}%${isToday ? ' ← HOY' : ''}\n`;
+    }
+    prompt += `INSTRUCCION TEMPORAL: Si las métricas actuales están dentro del rango normal para hoy (${dayNames[todayKey]}), NO es anomalía. Solo actúa si la desviación es >20% vs el patrón del día.\n`;
+  }
+
   // === INDICADORES DE DIVERSIDAD CREATIVA POR AD SET ===
   if (adSnapshots && adSnapshots.length > 0) {
     const adsByAdSet = {};
@@ -538,6 +600,8 @@ Analiza TODA la informacion anterior de forma holistica. Recuerda:
 - Pausar un ad set es ULTIMO RECURSO. Prioriza: create_ad > update_ad_status > scale_down > pause
 - USA EL DIAGNOSTICO PRE-ANALISIS: Cada ad set tiene un diagnostico computado matematicamente. Si dice FUNNEL_LEAK, no pausar — investigar funnel. Si dice CREATIVE_FATIGUE, refrescar creativos primero. Si dice AUDIENCE_SATURATED, expandir o reducir budget.
 - DIAGNOSTICA EL "POR QUE" en tu reasoning: En cada recomendacion, explica la CAUSA RAIZ del problema (fatiga creativa? saturacion? funnel? estacionalidad?) y por que tu accion ataca esa causa.
+- HISTORIAL POR ENTIDAD: Revisa el "Historial" de cada ad set. Si una acción FALLÓ antes (✗), NO la repitas en esa entidad. Si una acción FUNCIONÓ (✓), priorízala. Esto es conocimiento validado.
+- PATRONES TEMPORALES: Si hoy es un día donde históricamente el rendimiento es más bajo, NO lo confundas con un problema. Compara vs el patrón del día, no vs ayer.
 Responde SOLO con JSON valido.`;
 
   return prompt;

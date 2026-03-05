@@ -10,6 +10,7 @@ const BrainChat = require('../../db/models/BrainChat');
 const BrainRecommendation = require('../../db/models/BrainRecommendation');
 const BrainCycleMemory = require('../../db/models/BrainCycleMemory');
 const DiagnosticEngine = require('./diagnostic-engine');
+const BrainTemporalPattern = require('../../db/models/BrainTemporalPattern');
 const logger = require('../../utils/logger');
 
 /**
@@ -62,15 +63,22 @@ class BrainAnalyzer {
         getRecentActions(3)
       ]);
 
-      // 2. Cargar memorias existentes
-      const memories = await BrainMemory.find({}).lean();
+      // 2. Cargar memorias existentes + patrones temporales
+      const [memories, temporalPatterns] = await Promise.all([
+        BrainMemory.find({}).lean(),
+        BrainTemporalPattern.find({ pattern_type: 'day_of_week', level: 'account' }).lean().catch(() => [])
+      ]);
       const memoryMap = {};
       for (const m of memories) {
         memoryMap[m.entity_id] = m;
       }
 
+      // Build temporal baseline for today's day of week
+      const todayKey = moment().tz(process.env.TIMEZONE || 'America/New_York').format('dddd').toLowerCase();
+      const todayPattern = temporalPatterns.find(p => p.pattern_key === todayKey);
+
       // 3. Fase matemática: detectar cambios significativos
-      const findings = this._detectChanges(adsetSnapshots, memoryMap, accountOverview);
+      const findings = this._detectChanges(adsetSnapshots, memoryMap, accountOverview, todayPattern);
 
       // 3.5. Diagnostic engine: pre-compute structured diagnostic signals
       let diagnostics = {};
@@ -118,8 +126,11 @@ class BrainAnalyzer {
   /**
    * Fase 1: Detección matemática de cambios significativos.
    */
-  _detectChanges(snapshots, memoryMap, accountOverview) {
+  _detectChanges(snapshots, memoryMap, accountOverview, todayPattern = null) {
     const findings = [];
+
+    // Temporal baseline: if we have 4+ weeks of data for today's day, use it to filter noise
+    const hasTemporalBaseline = todayPattern && (todayPattern.metrics?.sample_count || 0) >= 4;
 
     for (const snap of snapshots) {
       const memory = memoryMap[snap.entity_id];
@@ -158,15 +169,31 @@ class BrainAnalyzer {
       if (rm.roas_7d > 0 && (m7d.roas || 0) > 0) {
         const roasDelta = ((m7d.roas - rm.roas_7d) / rm.roas_7d) * 100;
         if (Math.abs(roasDelta) >= this.thresholds.roas_change_pct) {
+          // Temporal filter: if current ROAS is within ±15% of the day-of-week average,
+          // downgrade severity — it's likely normal daily variation, not a real anomaly
+          let adjustedSeverity = Math.abs(roasDelta) > 40 ? 'high' : 'medium';
+          let temporalNote = null;
+          if (hasTemporalBaseline && roasDelta < 0) {
+            const dayAvgRoas = todayPattern.metrics.avg_roas;
+            if (dayAvgRoas > 0) {
+              const vsTemporalPct = ((m7d.roas - dayAvgRoas) / dayAvgRoas) * 100;
+              if (Math.abs(vsTemporalPct) <= 15) {
+                adjustedSeverity = 'low';
+                temporalNote = `Dentro del rango normal para ${todayPattern.pattern_key} (avg ${dayAvgRoas.toFixed(2)}x)`;
+              }
+            }
+          }
+
           findings.push({
             type: roasDelta < 0 ? 'anomaly' : 'opportunity',
-            severity: Math.abs(roasDelta) > 40 ? 'high' : 'medium',
+            severity: adjustedSeverity,
             entity: { entity_type: 'adset', entity_id: snap.entity_id, entity_name: snap.entity_name },
             data: {
               metric: 'roas_7d',
               from: rm.roas_7d,
               to: m7d.roas,
-              delta_pct: +roasDelta.toFixed(1)
+              delta_pct: +roasDelta.toFixed(1),
+              ...(temporalNote && { temporal_note: temporalNote })
             }
           });
         }
@@ -711,6 +738,60 @@ IMPORTANTE: Responde SOLO con el JSON array, sin texto adicional ni markdown.`;
       await BrainMemory.bulkWrite(bulkOps);
       logger.info(`[BRAIN-ANALYZER] Memoria actualizada: ${bulkOps.length} entidades`);
     }
+
+    // ═══ UPDATE TEMPORAL PATTERNS (account-level day-of-week averages) ═══
+    try {
+      const now = moment().tz(process.env.TIMEZONE || 'America/New_York');
+      const dayKey = now.format('dddd').toLowerCase(); // "monday", "tuesday", etc.
+
+      // Compute account-level averages from active ad sets
+      const activeSnaps = snapshots.filter(s => s.status === 'ACTIVE');
+      if (activeSnaps.length > 0) {
+        let totalRoas = 0, totalCpa = 0, totalCtr = 0, totalSpend = 0, totalFreq = 0, count = 0;
+        for (const s of activeSnaps) {
+          const m7d = s.metrics?.last_7d || {};
+          if ((m7d.spend || 0) >= this.thresholds.min_spend_for_analysis) {
+            totalRoas += (m7d.roas || 0);
+            totalCpa += (m7d.cpa || 0);
+            totalCtr += (m7d.ctr || 0);
+            totalSpend += (m7d.spend || 0);
+            totalFreq += (m7d.frequency || 0);
+            count++;
+          }
+        }
+        if (count > 0) {
+          const currentRoas = totalRoas / count;
+          const currentCpa = totalCpa / count;
+          const currentCtr = totalCtr / count;
+          const currentSpend = totalSpend / count;
+          const currentFreq = totalFreq / count;
+
+          // Running average update: new_avg = (old_avg * N + current) / (N + 1)
+          const existing = await BrainTemporalPattern.findOne({
+            pattern_type: 'day_of_week', pattern_key: dayKey, level: 'account'
+          }).lean();
+
+          const N = existing?.metrics?.sample_count || 0;
+          const old = existing?.metrics || {};
+          const updated = {
+            avg_roas: N > 0 ? (old.avg_roas * N + currentRoas) / (N + 1) : currentRoas,
+            avg_cpa: N > 0 ? (old.avg_cpa * N + currentCpa) / (N + 1) : currentCpa,
+            avg_ctr: N > 0 ? (old.avg_ctr * N + currentCtr) / (N + 1) : currentCtr,
+            avg_spend: N > 0 ? (old.avg_spend * N + currentSpend) / (N + 1) : currentSpend,
+            avg_frequency: N > 0 ? (old.avg_frequency * N + currentFreq) / (N + 1) : currentFreq,
+            sample_count: N + 1
+          };
+
+          await BrainTemporalPattern.findOneAndUpdate(
+            { pattern_type: 'day_of_week', pattern_key: dayKey, level: 'account' },
+            { $set: { metrics: updated, last_updated_at: new Date() } },
+            { upsert: true }
+          );
+        }
+      }
+    } catch (tempErr) {
+      logger.warn(`[BRAIN-ANALYZER] Temporal pattern update error (non-fatal): ${tempErr.message}`);
+    }
   }
 
   /**
@@ -935,16 +1016,19 @@ REGLAS:
         logger.warn(`[BRAIN-RECS] Diagnostic engine error (non-fatal): ${diagErr.message}`);
       }
 
+      // 2.6. Cargar patrones temporales para contexto
+      const temporalPatterns = await BrainTemporalPattern.find({ pattern_type: 'day_of_week', level: 'account' }).lean().catch(() => []);
+
       // 2.7. Cargar follow-ups activos (para prompt context + deduplicación posterior)
       const activeFollowUps = await BrainRecommendation.find({
         status: 'approved',
         'follow_up.current_phase': { $in: ['awaiting_day_3', 'awaiting_day_7', 'awaiting_day_14'] }
       }).lean();
 
-      // 3. Construir prompt con datos 7d estables + contexto de follow-ups
+      // 3. Construir prompt con datos 7d estables + contexto de follow-ups + temporal patterns
       const prompt = this._buildRecommendationPrompt(
         adsetSnapshots, accountOverview, recentActions,
-        memoryMap, recentInsights, previousRecs, decidedRecs, diagnostics, activeFollowUps
+        memoryMap, recentInsights, previousRecs, decidedRecs, diagnostics, activeFollowUps, temporalPatterns
       );
 
       // 4. Llamar a Claude para recomendaciones
@@ -1135,7 +1219,7 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
   /**
    * Construye prompt para recomendaciones con datos estables 7d.
    */
-  _buildRecommendationPrompt(snapshots, accountOverview, recentActions, memoryMap, recentInsights, previousRecs, decidedRecs = [], diagnostics = {}, activeFollowUps = []) {
+  _buildRecommendationPrompt(snapshots, accountOverview, recentActions, memoryMap, recentInsights, previousRecs, decidedRecs = [], diagnostics = {}, activeFollowUps = [], temporalPatterns = []) {
     let prompt = `## DATOS DE CUENTA (7 DÍAS)\n`;
     prompt += `ROAS 7d: ${accountOverview.roas_7d?.toFixed(2)}x | Target: ${kpiTargets.roas_target}x | Mínimo: ${kpiTargets.roas_minimum}x\n`;
     prompt += `ROAS 3d: ${accountOverview.roas_3d?.toFixed(2)}x\n`;
@@ -1189,6 +1273,16 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
         if (diag.saturation.score > 20) prompt += ` | Saturación: ${diag.saturation.level}(${diag.saturation.score}/100)`;
         if (diag.funnel.primary_leak) prompt += ` | Funnel: ${diag.funnel.primary_leak}`;
         prompt += '\n';
+      }
+      // Action history for this entity — what worked/failed before
+      if (mem?.action_history && mem.action_history.length > 0) {
+        const historyStr = mem.action_history.slice(-5).map(h => {
+          const daysAgo = Math.round((Date.now() - new Date(h.executed_at).getTime()) / 86400000);
+          const sign = h.roas_delta_pct > 0 ? '+' : '';
+          const emoji = h.result === 'improved' ? '✓' : h.result === 'worsened' ? '✗' : '—';
+          return `${emoji}${h.action_type}(${sign}${h.roas_delta_pct.toFixed(0)}% ROAS, ${daysAgo}d ago)`;
+        }).join(' | ');
+        prompt += `  Historial: ${historyStr}\n`;
       }
       prompt += `\n`;
     }
@@ -1259,7 +1353,28 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
       prompt += `\n`;
     }
 
-    prompt += `Genera recomendaciones accionables basándote en los datos 7d. Si no hay acciones claras que tomar, devuelve un array vacío [].`;
+    // Temporal patterns section
+    const validPatterns = (temporalPatterns || []).filter(p => (p.metrics?.sample_count || 0) >= 4);
+    if (validPatterns.length > 0) {
+      const now = moment().tz(process.env.TIMEZONE || 'America/New_York');
+      const todayKey = now.format('dddd').toLowerCase();
+      const dayNames = { monday: 'Lunes', tuesday: 'Martes', wednesday: 'Miércoles', thursday: 'Jueves', friday: 'Viernes', saturday: 'Sábado', sunday: 'Domingo' };
+
+      prompt += `## PATRONES TEMPORALES APRENDIDOS (${validPatterns[0].metrics.sample_count}+ semanas de datos)\n`;
+      const sorted = validPatterns.sort((a, b) => {
+        const order = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+        return order.indexOf(a.pattern_key) - order.indexOf(b.pattern_key);
+      });
+      for (const p of sorted) {
+        const m = p.metrics;
+        const isToday = p.pattern_key === todayKey;
+        prompt += `  ${isToday ? '→ ' : '  '}${dayNames[p.pattern_key] || p.pattern_key}: ROAS ${m.avg_roas.toFixed(2)}x, CPA $${m.avg_cpa.toFixed(0)}, CTR ${m.avg_ctr.toFixed(2)}% (${m.sample_count} muestras)${isToday ? ' ← HOY' : ''}\n`;
+      }
+      prompt += `INSTRUCCIÓN TEMPORAL: Si el rendimiento actual está dentro del rango normal para hoy (${dayNames[todayKey] || todayKey}), NO es una anomalía. Solo actúa si la desviación vs el patrón del día es significativa (>20%).\n\n`;
+    }
+
+    prompt += `Genera recomendaciones accionables basándote en los datos 7d. Si no hay acciones claras que tomar, devuelve un array vacío [].
+IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en esa entidad (✗), no la repitas. Si una acción tuvo éxito (✓), priorízala.`;
 
     return prompt;
   }
@@ -1454,6 +1569,40 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
         }
 
         await BrainRecommendation.updateOne({ _id: rec._id }, { $set: updateObj });
+
+        // ═══ WRITE ACTION HISTORY TO ENTITY MEMORY ═══
+        // On day_7 (stable signal), record this action's outcome on the entity's memory.
+        // This teaches the Brain what works for THIS specific entity.
+        if (targetPhase === 'day_7' && rec.entity?.entity_id) {
+          try {
+            // Derive context from the state at recommendation time
+            const prevMetrics = rec.follow_up?.metrics_at_recommendation || {};
+            const contextParts = [];
+            if ((prevMetrics.frequency_7d || 0) >= (kpiTargets.frequency_warning || 2.5)) contextParts.push('high_frequency');
+            if ((prevMetrics.roas_7d || 0) < (kpiTargets.roas_minimum || 1.5)) contextParts.push('low_roas');
+            if ((prevMetrics.roas_7d || 0) >= (kpiTargets.roas_excellent || 5)) contextParts.push('high_roas');
+            const mem = await BrainMemory.findOne({ entity_id: rec.entity.entity_id }).lean();
+            if (mem?.trends?.roas_direction === 'declining') contextParts.push('declining_roas');
+            if (mem?.trends?.roas_direction === 'improving') contextParts.push('improving_roas');
+
+            const historyEntry = {
+              action_type: rec.action_type,
+              executed_at: rec.decided_at || new Date(),
+              result: verdict,
+              roas_delta_pct: deltas.roas_pct || 0,
+              cpa_delta_pct: deltas.cpa_pct || 0,
+              context: contextParts.join(',') || 'normal'
+            };
+
+            await BrainMemory.findOneAndUpdate(
+              { entity_id: rec.entity.entity_id },
+              { $push: { action_history: { $each: [historyEntry], $slice: -20 } } }
+            );
+            logger.debug(`[FOLLOW-UP] Action history recorded: ${rec.action_type} → ${verdict} on ${rec.entity.entity_name}`);
+          } catch (histErr) {
+            logger.warn(`[FOLLOW-UP] Error writing action history (non-fatal): ${histErr.message}`);
+          }
+        }
 
         // Create follow-up insight on day_7 and day_14
         if (targetPhase === 'day_7' || targetPhase === 'day_14') {

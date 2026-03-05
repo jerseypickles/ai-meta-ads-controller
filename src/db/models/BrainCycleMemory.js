@@ -26,6 +26,9 @@ const brainCycleMemorySchema = new mongoose.Schema({
     hypothesis: { type: String, required: true },
     proposed_action: { type: String, default: '' },   // qué hacer para validar
     status: { type: String, enum: ['active', 'confirmed', 'rejected'], default: 'active' },
+    created_cycle_id: { type: String, default: null },      // ciclo donde nació
+    validated_at: { type: Date, default: null },             // cuándo se validó
+    validation_result: { type: String, default: null },      // "Confirmed: ROAS subió 15%..."
     _id: false
   }],
 
