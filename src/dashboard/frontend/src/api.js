@@ -238,6 +238,13 @@ export const uploadAndCreateAd = async ({ adsetId, imageFile, uploadedFile, head
   return data;
 };
 
+// ═══ BRAIN — Creative Refresh Link ═══
+
+export const getPendingCreativeRec = async (adsetId) => {
+  const response = await api.get(`/api/brain/recommendations/pending-creative/${adsetId}`);
+  return response.data;
+};
+
 // ═══ BRAIN — Intelligence Feed & Chat ═══
 
 export const getBrainInsights = async (page = 1, limit = 20, filters = {}) => {

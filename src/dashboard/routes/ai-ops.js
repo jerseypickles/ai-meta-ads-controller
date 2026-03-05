@@ -10,6 +10,7 @@ const StrategicDirective = require('../../db/models/StrategicDirective');
 const SafetyEvent = require('../../db/models/SafetyEvent');
 const MetricSnapshot = require('../../db/models/MetricSnapshot');
 const CreativeAsset = require('../../db/models/CreativeAsset');
+const BrainRecommendation = require('../../db/models/BrainRecommendation');
 const { getMetaClient } = require('../../meta/client');
 const { parseInsightRow, getTimeRanges, parseBudget } = require('../../meta/helpers');
 const logger = require('../../utils/logger');
@@ -1412,6 +1413,28 @@ router.post('/upload-and-create-ad', manualUpload.single('image'), async (req, r
         success: true
       });
 
+      // Step 6: Auto-link to approved creative_refresh recommendation (if any)
+      let linkedRec = null;
+      try {
+        const pendingRec = await BrainRecommendation.findOne({
+          status: 'approved',
+          action_type: 'creative_refresh',
+          'entity.entity_id': adset_id,
+          'follow_up.action_executed': { $ne: true }
+        });
+        if (pendingRec) {
+          await BrainRecommendation.updateOne({ _id: pendingRec._id }, { $set: {
+            'follow_up.action_executed': true,
+            'follow_up.execution_detected_at': new Date(),
+            updated_at: new Date()
+          }});
+          linkedRec = { id: pendingRec._id, title: pendingRec.title };
+          logger.info(`[AI-OPS] Auto-linked upload to Brain recommendation: "${pendingRec.title}"`);
+        }
+      } catch (linkErr) {
+        logger.warn(`[AI-OPS] Error auto-linking recommendation (non-fatal): ${linkErr.message}`);
+      }
+
       uploadAdJobs.set(jobId, {
         status: 'completed',
         startedAt: uploadAdJobs.get(jobId).startedAt,
@@ -1421,7 +1444,8 @@ router.post('/upload-and-create-ad', manualUpload.single('image'), async (req, r
           ad_name: adName,
           headline,
           primary_text,
-          image_hash: imageHash
+          image_hash: imageHash,
+          linked_recommendation: linkedRec || null
         }
       });
     } catch (err) {

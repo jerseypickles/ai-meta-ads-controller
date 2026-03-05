@@ -152,7 +152,8 @@ class DataCollector {
         }
       }
 
-      // 5. Guardar snapshots de ad sets
+      // 5. Preparar datos de snapshots de ad sets (guardar después de obtener ads para incluir ads_count)
+      const adSetSnapshotData = [];
       let adSetSnapshots = 0;
       for (const [adSetId, info] of Object.entries(adSetMap)) {
         const adSet = info;
@@ -164,7 +165,7 @@ class DataCollector {
         }
         const analysis = this._buildAnalysis(metrics);
 
-        await MetricSnapshot.create({
+        adSetSnapshotData.push({
           entity_type: 'adset',
           entity_id: adSet.id,
           entity_name: adSet.name,
@@ -178,16 +179,14 @@ class DataCollector {
           analysis,
           snapshot_at: new Date()
         });
-        totalSnapshots++;
-        adSetSnapshots++;
       }
-      logger.info(`  ${adSetSnapshots} snapshots de ad sets guardados`);
 
       // 6. Obtener status real de todos los ads — single account-level query
       //    instead of N individual getAds() calls (was ~40 calls, now 1)
       logger.info('Recolectando status de ads (account-level)...');
       const adStatusMap = {}; // { adId: 'ACTIVE' | 'PAUSED' | ... }
       const adSetsFetchedOk = new Set(); // Track which ad sets had ads returned
+      const adsPerAdSet = {}; // { adSetId: count of active ads }
       let adsFetchSuccess = false;
       try {
         const allAdsData = await this.meta.get(`/${this.meta.adAccountId}/ads`, {
@@ -211,12 +210,27 @@ class DataCollector {
         adsFetchSuccess = true;
         for (const ad of allAds) {
           adStatusMap[ad.id] = ad.effective_status || 'ACTIVE';
-          if (ad.adset_id) adSetsFetchedOk.add(ad.adset_id);
+          if (ad.adset_id) {
+            adSetsFetchedOk.add(ad.adset_id);
+            // Count active ads per ad set (ACTIVE status only)
+            if (ad.effective_status === 'ACTIVE') {
+              adsPerAdSet[ad.adset_id] = (adsPerAdSet[ad.adset_id] || 0) + 1;
+            }
+          }
         }
         logger.info(`  ${allAds.length} ads con status real obtenido (1 API call, ${adSetsFetchedOk.size} ad sets covered)`);
       } catch (err) {
         logger.warn(`  Error obteniendo ads a nivel de cuenta: ${err.message} — preservando status existente`);
       }
+
+      // 6.5. Guardar snapshots de ad sets (ahora con ads_count)
+      for (const snapData of adSetSnapshotData) {
+        snapData.ads_count = adsPerAdSet[snapData.entity_id] || 0;
+        await MetricSnapshot.create(snapData);
+        totalSnapshots++;
+        adSetSnapshots++;
+      }
+      logger.info(`  ${adSetSnapshots} snapshots de ad sets guardados`);
 
       // 7. Obtener insights a nivel de cuenta con level=ad (5 llamadas)
       logger.info('Recolectando insights de ads/creativos (level=ad)...');

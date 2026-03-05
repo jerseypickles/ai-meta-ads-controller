@@ -18,7 +18,8 @@ import {
   pauseEntity, deleteEntity, getAvailableCreatives,
   addAdToAdSet, generateAdCopy, getCreativePreviewUrl, logout,
   getBrainRecommendations, getBrainInsights,
-  generateCopyForUpload, uploadAndCreateAd
+  generateCopyForUpload, uploadAndCreateAd,
+  getPendingCreativeRec
 } from '../api';
 
 const AccountOrb = lazy(() => import('../components/AccountOrb'));
@@ -250,6 +251,20 @@ const AddCreativePanel = ({ adsetId, onClose, onSuccess }) => {
   const [creating, setCreating] = useState(false);
   const [result, setResult] = useState(null);
 
+  // Brain recommendation link
+  const [pendingRec, setPendingRec] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await getPendingCreativeRec(adsetId);
+        if (!cancelled && data.has_pending) setPendingRec(data.recommendation);
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [adsetId]);
+
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -332,6 +347,20 @@ const AddCreativePanel = ({ adsetId, onClose, onSuccess }) => {
       </div>
 
       {error && <div className="alert alert-danger" style={{ padding: '8px 12px', fontSize: '13px' }}>{error}</div>}
+
+      {/* Brain recommendation banner */}
+      {pendingRec && step !== 'done' && (
+        <div className="brain-rec-banner">
+          <Brain size={14} />
+          <div>
+            <strong>El Brain recomendo agregar creativos nuevos</strong>
+            <div className="text-xs text-tertiary" style={{ marginTop: '2px' }}>{pendingRec.title}</div>
+            <div className="text-xs" style={{ color: 'var(--purple)', marginTop: '2px' }}>
+              Al subir el creativo, se marcara la recomendacion como ejecutada automaticamente
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ─── STEP 1: Upload Image ─── */}
       {step === 'upload' && (
@@ -496,10 +525,26 @@ const AddCreativePanel = ({ adsetId, onClose, onSuccess }) => {
 
       {/* ─── STEP 3: Done ─── */}
       {step === 'done' && result && (
-        <div className="alert alert-success" style={{ padding: '10px 14px', fontSize: '13px' }}>
-          <CheckCircle size={14} style={{ marginRight: '6px' }} />
-          Ad created: <strong>{result.ad_name || result.headline}</strong>
-        </div>
+        <>
+          <div className="alert alert-success" style={{ padding: '10px 14px', fontSize: '13px' }}>
+            <CheckCircle size={14} style={{ marginRight: '6px' }} />
+            Ad created: <strong>{result.ad_name || result.headline}</strong>
+          </div>
+          {result.linked_recommendation && (
+            <div className="brain-rec-linked-confirm">
+              <Brain size={14} />
+              <div>
+                <strong>Recomendacion del Brain marcada como ejecutada</strong>
+                <div className="text-xs text-tertiary" style={{ marginTop: '2px' }}>
+                  {result.linked_recommendation.title}
+                </div>
+                <div className="text-xs" style={{ color: 'var(--green)', marginTop: '2px' }}>
+                  El seguimiento de impacto iniciara en 3 dias
+                </div>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

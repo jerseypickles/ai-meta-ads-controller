@@ -1801,18 +1801,21 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
         const actionExecuted = this._detectActionExecution(rec, snap);
 
         // Capture current metrics snapshot
-        const m7d = snap.metrics?.last_7d || {};
+        // For creative_refresh at day_3, use last_3d window to avoid dilution from pre-creative data
+        const useShortWindow = targetPhase === 'day_3' && rec.action_type === 'creative_refresh';
+        const mWindow = useShortWindow ? (snap.metrics?.last_3d || {}) : (snap.metrics?.last_7d || {});
         const currentMetrics = {
-          roas_7d: m7d.roas || 0,
-          cpa_7d: m7d.cpa || 0,
-          spend_7d: m7d.spend || 0,
-          frequency_7d: m7d.frequency || 0,
-          ctr_7d: m7d.ctr || 0,
-          purchases_7d: m7d.purchases || 0,
-          purchase_value_7d: m7d.purchase_value || 0,
-          add_to_cart_7d: m7d.add_to_cart || 0,
-          initiate_checkout_7d: m7d.initiate_checkout || 0,
+          roas_7d: mWindow.roas || 0,
+          cpa_7d: mWindow.cpa || 0,
+          spend_7d: mWindow.spend || 0,
+          frequency_7d: mWindow.frequency || 0,
+          ctr_7d: mWindow.ctr || 0,
+          purchases_7d: mWindow.purchases || 0,
+          purchase_value_7d: mWindow.purchase_value || 0,
+          add_to_cart_7d: mWindow.add_to_cart || 0,
+          initiate_checkout_7d: mWindow.initiate_checkout || 0,
           daily_budget: snap.daily_budget || 0,
+          active_ads: snap.ads_count || 0,
           status: snap.status
         };
 

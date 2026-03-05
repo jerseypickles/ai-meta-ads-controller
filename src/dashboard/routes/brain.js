@@ -287,6 +287,35 @@ router.post('/recommendations/:id/approve', async (req, res) => {
     rec.decided_at = new Date();
     rec.decision_note = req.body.note || '';
     rec.updated_at = new Date();
+
+    // Refresh baseline metrics from latest snapshot (más preciso que al generar la rec)
+    try {
+      const latestSnap = await MetricSnapshot.findOne({
+        entity_type: 'adset',
+        entity_id: rec.entity?.entity_id
+      }).sort({ snapshot_at: -1 }).lean();
+
+      if (latestSnap) {
+        const m7d = latestSnap.metrics?.last_7d || {};
+        rec.follow_up = rec.follow_up || {};
+        rec.follow_up.metrics_at_recommendation = {
+          roas_7d: m7d.roas || 0,
+          cpa_7d: m7d.cpa || 0,
+          spend_7d: m7d.spend || 0,
+          frequency_7d: m7d.frequency || 0,
+          ctr_7d: m7d.ctr || 0,
+          purchases_7d: m7d.purchases || 0,
+          purchase_value_7d: m7d.purchase_value || 0,
+          daily_budget: latestSnap.daily_budget || 0,
+          active_ads: latestSnap.ads_count || 0,
+          status: latestSnap.status
+        };
+        logger.info(`[BRAIN-API] Baseline refreshed at approval: ROAS ${m7d.roas?.toFixed(2)}, ads_count ${latestSnap.ads_count || 0}`);
+      }
+    } catch (snapErr) {
+      logger.warn(`[BRAIN-API] Error refreshing baseline (non-fatal): ${snapErr.message}`);
+    }
+
     await rec.save();
 
     logger.info(`[BRAIN-API] Recomendación aprobada: ${rec.title}`);
@@ -337,6 +366,26 @@ router.post('/recommendations/:id/mark-executed', async (req, res) => {
 
     logger.info(`[BRAIN-API] Recomendación marcada como ejecutada manualmente: ${rec.title}`);
     res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/brain/recommendations/pending-creative/:adsetId
+ * Check if there's an approved creative_refresh recommendation pending execution for an ad set.
+ * Used by AddCreativePanel to show a banner when uploading a creative that fulfills a Brain rec.
+ */
+router.get('/recommendations/pending-creative/:adsetId', async (req, res) => {
+  try {
+    const rec = await BrainRecommendation.findOne({
+      status: 'approved',
+      action_type: 'creative_refresh',
+      'entity.entity_id': req.params.adsetId,
+      'follow_up.action_executed': { $ne: true }
+    }).select('title action_detail entity priority created_at').lean();
+
+    res.json({ has_pending: !!rec, recommendation: rec || null });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

@@ -37,6 +37,9 @@ const metricSnapshotSchema = new mongoose.Schema({
   lifetime_budget: { type: Number, default: 0 },
   budget_remaining: { type: Number, default: 0 },
 
+  // Conteo de ads activos (nivel ad set)
+  ads_count: { type: Number, default: 0 },
+
   // Métricas por ventana de tiempo (today, last_3d, last_7d, last_14d, last_30d)
   metrics: {
     today: { type: metricsWindowSchema, default: () => ({}) },
