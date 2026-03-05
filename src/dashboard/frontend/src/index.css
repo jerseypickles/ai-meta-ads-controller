@@ -5256,6 +5256,603 @@ a:hover {
 }
 
 /* ═══════════════════════════════════════════
+   KNOWLEDGE PANEL V2 — 3D BRAIN DESIGN
+   ═══════════════════════════════════════════ */
+
+.knowledge-panel-v2 {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── Hero: 3D Brain + IQ ── */
+.kv2-hero {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  background: linear-gradient(135deg, rgba(99,102,241,0.06) 0%, rgba(16,185,129,0.04) 100%);
+  border: 1px solid rgba(99,102,241,0.12);
+  border-radius: var(--radius-lg, 12px);
+  padding: 16px;
+  min-height: 260px;
+}
+
+.kv2-brain-wrap {
+  flex: 1;
+  min-width: 0;
+  min-height: 240px;
+  position: relative;
+}
+
+.kv2-brain-placeholder {
+  width: 100%;
+  height: 240px;
+  background: rgba(99,102,241,0.05);
+  border-radius: var(--radius-md, 8px);
+}
+
+/* Knowledge Orb Container */
+.knowledge-orb-container {
+  width: 100%;
+  height: 240px;
+  position: relative;
+}
+
+.knowledge-orb-container canvas {
+  border-radius: var(--radius-md, 8px);
+}
+
+.knowledge-orb-tooltip {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15,15,25,0.92);
+  color: #e2e8f0;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 11px;
+  white-space: nowrap;
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  border: 1px solid rgba(99,102,241,0.25);
+  z-index: 5;
+}
+
+.knowledge-orb-legend {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  display: flex;
+  gap: 8px;
+  font-size: 9px;
+  color: rgba(255,255,255,0.5);
+  z-index: 5;
+}
+
+.legend-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 2px;
+  vertical-align: middle;
+}
+.legend-dot.memory { background: #3b82f6; }
+.legend-dot.hypothesis { background: #a855f7; }
+.legend-dot.temporal { background: #f97316; }
+.legend-dot.policy { background: #10b981; }
+
+/* ── IQ Panel ── */
+.kv2-iq-panel {
+  flex-shrink: 0;
+  width: 160px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.kv2-iq-score {
+  position: relative;
+  width: 110px;
+  height: 110px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.kv2-iq-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.kv2-iq-number {
+  font-size: 36px;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1;
+  z-index: 1;
+}
+
+.kv2-iq-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  z-index: 1;
+}
+
+.kv2-iq-subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.kv2-stats-mini {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.kv2-stat-pill {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  padding: 4px 8px;
+  text-align: center;
+  min-width: 48px;
+}
+
+.kv2-stat-val {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.kv2-stat-lbl {
+  display: block;
+  font-size: 9px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* ── Zone Tabs ── */
+.kv2-zone-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.kv2-zone-tab {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: var(--radius-md, 8px);
+  padding: 10px 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-muted);
+}
+
+.kv2-zone-tab:hover {
+  background: rgba(255,255,255,0.06);
+  border-color: var(--zone-color, rgba(255,255,255,0.15));
+}
+
+.kv2-zone-tab.active {
+  background: color-mix(in srgb, var(--zone-color) 10%, transparent);
+  border-color: var(--zone-color);
+  color: var(--text);
+}
+
+.kv2-zone-icon {
+  font-size: 18px;
+}
+
+.kv2-zone-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.kv2-zone-count {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.kv2-zone-tab.active .kv2-zone-count {
+  color: var(--zone-color);
+}
+
+/* ── Zone Detail Panels ── */
+.kv2-zone-detail {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid color-mix(in srgb, var(--zone-color) 20%, transparent);
+  border-radius: var(--radius-lg, 12px);
+  padding: 16px;
+  animation: fadeSlideIn 0.25s ease;
+}
+
+@keyframes fadeSlideIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.kv2-zone-header {
+  margin-bottom: 12px;
+}
+
+.kv2-zone-header h3 {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 2px 0;
+}
+
+.kv2-zone-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.kv2-empty-zone {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* ── Memory Zone ── */
+.kv2-outcome-bar {
+  display: flex;
+  height: 20px;
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 6px;
+  background: rgba(255,255,255,0.04);
+}
+
+.kv2-outcome-seg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: white;
+  min-width: 0;
+  transition: width 0.5s ease;
+}
+
+.kv2-outcome-seg.improved { background: #10b981; }
+.kv2-outcome-seg.neutral { background: #6b7280; }
+.kv2-outcome-seg.worsened { background: #ef4444; }
+
+.kv2-outcome-legend {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-bottom: 12px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.kv2-outcome-legend .improved::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #10b981; margin-right: 4px; vertical-align: middle; }
+.kv2-outcome-legend .neutral::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #6b7280; margin-right: 4px; vertical-align: middle; }
+.kv2-outcome-legend .worsened::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #ef4444; margin-right: 4px; vertical-align: middle; }
+
+.kv2-entity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kv2-entity-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(59,130,246,0.1);
+  border-radius: var(--radius-md, 8px);
+  padding: 10px 12px;
+  animation: fadeSlideIn 0.25s ease backwards;
+}
+
+.kv2-entity-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.kv2-entity-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 80%;
+}
+
+.kv2-entity-trend {
+  font-size: 14px;
+  font-weight: 700;
+}
+.kv2-entity-trend.improving { color: #10b981; }
+.kv2-entity-trend.declining { color: #ef4444; }
+.kv2-entity-trend.stable { color: #6b7280; }
+
+.kv2-entity-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.kv2-action-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.kv2-action-chip.improved { border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.08); }
+.kv2-action-chip.worsened { border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.08); }
+.kv2-action-chip.neutral { border-color: rgba(107,114,128,0.3); }
+
+.kv2-action-delta {
+  font-weight: 700;
+  font-size: 9px;
+}
+
+.kv2-action-chip.improved .kv2-action-delta { color: #10b981; }
+.kv2-action-chip.worsened .kv2-action-delta { color: #ef4444; }
+
+/* ── Hypothesis Zone ── */
+.kv2-hyp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kv2-hyp-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(168,85,247,0.1);
+  border-radius: var(--radius-md, 8px);
+  padding: 10px 12px;
+  animation: fadeSlideIn 0.25s ease backwards;
+}
+
+.kv2-hyp-card.confirmed { border-color: rgba(16,185,129,0.25); background: rgba(16,185,129,0.04); }
+.kv2-hyp-card.rejected { border-color: rgba(239,68,68,0.2); background: rgba(239,68,68,0.03); opacity: 0.7; }
+
+.kv2-hyp-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.kv2-hyp-card.confirmed .kv2-hyp-status { color: #10b981; }
+.kv2-hyp-card.rejected .kv2-hyp-status { color: #ef4444; }
+.kv2-hyp-card.active .kv2-hyp-status { color: #a855f7; }
+
+.kv2-hyp-text {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+
+.kv2-hyp-action {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.kv2-hyp-result {
+  font-size: 11px;
+  color: var(--text-secondary, #94a3b8);
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+
+/* ── Temporal Zone ── */
+.kv2-temporal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+
+.kv2-temporal-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(249,115,22,0.1);
+  border-radius: var(--radius-md, 8px);
+  padding: 8px 4px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+  min-height: 130px;
+}
+
+.kv2-temporal-card.today {
+  border-color: #f97316;
+  background: rgba(249,115,22,0.08);
+  box-shadow: 0 0 12px rgba(249,115,22,0.15);
+}
+
+.kv2-temporal-card.empty {
+  opacity: 0.4;
+}
+
+.kv2-temporal-day {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  text-transform: uppercase;
+}
+
+.kv2-temporal-today-badge {
+  position: absolute;
+  top: -6px;
+  right: -4px;
+  background: #f97316;
+  color: white;
+  font-size: 7px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 6px;
+  letter-spacing: 0.5px;
+}
+
+.kv2-temporal-bar-wrap {
+  flex: 1;
+  width: 18px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 4px;
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+}
+
+.kv2-temporal-bar {
+  width: 100%;
+  background: linear-gradient(to top, #f97316, #fb923c);
+  border-radius: 4px 4px 0 0;
+  transition: height 0.5s ease;
+  min-height: 3px;
+}
+
+.kv2-temporal-card.today .kv2-temporal-bar {
+  background: linear-gradient(to top, #f97316, #fbbf24);
+}
+
+.kv2-temporal-metrics {
+  font-size: 10px;
+}
+
+.kv2-temporal-val {
+  font-weight: 700;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.kv2-temporal-lbl {
+  color: var(--text-muted);
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
+.kv2-temporal-cpa {
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.kv2-temporal-samples {
+  font-size: 8px;
+  color: var(--text-muted);
+}
+
+/* ── Policy Zone ── */
+.kv2-policy-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kv2-policy-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  animation: fadeSlideIn 0.25s ease backwards;
+}
+
+.kv2-policy-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 130px;
+  flex-shrink: 0;
+}
+
+.kv2-policy-icon { font-size: 14px; }
+.kv2-policy-name { font-size: 12px; font-weight: 600; color: var(--text); }
+.kv2-policy-count { font-size: 10px; color: var(--text-muted); }
+
+.kv2-policy-bar-wrap {
+  flex: 1;
+  height: 22px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 11px;
+  overflow: hidden;
+  position: relative;
+}
+
+.kv2-policy-bar {
+  height: 100%;
+  border-radius: 11px;
+  transition: width 0.5s ease;
+  min-width: 2px;
+}
+
+.kv2-policy-pct {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  font-weight: 700;
+  color: white;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+}
+
+/* ── Cycle Footer ── */
+.kv2-cycle-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: var(--radius-md, 8px);
+  font-size: 11px;
+}
+
+.kv2-cycle-assess {
+  color: var(--text);
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.kv2-cycle-meta {
+  color: var(--text-muted);
+}
+
+/* ═══════════════════════════════════════════
    UPLOAD CREATIVE PANEL
    ═══════════════════════════════════════════ */
 

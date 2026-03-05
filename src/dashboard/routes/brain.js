@@ -9,6 +9,8 @@ const BrainKnowledgeSnapshot = require('../../db/models/BrainKnowledgeSnapshot')
 const MetricSnapshot = require('../../db/models/MetricSnapshot');
 const ActionLog = require('../../db/models/ActionLog');
 const SystemConfig = require('../../db/models/SystemConfig');
+const BrainCycleMemory = require('../../db/models/BrainCycleMemory');
+const BrainTemporalPattern = require('../../db/models/BrainTemporalPattern');
 const logger = require('../../utils/logger');
 
 const analyzer = new BrainAnalyzer();
@@ -736,6 +738,185 @@ router.get('/knowledge/history', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// ═══ DEEP KNOWLEDGE — All 4 intelligence systems in one call ═══
+
+/**
+ * GET /api/brain/knowledge/deep
+ * Returns unified view of all Brain knowledge systems:
+ *   1. Entity memories with action_history
+ *   2. Temporal patterns (day-of-week baselines)
+ *   3. Hypotheses (active, confirmed, rejected)
+ *   4. Thompson Sampling policy stats (summary)
+ */
+router.get('/knowledge/deep', async (req, res) => {
+  try {
+    const [memories, temporalPatterns, cycleMemories, policyRaw, followUpRecs] = await Promise.all([
+      BrainMemory.find({}).sort({ last_updated_at: -1 }).lean(),
+      BrainTemporalPattern.find({ pattern_type: 'day_of_week' }).sort({ pattern_key: 1 }).lean(),
+      BrainCycleMemory.find({}).sort({ created_at: -1 }).limit(10).lean(),
+      SystemConfig.get('unified_policy_learning_v1', null),
+      BrainRecommendation.find({ status: { $in: ['approved', 'measured'] } })
+        .sort({ decided_at: -1 }).limit(50).lean()
+    ]);
+
+    // 1. Entity memories — only those with action_history
+    const entitiesWithHistory = memories
+      .filter(m => m.action_history && m.action_history.length > 0)
+      .map(m => ({
+        entity_id: m.entity_id,
+        entity_name: m.entity_name,
+        entity_type: m.entity_type,
+        last_status: m.last_status,
+        trends: m.trends,
+        action_history: m.action_history.slice(-10),
+        last_updated_at: m.last_updated_at
+      }));
+
+    // Count all action outcomes across entities
+    let totalActions = 0, improved = 0, worsened = 0, neutral = 0;
+    for (const m of memories) {
+      if (m.action_history) {
+        for (const a of m.action_history) {
+          totalActions++;
+          if (a.result === 'improved') improved++;
+          else if (a.result === 'worsened') worsened++;
+          else neutral++;
+        }
+      }
+    }
+
+    // 2. Temporal patterns — day of week
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const todayKey = dayNames[new Date().getDay()];
+    const temporal = temporalPatterns.map(tp => ({
+      day: tp.pattern_key,
+      is_today: tp.pattern_key === todayKey,
+      metrics: tp.metrics,
+      sample_count: tp.metrics?.sample_count || 0
+    }));
+
+    // 3. Hypotheses — collect from all cycle memories
+    const allHypotheses = [];
+    for (const cm of cycleMemories) {
+      if (cm.hypotheses) {
+        for (const h of cm.hypotheses) {
+          allHypotheses.push({
+            hypothesis: h.hypothesis,
+            proposed_action: h.proposed_action,
+            status: h.status,
+            created_cycle_id: h.created_cycle_id || cm.cycle_id,
+            validated_at: h.validated_at,
+            validation_result: h.validation_result
+          });
+        }
+      }
+    }
+    // Dedup by hypothesis text — keep most recent
+    const hypMap = new Map();
+    for (const h of allHypotheses) {
+      const key = h.hypothesis.substring(0, 80);
+      if (!hypMap.has(key)) hypMap.set(key, h);
+    }
+    const hypotheses = Array.from(hypMap.values());
+
+    // 4. Thompson Sampling summary
+    let policySummary = { total_samples: 0, total_buckets: 0, top_actions: [] };
+    if (policyRaw) {
+      const buckets = policyRaw.buckets || {};
+      const actionStats = {};
+      for (const bKey of Object.keys(buckets)) {
+        for (const [action, stats] of Object.entries(buckets[bKey])) {
+          if (!actionStats[action]) actionStats[action] = { count: 0, alpha: 0, beta: 0 };
+          actionStats[action].count += stats.count || 0;
+          actionStats[action].alpha += stats.alpha || 0;
+          actionStats[action].beta += stats.beta || 0;
+        }
+      }
+      policySummary = {
+        total_samples: policyRaw.total_samples || 0,
+        total_buckets: Object.keys(buckets).length,
+        top_actions: Object.entries(actionStats)
+          .map(([action, s]) => ({
+            action,
+            count: s.count,
+            success_rate: (s.alpha + s.beta) > 0 ? Math.round((s.alpha / (s.alpha + s.beta)) * 100) : 50
+          }))
+          .sort((a, b) => b.count - a.count)
+      };
+    }
+
+    // 5. Win/loss from follow-ups
+    const measured = followUpRecs.filter(r => r.status === 'measured');
+    const winRate = measured.length > 0
+      ? Math.round((measured.filter(r => r.measurement?.verdict === 'positive').length / measured.length) * 100)
+      : 0;
+
+    res.json({
+      // Summary stats
+      iq_score: _calculateIQ(memories, temporalPatterns, hypotheses, policySummary, measured),
+      entities_tracked: memories.length,
+      entities_with_history: entitiesWithHistory.length,
+      total_action_outcomes: totalActions,
+      action_outcomes: { improved, worsened, neutral },
+      win_rate: winRate,
+      total_measured: measured.length,
+
+      // Detailed data
+      entity_memories: entitiesWithHistory.slice(0, 20),
+      temporal_patterns: temporal,
+      hypotheses,
+      policy: policySummary,
+
+      // Cycle memory count
+      cycle_memories_count: cycleMemories.length,
+      last_cycle: cycleMemories[0] ? {
+        cycle_id: cycleMemories[0].cycle_id,
+        account_assessment: cycleMemories[0].account_assessment,
+        conclusions_count: cycleMemories[0].conclusions?.length || 0,
+        created_at: cycleMemories[0].created_at
+      } : null
+    });
+  } catch (error) {
+    logger.error(`[BRAIN-API] Error en knowledge/deep: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Calculate Brain IQ score (0-100) from knowledge systems
+ */
+function _calculateIQ(memories, temporalPatterns, hypotheses, policy, measured) {
+  let score = 30; // base
+
+  // Memory breadth: +1 per entity with history, max +15
+  const withHistory = memories.filter(m => m.action_history && m.action_history.length > 0).length;
+  score += Math.min(15, withHistory * 2);
+
+  // Temporal maturity: +2 per day with 4+ samples, max +14
+  const matureDays = temporalPatterns.filter(t => (t.metrics?.sample_count || 0) >= 4).length;
+  score += Math.min(14, matureDays * 2);
+
+  // Hypothesis validation: +3 per validated, max +12
+  const validated = hypotheses.filter(h => h.status === 'confirmed' || h.status === 'rejected').length;
+  score += Math.min(12, validated * 3);
+
+  // Active hypotheses: +1 per active, max +4
+  const active = hypotheses.filter(h => h.status === 'active').length;
+  score += Math.min(4, active);
+
+  // Thompson samples: logarithmic scale, max +15
+  const samples = policy.total_samples || 0;
+  if (samples > 0) score += Math.min(15, Math.round(Math.log2(samples + 1) * 2));
+
+  // Win rate bonus: if measured > 5 and win > 60%, +5-10
+  if (measured.length >= 5) {
+    const wr = measured.filter(r => r.measurement?.verdict === 'positive').length / measured.length;
+    score += Math.min(10, Math.round(wr * 15));
+  }
+
+  return Math.min(100, Math.round(score));
+}
 
 // ═══ CREATIVE / AD PERFORMANCE TRACKING ═══
 

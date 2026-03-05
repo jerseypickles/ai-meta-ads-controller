@@ -7,11 +7,12 @@ import {
   clearBrainChatHistory, getBrainStats, getBrainRecommendations,
   approveRecommendation, rejectRecommendation, markRecommendationExecuted,
   triggerBrainRecommendations, getFollowUpStats,
-  getPolicyState, getKnowledgeHistory, getCreativePerformance, logout
+  getPolicyState, getKnowledgeHistory, getDeepKnowledge, getCreativePerformance, logout
 } from '../api';
 
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
 const ImpactOrb = React.lazy(() => import('../components/ImpactOrb'));
+const BrainKnowledgeOrb = React.lazy(() => import('../components/BrainKnowledgeOrb'));
 
 // ═══ CONSTANTES ═══
 
@@ -1807,23 +1808,18 @@ function FollowUpPanel({ formatTime, onApprovalAction }) {
 // ═══ KNOWLEDGE PANEL ═══
 
 function KnowledgePanel({ formatTime }) {
-  const [policyState, setPolicyState] = useState(null);
-  const [history, setHistory] = useState([]);
+  const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [activeZone, setActiveZone] = useState(null); // memory | hypothesis | temporal | policy
 
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
-        const [stateData, historyData] = await Promise.all([
-          getPolicyState(),
-          getKnowledgeHistory(30)
-        ]);
-        setPolicyState(stateData);
-        setHistory(historyData.snapshots || []);
+        const deepData = await getDeepKnowledge();
+        setData(deepData);
       } catch (err) {
-        console.error('Error loading knowledge data:', err);
+        console.error('Error loading deep knowledge:', err);
       } finally {
         setLoading(false);
       }
@@ -1831,199 +1827,188 @@ function KnowledgePanel({ formatTime }) {
   }, []);
 
   if (loading) return <div className="feed-empty">Cargando conocimiento del Brain...</div>;
+  if (!data) return <div className="feed-empty"><p>Error cargando datos de conocimiento.</p></div>;
+
+  const iq = data.iq_score || 30;
+  const iqColor = iq >= 75 ? '#10b981' : iq >= 55 ? '#6366f1' : iq >= 40 ? '#3b82f6' : '#f59e0b';
+  const iqLabel = iq >= 75 ? 'Experto' : iq >= 55 ? 'Aprendiendo' : iq >= 40 ? 'Principiante' : 'Inicial';
 
   return (
-    <div className="knowledge-panel">
-      {/* Knowledge Hero */}
-      {policyState && (
-        <div className="knowledge-hero">
-          <div className="knowledge-hero-grid">
-            <div className="knowledge-hero-card main">
-              <div className="knowledge-hero-icon">🧬</div>
-              <div className="knowledge-hero-value">{policyState.total_samples}</div>
-              <div className="knowledge-hero-label">Muestras aprendidas</div>
-              <div className="knowledge-hero-bar">
-                <div className="knowledge-hero-fill" style={{ width: `${Math.min(100, (policyState.total_samples / 200) * 100)}%` }} />
-              </div>
+    <div className="knowledge-panel knowledge-panel-v2">
+      {/* ── Hero: 3D Brain + IQ Score ── */}
+      <div className="kv2-hero">
+        <div className="kv2-brain-wrap">
+          <Suspense fallback={<div className="kv2-brain-placeholder" />}>
+            <BrainKnowledgeOrb data={data} />
+          </Suspense>
+        </div>
+        <div className="kv2-iq-panel">
+          <div className="kv2-iq-score" style={{ '--iq-color': iqColor }}>
+            <svg viewBox="0 0 120 120" className="kv2-iq-ring">
+              <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="6" />
+              <circle cx="60" cy="60" r="52" fill="none" stroke={iqColor} strokeWidth="6"
+                strokeDasharray={`${(iq / 100) * 327} 327`} strokeLinecap="round"
+                transform="rotate(-90 60 60)" style={{ transition: 'stroke-dasharray 1s ease' }} />
+            </svg>
+            <div className="kv2-iq-number">{iq}</div>
+            <div className="kv2-iq-label" style={{ color: iqColor }}>{iqLabel}</div>
+          </div>
+          <div className="kv2-iq-subtitle">Brain IQ</div>
+          <div className="kv2-stats-mini">
+            <div className="kv2-stat-pill">
+              <span className="kv2-stat-val">{data.entities_tracked}</span>
+              <span className="kv2-stat-lbl">Entidades</span>
             </div>
-            <div className="knowledge-hero-card">
-              <div className="knowledge-hero-icon">🔮</div>
-              <div className="knowledge-hero-value">{policyState.total_buckets}</div>
-              <div className="knowledge-hero-label">Contextos</div>
+            <div className="kv2-stat-pill">
+              <span className="kv2-stat-val">{data.total_measured}</span>
+              <span className="kv2-stat-lbl">Medidas</span>
             </div>
-            <div className="knowledge-hero-card">
-              <div className="knowledge-hero-icon">🕐</div>
-              <div className="knowledge-hero-value kh-time">
-                {policyState.updated_at ? formatTime(policyState.updated_at) : 'N/A'}
-              </div>
-              <div className="knowledge-hero-label">Ultima actualizacion</div>
+            <div className="kv2-stat-pill">
+              <span className="kv2-stat-val">{data.win_rate}%</span>
+              <span className="kv2-stat-lbl">Win Rate</span>
             </div>
           </div>
         </div>
-      )}
+      </div>
 
-      {/* Top Actions Performance */}
-      {policyState?.top_actions?.length > 0 && (
-        <div className="knowledge-section">
-          <div className="knowledge-section-header">
-            <h3 className="knowledge-section-title">Rendimiento por accion</h3>
-            <span className="knowledge-section-badge">Thompson Sampling</span>
+      {/* ── Zone Selector ── */}
+      <div className="kv2-zone-tabs">
+        {[
+          { key: 'memory', icon: '\uD83E\uDDE0', label: 'Memoria', count: data.entities_with_history, color: '#3b82f6' },
+          { key: 'hypothesis', icon: '\uD83E\uDD14', label: 'Hipotesis', count: data.hypotheses?.length || 0, color: '#a855f7' },
+          { key: 'temporal', icon: '\uD83D\uDCC5', label: 'Temporal', count: data.temporal_patterns?.filter(t => t.sample_count > 0).length || 0, color: '#f97316' },
+          { key: 'policy', icon: '\uD83C\uDFAF', label: 'Decisiones', count: data.policy?.total_samples || 0, color: '#10b981' }
+        ].map(z => (
+          <button
+            key={z.key}
+            className={`kv2-zone-tab ${activeZone === z.key ? 'active' : ''}`}
+            style={{ '--zone-color': z.color }}
+            onClick={() => setActiveZone(activeZone === z.key ? null : z.key)}
+          >
+            <span className="kv2-zone-icon">{z.icon}</span>
+            <span className="kv2-zone-label">{z.label}</span>
+            <span className="kv2-zone-count">{z.count}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* ── Zone Detail Panels ── */}
+      {activeZone === 'memory' && (
+        <div className="kv2-zone-detail" style={{ '--zone-color': '#3b82f6' }}>
+          <div className="kv2-zone-header">
+            <h3>Memoria por Entidad</h3>
+            <span className="kv2-zone-desc">Historial de acciones y resultados por ad set</span>
           </div>
-          <div className="knowledge-actions-table">
-            <div className="knowledge-table-header">
-              <span className="kt-col action">Accion</span>
-              <span className="kt-col count">Muestras</span>
-              <span className="kt-col reward">Reward</span>
-              <span className="kt-col rate">Exito</span>
-              <span className="kt-col bar">Confianza</span>
+          {/* Outcome summary */}
+          {data.total_action_outcomes > 0 && (
+            <div className="kv2-outcome-bar">
+              <div className="kv2-outcome-seg improved" style={{ width: `${(data.action_outcomes.improved / data.total_action_outcomes) * 100}%` }}>
+                {data.action_outcomes.improved > 0 && <span>{data.action_outcomes.improved}</span>}
+              </div>
+              <div className="kv2-outcome-seg neutral" style={{ width: `${(data.action_outcomes.neutral / data.total_action_outcomes) * 100}%` }}>
+                {data.action_outcomes.neutral > 0 && <span>{data.action_outcomes.neutral}</span>}
+              </div>
+              <div className="kv2-outcome-seg worsened" style={{ width: `${(data.action_outcomes.worsened / data.total_action_outcomes) * 100}%` }}>
+                {data.action_outcomes.worsened > 0 && <span>{data.action_outcomes.worsened}</span>}
+              </div>
             </div>
-            {policyState.top_actions.map(a => {
-              const actionCfg = ACTION_TYPE_CONFIG[a.action] || { icon: '\uD83D\uDCCB', label: a.action };
-              return (
-                <div key={a.action} className="knowledge-table-row">
-                  <span className="kt-col action">
-                    {actionCfg.icon} {actionCfg.label}
-                  </span>
-                  <span className="kt-col count">{a.count}</span>
-                  <span className={`kt-col reward ${a.avg_reward >= 0 ? 'positive' : 'negative'}`}>
-                    {a.avg_reward > 0 ? '+' : ''}{a.avg_reward.toFixed(3)}
-                  </span>
-                  <span className={`kt-col rate ${a.success_rate >= 55 ? 'good' : a.success_rate >= 45 ? '' : 'bad'}`}>
-                    {a.success_rate}%
-                  </span>
-                  <span className="kt-col bar">
-                    <div className="knowledge-confidence-bar">
-                      <div
-                        className={`knowledge-confidence-fill ${a.success_rate >= 55 ? 'good' : a.success_rate >= 45 ? 'mid' : 'low'}`}
-                        style={{ width: `${Math.min(100, a.success_rate)}%` }}
-                      />
-                    </div>
+          )}
+          <div className="kv2-outcome-legend">
+            <span className="improved">Mejoro</span>
+            <span className="neutral">Neutral</span>
+            <span className="worsened">Empeoro</span>
+          </div>
+          {/* Entity list */}
+          <div className="kv2-entity-list">
+            {(data.entity_memories || []).map((entity, i) => (
+              <div key={entity.entity_id} className="kv2-entity-card" style={{ animationDelay: `${i * 0.04}s` }}>
+                <div className="kv2-entity-header">
+                  <span className="kv2-entity-name">{entity.entity_name}</span>
+                  <span className={`kv2-entity-trend ${entity.trends?.roas_direction || ''}`}>
+                    {entity.trends?.roas_direction === 'improving' ? '\u2191' : entity.trends?.roas_direction === 'declining' ? '\u2193' : '\u2192'}
                   </span>
                 </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Top Buckets (Contexts) */}
-      {policyState?.buckets_summary?.length > 0 && (
-        <div className="knowledge-section">
-          <div className="knowledge-section-header">
-            <h3 className="knowledge-section-title">Contextos mas explorados</h3>
-            <span className="knowledge-section-count">{policyState.buckets_summary.length} contextos</span>
-          </div>
-          <div className="knowledge-buckets">
-            {policyState.buckets_summary.slice(0, 8).map((b, i) => {
-              const parts = b.bucket.split('|');
-              return (
-                <div key={i} className="knowledge-bucket-card" style={{ animationDelay: `${i * 0.04}s` }}>
-                  <div className="knowledge-bucket-header">
-                    <span className="knowledge-bucket-samples">{b.total_samples} muestras</span>
-                    <span className={`knowledge-bucket-reward ${b.avg_reward >= 0 ? 'positive' : 'negative'}`}>
-                      {b.avg_reward > 0 ? '+' : ''}{b.avg_reward.toFixed(3)}
-                    </span>
-                  </div>
-                  <div className="knowledge-bucket-dims">
-                    {parts.map((p, j) => (
-                      <span key={j} className="knowledge-dim-tag">{p}</span>
-                    ))}
-                  </div>
-                  <div className="knowledge-bucket-actions">
-                    {b.actions.slice(0, 3).map((a, j) => {
-                      const acfg = ACTION_TYPE_CONFIG[a.action] || { icon: '', label: a.action };
-                      return (
-                        <span key={j} className="knowledge-bucket-action">
-                          {acfg.icon} {acfg.label}: {a.count}x
-                          <span className={`bucket-action-rate ${a.mean >= 0.55 ? 'good' : a.mean < 0.45 ? 'bad' : ''}`}>
-                            ({(a.mean * 100).toFixed(0)}%)
+                <div className="kv2-entity-actions">
+                  {entity.action_history.slice(-5).map((a, j) => {
+                    const acfg = ACTION_TYPE_CONFIG[a.action_type] || { icon: '', label: a.action_type };
+                    return (
+                      <span key={j} className={`kv2-action-chip ${a.result}`}>
+                        {acfg.icon} {acfg.label}
+                        {a.roas_delta_pct !== 0 && (
+                          <span className="kv2-action-delta">
+                            {a.roas_delta_pct > 0 ? '+' : ''}{Math.round(a.roas_delta_pct)}%
                           </span>
-                        </span>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Daily Evolution */}
-      {history.length > 0 && (
-        <div className="knowledge-section">
-          <div className="knowledge-section-header">
-            <h3 className="knowledge-section-title">Evolucion diaria</h3>
-            <button
-              className="knowledge-toggle-btn"
-              onClick={() => setHistoryExpanded(!historyExpanded)}
-            >
-              {historyExpanded ? 'Colapsar' : `Ver ${history.length} dias`}
-            </button>
-          </div>
-          <div className="knowledge-history">
-            {(historyExpanded ? history.slice().reverse() : history.slice().reverse().slice(0, 5)).map((snap, i) => {
-              const prevSnap = history[history.length - 1 - i - 1];
-              const samplesDelta = prevSnap ? snap.total_samples - prevSnap.total_samples : snap.total_samples;
-              const wrDelta = prevSnap ? snap.win_rate - prevSnap.win_rate : 0;
-              return (
-                <div key={snap.date} className="knowledge-day-card" style={{ animationDelay: `${i * 0.03}s` }}>
-                  <div className="knowledge-day-header">
-                    <span className="knowledge-day-date">{snap.date}</span>
-                    <div className="knowledge-day-badges">
-                      {snap.insights_generated > 0 && (
-                        <span className="knowledge-day-badge insights">{snap.insights_generated} insights</span>
-                      )}
-                      {snap.recommendations_generated > 0 && (
-                        <span className="knowledge-day-badge recs">{snap.recommendations_generated} recs</span>
-                      )}
-                      {snap.recommendations_approved > 0 && (
-                        <span className="knowledge-day-badge approved">{snap.recommendations_approved} aprobadas</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="knowledge-day-metrics">
-                    <div className="knowledge-day-metric">
-                      <span className="knowledge-day-metric-value">{snap.total_samples}</span>
-                      <span className="knowledge-day-metric-label">Muestras</span>
-                      {samplesDelta > 0 && (
-                        <span className="knowledge-day-metric-delta positive">+{samplesDelta}</span>
-                      )}
-                    </div>
-                    <div className="knowledge-day-metric">
-                      <span className="knowledge-day-metric-value">{snap.win_rate}%</span>
-                      <span className="knowledge-day-metric-label">Win Rate</span>
-                      {wrDelta !== 0 && (
-                        <span className={`knowledge-day-metric-delta ${wrDelta >= 0 ? 'positive' : 'negative'}`}>
-                          {wrDelta > 0 ? '+' : ''}{wrDelta}%
-                        </span>
-                      )}
-                    </div>
-                    <div className="knowledge-day-metric">
-                      <span className="knowledge-day-metric-value">{snap.total_buckets}</span>
-                      <span className="knowledge-day-metric-label">Contextos</span>
-                    </div>
-                    <div className="knowledge-day-metric">
-                      <span className={`knowledge-day-metric-value ${snap.avg_reward >= 0 ? 'positive' : 'negative'}`}>
-                        {snap.avg_reward > 0 ? '+' : ''}{snap.avg_reward.toFixed(3)}
+                        )}
                       </span>
-                      <span className="knowledge-day-metric-label">Reward</span>
-                    </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+            {(!data.entity_memories || data.entity_memories.length === 0) && (
+              <div className="kv2-empty-zone">Aun no hay entidades con historial. Se llenara cuando se midan acciones aprobadas.</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeZone === 'hypothesis' && (
+        <div className="kv2-zone-detail" style={{ '--zone-color': '#a855f7' }}>
+          <div className="kv2-zone-header">
+            <h3>Hipotesis del Brain</h3>
+            <span className="kv2-zone-desc">Ideas que el Brain esta probando o ya valido</span>
+          </div>
+          <div className="kv2-hyp-list">
+            {(data.hypotheses || []).map((h, i) => (
+              <div key={i} className={`kv2-hyp-card ${h.status}`} style={{ animationDelay: `${i * 0.04}s` }}>
+                <div className="kv2-hyp-status">
+                  {h.status === 'confirmed' ? '\u2705' : h.status === 'rejected' ? '\u274C' : '\u23F3'}
+                  <span>{h.status === 'confirmed' ? 'Confirmada' : h.status === 'rejected' ? 'Rechazada' : 'Activa'}</span>
+                </div>
+                <div className="kv2-hyp-text">{h.hypothesis}</div>
+                {h.proposed_action && (
+                  <div className="kv2-hyp-action">Accion propuesta: {h.proposed_action}</div>
+                )}
+                {h.validation_result && (
+                  <div className="kv2-hyp-result">{h.validation_result}</div>
+                )}
+              </div>
+            ))}
+            {(!data.hypotheses || data.hypotheses.length === 0) && (
+              <div className="kv2-empty-zone">El Brain aun no ha generado hipotesis. Se crean al final de cada ciclo de analisis.</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeZone === 'temporal' && (
+        <div className="kv2-zone-detail" style={{ '--zone-color': '#f97316' }}>
+          <div className="kv2-zone-header">
+            <h3>Patrones Temporales</h3>
+            <span className="kv2-zone-desc">Promedios por dia de la semana (se estabilizan con mas datos)</span>
+          </div>
+          <div className="kv2-temporal-grid">
+            {['sunday','monday','tuesday','wednesday','thursday','friday','saturday'].map((day, i) => {
+              const dayLabels = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
+              const tp = (data.temporal_patterns || []).find(t => t.day === day);
+              const samples = tp?.sample_count || 0;
+              const isToday = tp?.is_today;
+              const roas = tp?.metrics?.avg_roas || 0;
+              const cpa = tp?.metrics?.avg_cpa || 0;
+              const maxRoas = Math.max(...(data.temporal_patterns || []).map(t => t.metrics?.avg_roas || 0), 1);
+              return (
+                <div key={day} className={`kv2-temporal-card ${isToday ? 'today' : ''} ${samples === 0 ? 'empty' : ''}`}>
+                  <div className="kv2-temporal-day">{dayLabels[i]}</div>
+                  {isToday && <div className="kv2-temporal-today-badge">HOY</div>}
+                  <div className="kv2-temporal-bar-wrap">
+                    <div className="kv2-temporal-bar" style={{ height: `${roas > 0 ? Math.max(10, (roas / maxRoas) * 100) : 5}%` }} />
                   </div>
-                  {snap.total_actions_measured > 0 && (
-                    <div className="knowledge-day-verdicts">
-                      <div className="followup-action-bar">
-                        <div className="bar-segment positive" style={{ width: `${(snap.actions_by_verdict.positive / snap.total_actions_measured) * 100}%` }} />
-                        <div className="bar-segment neutral" style={{ width: `${(snap.actions_by_verdict.neutral / snap.total_actions_measured) * 100}%` }} />
-                        <div className="bar-segment negative" style={{ width: `${(snap.actions_by_verdict.negative / snap.total_actions_measured) * 100}%` }} />
-                      </div>
-                      <div className="knowledge-day-verdict-labels">
-                        <span className="positive">{snap.actions_by_verdict.positive} ok</span>
-                        <span className="neutral">{snap.actions_by_verdict.neutral} neutral</span>
-                        <span className="negative">{snap.actions_by_verdict.negative} mal</span>
-                      </div>
-                    </div>
-                  )}
+                  <div className="kv2-temporal-metrics">
+                    <div className="kv2-temporal-val">{roas > 0 ? roas.toFixed(2) : '-'}</div>
+                    <div className="kv2-temporal-lbl">ROAS</div>
+                    {cpa > 0 && <div className="kv2-temporal-cpa">${cpa.toFixed(0)} CPA</div>}
+                  </div>
+                  <div className="kv2-temporal-samples">{samples} muestras</div>
                 </div>
               );
             })}
@@ -2031,11 +2016,46 @@ function KnowledgePanel({ formatTime }) {
         </div>
       )}
 
-      {!policyState?.total_samples && history.length === 0 && (
-        <div className="feed-empty">
-          <div className="feed-empty-icon">{'\uD83E\uDDE0'}</div>
-          <p>El Brain aun no tiene datos de aprendizaje.</p>
-          <p className="feed-empty-hint">A medida que se ejecuten acciones y se mida su impacto, el Brain acumulara conocimiento aqui.</p>
+      {activeZone === 'policy' && (
+        <div className="kv2-zone-detail" style={{ '--zone-color': '#10b981' }}>
+          <div className="kv2-zone-header">
+            <h3>Politica de Decisiones</h3>
+            <span className="kv2-zone-desc">Thompson Sampling — {data.policy?.total_samples || 0} muestras en {data.policy?.total_buckets || 0} contextos</span>
+          </div>
+          <div className="kv2-policy-actions">
+            {(data.policy?.top_actions || []).map((a, i) => {
+              const acfg = ACTION_TYPE_CONFIG[a.action] || { icon: '', label: a.action };
+              const barWidth = Math.min(100, a.success_rate);
+              const barColor = a.success_rate >= 60 ? '#10b981' : a.success_rate >= 45 ? '#f59e0b' : '#ef4444';
+              return (
+                <div key={a.action} className="kv2-policy-row" style={{ animationDelay: `${i * 0.04}s` }}>
+                  <div className="kv2-policy-action">
+                    <span className="kv2-policy-icon">{acfg.icon}</span>
+                    <span className="kv2-policy-name">{acfg.label}</span>
+                    <span className="kv2-policy-count">{a.count}x</span>
+                  </div>
+                  <div className="kv2-policy-bar-wrap">
+                    <div className="kv2-policy-bar" style={{ width: `${barWidth}%`, background: barColor }} />
+                    <span className="kv2-policy-pct">{a.success_rate}%</span>
+                  </div>
+                </div>
+              );
+            })}
+            {(!data.policy?.top_actions || data.policy.top_actions.length === 0) && (
+              <div className="kv2-empty-zone">Aun no hay datos de Thompson Sampling. Se llena cuando se miden acciones aprobadas.</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Cycle Memory ── */}
+      {data.last_cycle && (
+        <div className="kv2-cycle-footer">
+          <span className="kv2-cycle-assess">{data.last_cycle.account_assessment || 'N/A'}</span>
+          <span className="kv2-cycle-meta">
+            Ultimo ciclo: {data.last_cycle.conclusions_count} conclusiones
+            {data.last_cycle.created_at && ` \u00B7 ${formatTime(data.last_cycle.created_at)}`}
+          </span>
         </div>
       )}
     </div>
