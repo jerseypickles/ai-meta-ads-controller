@@ -198,11 +198,16 @@ export default function BrainIntelligence() {
     const msg = chatInput.trim();
     if (!msg || chatSending) return;
 
-    // Prepend rec context if attached
+    // Prepend rec/followup context if attached
     let fullMsg = msg;
     let displayMsg = msg;
     if (attachedRec) {
-      const recCtx = `[Rec: "${attachedRec.title}" — ${attachedRec.action_type} — ${attachedRec.entity?.entity_name || 'N/A'} — Conf: ${attachedRec.confidence_score || 50}%] `;
+      let recCtx;
+      if (attachedRec._isFollowUp) {
+        recCtx = `[Seguimiento: "${attachedRec.title}" — ${attachedRec.action_type} — ${attachedRec.entity?.entity_name || 'N/A'} — ${attachedRec._followUpContext}] `;
+      } else {
+        recCtx = `[Rec: "${attachedRec.title}" — ${attachedRec.action_type} — ${attachedRec.entity?.entity_name || 'N/A'} — Conf: ${attachedRec.confidence_score || 50}%] `;
+      }
       fullMsg = recCtx + msg;
       displayMsg = fullMsg;
       setAttachedRec(null);
@@ -254,6 +259,25 @@ export default function BrainIntelligence() {
 
   const handleDiscussRec = (rec) => {
     setAttachedRec(rec);
+    setActiveTab('chat');
+    setChatInput('');
+    setTimeout(() => chatInputRef.current?.focus(), 100);
+  };
+
+  const handleDiscussFollowUp = (followUp) => {
+    // Build a rich context object that looks like a rec for the chat
+    const d3Info = followUp.day_3
+      ? ` — Dia 3: ROAS ${followUp.day_3.roas_pct > 0 ? '+' : ''}${followUp.day_3.roas_pct}%, CPA ${followUp.day_3.cpa_pct > 0 ? '+' : ''}${followUp.day_3.cpa_pct}%, verdict: ${followUp.day_3.verdict}`
+      : ' — Sin medicion dia 3 aun';
+    const ctxRec = {
+      title: followUp.title || followUp.impact_summary || 'Seguimiento',
+      action_type: followUp.action_type,
+      entity: { entity_name: followUp.entity_name },
+      confidence_score: followUp.confidence_score || 50,
+      _isFollowUp: true,
+      _followUpContext: `${followUp.hours_since_approved != null ? Math.floor(followUp.hours_since_approved / 24) + 'd' : ''} desde aprobacion. ROAS al aprobar: ${followUp.roas_at_approval?.toFixed(2) || followUp.roas_before?.toFixed(2) || '?'}x${d3Info}. Phase: ${followUp.current_phase || 'measured'}. Ejecutada: ${followUp.action_executed ? 'si' : 'no'}`
+    };
+    setAttachedRec(ctxRec);
     setActiveTab('chat');
     setChatInput('');
     setTimeout(() => chatInputRef.current?.focus(), 100);
@@ -480,7 +504,7 @@ export default function BrainIntelligence() {
             formatTime={formatTime}
           />
         ) : activeTab === 'followup' ? (
-          <FollowUpPanel formatTime={formatTime} onApprovalAction={openApprovalModal} />
+          <FollowUpPanel formatTime={formatTime} onApprovalAction={openApprovalModal} onDiscuss={handleDiscussFollowUp} />
         ) : activeTab === 'knowledge' ? (
           <KnowledgePanel formatTime={formatTime} />
         ) : activeTab === 'creatives' ? (
@@ -935,9 +959,21 @@ function RecommendationsPanel({
                         <span className="split-row-time">{formatTime(rec.created_at)}</span>
                       </div>
                     </div>
-                    {/* Mini confidence */}
-                    <div className="split-row-confidence" title={`${rec.confidence_score || 50}%`}>
-                      <span className="split-row-conf-val">{rec.confidence_score || 50}</span>
+                    <div className="split-row-actions">
+                      <div className="split-row-confidence" title={`${rec.confidence_score || 50}%`}>
+                        <span className="split-row-conf-val">{rec.confidence_score || 50}</span>
+                      </div>
+                      {onDiscussRec && (
+                        <button
+                          className="btn-discuss-mini"
+                          title="Discutir con Brain"
+                          onClick={(e) => { e.stopPropagation(); onDiscussRec(rec); }}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                          </svg>
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -1313,7 +1349,7 @@ const VERDICT_CONFIG = {
   neutral:  { icon: '\u2796', label: 'Neutral', color: '#6b7280', bg: 'rgba(107,114,128,0.12)' }
 };
 
-function FollowUpPanel({ formatTime, onApprovalAction }) {
+function FollowUpPanel({ formatTime, onApprovalAction, onDiscuss }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expandedItem, setExpandedItem] = useState(null);
@@ -1766,6 +1802,16 @@ function FollowUpPanel({ formatTime, onApprovalAction }) {
                       </div>
                     </div>
                   )}
+
+                  {/* Discuss with Brain */}
+                  {onDiscuss && (
+                    <button className="btn-discuss-followup" onClick={() => onDiscuss(p)}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                      </svg>
+                      Discutir con Brain
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -1891,6 +1937,16 @@ function FollowUpPanel({ formatTime, onApprovalAction }) {
 
                   {item.impact_summary && !isExpanded && (
                     <div className="followup-timeline-summary">{item.impact_summary}</div>
+                  )}
+
+                  {/* Discuss with Brain — visible when expanded */}
+                  {isExpanded && onDiscuss && (
+                    <button className="btn-discuss-followup" onClick={(e) => { e.stopPropagation(); onDiscuss(item); }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                      </svg>
+                      Discutir con Brain
+                    </button>
                   )}
                 </div>
               );
@@ -2485,16 +2541,18 @@ function ChatPanel({
                   </div>
                 )}
                 <div className="chat-msg-content">
-                  {msg.role === 'user' && msg.content.startsWith('[Rec:') && (
+                  {msg.role === 'user' && (msg.content.startsWith('[Rec:') || msg.content.startsWith('[Seguimiento:')) && (
                     <div className="chat-msg-rec-context">
-                      Discutiendo recomendacion
+                      {msg.content.startsWith('[Seguimiento:') ? 'Discutiendo seguimiento' : 'Discutiendo recomendacion'}
                     </div>
                   )}
                   <div className={`chat-msg-text ${msg.role === 'assistant' ? 'markdown-body' : ''}`}>
                     {msg.role === 'assistant' ? (
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
                     ) : (
-                      msg.content.startsWith('[Rec:') ? msg.content.replace(/^\[Rec:.*?\]\s*/, '') : msg.content
+                      msg.content.startsWith('[Rec:') || msg.content.startsWith('[Seguimiento:')
+                        ? msg.content.replace(/^\[(Rec|Seguimiento):.*?\]\s*/, '')
+                        : msg.content
                     )}
                   </div>
                   <div className="chat-msg-meta">
@@ -2539,13 +2597,13 @@ function ChatPanel({
         <div ref={chatEndRef} />
       </div>
 
-      {/* Attached recommendation chip */}
+      {/* Attached recommendation/followup chip */}
       {attachedRec && (
-        <div className="chat-attached-rec">
+        <div className={`chat-attached-rec ${attachedRec._isFollowUp ? 'followup' : ''}`}>
           <div className="chat-attached-inner">
             <span className="chat-attached-icon">&#8226;</span>
             <div className="chat-attached-info">
-              <span className="chat-attached-label">Discutiendo:</span>
+              <span className="chat-attached-label">{attachedRec._isFollowUp ? 'Seguimiento:' : 'Rec:'}</span>
               <span className="chat-attached-title">{attachedRec.title}</span>
             </div>
             <button className="chat-attached-close" onClick={onClearAttachment}>&times;</button>

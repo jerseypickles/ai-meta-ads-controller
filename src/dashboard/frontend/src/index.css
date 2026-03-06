@@ -3326,6 +3326,72 @@ a:hover {
   color: var(--red-light);
 }
 
+.chat-attached-rec.followup .chat-attached-inner {
+  background: rgba(139, 92, 246, 0.08);
+  border-color: rgba(139, 92, 246, 0.2);
+}
+
+.chat-attached-rec.followup .chat-attached-label {
+  color: #a78bfa;
+}
+
+/* Discuss buttons */
+.split-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.btn-discuss-mini {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  opacity: 0;
+  flex-shrink: 0;
+}
+
+.split-row:hover .btn-discuss-mini {
+  opacity: 1;
+}
+
+.btn-discuss-mini:hover {
+  color: #818cf8;
+  border-color: rgba(99, 102, 241, 0.3);
+  background: rgba(99, 102, 241, 0.08);
+}
+
+.btn-discuss-followup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  margin-top: 6px;
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-family: var(--font-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-discuss-followup:hover {
+  color: #818cf8;
+  border-color: rgba(99, 102, 241, 0.4);
+  background: rgba(99, 102, 241, 0.05);
+}
+
 /* Chat Input */
 .chat-input-form {
   display: flex;
