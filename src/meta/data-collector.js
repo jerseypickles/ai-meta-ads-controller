@@ -182,7 +182,7 @@ class DataCollector {
       let adsFetchSuccess = false;
       try {
         const allAdsData = await this.meta.get(`/${this.meta.adAccountId}/ads`, {
-          fields: 'id,effective_status,adset_id',
+          fields: 'id,name,effective_status,adset_id,campaign_id',
           filtering: JSON.stringify([
             { field: 'effective_status', operator: 'IN', value: ['ACTIVE', 'PAUSED', 'CAMPAIGN_PAUSED', 'ADSET_PAUSED', 'PENDING_REVIEW', 'DISAPPROVED', 'WITH_ISSUES'] }
           ]),
@@ -205,11 +205,27 @@ class DataCollector {
         }
 
         adsFetchSuccess = true;
+        let newAdsInjected = 0;
         for (const ad of allAds) {
           adStatusMap[ad.id] = ad.effective_status || 'ACTIVE';
           if (ad.adset_id && ad.effective_status === 'ACTIVE') {
             adsPerAdSet[ad.adset_id] = (adsPerAdSet[ad.adset_id] || 0) + 1;
           }
+          // Inject new ads that have no insights yet into adMetadata
+          // so they get a snapshot created (with empty metrics).
+          // Without this, recently created ads are invisible until Meta
+          // processes their first insight row (can take hours).
+          if (!adMetadata[ad.id] && ad.name) {
+            adMetadata[ad.id] = {
+              ad_name: ad.name,
+              adset_id: ad.adset_id || null,
+              campaign_id: ad.campaign_id || null
+            };
+            newAdsInjected++;
+          }
+        }
+        if (newAdsInjected > 0) {
+          logger.info(`  ${newAdsInjected} new ads (no insights yet) injected for snapshot tracking`);
         }
         logger.info(`  ${allAds.length} ads con status real obtenido`);
       } catch (err) {
