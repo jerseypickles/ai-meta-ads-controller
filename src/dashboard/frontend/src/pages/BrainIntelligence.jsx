@@ -138,6 +138,11 @@ export default function BrainIntelligence() {
     loadStats();
   }, [loadInsights, loadStats]);
 
+  // Load recs on mount so chat picker has data even before visiting recs tab
+  useEffect(() => {
+    if (recommendations.length === 0) loadRecommendations();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (activeTab === 'chat' && chatMessages.length === 0) {
       loadChatHistory();
@@ -266,16 +271,19 @@ export default function BrainIntelligence() {
 
   const handleDiscussFollowUp = (followUp) => {
     // Build a rich context object that looks like a rec for the chat
-    const d3Info = followUp.day_3
-      ? ` — Dia 3: ROAS ${followUp.day_3.roas_pct > 0 ? '+' : ''}${followUp.day_3.roas_pct}%, CPA ${followUp.day_3.cpa_pct > 0 ? '+' : ''}${followUp.day_3.cpa_pct}%, verdict: ${followUp.day_3.verdict}`
+    // Handles both in-progress items (day_3, hours_since_approved) and timeline items (phases.day_3, roas_before)
+    const d3 = followUp.day_3 || followUp.phases?.day_3;
+    const d3Info = d3
+      ? ` — Dia 3: ROAS ${(d3.roas_pct || 0) > 0 ? '+' : ''}${d3.roas_pct || 0}%, CPA ${(d3.cpa_pct || 0) > 0 ? '+' : ''}${d3.cpa_pct || 0}%, verdict: ${d3.verdict || 'N/A'}`
       : ' — Sin medicion dia 3 aun';
+    const roasRef = followUp.roas_at_approval ?? followUp.roas_before ?? null;
     const ctxRec = {
       title: followUp.title || followUp.impact_summary || 'Seguimiento',
       action_type: followUp.action_type,
       entity: { entity_name: followUp.entity_name },
       confidence_score: followUp.confidence_score || 50,
       _isFollowUp: true,
-      _followUpContext: `${followUp.hours_since_approved != null ? Math.floor(followUp.hours_since_approved / 24) + 'd' : ''} desde aprobacion. ROAS al aprobar: ${followUp.roas_at_approval?.toFixed(2) || followUp.roas_before?.toFixed(2) || '?'}x${d3Info}. Phase: ${followUp.current_phase || 'measured'}. Ejecutada: ${followUp.action_executed ? 'si' : 'no'}`
+      _followUpContext: `${followUp.hours_since_approved != null ? Math.floor(followUp.hours_since_approved / 24) + 'd desde aprobacion. ' : ''}ROAS ref: ${roasRef != null ? roasRef.toFixed(2) : '?'}x${d3Info}. Phase: ${followUp.current_phase || followUp.impact_verdict || 'measured'}. Ejecutada: ${followUp.action_executed ? 'si' : 'no'}`
     };
     setAttachedRec(ctxRec);
     setActiveTab('chat');
