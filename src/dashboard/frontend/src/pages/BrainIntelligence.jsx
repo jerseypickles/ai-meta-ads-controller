@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import {
   getBrainInsights, markInsightRead, markAllInsightsRead,
-  triggerBrainAnalysis, sendBrainChat, getBrainChatHistory,
+  triggerBrainAnalysis, sendBrainChat, sendBrainChatStream, getBrainChatHistory,
   clearBrainChatHistory, getBrainStats, getBrainRecommendations,
   approveRecommendation, rejectRecommendation, markRecommendationExecuted,
   triggerBrainRecommendations, getFollowUpStats,
@@ -55,8 +55,11 @@ export default function BrainIntelligence() {
   const [chatInput, setChatInput] = useState('');
   const [chatSending, setChatSending] = useState(false);
   const [chatLoading, setChatLoading] = useState(false);
+  const [chatThinking, setChatThinking] = useState(null); // { phase, text }
+  const [streamingText, setStreamingText] = useState('');
   const chatEndRef = useRef(null);
   const chatInputRef = useRef(null);
+  const streamAbortRef = useRef(null);
 
   // Recommendations state
   const [recommendations, setRecommendations] = useState([]);
@@ -151,7 +154,7 @@ export default function BrainIntelligence() {
     if (chatEndRef.current) {
       chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [chatMessages]);
+  }, [chatMessages, streamingText, chatThinking]);
 
   // ═══ ACCIONES ═══
 
@@ -208,25 +211,45 @@ export default function BrainIntelligence() {
     setChatInput('');
     setChatMessages(prev => [...prev, { role: 'user', content: displayMsg, created_at: new Date().toISOString() }]);
     setChatSending(true);
+    setChatThinking({ phase: 'loading', text: 'Cargando datos...' });
+    setStreamingText('');
 
-    try {
-      const result = await sendBrainChat(fullMsg);
-      setChatMessages(prev => [...prev, {
-        role: 'assistant',
-        content: result.message,
-        tokens_used: result.tokens_used,
-        created_at: new Date().toISOString()
-      }]);
-    } catch (err) {
-      setChatMessages(prev => [...prev, {
-        role: 'assistant',
-        content: `Error: ${err.response?.data?.error || err.message}`,
-        created_at: new Date().toISOString()
-      }]);
-    } finally {
-      setChatSending(false);
-      chatInputRef.current?.focus();
-    }
+    const { abort } = sendBrainChatStream(fullMsg, {
+      onThinking: (data) => {
+        setChatThinking({ phase: data.phase, text: data.text });
+      },
+      onDelta: (text) => {
+        setChatThinking(null);
+        setStreamingText(prev => prev + text);
+      },
+      onDone: (data) => {
+        setStreamingText(prev => {
+          setChatMessages(msgs => [...msgs, {
+            role: 'assistant',
+            content: prev,
+            tokens_used: data.tokens_used || 0,
+            created_at: new Date().toISOString()
+          }]);
+          return '';
+        });
+        setChatSending(false);
+        setChatThinking(null);
+        chatInputRef.current?.focus();
+      },
+      onError: (err) => {
+        setChatMessages(prev => [...prev, {
+          role: 'assistant',
+          content: `Error: ${err.message}`,
+          created_at: new Date().toISOString()
+        }]);
+        setChatSending(false);
+        setChatThinking(null);
+        setStreamingText('');
+        chatInputRef.current?.focus();
+      }
+    });
+
+    streamAbortRef.current = abort;
   };
 
   const handleDiscussRec = (rec) => {
@@ -468,6 +491,8 @@ export default function BrainIntelligence() {
             chatInput={chatInput}
             chatSending={chatSending}
             chatLoading={chatLoading}
+            chatThinking={chatThinking}
+            streamingText={streamingText}
             chatEndRef={chatEndRef}
             chatInputRef={chatInputRef}
             onInputChange={setChatInput}
@@ -2388,25 +2413,32 @@ function CreativesPanel({ formatTime }) {
 
 function ChatPanel({
   messages, chatInput, chatSending, chatLoading,
+  chatThinking, streamingText,
   chatEndRef, chatInputRef,
   onInputChange, onSend, onClear, formatTime,
   attachedRec, onClearAttachment
 }) {
+  const thinkingPhrases = {
+    loading: 'Revisando ad sets y metricas...',
+    generating: 'Formulando respuesta...'
+  };
+
   return (
     <div className="chat-panel">
       {/* Chat Header */}
       <div className="chat-header">
         <div className="chat-header-left">
-          <div className="chat-brain-orb">
-            <div className="chat-orb-ring" />
-            <span className="chat-brain-icon">🧠</span>
+          <div className="chat-brain-indicator">
+            <div className={`chat-brain-dot ${chatSending ? 'active' : ''}`} />
           </div>
           <div>
-            <div className="chat-header-title">Brain Analyst</div>
+            <div className="chat-header-title">Brain</div>
             <div className="chat-header-sub">
-              {chatSending ? (
-                <span className="chat-status-active">Analizando...</span>
-              ) : 'Pregunta sobre tus campanas'}
+              {chatThinking ? (
+                <span className="chat-status-thinking">{thinkingPhrases[chatThinking.phase] || chatThinking.text}</span>
+              ) : chatSending ? (
+                <span className="chat-status-active">Escribiendo...</span>
+              ) : 'Estratega de campanas'}
             </div>
           </div>
         </div>
@@ -2421,76 +2453,88 @@ function ChatPanel({
       <div className="chat-messages">
         {chatLoading ? (
           <div className="chat-loading">Cargando historial...</div>
-        ) : messages.length === 0 ? (
+        ) : messages.length === 0 && !chatSending ? (
           <div className="chat-welcome">
-            <div className="chat-welcome-orb">
-              <div className="chat-welcome-ring" />
-              <span>🧠</span>
+            <div className="chat-welcome-icon">
+              <div className="chat-welcome-dot" />
             </div>
-            <h3>Brain Analyst</h3>
-            <p>Soy el analista inteligente de tus campanas de Meta Ads. Conozco cada ad set, sus metricas, tendencias y rendimiento.</p>
+            <h3>Brain</h3>
+            <p>Soy el que controla tus campanas. Preguntame lo que quieras — te digo la verdad, no lo que quieres oir.</p>
             <div className="chat-suggestions">
-              <button className="chat-suggestion" onClick={() => onInputChange('¿Cual es el ad set con mejor ROAS?')}>
-                Mejor ROAS
+              <button className="chat-suggestion" onClick={() => onInputChange('¿Como van las campanas hoy?')}>
+                Estado actual
               </button>
-              <button className="chat-suggestion" onClick={() => onInputChange('¿Que ad sets deberia considerar pausar?')}>
-                Ad sets a pausar
+              <button className="chat-suggestion" onClick={() => onInputChange('¿Que ad sets deberia pausar?')}>
+                Que pausar
               </button>
-              <button className="chat-suggestion" onClick={() => onInputChange('Dame un resumen del estado de las campanas')}>
-                Resumen general
+              <button className="chat-suggestion" onClick={() => onInputChange('¿Donde esta el problema?')}>
+                Diagnostico
               </button>
-              <button className="chat-suggestion" onClick={() => onInputChange('¿Hay alguna anomalia o problema?')}>
-                Anomalias
-              </button>
-              <button className="chat-suggestion" onClick={() => onInputChange('¿Cuales son las tendencias de esta semana?')}>
-                Tendencias
-              </button>
-              <button className="chat-suggestion" onClick={() => onInputChange('¿Que oportunidades de escalado hay?')}>
+              <button className="chat-suggestion" onClick={() => onInputChange('¿Que oportunidades ves?')}>
                 Oportunidades
               </button>
             </div>
           </div>
         ) : (
-          messages.map((msg, i) => (
-            <div key={i} className={`chat-message ${msg.role}`}>
-              {msg.role === 'assistant' && (
-                <div className="chat-msg-avatar-wrap">
-                  <span className="chat-msg-avatar">🧠</span>
-                </div>
-              )}
-              <div className="chat-msg-content">
-                {/* Show attached rec context if this is a user message with rec prefix */}
-                {msg.role === 'user' && msg.content.startsWith('[Rec:') && (
-                  <div className="chat-msg-rec-context">
-                    Discutiendo recomendacion
+          <>
+            {messages.map((msg, i) => (
+              <div key={i} className={`chat-message ${msg.role}`}>
+                {msg.role === 'assistant' && (
+                  <div className="chat-msg-avatar-wrap">
+                    <div className="chat-msg-avatar-dot" />
                   </div>
                 )}
-                <div className={`chat-msg-text ${msg.role === 'assistant' ? 'markdown-body' : ''}`}>
-                  {msg.role === 'assistant' ? (
-                    <ReactMarkdown>{msg.content}</ReactMarkdown>
-                  ) : (
-                    msg.content.startsWith('[Rec:') ? msg.content.replace(/^\[Rec:.*?\]\s*/, '') : msg.content
+                <div className="chat-msg-content">
+                  {msg.role === 'user' && msg.content.startsWith('[Rec:') && (
+                    <div className="chat-msg-rec-context">
+                      Discutiendo recomendacion
+                    </div>
                   )}
-                </div>
-                <div className="chat-msg-meta">
-                  <span>{formatTime(msg.created_at)}</span>
-                  {msg.tokens_used > 0 && <span className="chat-token-count">{msg.tokens_used} tokens</span>}
+                  <div className={`chat-msg-text ${msg.role === 'assistant' ? 'markdown-body' : ''}`}>
+                    {msg.role === 'assistant' ? (
+                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    ) : (
+                      msg.content.startsWith('[Rec:') ? msg.content.replace(/^\[Rec:.*?\]\s*/, '') : msg.content
+                    )}
+                  </div>
+                  <div className="chat-msg-meta">
+                    <span>{formatTime(msg.created_at)}</span>
+                    {msg.tokens_used > 0 && <span className="chat-token-count">{msg.tokens_used} tok</span>}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))
-        )}
-        {chatSending && (
-          <div className="chat-message assistant">
-            <div className="chat-msg-avatar-wrap">
-              <span className="chat-msg-avatar">🧠</span>
-            </div>
-            <div className="chat-msg-content">
-              <div className="chat-msg-text typing">
-                <span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" />
+            ))}
+
+            {/* Thinking state */}
+            {chatSending && chatThinking && !streamingText && (
+              <div className="chat-message assistant">
+                <div className="chat-msg-avatar-wrap">
+                  <div className="chat-msg-avatar-dot thinking" />
+                </div>
+                <div className="chat-msg-content">
+                  <div className="chat-msg-thinking">
+                    <span className="thinking-pulse" />
+                    <span className="thinking-text">{thinkingPhrases[chatThinking.phase] || chatThinking.text}</span>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
+            )}
+
+            {/* Streaming text — word by word */}
+            {streamingText && (
+              <div className="chat-message assistant">
+                <div className="chat-msg-avatar-wrap">
+                  <div className="chat-msg-avatar-dot streaming" />
+                </div>
+                <div className="chat-msg-content">
+                  <div className="chat-msg-text markdown-body streaming-text">
+                    <ReactMarkdown>{streamingText}</ReactMarkdown>
+                    <span className="streaming-cursor" />
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
         )}
         <div ref={chatEndRef} />
       </div>
@@ -2499,7 +2543,7 @@ function ChatPanel({
       {attachedRec && (
         <div className="chat-attached-rec">
           <div className="chat-attached-inner">
-            <span className="chat-attached-icon">🎯</span>
+            <span className="chat-attached-icon">&#8226;</span>
             <div className="chat-attached-info">
               <span className="chat-attached-label">Discutiendo:</span>
               <span className="chat-attached-title">{attachedRec.title}</span>
@@ -2517,7 +2561,7 @@ function ChatPanel({
           className="chat-input"
           value={chatInput}
           onChange={(e) => onInputChange(e.target.value)}
-          placeholder={attachedRec ? `Pregunta sobre: ${attachedRec.title}` : 'Pregunta sobre tus campanas...'}
+          placeholder={attachedRec ? `Pregunta sobre: ${attachedRec.title}` : 'Preguntale al Brain...'}
           disabled={chatSending}
           autoFocus
         />

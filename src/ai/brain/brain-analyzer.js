@@ -1276,8 +1276,11 @@ IMPORTANTE: Responde SOLO con el JSON, sin texto adicional ni markdown.`;
    * Chat: el usuario pregunta sobre las campañas.
    * El Brain responde con datos reales como contexto.
    */
-  async chat(userMessage) {
-    // 1. Cargar datos actuales para contexto
+  /**
+   * Prepara el contexto del chat: carga datos, construye system prompt y mensajes.
+   * Usado tanto por chat() como por chatStream().
+   */
+  async _prepareChatContext(userMessage) {
     const [adsetSnapshots, accountOverview, recentInsights, chatHistory, activeRecs, recHistory, cycleMemories, adSnapshots, memories] = await Promise.all([
       getLatestSnapshots('adset'),
       getAccountOverview(),
@@ -1290,10 +1293,8 @@ IMPORTANTE: Responde SOLO con el JSON, sin texto adicional ni markdown.`;
       BrainMemory.find({}).lean().catch(() => [])
     ]);
 
-    // 2. Guardar mensaje del usuario
     await BrainChat.create({ role: 'user', content: userMessage });
 
-    // 2.5. Run diagnostic engine for chat context
     let diagnosticSummary = '';
     try {
       const memoryMap = {};
@@ -1301,58 +1302,69 @@ IMPORTANTE: Responde SOLO con el JSON, sin texto adicional ni markdown.`;
       const diagnostics = this.diagnosticEngine.diagnoseAll(adsetSnapshots, adSnapshots, memoryMap, accountOverview);
       diagnosticSummary = this.diagnosticEngine.formatForPrompt(diagnostics);
     } catch (diagErr) {
-      // Non-fatal — chat still works without diagnostics
+      // Non-fatal
     }
 
-    // 3. Construir contexto
     const context = this._buildChatContext(adsetSnapshots, accountOverview, recentInsights, activeRecs, recHistory, cycleMemories);
 
-    // 4. Construir historial de conversación
     const messages = [];
-    const history = chatHistory.reverse(); // Más antiguo primero
+    const history = chatHistory.reverse();
     for (const msg of history) {
       messages.push({ role: msg.role, content: msg.content });
     }
     messages.push({ role: 'user', content: userMessage });
 
-    // 5. Llamar a Claude
+    const systemPrompt = `Eres el Brain — el cerebro que controla las campañas de Meta Ads de Jersey Pickles. No eres un asistente servil. Eres el que toma las decisiones, el que ve los patrones, el que sabe qué funciona y qué no.
+
+TU PERSONALIDAD:
+- Hablas como un estratega directo y sin rodeos. No adulas. No dices "¡Excelente pregunta!". Vas al grano.
+- Si algo anda mal, lo dices claro. Si un ad set es basura, dices que es basura y por qué.
+- Tienes opinion propia. No solo reportas datos — los interpretas y dices lo que harías.
+- Hablas en primera persona: "Yo veo que...", "Lo que haría es...", "No me gusta como se ve..."
+- Eres conciso. Nada de párrafos inflados. Bullet points cuando hay datos.
+- Si el operador pregunta algo que ya deberían saber, se lo haces notar con tacto pero sin falsedad.
+- Puedes usar humor seco cuando la situación lo amerite. Nunca forzado.
+- Cuando no sabes algo, lo admites sin drama: "No tengo esa data" y ofreces lo que sí tienes.
+
+DATOS QUE ESTOY VIENDO AHORA MISMO:
+${context}
+
+CAPACIDADES:
+- Métricas por ventana: hoy, 3d, 7d, 14d, 30d (7d es mi referencia principal)
+- Funnel del pixel: ATC → IC → Purchase
+- AOV por ad set, calendario estacional, budget mensual y pacing
+- Historial completo de recomendaciones y su impacto medido
+- Diagnósticos pre-computados por entidad
+
+${diagnosticSummary ? `DIAGNÓSTICOS QUE YA CALCULÉ:\n${diagnosticSummary}` : ''}
+
+CÓMO RESPONDO:
+1. En ESPAÑOL. Directo. Sin formalidades innecesarias.
+2. Siempre con datos concretos — nombres de ad sets, números, métricas reales.
+3. Digo la causa raíz, no solo el síntoma. "ROAS bajo" no es un diagnóstico — fatiga creativa, saturación de audiencia, leak en el funnel, eso sí.
+4. Si sugiero una acción, explico qué haría yo y qué espero que pase.
+5. Máximo 2-3 párrafos cortos + bullets con datos. No escribo ensayos.
+6. Para tendencias uso 14d/30d de contexto, no solo la ventana corta.`;
+
+    return { systemPrompt, messages, adsetSnapshots, accountOverview };
+  }
+
+  /**
+   * Chat normal (sin streaming) — fallback.
+   */
+  async chat(userMessage) {
+    const { systemPrompt, messages, adsetSnapshots, accountOverview } = await this._prepareChatContext(userMessage);
+
     const response = await this.anthropic.messages.create({
       model: config.claude.model,
       max_tokens: 1500,
       messages,
-      system: `Eres el Brain Analyst de Jersey Pickles — un asistente experto en Meta Ads que conoce todas las campañas en detalle.
-
-DATOS ACTUALES DE LAS CAMPAÑAS:
-${context}
-
-CAPACIDADES DE DATOS:
-- Métricas por ventana: hoy, 3d, 7d, 14d, 30d (usa 7d como referencia principal, 14d/30d para tendencias largo plazo)
-- Funnel del pixel: Add to Cart → Initiate Checkout → Purchase (disponible cuando hay datos)
-- AOV (Average Order Value) por ad set
-- Calendario estacional configurado (eventos clave de ecommerce)
-- Budget mensual y pacing
-- Historial de recomendaciones aprobadas/rechazadas por el usuario y su impacto medido
-- KPIs objetivo configurados
-- Diagnóstico pre-computado por entidad (fatiga creativa, saturación de audiencia, funnel leaks)
-
-${diagnosticSummary ? `DIAGNÓSTICOS PRE-COMPUTADOS:\n${diagnosticSummary}` : ''}
-
-REGLAS:
-1. Responde en ESPAÑOL, de forma profesional pero accesible.
-2. Usa datos específicos cuando respondas — nombres de ad sets, números, métricas reales.
-3. Si no tienes la información exacta, dilo honestamente pero indica qué datos SI tienes que pueden ayudar.
-4. Puedes sugerir acciones pero aclara que el Brain las ejecutaría si se aprueban.
-5. Sé conciso — responde en 2-4 párrafos máximo. Usa bullet points para datos.
-6. Cuando analices tendencias, usa datos de 14d/30d para contexto histórico, no solo 7d.
-7. Menciona el funnel (ATC→IC→Purchase) cuando sea relevante para diagnosticar problemas de conversión.
-8. Cuando diagnostiques problemas, explica la CAUSA RAÍZ: ¿Es fatiga creativa? ¿Saturación de audiencia? ¿Problema de landing page? No solo digas "ROAS bajo".
-9. Usa los diagnósticos pre-computados cuando estén disponibles para dar análisis más profundos.`
+      system: systemPrompt
     });
 
     const assistantMessage = response.content[0]?.text || '';
     const tokensUsed = (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0);
 
-    // 6. Guardar respuesta
     await BrainChat.create({
       role: 'assistant',
       content: assistantMessage,
@@ -1361,10 +1373,35 @@ REGLAS:
       ai_model: config.claude.model
     });
 
+    return { message: assistantMessage, tokens_used: tokensUsed, context_entities: adsetSnapshots.length };
+  }
+
+  /**
+   * Chat con streaming — devuelve un stream de Anthropic.
+   * El caller (route) se encarga de enviar los chunks via SSE.
+   */
+  async chatStream(userMessage) {
+    const { systemPrompt, messages, adsetSnapshots, accountOverview } = await this._prepareChatContext(userMessage);
+
+    const stream = this.anthropic.messages.stream({
+      model: config.claude.model,
+      max_tokens: 1500,
+      messages,
+      system: systemPrompt
+    });
+
     return {
-      message: assistantMessage,
-      tokens_used: tokensUsed,
-      context_entities: adsetSnapshots.length
+      stream,
+      onComplete: async (fullText, usage) => {
+        const tokensUsed = (usage?.input_tokens || 0) + (usage?.output_tokens || 0);
+        await BrainChat.create({
+          role: 'assistant',
+          content: fullText,
+          context_summary: `${adsetSnapshots.length} adsets, ROAS 7d: ${accountOverview.roas_7d?.toFixed(2)}`,
+          tokens_used: tokensUsed,
+          ai_model: config.claude.model
+        });
+      }
     };
   }
 

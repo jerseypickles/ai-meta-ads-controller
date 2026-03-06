@@ -117,6 +117,80 @@ router.post('/chat', async (req, res) => {
 });
 
 /**
+ * POST /api/brain/chat/stream — Chat con streaming SSE word-by-word
+ * Body: { message: "string" }
+ */
+router.post('/chat/stream', async (req, res) => {
+  try {
+    const { message } = req.body;
+    if (!message || typeof message !== 'string' || message.trim().length === 0) {
+      return res.status(400).json({ error: 'Mensaje requerido' });
+    }
+
+    // SSE headers
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+
+    // Phase 1: thinking — data loading
+    res.write(`data: ${JSON.stringify({ type: 'thinking', phase: 'loading', text: 'Cargando datos de campañas...' })}\n\n`);
+
+    const { stream, onComplete } = await analyzer.chatStream(message.trim());
+
+    // Phase 2: thinking — generating
+    res.write(`data: ${JSON.stringify({ type: 'thinking', phase: 'generating', text: 'Analizando y formulando respuesta...' })}\n\n`);
+
+    let fullText = '';
+    let usage = null;
+
+    stream.on('text', (text) => {
+      fullText += text;
+      res.write(`data: ${JSON.stringify({ type: 'delta', text })}\n\n`);
+    });
+
+    stream.on('message', (msg) => {
+      usage = msg.usage;
+    });
+
+    stream.on('end', async () => {
+      try {
+        await onComplete(fullText, usage);
+        const tokensUsed = (usage?.input_tokens || 0) + (usage?.output_tokens || 0);
+        res.write(`data: ${JSON.stringify({ type: 'done', tokens_used: tokensUsed })}\n\n`);
+      } catch (saveErr) {
+        logger.error(`[BRAIN-API] Error saving stream chat: ${saveErr.message}`);
+        res.write(`data: ${JSON.stringify({ type: 'done', tokens_used: 0 })}\n\n`);
+      }
+      res.end();
+    });
+
+    stream.on('error', (err) => {
+      logger.error(`[BRAIN-API] Stream error: ${err.message}`);
+      res.write(`data: ${JSON.stringify({ type: 'error', error: err.message })}\n\n`);
+      res.end();
+    });
+
+    // Handle client disconnect
+    req.on('close', () => {
+      stream.controller?.abort();
+    });
+
+  } catch (error) {
+    logger.error(`[BRAIN-API] Error en chat stream: ${error.message}`);
+    // If headers already sent, send SSE error
+    if (res.headersSent) {
+      res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
+      res.end();
+    } else {
+      res.status(500).json({ error: error.message });
+    }
+  }
+});
+
+/**
  * GET /api/brain/chat/history — Historial de chat
  * Query: ?limit=50
  */

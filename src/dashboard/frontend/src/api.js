@@ -273,6 +273,66 @@ export const sendBrainChat = async (message) => {
   return response.data;
 };
 
+/**
+ * Streaming chat with Brain via SSE (POST with fetch).
+ * @param {string} message
+ * @param {Function} onThinking - callback({ phase, text }) during thinking phases
+ * @param {Function} onDelta - callback(text) for each text chunk
+ * @param {Function} onDone - callback({ tokens_used }) when complete
+ * @param {Function} onError - callback(error) on error
+ * @returns {{ abort: Function }} - call abort() to cancel
+ */
+export const sendBrainChatStream = (message, { onThinking, onDelta, onDone, onError }) => {
+  const controller = new AbortController();
+  const token = getToken();
+
+  const url = `${BASE_URL}/api/brain/chat/stream`;
+
+  fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+    },
+    body: JSON.stringify({ message }),
+    signal: controller.signal
+  }).then(async (response) => {
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ error: 'Stream failed' }));
+      onError?.(new Error(err.error || `HTTP ${response.status}`));
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const data = JSON.parse(line.slice(6));
+          if (data.type === 'thinking') onThinking?.(data);
+          else if (data.type === 'delta') onDelta?.(data.text);
+          else if (data.type === 'done') onDone?.(data);
+          else if (data.type === 'error') onError?.(new Error(data.error));
+        } catch (e) { /* ignore parse errors */ }
+      }
+    }
+  }).catch((err) => {
+    if (err.name !== 'AbortError') onError?.(err);
+  });
+
+  return { abort: () => controller.abort() };
+};
+
 export const getBrainChatHistory = async (limit = 50) => {
   const response = await api.get('/api/brain/chat/history', { params: { limit } });
   return response.data;
