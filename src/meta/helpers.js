@@ -171,37 +171,38 @@ function getTimeRanges() {
   const TIMEZONE = require('../../config').system.timezone || 'America/New_York';
 
   const today = moment().tz(TIMEZONE).format('YYYY-MM-DD');
+  const yesterday = moment().tz(TIMEZONE).subtract(1, 'days').format('YYYY-MM-DD');
 
   const ranges = {};
 
-  // Hoy
+  // Hoy (datos parciales del día en curso)
   ranges.today = {
     since: today,
     until: today
   };
 
-  // Últimos 3 días
+  // Últimos 3 días completados (excluye hoy)
   ranges.last_3d = {
-    since: moment().tz(TIMEZONE).subtract(2, 'days').format('YYYY-MM-DD'),
-    until: today
+    since: moment().tz(TIMEZONE).subtract(3, 'days').format('YYYY-MM-DD'),
+    until: yesterday
   };
 
-  // Últimos 7 días
+  // Últimos 7 días completados (excluye hoy)
   ranges.last_7d = {
-    since: moment().tz(TIMEZONE).subtract(6, 'days').format('YYYY-MM-DD'),
-    until: today
+    since: moment().tz(TIMEZONE).subtract(7, 'days').format('YYYY-MM-DD'),
+    until: yesterday
   };
 
-  // Últimos 14 días
+  // Últimos 14 días completados (excluye hoy)
   ranges.last_14d = {
-    since: moment().tz(TIMEZONE).subtract(13, 'days').format('YYYY-MM-DD'),
-    until: today
+    since: moment().tz(TIMEZONE).subtract(14, 'days').format('YYYY-MM-DD'),
+    until: yesterday
   };
 
-  // Últimos 30 días
+  // Últimos 30 días completados (excluye hoy)
   ranges.last_30d = {
-    since: moment().tz(TIMEZONE).subtract(29, 'days').format('YYYY-MM-DD'),
-    until: today
+    since: moment().tz(TIMEZONE).subtract(30, 'days').format('YYYY-MM-DD'),
+    until: yesterday
   };
 
   return ranges;
@@ -220,13 +221,17 @@ function aggregateDailyInsights(dailyRows, entityIdField) {
   const TIMEZONE = require('../../config').system.timezone || 'America/New_York';
   const today = moment().tz(TIMEZONE).format('YYYY-MM-DD');
 
-  // Boundaries for each window (inclusive)
+  // Boundaries for each window
+  // IMPORTANT: last_Xd windows use only COMPLETED days (exclude today's partial data).
+  // Today's incomplete data skews ROAS/CPA because spend accumulates before conversions
+  // are attributed (Meta attribution lag). "today" has its own dedicated window.
+  const yesterday = moment().tz(TIMEZONE).subtract(1, 'days').format('YYYY-MM-DD');
   const windows = {
-    today:    { since: today },
-    last_3d:  { since: moment().tz(TIMEZONE).subtract(2, 'days').format('YYYY-MM-DD') },
-    last_7d:  { since: moment().tz(TIMEZONE).subtract(6, 'days').format('YYYY-MM-DD') },
-    last_14d: { since: moment().tz(TIMEZONE).subtract(13, 'days').format('YYYY-MM-DD') },
-    last_30d: { since: moment().tz(TIMEZONE).subtract(29, 'days').format('YYYY-MM-DD') }
+    today:    { since: today, until: today },
+    last_3d:  { since: moment().tz(TIMEZONE).subtract(3, 'days').format('YYYY-MM-DD'), until: yesterday },
+    last_7d:  { since: moment().tz(TIMEZONE).subtract(7, 'days').format('YYYY-MM-DD'), until: yesterday },
+    last_14d: { since: moment().tz(TIMEZONE).subtract(14, 'days').format('YYYY-MM-DD'), until: yesterday },
+    last_30d: { since: moment().tz(TIMEZONE).subtract(30, 'days').format('YYYY-MM-DD'), until: yesterday }
   };
 
   // Group rows by entity
@@ -244,9 +249,9 @@ function aggregateDailyInsights(dailyRows, entityIdField) {
   for (const [eid, rows] of Object.entries(byEntity)) {
     result[eid] = {};
 
-    for (const [windowName, { since }] of Object.entries(windows)) {
-      // Filter rows that fall within this window
-      const windowRows = rows.filter(r => r.date_start >= since && r.date_start <= today);
+    for (const [windowName, { since, until }] of Object.entries(windows)) {
+      // Filter rows that fall within this window (each window has its own upper bound)
+      const windowRows = rows.filter(r => r.date_start >= since && r.date_start <= until);
 
       if (windowRows.length === 0) {
         result[eid][windowName] = null; // Will be filled with emptyMetrics by caller
