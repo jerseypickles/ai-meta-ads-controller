@@ -525,6 +525,9 @@ export default function BrainIntelligence() {
             formatTime={formatTime}
             attachedRec={attachedRec}
             onClearAttachment={() => setAttachedRec(null)}
+            recommendations={recommendations}
+            onAttachRec={handleDiscussRec}
+            onAttachFollowUp={handleDiscussFollowUp}
           />
         )}
       </div>
@@ -2472,8 +2475,58 @@ function ChatPanel({
   chatThinking, streamingText,
   chatEndRef, chatInputRef,
   onInputChange, onSend, onClear, formatTime,
-  attachedRec, onClearAttachment
+  attachedRec, onClearAttachment,
+  recommendations, onAttachRec, onAttachFollowUp
 }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerTab, setPickerTab] = useState('recs'); // 'recs' | 'followups'
+  const [followUps, setFollowUps] = useState(null);
+  const [loadingFollowUps, setLoadingFollowUps] = useState(false);
+  const pickerRef = useRef(null);
+
+  // Close picker on outside click
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const handleClick = (e) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target)) {
+        setPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [pickerOpen]);
+
+  // Load follow-ups when picker opens on that tab
+  useEffect(() => {
+    if (pickerOpen && pickerTab === 'followups' && !followUps && !loadingFollowUps) {
+      setLoadingFollowUps(true);
+      getFollowUpStats().then(data => {
+        setFollowUps(data?.timeline || []);
+      }).catch(() => setFollowUps([])).finally(() => setLoadingFollowUps(false));
+    }
+  }, [pickerOpen, pickerTab, followUps, loadingFollowUps]);
+
+  const handlePickerToggle = () => {
+    setPickerOpen(prev => !prev);
+    if (!pickerOpen) setFollowUps(null); // reset for fresh load
+  };
+
+  const handlePickRec = (rec) => {
+    onAttachRec(rec);
+    setPickerOpen(false);
+  };
+
+  const handlePickFollowUp = (fu) => {
+    onAttachFollowUp(fu);
+    setPickerOpen(false);
+  };
+
+  // Filter recs to show only pending/approved (relevant ones)
+  const pickerRecs = useMemo(() => {
+    if (!recommendations) return [];
+    return recommendations.filter(r => r.status === 'pending' || r.status === 'approved').slice(0, 15);
+  }, [recommendations]);
+
   const thinkingPhrases = {
     loading: 'Revisando ad sets y metricas...',
     generating: 'Formulando respuesta...'
@@ -2611,8 +2664,84 @@ function ChatPanel({
         </div>
       )}
 
+      {/* Attachment picker */}
+      {pickerOpen && (
+        <div className="chat-picker" ref={pickerRef}>
+          <div className="chat-picker-tabs">
+            <button
+              className={`chat-picker-tab ${pickerTab === 'recs' ? 'active' : ''}`}
+              onClick={() => setPickerTab('recs')}
+            >
+              Recomendaciones
+            </button>
+            <button
+              className={`chat-picker-tab ${pickerTab === 'followups' ? 'active' : ''}`}
+              onClick={() => setPickerTab('followups')}
+            >
+              Seguimientos
+            </button>
+          </div>
+          <div className="chat-picker-list">
+            {pickerTab === 'recs' ? (
+              pickerRecs.length === 0 ? (
+                <div className="chat-picker-empty">Sin recomendaciones activas</div>
+              ) : (
+                pickerRecs.map(rec => (
+                  <button
+                    key={rec._id}
+                    className="chat-picker-item"
+                    onClick={() => handlePickRec(rec)}
+                  >
+                    <span className={`chat-picker-status ${rec.status}`} />
+                    <div className="chat-picker-item-info">
+                      <span className="chat-picker-item-title">{rec.title}</span>
+                      <span className="chat-picker-item-meta">
+                        {rec.action_type} — {rec.entity?.entity_name || 'N/A'} — {rec.confidence_score}%
+                      </span>
+                    </div>
+                  </button>
+                ))
+              )
+            ) : (
+              loadingFollowUps ? (
+                <div className="chat-picker-empty">Cargando seguimientos...</div>
+              ) : !followUps || followUps.length === 0 ? (
+                <div className="chat-picker-empty">Sin seguimientos activos</div>
+              ) : (
+                followUps.slice(0, 15).map((fu, i) => (
+                  <button
+                    key={fu.rec_id || i}
+                    className="chat-picker-item followup"
+                    onClick={() => handlePickFollowUp(fu)}
+                  >
+                    <span className={`chat-picker-status ${fu.current_phase || 'monitoring'}`} />
+                    <div className="chat-picker-item-info">
+                      <span className="chat-picker-item-title">{fu.title || fu.impact_summary || fu.entity_name}</span>
+                      <span className="chat-picker-item-meta">
+                        {fu.action_type} — {fu.entity_name || 'N/A'}{fu.hours_since_approved != null ? ` — ${Math.floor(fu.hours_since_approved / 24)}d` : ''}
+                      </span>
+                    </div>
+                  </button>
+                ))
+              )
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Input */}
       <form className="chat-input-form" onSubmit={onSend}>
+        <button
+          type="button"
+          className={`btn-attach ${pickerOpen ? 'active' : ''} ${attachedRec ? 'has-attachment' : ''}`}
+          onClick={handlePickerToggle}
+          disabled={chatSending}
+          title="Adjuntar rec o seguimiento"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+          </svg>
+        </button>
         <input
           ref={chatInputRef}
           type="text"
