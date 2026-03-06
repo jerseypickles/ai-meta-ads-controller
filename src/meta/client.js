@@ -143,11 +143,16 @@ class MetaClient {
 
   /**
    * Returns current rate limit usage (0-100) or null if not yet known.
+   * Critical readings (>90%) expire faster because Meta resets its counters
+   * quickly (often 10-30s). Keeping a 120% reading for 5 min would block
+   * the live endpoint from fetching fresh data long after Meta has recovered.
    */
   getRateLimitUsage() {
     if (!this._lastUsage) return null;
     const age = Date.now() - this._lastUsage.ts;
-    if (age > 5 * 60 * 1000) return null; // Stale after 5 min
+    // Critical readings expire in 60s (Meta typically recovers in 10-30s)
+    const maxAge = this._lastUsage.max > 90 ? 60 * 1000 : 5 * 60 * 1000;
+    if (age > maxAge) return null;
     return this._lastUsage;
   }
 
@@ -184,11 +189,18 @@ class MetaClient {
 
   /**
    * Returns true if we know we're rate limited (code 17 error recently or usage > 90%).
+   * When the cooldown expires, resets minTime so the next request isn't stuck in heavy throttle.
    */
   isRateLimited() {
     const usage = this.getRateLimitUsage();
     if (usage && usage.max > 90) return true;
-    if (this._rateLimitedUntil && Date.now() < this._rateLimitedUntil) return true;
+    if (this._rateLimitedUntil) {
+      if (Date.now() < this._rateLimitedUntil) return true;
+      // Cooldown just expired — reset throttle so live requests aren't stuck at 5000ms
+      this._rateLimitedUntil = null;
+      this.limiter.updateSettings({ minTime: 1500 }); // Conservative restart, not full speed
+      logger.info('[META-RATE] Cooldown expired — resetting throttle to 1500ms');
+    }
     return false;
   }
 
@@ -223,7 +235,9 @@ class MetaClient {
       const metaError = err.response?.data?.error;
       if (metaError?.code === 17 || metaError?.code === 4) {
         const regainIn = metaError.estimated_time_to_regain_access || 60;
-        this.setRateLimited(Math.max(regainIn, 60));
+        // Use Meta's suggested wait time + small buffer, not a blanket 60s minimum.
+        // When Meta says 10s, waiting 60s wastes 50s of live data availability.
+        this.setRateLimited(Math.max(regainIn + 5, 15));
       }
       throw err;
     });

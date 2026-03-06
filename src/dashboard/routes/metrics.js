@@ -90,6 +90,14 @@ const FETCH_DEADLINE_MS = 25000; // 25 seconds — well under Render's 30s proxy
 async function _fetchLiveAdSets() {
   const meta = getMetaClient();
 
+  // Pre-flight: if data-collector is actively running, don't compete for the
+  // Bottleneck limiter — our calls would queue behind it and timeout at 25s.
+  // Use snapshots (which the collector just wrote) instead.
+  const busy = meta.isBusy();
+  if (busy) {
+    return _getSnapshotFallback(`collector_busy: ${busy.label}`);
+  }
+
   // Pre-flight: skip only if truly rate-limited
   if (meta.isRateLimited()) {
     return _getSnapshotFallback('rate_limited');
@@ -242,8 +250,16 @@ async function _backgroundRefresh() {
   _liveCache.refreshing = true;
 
   try {
-    // Check rate limit before refreshing — skip only if critically high
+    // Check if data-collector is running — don't compete for the Bottleneck limiter
     const meta = getMetaClient();
+    const busy = meta.isBusy();
+    if (busy) {
+      logger.info(`[LIVE-BG] Skipping refresh — ${busy.label} is running`);
+      _liveCache.refreshing = false;
+      return;
+    }
+
+    // Check rate limit before refreshing — skip only if critically high
     if (meta.isRateLimited()) {
       logger.info('[LIVE-BG] Skipping refresh — rate limited');
       _liveCache.refreshing = false;

@@ -1272,13 +1272,23 @@ REGLAS:
     logger.info('[BRAIN-RECS] Iniciando ciclo de recomendaciones...');
 
     try {
-      // 0. Refrescar datos de Meta antes de generar recomendaciones
-      //    Garantiza que Claude vea métricas actuales, no snapshots de horas atrás.
+      // 0. Refrescar datos de Meta — only if snapshots are stale (>15 min old).
+      //    The data-collection cron runs every 10 min, so snapshots are usually fresh.
+      //    Running a redundant collect() here causes Bottleneck contention and pushes
+      //    Meta API usage to 117%+, triggering rate limits and killing live endpoints.
       try {
-        logger.info('[BRAIN-RECS] Refrescando datos de Meta antes de generar recomendaciones...');
-        const collector = new DataCollector();
-        const collectResult = await collector.collect();
-        logger.info(`[BRAIN-RECS] Datos frescos: ${collectResult.snapshots} snapshots en ${collectResult.elapsed}`);
+        const MetricSnapshot = require('../../db/models/MetricSnapshot');
+        const latestSnap = await MetricSnapshot.findOne().sort({ snapshot_at: -1 }).select('snapshot_at').lean();
+        const snapAge = latestSnap ? (Date.now() - new Date(latestSnap.snapshot_at).getTime()) / 1000 : Infinity;
+
+        if (snapAge > 15 * 60) {
+          logger.info(`[BRAIN-RECS] Snapshots are ${Math.round(snapAge / 60)}min old — refreshing from Meta...`);
+          const collector = new DataCollector();
+          const collectResult = await collector.collect();
+          logger.info(`[BRAIN-RECS] Datos frescos: ${collectResult.snapshots} snapshots en ${collectResult.elapsed}`);
+        } else {
+          logger.info(`[BRAIN-RECS] Snapshots are fresh (${Math.round(snapAge / 60)}min old) — skipping redundant Meta refresh`);
+        }
       } catch (collectErr) {
         logger.warn(`[BRAIN-RECS] Error refrescando datos (continuando con snapshots existentes): ${collectErr.message}`);
       }
