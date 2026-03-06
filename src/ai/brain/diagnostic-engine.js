@@ -307,6 +307,57 @@ class DiagnosticEngine {
       });
     }
 
+    // ── Per-ad fatigue breakdown ──
+    // Classify each ad individually: learning / healthy / fatigued / drag
+    const now = new Date();
+    const adBreakdown = activeAds.map(ad => {
+      const adM7 = ad.metrics?.last_7d || {};
+      const adM3 = ad.metrics?.last_3d || {};
+      const createdTime = ad.meta_created_time || ad.created_time || ad.created_at;
+      const ageHours = createdTime ? (now - new Date(createdTime)) / (1000 * 60 * 60) : Infinity;
+      const ageDays = Math.floor(ageHours / 24);
+      const adFreq = adM7.frequency || 0;
+      const adRoas = adM7.roas || 0;
+      const adCtr = adM7.ctr || 0;
+      const adSpend = adM7.spend || 0;
+
+      // Determine per-ad status
+      let adStatus, adAction;
+      if (ageHours < 72) {
+        adStatus = 'learning';
+        adAction = 'protect'; // Never touch learning ads
+      } else if (adFreq >= 4.0 || ageDays >= 28) {
+        adStatus = 'fatigued';
+        adAction = 'pause_candidate';
+      } else if (adRoas < (m7d.roas || 0) * 0.4 && adSpend > 5) {
+        adStatus = 'drag'; // Dragging ad set performance down
+        adAction = 'pause_candidate';
+      } else if (ageDays >= 14 || adFreq >= 2.5) {
+        adStatus = 'aging';
+        adAction = 'monitor';
+      } else {
+        adStatus = 'healthy';
+        adAction = 'keep';
+      }
+
+      return {
+        ad_id: ad.entity_id || ad.id,
+        ad_name: ad.entity_name || ad.name || 'Unknown',
+        age_days: ageDays,
+        age_hours: Math.round(ageHours),
+        status: adStatus,
+        action: adAction,
+        roas_7d: adRoas,
+        ctr_7d: adCtr,
+        frequency_7d: adFreq,
+        spend_7d: adSpend
+      };
+    });
+
+    const learningAds = adBreakdown.filter(a => a.status === 'learning');
+    const fatiguedAds = adBreakdown.filter(a => a.status === 'fatigued' || a.status === 'drag');
+    const healthyAds = adBreakdown.filter(a => a.status === 'healthy' || a.status === 'aging');
+
     // Cap score
     fatigueScore = Math.min(100, fatigueScore);
 
@@ -323,7 +374,11 @@ class DiagnosticEngine {
       signals,
       needs_creative_refresh: fatigueScore >= 30,
       needs_immediate_action: fatigueScore >= 60,
-      active_ads_count: activeAds.length
+      active_ads_count: activeAds.length,
+      ad_breakdown: adBreakdown,
+      learning_count: learningAds.length,
+      fatigued_count: fatiguedAds.length,
+      healthy_count: healthyAds.length
     };
   }
 
@@ -1028,13 +1083,24 @@ class DiagnosticEngine {
         }
       }
 
-      // Fatigue
+      // Fatigue (with per-ad breakdown)
       if (d.fatigue.score > 10) {
         text += `  Fatiga: ${d.fatigue.level} (${d.fatigue.score}/100)`;
         if (d.fatigue.signals.length > 0) {
           text += ` — ${d.fatigue.signals.map(s => s.signal).join(', ')}`;
         }
-        text += ` | ${d.active_ads} ads activos\n`;
+        text += ` | ${d.active_ads} ads activos`;
+        if (d.fatigue.learning_count > 0) text += ` (${d.fatigue.learning_count} LEARNING)`;
+        if (d.fatigue.fatigued_count > 0) text += ` (${d.fatigue.fatigued_count} fatigados/drag)`;
+        text += '\n';
+        // Per-ad breakdown
+        if (d.fatigue.ad_breakdown && d.fatigue.ad_breakdown.length > 0) {
+          for (const ab of d.fatigue.ad_breakdown) {
+            const tag = ab.status.toUpperCase();
+            const action = ab.action === 'protect' ? 'NO TOCAR' : ab.action === 'pause_candidate' ? 'PAUSAR' : ab.action;
+            text += `    → [${tag}] "${ab.ad_name}" — ${ab.age_days}d | ROAS: ${ab.roas_7d.toFixed(2)}x | Freq: ${ab.frequency_7d.toFixed(1)} | $${ab.spend_7d.toFixed(0)}/sem | Acción: ${action}\n`;
+          }
+        }
       }
 
       // Creative Lifespan

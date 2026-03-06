@@ -70,10 +70,26 @@ Cuando un ad set muestra metricas en declive (ROAS bajando, CPA subiendo, CTR ca
 3. Si tiene 3+ ads activos pero TODOS muestran metricas malas → Ahi si puedes considerar pausar.
 4. Si tiene 3+ ads activos pero solo ALGUNOS estan mal → Usa "update_ad_status" para pausar los ads malos individualmente, y "create_ad" para reemplazarlos.
 
+REGLA CRITICA — PROTECCION DE ADS EN LEARNING (<72h):
+Los ads marcados como [LEARNING] tienen MENOS de 72 horas activos. REGLAS ABSOLUTAS:
+1. NUNCA recomiendas pausar un ad [LEARNING] — no tiene datos suficientes para juzgar.
+2. NUNCA uses metricas de un ad [LEARNING] para diagnosticar fatiga del ad set — sus numeros aun no son representativos.
+3. Si un ad set tiene fatiga pero contiene ads [LEARNING], la fatiga viene de los ads VIEJOS, no de los nuevos.
+4. Cuando recomiendas "update_ad_status" para pausar ads malos, EXCLUYE siempre los [LEARNING].
+5. Si TODOS los ads de un ad set son [LEARNING], el ad set esta en fase de aprendizaje — no actuar.
+
+DIAGNOSTICO POR AD INDIVIDUAL:
+Los ads en la seccion "ADS INDIVIDUALES" ahora incluyen etiquetas:
+- [LEARNING]: <72h activo. Protegido. No tocar.
+- [FATIGUED]: Frequency >= 4.0 o edad >= 28 dias. Candidato a pausar.
+- [DRAG]: ROAS muy por debajo del promedio del ad set (< 40%). Arrastra el rendimiento. Candidato a pausar.
+- [HEALTHY]: Rendimiento normal. Mantener.
+Usa estas etiquetas para tomar decisiones GRANULARES: pausa los [FATIGUED] y [DRAG], mantén los [HEALTHY], protege los [LEARNING].
+
 ORDEN DE PRIORIDAD cuando un ad set declina:
-1ro: Refrescar creativos (create_ad) — si tiene pocos ads o creativos fatigados
-2do: Pausar ads individuales malos (update_ad_status) — si hay ads especificos arrastrando el ad set
-3ro: Bajar budget (scale_down) — si todos los ads estan mal pero el ad set tiene historial bueno
+1ro: Identificar cuales ads especificos son [FATIGUED] o [DRAG] y recomendar pausarlos (update_ad_status)
+2do: Refrescar creativos (create_ad) — especialmente si hay ads fatigados que se van a pausar
+3ro: Bajar budget (scale_down) — si todos los ads (no-learning) estan mal pero el ad set tiene historial bueno
 4to: Pausar ad set completo (pause) — ULTIMO RECURSO, solo si ya se intento lo anterior o tiene 0 potencial
 
 Pausar un ad set es la accion MAS destructiva. Pierdes toda la data de aprendizaje de Meta. Siempre intenta salvar el ad set primero con creativos frescos.
@@ -341,9 +357,10 @@ Budget ceiling diario: $${budgetCeiling} | Pacing mensual estimado: ${monthlyPac
     prompt += '\n';
   }
 
-  // === ADS POR AD SET (para analisis de creativos) ===
+  // === ADS POR AD SET (para analisis de creativos con edad y fatiga) ===
   if (adSnapshots && adSnapshots.length > 0) {
-    prompt += `═══ ADS INDIVIDUALES (para analisis de fatiga/rotacion) ═══\n`;
+    prompt += `═══ ADS INDIVIDUALES (con edad y estado de fatiga) ═══\n`;
+    prompt += `  LEYENDA: [LEARNING] = <72h activo, NO TOCAR | [FATIGUED] = freq alta o >28d | [DRAG] = ROAS muy bajo vs ad set | [HEALTHY] = OK\n\n`;
     // Agrupar por parent_id (ad set)
     const adsByAdSet = {};
     for (const ad of adSnapshots) {
@@ -352,12 +369,38 @@ Budget ceiling diario: $${budgetCeiling} | Pacing mensual estimado: ${monthlyPac
       adsByAdSet[pid].push(ad);
     }
 
+    const now = new Date();
     for (const [adSetId, ads] of Object.entries(adsByAdSet)) {
       const parentName = activeAdSets.find(s => s.entity_id === adSetId)?.entity_name || adSetId;
-      prompt += `  ${parentName} (${ads.length} ads):\n`;
+      // Compute ad set avg ROAS for drag detection
+      const activeAds = ads.filter(a => a.status === 'ACTIVE');
+      const adsetAvgRoas = activeAds.length > 0
+        ? activeAds.reduce((s, a) => s + (a.metrics?.last_7d?.roas || 0), 0) / activeAds.length
+        : 0;
+
+      prompt += `  ${parentName} (${ads.length} ads, avg ROAS: ${adsetAvgRoas.toFixed(2)}x):\n`;
       for (const ad of ads) {
         const m7 = ad.metrics?.last_7d || {};
-        prompt += `    [${ad.entity_id}] ${ad.entity_name} | Status: ${ad.status} | CTR: ${(m7.ctr || 0).toFixed(2)}% | ROAS: ${(m7.roas || 0).toFixed(2)}x | Spend: $${(m7.spend || 0).toFixed(0)} | Freq: ${(m7.frequency || 0).toFixed(2)}\n`;
+        const createdTime = ad.meta_created_time || ad.created_time || ad.created_at;
+        const ageHours = createdTime ? (now - new Date(createdTime)) / (1000 * 60 * 60) : -1;
+        const ageDays = ageHours >= 0 ? Math.floor(ageHours / 24) : '?';
+        const freq = m7.frequency || 0;
+        const roas = m7.roas || 0;
+
+        // Determine per-ad tag
+        let tag;
+        if (ageHours >= 0 && ageHours < 72) {
+          tag = 'LEARNING';
+        } else if (freq >= 4.0 || (typeof ageDays === 'number' && ageDays >= 28)) {
+          tag = 'FATIGUED';
+        } else if (roas < adsetAvgRoas * 0.4 && (m7.spend || 0) > 5) {
+          tag = 'DRAG';
+        } else {
+          tag = 'HEALTHY';
+        }
+
+        const ageStr = typeof ageDays === 'number' ? `${ageDays}d` : '?d';
+        prompt += `    [${ad.entity_id}] ${ad.entity_name} | [${tag}] Age: ${ageStr} | Status: ${ad.status} | CTR: ${(m7.ctr || 0).toFixed(2)}% | ROAS: ${roas.toFixed(2)}x | Spend: $${(m7.spend || 0).toFixed(0)} | Freq: ${freq.toFixed(2)}\n`;
       }
     }
     prompt += '\n';

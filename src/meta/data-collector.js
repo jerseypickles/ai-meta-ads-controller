@@ -182,7 +182,7 @@ class DataCollector {
       let adsFetchSuccess = false;
       try {
         const allAdsData = await this.meta.get(`/${this.meta.adAccountId}/ads`, {
-          fields: 'id,name,effective_status,adset_id,campaign_id',
+          fields: 'id,name,effective_status,adset_id,campaign_id,created_time',
           filtering: JSON.stringify([
             { field: 'effective_status', operator: 'IN', value: ['ACTIVE', 'PAUSED', 'CAMPAIGN_PAUSED', 'ADSET_PAUSED', 'PENDING_REVIEW', 'DISAPPROVED', 'WITH_ISSUES'] }
           ]),
@@ -215,11 +215,16 @@ class DataCollector {
           // so they get a snapshot created (with empty metrics).
           // Without this, recently created ads are invisible until Meta
           // processes their first insight row (can take hours).
+          // Store created_time for all ads (existing or new)
+          if (adMetadata[ad.id] && ad.created_time) {
+            adMetadata[ad.id].created_time = ad.created_time;
+          }
           if (!adMetadata[ad.id] && ad.name) {
             adMetadata[ad.id] = {
               ad_name: ad.name,
               adset_id: ad.adset_id || null,
-              campaign_id: ad.campaign_id || null
+              campaign_id: ad.campaign_id || null,
+              created_time: ad.created_time || null
             };
             newAdsInjected++;
           }
@@ -283,6 +288,7 @@ class DataCollector {
           parent_id: adData.adset_id,
           campaign_id: adData.campaign_id,
           status: adStatus,
+          meta_created_time: adData.created_time ? new Date(adData.created_time) : null,
           metrics,
           analysis: this._buildAnalysis(metrics),
           snapshot_at: new Date()

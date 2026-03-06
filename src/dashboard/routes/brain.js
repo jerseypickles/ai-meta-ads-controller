@@ -1005,7 +1005,7 @@ router.get('/creative-performance', async (req, res) => {
       { $sort: { 'metrics.last_3d.spend': -1 } }
     ]);
 
-    // Get latest snapshot per adset for context (name)
+    // Get latest snapshot per adset for context (name, fatigue)
     const adsetSnapshots = await MetricSnapshot.aggregate([
       { $match: { entity_type: 'adset' } },
       { $sort: { entity_id: 1, snapshot_at: -1 } },
@@ -1014,12 +1014,37 @@ router.get('/creative-performance', async (req, res) => {
     ]);
     const adsetMap = {};
     for (const s of adsetSnapshots) {
-      adsetMap[s.entity_id] = { name: s.entity_name, daily_budget: s.daily_budget || 0 };
+      adsetMap[s.entity_id] = {
+        name: s.entity_name,
+        daily_budget: s.daily_budget || 0,
+        frequency_7d: s.metrics?.last_7d?.frequency || 0,
+        ads_count: s.ads_count || 0
+      };
+    }
+
+    // Build sibling map: group ads by adset for per-ad comparison
+    const siblingsByAdSet = {};
+    for (const ad of adSnapshots) {
+      const pid = ad.parent_id;
+      if (!pid) continue;
+      if (!siblingsByAdSet[pid]) siblingsByAdSet[pid] = [];
+      siblingsByAdSet[pid].push({
+        entity_id: ad.entity_id,
+        roas_7d: ad.metrics?.last_7d?.roas || 0,
+        ctr_7d: ad.metrics?.last_7d?.ctr || 0,
+        spend_7d: ad.metrics?.last_7d?.spend || 0,
+        frequency_7d: ad.metrics?.last_7d?.frequency || 0
+      });
     }
 
     // Compute averages across manual ads for 3d (for comparison)
+    // Only include non-learning ads in the average (ads with >= 72h)
+    const now = new Date();
     let totalSpend3d = 0, totalRevenue3d = 0, totalCTR3d = 0, ctrCount = 0;
     for (const ad of adSnapshots) {
+      const createdTime = ad.meta_created_time || ad.created_at;
+      const ageHours = createdTime ? (now - new Date(createdTime)) / (1000 * 60 * 60) : Infinity;
+      if (ageHours < 72) continue; // Don't include learning ads in averages
       const m3 = ad.metrics?.last_3d || {};
       totalSpend3d += m3.spend || 0;
       totalRevenue3d += m3.purchase_value || 0;
@@ -1031,7 +1056,13 @@ router.get('/creative-performance', async (req, res) => {
     // Build response
     const ads = adSnapshots.map(ad => {
       const m3 = ad.metrics?.last_3d || {};
+      const m7 = ad.metrics?.last_7d || {};
       const mT = ad.metrics?.today || {};
+
+      // Calculate ad age
+      const createdTime = ad.meta_created_time || ad.created_at;
+      const ageHours = createdTime ? (now - new Date(createdTime)) / (1000 * 60 * 60) : Infinity;
+      const ageDays = Math.floor(ageHours / 24);
 
       // Trend: compare today vs 3d ROAS
       const roas3 = m3.roas || 0;
@@ -1043,10 +1074,14 @@ router.get('/creative-performance', async (req, res) => {
         else if (ratio < 0.7) trend = 'declining';
       }
 
-      // Brain verdict based on 3d metrics
-      let verdict = 'new'; // default for ads with no spend
+      // Brain verdict — age-aware
+      let verdict = 'new'; // default for ads with no spend/data
       const spend3 = m3.spend || 0;
-      if (spend3 >= 3) {
+
+      if (ageHours < 72) {
+        // LEARNING: Ad is less than 72h old — don't judge it regardless of spend
+        verdict = 'learning';
+      } else if (spend3 >= 3) {
         if (roas3 >= avgROAS3d * 1.2 && (m3.ctr || 0) >= avgCTR3d * 0.8) {
           verdict = 'good';
         } else if (roas3 < avgROAS3d * 0.5 || (m3.frequency || 0) >= 3.5) {
@@ -1056,6 +1091,36 @@ router.get('/creative-performance', async (req, res) => {
         }
       }
 
+      // Per-ad fatigue signals
+      const freq7d = m7.frequency || 0;
+      const ctr7d = m7.ctr || 0;
+      const roas7d = m7.roas || 0;
+      let fatigueLevel = 'healthy';
+      const fatigueSignals = [];
+
+      if (ageHours < 72) {
+        fatigueLevel = 'learning';
+      } else {
+        if (freq7d >= 4.0) { fatigueSignals.push('frequency_critical'); fatigueLevel = 'severe'; }
+        else if (freq7d >= 2.5) { fatigueSignals.push('frequency_warning'); }
+
+        if (ageDays >= 28) { fatigueSignals.push('age_severe'); if (fatigueLevel !== 'severe') fatigueLevel = 'severe'; }
+        else if (ageDays >= 21) { fatigueSignals.push('age_moderate'); if (fatigueLevel === 'healthy') fatigueLevel = 'moderate'; }
+        else if (ageDays >= 14) { fatigueSignals.push('age_early'); if (fatigueLevel === 'healthy') fatigueLevel = 'early'; }
+
+        // CTR decline vs siblings
+        const siblings = siblingsByAdSet[ad.parent_id] || [];
+        if (siblings.length > 1) {
+          const avgSiblingCTR = siblings.reduce((s, a) => s + a.ctr_7d, 0) / siblings.length;
+          if (avgSiblingCTR > 0 && ctr7d < avgSiblingCTR * 0.6) {
+            fatigueSignals.push('ctr_below_siblings');
+          }
+        }
+
+        if (fatigueSignals.length >= 2 && fatigueLevel === 'healthy') fatigueLevel = 'early';
+        if (fatigueSignals.length >= 3 && fatigueLevel === 'early') fatigueLevel = 'moderate';
+      }
+
       return {
         ad_id: ad.entity_id,
         ad_name: ad.entity_name,
@@ -1063,6 +1128,8 @@ router.get('/creative-performance', async (req, res) => {
         adset_id: ad.parent_id,
         adset_name: adsetMap[ad.parent_id]?.name || ad.parent_id,
         snapshot_at: ad.snapshot_at,
+        age_hours: Math.round(ageHours),
+        age_days: ageDays,
         metrics: {
           today: { spend: mT.spend || 0, roas: mT.roas || 0, purchases: mT.purchases || 0, ctr: mT.ctr || 0, clicks: mT.clicks || 0 },
           last_3d: {
@@ -1072,7 +1139,12 @@ router.get('/creative-performance', async (req, res) => {
           }
         },
         trend,
-        verdict
+        verdict,
+        fatigue: {
+          level: fatigueLevel,
+          signals: fatigueSignals
+        },
+        siblings_count: (siblingsByAdSet[ad.parent_id] || []).length
       };
     });
 

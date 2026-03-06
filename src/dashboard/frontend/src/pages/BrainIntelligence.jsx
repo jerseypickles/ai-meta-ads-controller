@@ -2229,10 +2229,11 @@ function KnowledgePanel({ formatTime }) {
 // ═══ CREATIVES PANEL ═══
 
 const CREATIVE_VERDICT = {
-  good: { label: 'Buen rendimiento', color: '#10b981', glow: 'rgba(16,185,129,0.25)', bg: 'rgba(16,185,129,0.08)', border: 'rgba(16,185,129,0.3)' },
-  bad:  { label: 'Bajo rendimiento', color: '#ef4444', glow: 'rgba(239,68,68,0.25)', bg: 'rgba(239,68,68,0.08)', border: 'rgba(239,68,68,0.3)' },
-  watch:{ label: 'Monitorear',       color: '#f59e0b', glow: 'rgba(245,158,11,0.25)', bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.3)' },
-  new:  { label: 'Sin datos',        color: '#6b7280', glow: 'rgba(107,114,128,0.15)', bg: 'rgba(107,114,128,0.06)', border: 'rgba(107,114,128,0.2)' }
+  good:     { label: 'Buen rendimiento', color: '#10b981', glow: 'rgba(16,185,129,0.25)', bg: 'rgba(16,185,129,0.08)', border: 'rgba(16,185,129,0.3)' },
+  bad:      { label: 'Bajo rendimiento', color: '#ef4444', glow: 'rgba(239,68,68,0.25)', bg: 'rgba(239,68,68,0.08)', border: 'rgba(239,68,68,0.3)' },
+  watch:    { label: 'Monitorear',       color: '#f59e0b', glow: 'rgba(245,158,11,0.25)', bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.3)' },
+  learning: { label: 'Aprendiendo',      color: '#3b82f6', glow: 'rgba(59,130,246,0.25)', bg: 'rgba(59,130,246,0.08)', border: 'rgba(59,130,246,0.3)' },
+  new:      { label: 'Sin datos',        color: '#6b7280', glow: 'rgba(107,114,128,0.15)', bg: 'rgba(107,114,128,0.06)', border: 'rgba(107,114,128,0.2)' }
 };
 
 const SORT_OPTIONS = [
@@ -2274,7 +2275,7 @@ function CreativesPanel({ formatTime }) {
   const accountAvg = data.account_avg || {};
 
   // Verdict counts
-  const verdictCounts = { good: 0, bad: 0, watch: 0, new: 0 };
+  const verdictCounts = { good: 0, bad: 0, watch: 0, learning: 0, new: 0 };
   for (const ad of data.ads) verdictCounts[ad.verdict] = (verdictCounts[ad.verdict] || 0) + 1;
 
   // Filter
@@ -2311,6 +2312,7 @@ function CreativesPanel({ formatTime }) {
       <div className="cv2-hero">
         {[
           { key: 'good', count: verdictCounts.good },
+          { key: 'learning', count: verdictCounts.learning },
           { key: 'watch', count: verdictCounts.watch },
           { key: 'bad', count: verdictCounts.bad },
           { key: 'new', count: verdictCounts.new }
@@ -2377,8 +2379,37 @@ function CreativesPanel({ formatTime }) {
                     {ad.status === 'ACTIVE' ? 'Active' : 'Paused'}
                   </span>
                   <span className="cv2-verdict-pill">{vc.label}</span>
+                  {ad.age_days != null && (
+                    <span className="cv2-age-pill" title={`${ad.age_hours || 0}h activo`}>
+                      {ad.age_days < 1 ? `${ad.age_hours || 0}h` : `${ad.age_days}d`}
+                    </span>
+                  )}
                 </div>
               </div>
+
+              {/* Fatigue indicator bar (only for non-learning, non-new) */}
+              {ad.fatigue && ad.fatigue.level !== 'learning' && ad.fatigue.level !== 'healthy' && ad.verdict !== 'new' && (
+                <div className={`cv2-fatigue-bar cv2-fatigue-${ad.fatigue.level}`}>
+                  <span className="cv2-fatigue-icon">{ad.fatigue.level === 'severe' ? '🔥' : ad.fatigue.level === 'moderate' ? '⚠' : '📊'}</span>
+                  <span className="cv2-fatigue-text">
+                    {ad.fatigue.level === 'severe' ? 'Fatiga severa' : ad.fatigue.level === 'moderate' ? 'Fatiga moderada' : 'Fatiga temprana'}
+                    {ad.fatigue.signals && ad.fatigue.signals.length > 0 && ` (${ad.fatigue.signals.length} señales)`}
+                  </span>
+                </div>
+              )}
+
+              {/* Learning message for learning ads */}
+              {ad.verdict === 'learning' && (
+                <div className="cv2-learning-bar">
+                  <span className="cv2-learning-icon">🧪</span>
+                  <span className="cv2-learning-text">
+                    En fase de aprendizaje — {ad.age_hours != null ? `${Math.max(0, 72 - ad.age_hours)}h restantes` : 'evaluando'}
+                  </span>
+                  <div className="cv2-learning-progress">
+                    <div className="cv2-learning-fill" style={{ width: `${Math.min(100, ((ad.age_hours || 0) / 72) * 100)}%` }} />
+                  </div>
+                </div>
+              )}
 
               {/* ROAS hero metric + gauge */}
               <div className="cv2-card-roas">

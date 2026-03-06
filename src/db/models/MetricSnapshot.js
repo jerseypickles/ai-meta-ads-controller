@@ -40,6 +40,9 @@ const metricSnapshotSchema = new mongoose.Schema({
   // Conteo de ads activos (nivel ad set)
   ads_count: { type: Number, default: 0 },
 
+  // Fecha de creación en Meta (para calcular edad del ad/adset)
+  meta_created_time: { type: Date, default: null },
+
   // Métricas por ventana de tiempo (today, last_3d, last_7d, last_14d, last_30d)
   metrics: {
     today: { type: metricsWindowSchema, default: () => ({}) },

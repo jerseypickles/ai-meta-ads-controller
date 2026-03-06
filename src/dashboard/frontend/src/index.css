@@ -6919,6 +6919,80 @@ a:hover {
   color: #ef4444 !important;
 }
 
+/* ── Age pill ── */
+.cv2-age-pill {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.06);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+/* ── Fatigue indicator bar ── */
+.cv2-fatigue-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  margin: 0 -1px;
+}
+.cv2-fatigue-icon { font-size: 12px; }
+.cv2-fatigue-text { color: var(--text-secondary); }
+
+.cv2-fatigue-early {
+  background: rgba(245,158,11,0.08);
+  border: 1px solid rgba(245,158,11,0.15);
+}
+.cv2-fatigue-early .cv2-fatigue-text { color: #f59e0b; }
+
+.cv2-fatigue-moderate {
+  background: rgba(249,115,22,0.08);
+  border: 1px solid rgba(249,115,22,0.15);
+}
+.cv2-fatigue-moderate .cv2-fatigue-text { color: #f97316; }
+
+.cv2-fatigue-severe {
+  background: rgba(239,68,68,0.08);
+  border: 1px solid rgba(239,68,68,0.15);
+}
+.cv2-fatigue-severe .cv2-fatigue-text { color: #ef4444; }
+
+/* ── Learning bar ── */
+.cv2-learning-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(59,130,246,0.06);
+  border: 1px solid rgba(59,130,246,0.15);
+  margin: 0 -1px;
+}
+.cv2-learning-icon { font-size: 13px; }
+.cv2-learning-text {
+  font-size: 11px;
+  color: #3b82f6;
+  flex: 1;
+}
+.cv2-learning-progress {
+  width: 60px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(59,130,246,0.12);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.cv2-learning-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #3b82f6, #60a5fa);
+  transition: width 0.3s ease;
+}
+
 /* ── Responsive ── */
 @media (max-width: 768px) {
   .cv2-hero {
