@@ -560,29 +560,36 @@ function FeedPanel({
     }
   }, [insights]);
 
-  const brainState = analyzing ? 'analyzing' : (unreadCount > 10 ? 'alert' : (unreadCount > 0 ? 'idle' : 'idle'));
-  const thoughtText = analyzing ? 'Procesando patrones...' : '';
-
   return (
     <div className="feed-panel split-layout">
-      {/* Brain Orb Hero — compact */}
+      {/* Brain Orb Hero — compact inline bar */}
       <div className="feed-hero-compact">
-        <div className="feed-hero-orb">
-          <Suspense fallback={<div className="brain-orb-fallback"><div className="orb-placeholder" /></div>}>
+        <div className="feed-hero-orb-mini">
+          <Suspense fallback={<div className="brain-orb-fallback-mini"><div className="orb-placeholder-mini" /></div>}>
             <BrainOrb
               stats={stats}
               unreadCount={unreadCount || 0}
               analyzing={analyzing}
-              brainState={brainState}
-              thoughtText={thoughtText}
+              brainState={analyzing ? 'analyzing' : 'idle'}
+              thoughtText={analyzing ? 'Procesando patrones...' : ''}
               pendingCount={pendingCount || 0}
               entityCount={entityCount || stats?.entities_tracked || 0}
             />
           </Suspense>
         </div>
+        <div className="feed-hero-info-compact">
+          <span className="feed-hero-title-compact">Neural Feed</span>
+          <span className="feed-hero-counts">
+            {insightsTotal > 0 && <span className="feed-count-chip">{insightsTotal} insights</span>}
+            {unreadCount > 0 && <span className="feed-count-chip unread">{unreadCount} sin leer</span>}
+            {(entityCount || stats?.entities_tracked || 0) > 0 && (
+              <span className="feed-count-chip">{entityCount || stats?.entities_tracked} entidades</span>
+            )}
+          </span>
+        </div>
         <div className="feed-hero-actions-compact">
           <button className="btn-ghost btn-small" onClick={onMarkAllRead} title="Marcar todo leido">
-            ✓ Todo leido
+            Todo leido
           </button>
           <button
             className={`btn-primary btn-small ${analyzing ? 'btn-analyzing' : ''}`}
@@ -893,11 +900,11 @@ function RecommendationsPanel({
                     <div className="split-row-accent" style={{ background: priorityCfg.color }} />
                     <div className="split-row-icon" style={{ color: priorityCfg.color }}>{actionCfg.icon}</div>
                     <div className="split-row-content">
-                      <div className="split-row-title">
-                        {rec.title}
-                        <span className="rec-status-dot" style={{ background: statusCfg.color }} title={statusCfg.label} />
-                      </div>
+                      <div className="split-row-title">{rec.title}</div>
                       <div className="split-row-meta">
+                        <span className={`rec-status-tag status-${rec.status}`} style={{ color: statusCfg.color, borderColor: statusCfg.color }}>
+                          {statusCfg.label}
+                        </span>
                         <span className="split-row-type" style={{ color: priorityCfg.color }}>{priorityCfg.label}</span>
                         {rec.entity && <span className="split-row-entity">{rec.entity.entity_name}</span>}
                         <span className="split-row-time">{formatTime(rec.created_at)}</span>

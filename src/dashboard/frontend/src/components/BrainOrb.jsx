@@ -262,10 +262,8 @@ export default function BrainOrb({
   const effectiveState = useMemo(() => {
     if (brainState) return brainState;
     if (analyzing) return 'analyzing';
-    if (unreadCount > 10) return 'alert';
-    if (unreadCount > 0) return 'idle';
     return 'idle';
-  }, [brainState, analyzing, unreadCount]);
+  }, [brainState, analyzing]);
 
   const activity = useMemo(() => {
     const map = { idle: 0.1, analyzing: 0.85, alert: 0.6, thinking: 0.5, approved: 0.3, rejected: 0.3 };
@@ -289,19 +287,14 @@ export default function BrainOrb({
     if (thoughtText) return thoughtText;
     const texts = {
       analyzing: 'Procesando patrones...',
-      alert: `${unreadCount} alerta${unreadCount > 1 ? 's' : ''} detectada${unreadCount > 1 ? 's' : ''}`,
       thinking: 'Evaluando acciones...',
       approved: 'Accion confirmada',
       rejected: 'Decision registrada',
+      alert: 'Requiere atencion',
     };
     if (texts[effectiveState]) return texts[effectiveState];
-    // idle
-    const parts = [];
-    if (entityCount > 0) parts.push(`${entityCount} entidades`);
-    if (pendingCount > 0) parts.push(`${pendingCount} pendiente${pendingCount > 1 ? 's' : ''}`);
-    if (unreadCount > 0) parts.push(`${unreadCount} sin leer`);
-    return parts.length > 0 ? parts.join(' | ') : 'Monitoreo activo';
-  }, [effectiveState, thoughtText, unreadCount, pendingCount, entityCount]);
+    return 'Monitoreo activo';
+  }, [effectiveState, thoughtText]);
 
   const stateLabel = useMemo(() => {
     const labels = {
