@@ -144,12 +144,14 @@ async function _fetchLiveAdSets() {
     return _getSnapshotFallback('no_adsets_from_api');
   }
 
-  // ── 2. Insights: 1 call with time_increment=1 for 30 days ──
-  //    aggregateDailyInsights() computes today/3d/7d/14d/30d locally
+  // ── 2. Insights: 1 call with time_increment=1, maxDays=14 ──
+  //    Live only shows today/3d/7d/14d — no need for 30 days.
+  //    14 days = ~half the rows vs 30 days → fewer pagination pages.
+  //    If the cron already fetched 30d data within 90s, the cache returns it instantly.
   let adSetInsights = {};
 
   try {
-    const dailyRows = await meta.getAccountInsightsDaily('adset');
+    const dailyRows = await meta.getAccountInsightsDaily('adset', 14);
     checkDeadline('after_insights');
     adSetInsights = aggregateDailyInsights(dailyRows, 'adset_id');
     logger.debug(`[LIVE] ${dailyRows.length} daily rows → ${Object.keys(adSetInsights).length} ad sets`);
@@ -285,8 +287,10 @@ async function _backgroundRefresh() {
 function _startBackgroundRefresh() {
   if (_bgRefreshTimer) return;
   logger.info(`[LIVE-BG] Starting background refresh every ${BG_REFRESH_INTERVAL / 1000}s`);
-  // Initial fetch after 2s (let server boot first)
-  setTimeout(() => _backgroundRefresh(), 2000);
+  // Initial fetch after 90s — the boot cron runs immediately on startup and takes ~50s.
+  // Waiting 90s ensures the cron finishes first and the daily insights cache is populated,
+  // so the BG refresh gets an instant cache hit instead of competing for the Bottleneck limiter.
+  setTimeout(() => _backgroundRefresh(), 90000);
   _bgRefreshTimer = setInterval(_backgroundRefresh, BG_REFRESH_INTERVAL);
 }
 

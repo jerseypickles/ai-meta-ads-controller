@@ -22,6 +22,13 @@ class MetaClient {
     this._insightsCache = new Map();
     this._insightsCacheTTL = 55 * 1000; // 55 seconds — expires before live cache (120s)
 
+    // Cache for daily insight rows (getAccountInsightsDaily).
+    // Keyed by `${level}:${maxDays}`. The live endpoint and data-collector often
+    // fetch the same level within seconds of each other — this avoids duplicate API calls
+    // and the associated Bottleneck queuing that caused the 28s timeout.
+    this._dailyInsightsCache = new Map();
+    this._dailyInsightsCacheTTL = 90 * 1000; // 90s — long enough to survive cron→live overlap
+
     // Rate limiter: Standard tier allows 190,000 + 400*active_ads per hour.
     // We cap at 1,000/hour locally (very safe), with adaptive throttling via headers.
     // minTime starts at 1000ms — _checkRateLimitHeaders speeds up to 500ms when headroom available.
@@ -531,17 +538,43 @@ class MetaClient {
   }
 
   /**
-   * Obtener insights diarios (time_increment=1) para los últimos 30 días a nivel de cuenta.
+   * Obtener insights diarios (time_increment=1) a nivel de cuenta.
    * UNA sola llamada devuelve 1 row por entidad por día → el caller agrega localmente
    * en ventanas (today, 3d, 7d, 14d, 30d), eliminando la necesidad de 5 calls separadas.
    *
-   * Reduce ~5 insight calls por nivel a ~1 call por nivel.
+   * @param {string} level - 'campaign', 'adset', or 'ad'
+   * @param {number} maxDays - How many days to fetch (default 30). Live endpoint uses 14
+   *   to cut row count in half and avoid pagination timeouts.
+   *
+   * Results are cached for 90s so the live endpoint can reuse data the cron just fetched,
+   * avoiding duplicate API calls through the shared Bottleneck limiter.
+   * A request for 14 days will also match a cached 30-day response (superset).
    */
-  async getAccountInsightsDaily(level) {
+  async getAccountInsightsDaily(level, maxDays = 30) {
     const moment = require('moment-timezone');
     const TIMEZONE = require('../../config').system.timezone || 'America/New_York';
     const today = moment().tz(TIMEZONE).format('YYYY-MM-DD');
-    const since30d = moment().tz(TIMEZONE).subtract(29, 'days').format('YYYY-MM-DD');
+    const sinceDays = Math.min(maxDays, 30);
+    const sinceDate = moment().tz(TIMEZONE).subtract(sinceDays - 1, 'days').format('YYYY-MM-DD');
+
+    // Check cache — a cached superset (30d) satisfies a smaller request (14d)
+    const cacheKey = `${level}:${sinceDays}`;
+    const now = Date.now();
+    for (const [key, entry] of this._dailyInsightsCache) {
+      if (now - entry.ts > this._dailyInsightsCacheTTL) {
+        this._dailyInsightsCache.delete(key);
+        continue;
+      }
+      // Match if same level and cached range covers requested range
+      if (key.startsWith(`${level}:`) && entry.sinceDate <= sinceDate) {
+        logger.debug(`[DAILY-CACHE] Hit for ${cacheKey} (from ${key}, ${entry.data.length} rows, age ${Math.round((now - entry.ts) / 1000)}s)`);
+        // If cached has more days than needed, filter rows to requested range
+        if (entry.sinceDate < sinceDate) {
+          return entry.data.filter(r => r.date_start >= sinceDate);
+        }
+        return entry.data;
+      }
+    }
 
     const fieldList = [
       'campaign_id', 'campaign_name',
@@ -559,7 +592,7 @@ class MetaClient {
     const params = {
       level,
       fields: fieldList.join(','),
-      time_range: JSON.stringify({ since: since30d, until: today }),
+      time_range: JSON.stringify({ since: sinceDate, until: today }),
       time_increment: 1, // 1 row per entity per day
       limit: 500
     };
@@ -583,6 +616,9 @@ class MetaClient {
         results = results.concat(nextData.data || []);
         paging = nextData.paging;
       }
+
+      // Cache the results
+      this._dailyInsightsCache.set(cacheKey, { data: results, ts: Date.now(), sinceDate });
 
       return results;
     } catch (error) {
