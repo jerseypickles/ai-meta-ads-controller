@@ -34,9 +34,10 @@ SUBASTA Y DELIVERY:
 
 ATTRIBUTION Y DATOS:
 - Ventana de atribucion: 7-day click / 1-day view (default).
-- ROAS de "hoy" o "3 dias" esta INCOMPLETO por el lag de atribucion. Conversiones siguen atribuyendose hasta 7 dias despues del click.
+- "today" = datos PARCIALES del dia en curso. NUNCA tomar decisiones basadas solo en "today" — el lag de atribucion de Meta (24h+) hace que ROAS de hoy siempre parezca bajo.
+- "3d/7d/14d/30d" = dias COMPLETADOS (excluyen hoy). Son confiables. Usa 3d para cambios recientes, 7d como referencia principal.
 - ROAS real de un periodo solo se estabiliza ~10 dias despues de que termina el periodo.
-- Comparar 7d vs 14d es mas confiable que 3d vs 7d para detectar tendencias reales.
+- Comparar 3d vs 7d es util para detectar cambios recientes. Comparar 7d vs 14d para confirmar tendencias.
 - View-through conversions (1-day view) pueden inflar ROAS en 15-30%.
 
 ESTRUCTURA DE CUENTA:

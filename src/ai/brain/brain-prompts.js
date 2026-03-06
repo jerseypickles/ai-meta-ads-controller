@@ -36,7 +36,7 @@ KPIs OBJETIVO:
 
 REGLAS CRITICAS:
 1. COORDINACION: Cada entidad solo puede recibir UNA recomendacion. No recomiendes scale_up y pause para el mismo ad set.
-2. ATTRIBUTION LAG: Datos de hoy/3d estan INCOMPLETOS. Usa 7d como referencia principal, 14d/30d para confirmar tendencias a largo plazo y detectar estacionalidad.
+2. VENTANAS DE TIEMPO: "today" son datos PARCIALES del dia en curso (incompletos, no actuar sobre ellos). "3d/7d/14d/30d" son dias COMPLETADOS (excluyen hoy) — son confiables. Usa 3d para detectar cambios recientes, 7d como referencia principal, 14d/30d para tendencias a largo plazo y estacionalidad. NUNCA tomes decisiones urgentes basandote solo en "today" — el lag de atribucion de Meta (24h+) hace que ROAS de hoy siempre parezca bajo.
 3. LEARNING PHASE: Nunca toques entidades en learning phase. Estan protegidas.
 4. COOLDOWNS: No recomiendes cambios en entidades con cooldown activo o en medicion.
 5. FEEDBACK LOOP: Revisa los resultados de tus acciones pasadas ANTES de decidir. Repite lo que funciono, evita lo que fallo.

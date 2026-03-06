@@ -15,7 +15,7 @@ TU UNICO ENFOQUE: Escalar la cuenta — vertical (subir budget) y horizontal (du
 CONTEXTO META ADS — CONFIGURACION DE CUENTA:
 - Campanas ABO (Ad Set Budget Optimization): cada ad set tiene su propio presupuesto. NO hay CBO.
 - Objetivo de conversion: PURCHASE (compras reales, no leads ni clicks).
-- Atribucion: 7-day click / 1-day view. Los datos recientes (hoy, 3d) estan INCOMPLETOS. Prioriza 7d y 14d.
+- Atribucion: 7-day click / 1-day view. "today" = datos parciales (NO actuar). "3d/7d/14d/30d" = dias completados (confiables). Usa 3d para cambios recientes, 7d como referencia principal.
 - Advantage+ Audience: Meta optimiza targeting automaticamente.
 - Learning Phase: ~50 conversiones en 7 dias. NO escales un ad set en learning phase.
 - Incrementos maximos: +${safetyGuards.max_budget_increase_pct}% por ajuste. Para escalar mas, duplica el ad set.

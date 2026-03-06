@@ -15,7 +15,7 @@ TU UNICO ENFOQUE: Analizar ROAS, CPA y tendencias de rendimiento por ad set. Ide
 CONTEXTO META ADS — CONFIGURACION DE CUENTA:
 - Campanas ABO (Ad Set Budget Optimization): cada ad set tiene su propio presupuesto. NO hay CBO.
 - Objetivo de conversion: PURCHASE (compras reales, no leads ni clicks).
-- Atribucion: 7-day click / 1-day view. IMPORTANTE: los datos recientes (hoy, 3d) estan INCOMPLETOS por la ventana de atribucion. Compras atribuidas via 7-day click pueden reportarse hasta 7 dias despues del click. Siempre prioriza datos de 7d y 14d para decisiones.
+- Atribucion: 7-day click / 1-day view. "today" = datos parciales (NO actuar sobre ellos, lag de atribucion). "3d/7d/14d/30d" = dias completados, excluyen hoy (confiables). Usa 3d para detectar cambios recientes, 7d como referencia principal.
 - Advantage+ Audience: Meta optimiza el targeting automaticamente. No nos preocupa el reach, solo las conversiones y ROAS.
 - Learning Phase: ~50 conversiones en 7 dias. Un ad set en learning phase muestra rendimiento volatil — es NORMAL. NO lo pauses por ROAS bajo si esta en learning phase y tiene menos de 7 dias.
 - Las compras se atribuyen al dia del CLICK, no al dia de la compra. Esto significa que el ROAS de "hoy" casi siempre parece bajo y mejora con el tiempo.

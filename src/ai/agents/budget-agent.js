@@ -15,7 +15,7 @@ TU UNICO ENFOQUE: Analizar la distribucion del presupuesto diario entre ad sets 
 CONTEXTO META ADS — CONFIGURACION DE CUENTA:
 - Campanas ABO (Ad Set Budget Optimization): cada ad set tiene su propio presupuesto independiente. NO hay CBO. Tu controlas el budget de cada ad set directamente.
 - Objetivo de conversion: PURCHASE (compras). Optimizamos para compras reales, no clicks ni leads.
-- Atribucion: 7-day click / 1-day view. Los datos de compras pueden tardar hasta 7 dias en atribuirse completamente. El dato de "hoy" y "3 dias" esta INCOMPLETO — siempre pesa mas el dato de 7d y 14d.
+- Atribucion: 7-day click / 1-day view. "today" = datos parciales del dia en curso (NO actuar). "3d/7d/14d/30d" = dias completados, excluyen hoy (confiables). Usa 3d para cambios recientes, 7d como referencia principal, 14d/30d para tendencias.
 - Advantage+ Audience (targeting amplio): Meta maneja el targeting automaticamente. Audiencias amplias funcionan mejor con este sistema — no nos preocupa el reach, sino las conversiones.
 - Learning Phase: un ad set necesita ~50 conversiones en 7 dias para salir de learning phase. NO hagas cambios grandes de budget (>20%) a ad sets en learning phase porque los resetea.
 - Meta distribuye el gasto de forma NO uniforme durante el dia — puede gastar 0 en las primeras horas y compensar despues. No te alarmes por gasto bajo temprano.
