@@ -2253,11 +2253,18 @@ const SORT_OPTIONS = [
   { key: 'purchases', label: 'Compras' }
 ];
 
+const TIME_WINDOWS = [
+  { key: 'today', label: 'Hoy' },
+  { key: 'last_3d', label: '3d' },
+  { key: 'last_7d', label: '7d' }
+];
+
 function CreativesPanel({ formatTime }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [sortBy, setSortBy] = useState('spend');
   const [filterVerdict, setFilterVerdict] = useState('all');
+  const [timeWindow, setTimeWindow] = useState('last_3d');
 
   useEffect(() => {
     (async () => {
@@ -2275,7 +2282,7 @@ function CreativesPanel({ formatTime }) {
       <div className="feed-empty">
         <div className="feed-empty-icon">🎨</div>
         <p>No hay creativos manuales todavia.</p>
-        <p className="feed-empty-hint">Cuando subas creativos desde Ad Sets Manager, el Brain rastreara su rendimiento aqui con metricas de 3 dias.</p>
+        <p className="feed-empty-hint">Cuando subas creativos desde Ad Sets Manager, el Brain rastreara su rendimiento aqui.</p>
       </div>
     );
   }
@@ -2290,16 +2297,16 @@ function CreativesPanel({ formatTime }) {
   let filtered = data.ads;
   if (filterVerdict !== 'all') filtered = filtered.filter(a => a.verdict === filterVerdict);
 
-  // Sort
+  // Sort (uses selected time window)
   filtered = [...filtered].sort((a, b) => {
-    const m3a = a.metrics?.last_3d || {};
-    const m3b = b.metrics?.last_3d || {};
-    if (sortBy === 'spend') return (m3b.spend || 0) - (m3a.spend || 0);
-    if (sortBy === 'roas') return (m3b.roas || 0) - (m3a.roas || 0);
-    if (sortBy === 'clicks') return (m3b.clicks || 0) - (m3a.clicks || 0);
-    if (sortBy === 'ctr') return (m3b.ctr || 0) - (m3a.ctr || 0);
-    if (sortBy === 'cpa') return (m3a.cpa || 0) - (m3b.cpa || 0);
-    if (sortBy === 'purchases') return (m3b.purchases || 0) - (m3a.purchases || 0);
+    const ma = a.metrics?.[timeWindow] || {};
+    const mb = b.metrics?.[timeWindow] || {};
+    if (sortBy === 'spend') return (mb.spend || 0) - (ma.spend || 0);
+    if (sortBy === 'roas') return (mb.roas || 0) - (ma.roas || 0);
+    if (sortBy === 'clicks') return (mb.clicks || 0) - (ma.clicks || 0);
+    if (sortBy === 'ctr') return (mb.ctr || 0) - (ma.ctr || 0);
+    if (sortBy === 'cpa') return (ma.cpa || 0) - (mb.cpa || 0);
+    if (sortBy === 'purchases') return (mb.purchases || 0) - (ma.purchases || 0);
     return 0;
   });
 
@@ -2309,9 +2316,14 @@ function CreativesPanel({ formatTime }) {
   const fmtInt = (v) => v != null && v > 0 ? v.toLocaleString() : '--';
 
   // ROAS gauge helper: returns width % relative to account avg (capped at 200%)
+  const windowAvg = accountAvg[timeWindow] || {};
+  const avgRoas = windowAvg.roas || accountAvg.roas_3d || 0;
+  const avgCtr = windowAvg.ctr || accountAvg.ctr_3d || 0;
+  const windowLabel = TIME_WINDOWS.find(w => w.key === timeWindow)?.label || '3d';
+
   const roasGauge = (roas) => {
-    if (!accountAvg.roas_3d || accountAvg.roas_3d === 0 || !roas) return 0;
-    return Math.min((roas / accountAvg.roas_3d) * 50, 100);
+    if (!avgRoas || avgRoas === 0 || !roas) return 0;
+    return Math.min((roas / avgRoas) * 50, 100);
   };
 
   return (
@@ -2340,18 +2352,26 @@ function CreativesPanel({ formatTime }) {
         })}
         <div className="cv2-hero-ref">
           <div className="cv2-hero-ref-item">
-            <span className="cv2-hero-ref-val">{fmtNum(accountAvg.roas_3d)}x</span>
-            <span className="cv2-hero-ref-label">ROAS prom</span>
+            <span className="cv2-hero-ref-val">{fmtNum(avgRoas)}x</span>
+            <span className="cv2-hero-ref-label">ROAS prom ({windowLabel})</span>
           </div>
           <div className="cv2-hero-ref-item">
-            <span className="cv2-hero-ref-val">{fmtPct(accountAvg.ctr_3d)}</span>
-            <span className="cv2-hero-ref-label">CTR prom</span>
+            <span className="cv2-hero-ref-val">{fmtPct(avgCtr)}</span>
+            <span className="cv2-hero-ref-label">CTR prom ({windowLabel})</span>
           </div>
         </div>
       </div>
 
-      {/* ── Sort pills ── */}
+      {/* ── Toolbar: time window + sort pills ── */}
       <div className="cv2-toolbar">
+        <div className="cv2-time-pills">
+          {TIME_WINDOWS.map(w => (
+            <button key={w.key}
+              className={`cv2-time-pill ${timeWindow === w.key ? 'active' : ''}`}
+              onClick={() => setTimeWindow(w.key)}
+            >{w.label}</button>
+          ))}
+        </div>
         <div className="cv2-sort-pills">
           {SORT_OPTIONS.map(s => (
             <button key={s.key}
@@ -2366,11 +2386,11 @@ function CreativesPanel({ formatTime }) {
       {/* ── Ad cards grid ── */}
       <div className="cv2-grid">
         {filtered.map(ad => {
-          const m3 = ad.metrics?.last_3d || {};
+          const mw = ad.metrics?.[timeWindow] || {};
           const vc = CREATIVE_VERDICT[ad.verdict] || CREATIVE_VERDICT.new;
           const trendIcon = ad.trend === 'improving' ? '\u2197' : ad.trend === 'declining' ? '\u2198' : '\u2192';
           const trendClass = ad.trend === 'improving' ? 'up' : ad.trend === 'declining' ? 'down' : 'flat';
-          const gauge = roasGauge(m3.roas);
+          const gauge = roasGauge(mw.roas);
 
           return (
             <div key={ad.ad_id} className="cv2-card" style={{ '--vc': vc.color, '--vg': vc.glow, '--vbg': vc.bg, '--vb': vc.border }}>
@@ -2422,18 +2442,18 @@ function CreativesPanel({ formatTime }) {
               {/* ROAS hero metric + gauge */}
               <div className="cv2-card-roas">
                 <div className="cv2-roas-left">
-                  <span className="cv2-roas-value">{m3.roas > 0 ? `${m3.roas.toFixed(2)}x` : '--'}</span>
-                  <span className="cv2-roas-label">ROAS 3d</span>
+                  <span className="cv2-roas-value">{mw.roas > 0 ? `${mw.roas.toFixed(2)}x` : '--'}</span>
+                  <span className="cv2-roas-label">ROAS {windowLabel}</span>
                 </div>
                 <div className="cv2-roas-gauge">
                   <div className="cv2-gauge-track">
                     <div className="cv2-gauge-fill" style={{ width: `${gauge}%` }} />
-                    <div className="cv2-gauge-marker" style={{ left: '50%' }} title={`Promedio: ${fmtNum(accountAvg.roas_3d)}x`} />
+                    <div className="cv2-gauge-marker" style={{ left: '50%' }} title={`Promedio: ${fmtNum(avgRoas)}x`} />
                   </div>
                   <div className="cv2-gauge-labels">
                     <span>0</span>
-                    <span>{fmtNum(accountAvg.roas_3d)}x avg</span>
-                    <span>{accountAvg.roas_3d ? (accountAvg.roas_3d * 2).toFixed(1) + 'x' : ''}</span>
+                    <span>{fmtNum(avgRoas)}x avg</span>
+                    <span>{avgRoas ? (avgRoas * 2).toFixed(1) + 'x' : ''}</span>
                   </div>
                 </div>
                 <span className={`cv2-trend ${trendClass}`}>{trendIcon}</span>
@@ -2442,29 +2462,29 @@ function CreativesPanel({ formatTime }) {
               {/* Metrics grid */}
               <div className="cv2-card-metrics">
                 <div className="cv2-metric">
-                  <span className="cv2-metric-val">{fmtMoney(m3.spend)}</span>
+                  <span className="cv2-metric-val">{fmtMoney(mw.spend)}</span>
                   <span className="cv2-metric-key">Gasto</span>
                 </div>
                 <div className="cv2-metric">
-                  <span className="cv2-metric-val">{fmtInt(m3.clicks)}</span>
+                  <span className="cv2-metric-val">{fmtInt(mw.clicks)}</span>
                   <span className="cv2-metric-key">Clicks</span>
                 </div>
                 <div className="cv2-metric">
-                  <span className="cv2-metric-val">{fmtPct(m3.ctr)}</span>
+                  <span className="cv2-metric-val">{fmtPct(mw.ctr)}</span>
                   <span className="cv2-metric-key">CTR</span>
                 </div>
                 <div className="cv2-metric">
-                  <span className="cv2-metric-val">{fmtInt(m3.purchases)}</span>
+                  <span className="cv2-metric-val">{fmtInt(mw.purchases)}</span>
                   <span className="cv2-metric-key">Compras</span>
                 </div>
                 <div className="cv2-metric">
-                  <span className="cv2-metric-val">{fmtMoney(m3.cpa)}</span>
+                  <span className="cv2-metric-val">{fmtMoney(mw.cpa)}</span>
                   <span className="cv2-metric-key">CPA</span>
                 </div>
                 <div className="cv2-metric">
-                  <span className="cv2-metric-val">{m3.frequency > 0 ? m3.frequency.toFixed(1) : '--'}</span>
-                  <span className={`cv2-metric-key ${(m3.frequency || 0) >= 3.5 ? 'cv2-freq-warn' : ''}`}>
-                    Freq{(m3.frequency || 0) >= 3.5 ? ' !' : ''}
+                  <span className="cv2-metric-val">{mw.frequency > 0 ? mw.frequency.toFixed(1) : '--'}</span>
+                  <span className={`cv2-metric-key ${(mw.frequency || 0) >= 3.5 ? 'cv2-freq-warn' : ''}`}>
+                    Freq{(mw.frequency || 0) >= 3.5 ? ' !' : ''}
                   </span>
                 </div>
               </div>

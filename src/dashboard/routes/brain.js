@@ -1111,21 +1111,23 @@ router.get('/creative-performance', async (req, res) => {
       });
     }
 
-    // Compute averages across manual ads for 3d (for comparison)
+    // Compute averages across manual ads for each window (for comparison)
     // Only include non-learning ads in the average (ads with >= 72h)
     const now = new Date();
-    let totalSpend3d = 0, totalRevenue3d = 0, totalCTR3d = 0, ctrCount = 0;
+    const avgCalc = { today: { spend: 0, rev: 0, ctr: 0, n: 0 }, last_3d: { spend: 0, rev: 0, ctr: 0, n: 0 }, last_7d: { spend: 0, rev: 0, ctr: 0, n: 0 } };
     for (const ad of adSnapshots) {
       const createdTime = ad.meta_created_time || ad.created_at;
       const ageHours = createdTime ? (now - new Date(createdTime)) / (1000 * 60 * 60) : Infinity;
       if (ageHours < 72) continue; // Don't include learning ads in averages
-      const m3 = ad.metrics?.last_3d || {};
-      totalSpend3d += m3.spend || 0;
-      totalRevenue3d += m3.purchase_value || 0;
-      if (m3.ctr > 0) { totalCTR3d += m3.ctr; ctrCount++; }
+      for (const w of ['today', 'last_3d', 'last_7d']) {
+        const m = ad.metrics?.[w] || {};
+        avgCalc[w].spend += m.spend || 0;
+        avgCalc[w].rev += m.purchase_value || 0;
+        if (m.ctr > 0) { avgCalc[w].ctr += m.ctr; avgCalc[w].n++; }
+      }
     }
-    const avgROAS3d = totalSpend3d > 0 ? totalRevenue3d / totalSpend3d : 0;
-    const avgCTR3d = ctrCount > 0 ? totalCTR3d / ctrCount : 0;
+    const avgROAS3d = avgCalc.last_3d.spend > 0 ? avgCalc.last_3d.rev / avgCalc.last_3d.spend : 0;
+    const avgCTR3d = avgCalc.last_3d.n > 0 ? avgCalc.last_3d.ctr / avgCalc.last_3d.n : 0;
 
     // Build response
     const ads = adSnapshots.map(ad => {
@@ -1205,11 +1207,20 @@ router.get('/creative-performance', async (req, res) => {
         age_hours: Math.round(ageHours),
         age_days: ageDays,
         metrics: {
-          today: { spend: mT.spend || 0, roas: mT.roas || 0, purchases: mT.purchases || 0, ctr: mT.ctr || 0, clicks: mT.clicks || 0 },
+          today: {
+            spend: mT.spend || 0, roas: mT.roas || 0, purchases: mT.purchases || 0,
+            ctr: mT.ctr || 0, cpa: mT.cpa || 0, frequency: mT.frequency || 0,
+            impressions: mT.impressions || 0, clicks: mT.clicks || 0
+          },
           last_3d: {
             spend: m3.spend || 0, roas: m3.roas || 0, purchases: m3.purchases || 0,
             ctr: m3.ctr || 0, cpa: m3.cpa || 0, frequency: m3.frequency || 0,
             impressions: m3.impressions || 0, cpm: m3.cpm || 0, clicks: m3.clicks || 0
+          },
+          last_7d: {
+            spend: m7.spend || 0, roas: m7.roas || 0, purchases: m7.purchases || 0,
+            ctr: m7.ctr || 0, cpa: m7.cpa || 0, frequency: m7.frequency || 0,
+            impressions: m7.impressions || 0, cpm: m7.cpm || 0, clicks: m7.clicks || 0
           }
         },
         trend,
@@ -1222,9 +1233,17 @@ router.get('/creative-performance', async (req, res) => {
       };
     });
 
+    const buildAvg = (w) => ({
+      roas: avgCalc[w].spend > 0 ? Math.round((avgCalc[w].rev / avgCalc[w].spend) * 100) / 100 : 0,
+      ctr: avgCalc[w].n > 0 ? Math.round((avgCalc[w].ctr / avgCalc[w].n) * 100) / 100 : 0
+    });
+
     res.json({
       ads,
-      account_avg: { roas_3d: Math.round(avgROAS3d * 100) / 100, ctr_3d: Math.round(avgCTR3d * 100) / 100 },
+      account_avg: {
+        roas_3d: Math.round(avgROAS3d * 100) / 100, ctr_3d: Math.round(avgCTR3d * 100) / 100,
+        today: buildAvg('today'), last_3d: buildAvg('last_3d'), last_7d: buildAvg('last_7d')
+      },
       total: ads.length
     });
   } catch (error) {
