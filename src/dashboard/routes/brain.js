@@ -1064,11 +1064,11 @@ router.get('/creative-performance', async (req, res) => {
         adset_name: adsetMap[ad.parent_id]?.name || ad.parent_id,
         snapshot_at: ad.snapshot_at,
         metrics: {
-          today: { spend: mT.spend || 0, roas: mT.roas || 0, purchases: mT.purchases || 0, ctr: mT.ctr || 0 },
+          today: { spend: mT.spend || 0, roas: mT.roas || 0, purchases: mT.purchases || 0, ctr: mT.ctr || 0, clicks: mT.clicks || 0 },
           last_3d: {
             spend: m3.spend || 0, roas: m3.roas || 0, purchases: m3.purchases || 0,
             ctr: m3.ctr || 0, cpa: m3.cpa || 0, frequency: m3.frequency || 0,
-            impressions: m3.impressions || 0, cpm: m3.cpm || 0
+            impressions: m3.impressions || 0, cpm: m3.cpm || 0, clicks: m3.clicks || 0
           }
         },
         trend,

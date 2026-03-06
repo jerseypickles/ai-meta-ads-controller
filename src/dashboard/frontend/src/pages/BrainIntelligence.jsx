@@ -2229,18 +2229,26 @@ function KnowledgePanel({ formatTime }) {
 // ═══ CREATIVES PANEL ═══
 
 const CREATIVE_VERDICT = {
-  good: { icon: '✅', label: 'Buen rendimiento', color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
-  bad:  { icon: '🔴', label: 'Bajo rendimiento', color: '#ef4444', bg: 'rgba(239,68,68,0.12)' },
-  watch:{ icon: '👁️', label: 'Monitorear', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
-  new:  { icon: '🆕', label: 'Sin datos', color: '#6b7280', bg: 'rgba(107,114,128,0.12)' }
+  good: { label: 'Buen rendimiento', color: '#10b981', glow: 'rgba(16,185,129,0.25)', bg: 'rgba(16,185,129,0.08)', border: 'rgba(16,185,129,0.3)' },
+  bad:  { label: 'Bajo rendimiento', color: '#ef4444', glow: 'rgba(239,68,68,0.25)', bg: 'rgba(239,68,68,0.08)', border: 'rgba(239,68,68,0.3)' },
+  watch:{ label: 'Monitorear',       color: '#f59e0b', glow: 'rgba(245,158,11,0.25)', bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.3)' },
+  new:  { label: 'Sin datos',        color: '#6b7280', glow: 'rgba(107,114,128,0.15)', bg: 'rgba(107,114,128,0.06)', border: 'rgba(107,114,128,0.2)' }
 };
+
+const SORT_OPTIONS = [
+  { key: 'spend', label: 'Gasto' },
+  { key: 'roas', label: 'ROAS' },
+  { key: 'clicks', label: 'Clicks' },
+  { key: 'ctr', label: 'CTR' },
+  { key: 'cpa', label: 'CPA' },
+  { key: 'purchases', label: 'Compras' }
+];
 
 function CreativesPanel({ formatTime }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [sortBy, setSortBy] = useState('spend');
   const [filterVerdict, setFilterVerdict] = useState('all');
-  const [filterStatus, setFilterStatus] = useState('all');
 
   useEffect(() => {
     (async () => {
@@ -2265,10 +2273,13 @@ function CreativesPanel({ formatTime }) {
 
   const accountAvg = data.account_avg || {};
 
+  // Verdict counts
+  const verdictCounts = { good: 0, bad: 0, watch: 0, new: 0 };
+  for (const ad of data.ads) verdictCounts[ad.verdict] = (verdictCounts[ad.verdict] || 0) + 1;
+
   // Filter
   let filtered = data.ads;
   if (filterVerdict !== 'all') filtered = filtered.filter(a => a.verdict === filterVerdict);
-  if (filterStatus !== 'all') filtered = filtered.filter(a => a.status === filterStatus);
 
   // Sort
   filtered = [...filtered].sort((a, b) => {
@@ -2276,135 +2287,151 @@ function CreativesPanel({ formatTime }) {
     const m3b = b.metrics?.last_3d || {};
     if (sortBy === 'spend') return (m3b.spend || 0) - (m3a.spend || 0);
     if (sortBy === 'roas') return (m3b.roas || 0) - (m3a.roas || 0);
+    if (sortBy === 'clicks') return (m3b.clicks || 0) - (m3a.clicks || 0);
     if (sortBy === 'ctr') return (m3b.ctr || 0) - (m3a.ctr || 0);
     if (sortBy === 'cpa') return (m3a.cpa || 0) - (m3b.cpa || 0);
     if (sortBy === 'purchases') return (m3b.purchases || 0) - (m3a.purchases || 0);
     return 0;
   });
 
-  // Summary stats
-  const verdictCounts = { good: 0, bad: 0, watch: 0, new: 0 };
-  for (const ad of data.ads) verdictCounts[ad.verdict] = (verdictCounts[ad.verdict] || 0) + 1;
+  const fmtMoney = (v) => v != null && v > 0 ? `$${v.toFixed(2)}` : '--';
+  const fmtPct = (v) => v != null && v > 0 ? `${v.toFixed(2)}%` : '--';
+  const fmtNum = (v) => v != null && v > 0 ? v.toFixed(2) : '--';
+  const fmtInt = (v) => v != null && v > 0 ? v.toLocaleString() : '--';
 
-  const fmtMoney = (v) => v != null ? `$${v.toFixed(2)}` : '$0.00';
-  const fmtPct = (v) => v != null ? `${v.toFixed(2)}%` : '0.00%';
-  const fmtNum = (v, d = 2) => v != null ? v.toFixed(d) : '0';
+  // ROAS gauge helper: returns width % relative to account avg (capped at 200%)
+  const roasGauge = (roas) => {
+    if (!accountAvg.roas_3d || accountAvg.roas_3d === 0 || !roas) return 0;
+    return Math.min((roas / accountAvg.roas_3d) * 50, 100);
+  };
 
   return (
-    <div className="creatives-panel">
-      {/* Summary hero */}
-      <div className="creatives-hero">
-        <div className="creatives-hero-stat">
-          <span className="creatives-hero-value" style={{ color: '#10b981' }}>{verdictCounts.good}</span>
-          <span className="creatives-hero-label">Buenos</span>
-        </div>
-        <div className="creatives-hero-stat">
-          <span className="creatives-hero-value" style={{ color: '#f59e0b' }}>{verdictCounts.watch}</span>
-          <span className="creatives-hero-label">Monitorear</span>
-        </div>
-        <div className="creatives-hero-stat">
-          <span className="creatives-hero-value" style={{ color: '#ef4444' }}>{verdictCounts.bad}</span>
-          <span className="creatives-hero-label">Bajo rend.</span>
-        </div>
-        <div className="creatives-hero-stat">
-          <span className="creatives-hero-value" style={{ color: '#6b7280' }}>{verdictCounts.new}</span>
-          <span className="creatives-hero-label">Sin datos</span>
-        </div>
-        <div className="creatives-hero-stat creatives-hero-ref">
-          <span className="creatives-hero-value">{fmtNum(accountAvg.roas_3d)}x</span>
-          <span className="creatives-hero-label">ROAS prom 3d</span>
-        </div>
-        <div className="creatives-hero-stat creatives-hero-ref">
-          <span className="creatives-hero-value">{fmtPct(accountAvg.ctr_3d)}</span>
-          <span className="creatives-hero-label">CTR prom 3d</span>
+    <div className="cv2-panel">
+      {/* ── Hero: verdict summary cards ── */}
+      <div className="cv2-hero">
+        {[
+          { key: 'good', count: verdictCounts.good },
+          { key: 'watch', count: verdictCounts.watch },
+          { key: 'bad', count: verdictCounts.bad },
+          { key: 'new', count: verdictCounts.new }
+        ].map(({ key, count }) => {
+          const v = CREATIVE_VERDICT[key];
+          return (
+            <button key={key}
+              className={`cv2-hero-card ${filterVerdict === key ? 'selected' : ''}`}
+              style={{ '--vc': v.color, '--vg': v.glow, '--vbg': v.bg, '--vb': v.border }}
+              onClick={() => setFilterVerdict(filterVerdict === key ? 'all' : key)}
+            >
+              <span className="cv2-hero-count">{count}</span>
+              <span className="cv2-hero-label">{v.label}</span>
+              <span className="cv2-hero-dot" />
+            </button>
+          );
+        })}
+        <div className="cv2-hero-ref">
+          <div className="cv2-hero-ref-item">
+            <span className="cv2-hero-ref-val">{fmtNum(accountAvg.roas_3d)}x</span>
+            <span className="cv2-hero-ref-label">ROAS prom</span>
+          </div>
+          <div className="cv2-hero-ref-item">
+            <span className="cv2-hero-ref-val">{fmtPct(accountAvg.ctr_3d)}</span>
+            <span className="cv2-hero-ref-label">CTR prom</span>
+          </div>
         </div>
       </div>
 
-      {/* Filters & Sort */}
-      <div className="creatives-filters">
-        <div className="d-flex gap-2 align-center">
-          <select className="creatives-select" value={filterVerdict} onChange={(e) => setFilterVerdict(e.target.value)}>
-            <option value="all">Todos los veredictos</option>
-            <option value="good">✅ Buenos</option>
-            <option value="watch">👁️ Monitorear</option>
-            <option value="bad">🔴 Bajo rendimiento</option>
-            <option value="new">🆕 Sin datos</option>
-          </select>
-          <select className="creatives-select" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
-            <option value="all">Todos los status</option>
-            <option value="ACTIVE">Active</option>
-            <option value="PAUSED">Paused</option>
-          </select>
-        </div>
-        <div className="d-flex gap-2 align-center">
-          <span className="text-xs text-tertiary">Ordenar:</span>
-          {['spend', 'roas', 'ctr', 'cpa', 'purchases'].map(s => (
-            <button key={s} onClick={() => setSortBy(s)}
-              className={`creatives-sort-btn ${sortBy === s ? 'active' : ''}`}>
-              {s === 'spend' ? 'Gasto' : s === 'roas' ? 'ROAS' : s === 'ctr' ? 'CTR' : s === 'cpa' ? 'CPA' : 'Compras'}
-            </button>
+      {/* ── Sort pills ── */}
+      <div className="cv2-toolbar">
+        <div className="cv2-sort-pills">
+          {SORT_OPTIONS.map(s => (
+            <button key={s.key}
+              className={`cv2-sort-pill ${sortBy === s.key ? 'active' : ''}`}
+              onClick={() => setSortBy(s.key)}
+            >{s.label}</button>
           ))}
         </div>
+        <span className="cv2-count">{filtered.length} de {data.ads.length}</span>
       </div>
 
-      {/* Ads table */}
-      <div className="creatives-table-wrap">
-        <table className="creatives-table">
-          <thead>
-            <tr>
-              <th>Ad</th>
-              <th>Ad Set</th>
-              <th>Status</th>
-              <th>Veredicto</th>
-              <th style={{ textAlign: 'right' }}>Spend 3d</th>
-              <th style={{ textAlign: 'right' }}>ROAS 3d</th>
-              <th style={{ textAlign: 'right' }}>Compras 3d</th>
-              <th style={{ textAlign: 'right' }}>CPA 3d</th>
-              <th style={{ textAlign: 'right' }}>CTR 3d</th>
-              <th style={{ textAlign: 'right' }}>Freq 3d</th>
-              <th>Tendencia</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map(ad => {
-              const m3 = ad.metrics?.last_3d || {};
-              const vc = CREATIVE_VERDICT[ad.verdict] || CREATIVE_VERDICT.new;
-              const roasClass = m3.roas >= (accountAvg.roas_3d || 0) * 1.2 ? 'cv-good' : m3.roas < (accountAvg.roas_3d || 0) * 0.5 ? 'cv-bad' : '';
-              const freqClass = (m3.frequency || 0) >= 3.5 ? 'cv-bad' : (m3.frequency || 0) >= 2.5 ? 'cv-warn' : '';
-              const trendIcon = ad.trend === 'improving' ? '📈' : ad.trend === 'declining' ? '📉' : '➡️';
+      {/* ── Ad cards grid ── */}
+      <div className="cv2-grid">
+        {filtered.map(ad => {
+          const m3 = ad.metrics?.last_3d || {};
+          const vc = CREATIVE_VERDICT[ad.verdict] || CREATIVE_VERDICT.new;
+          const trendIcon = ad.trend === 'improving' ? '\u2197' : ad.trend === 'declining' ? '\u2198' : '\u2192';
+          const trendClass = ad.trend === 'improving' ? 'up' : ad.trend === 'declining' ? 'down' : 'flat';
+          const gauge = roasGauge(m3.roas);
 
-              return (
-                <tr key={ad.ad_id}>
-                  <td className="creatives-ad-name" title={ad.ad_name}>
-                    {ad.ad_name.length > 35 ? ad.ad_name.substring(0, 35) + '...' : ad.ad_name}
-                  </td>
-                  <td className="text-tertiary text-xs">{ad.adset_name?.length > 20 ? ad.adset_name.substring(0, 20) + '...' : ad.adset_name}</td>
-                  <td>
-                    <span className={`creatives-status ${ad.status === 'ACTIVE' ? 'active' : 'paused'}`}>
-                      {ad.status === 'ACTIVE' ? 'Active' : 'Paused'}
-                    </span>
-                  </td>
-                  <td>
-                    <span className="creatives-verdict" style={{ background: vc.bg, color: vc.color }}>
-                      {vc.icon} {vc.label}
-                    </span>
-                  </td>
-                  <td style={{ textAlign: 'right' }} className="font-mono">{fmtMoney(m3.spend)}</td>
-                  <td style={{ textAlign: 'right' }} className={`font-mono font-bold ${roasClass}`}>{fmtNum(m3.roas)}x</td>
-                  <td style={{ textAlign: 'right' }} className="font-mono">{m3.purchases || 0}</td>
-                  <td style={{ textAlign: 'right' }} className="font-mono">{m3.cpa > 0 ? fmtMoney(m3.cpa) : '—'}</td>
-                  <td style={{ textAlign: 'right' }} className="font-mono">{fmtPct(m3.ctr)}</td>
-                  <td style={{ textAlign: 'right' }} className={`font-mono ${freqClass}`}>{fmtNum(m3.frequency)}</td>
-                  <td className="text-center">{trendIcon}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+          return (
+            <div key={ad.ad_id} className="cv2-card" style={{ '--vc': vc.color, '--vg': vc.glow, '--vbg': vc.bg, '--vb': vc.border }}>
+              {/* Card header */}
+              <div className="cv2-card-head">
+                <div className="cv2-card-identity">
+                  <span className="cv2-card-name" title={ad.ad_name}>
+                    {ad.ad_name.replace(' [Manual Upload]', '')}
+                  </span>
+                  <span className="cv2-card-adset" title={ad.adset_name}>{ad.adset_name}</span>
+                </div>
+                <div className="cv2-card-badges">
+                  <span className={`cv2-status-pill ${ad.status === 'ACTIVE' ? 'active' : 'paused'}`}>
+                    {ad.status === 'ACTIVE' ? 'Active' : 'Paused'}
+                  </span>
+                  <span className="cv2-verdict-pill">{vc.label}</span>
+                </div>
+              </div>
 
-      <div className="text-xs text-tertiary" style={{ marginTop: '8px', textAlign: 'right' }}>
-        {filtered.length} de {data.ads.length} ads — Datos de los ultimos snapshots
+              {/* ROAS hero metric + gauge */}
+              <div className="cv2-card-roas">
+                <div className="cv2-roas-left">
+                  <span className="cv2-roas-value">{m3.roas > 0 ? `${m3.roas.toFixed(2)}x` : '--'}</span>
+                  <span className="cv2-roas-label">ROAS 3d</span>
+                </div>
+                <div className="cv2-roas-gauge">
+                  <div className="cv2-gauge-track">
+                    <div className="cv2-gauge-fill" style={{ width: `${gauge}%` }} />
+                    <div className="cv2-gauge-marker" style={{ left: '50%' }} title={`Promedio: ${fmtNum(accountAvg.roas_3d)}x`} />
+                  </div>
+                  <div className="cv2-gauge-labels">
+                    <span>0</span>
+                    <span>{fmtNum(accountAvg.roas_3d)}x avg</span>
+                    <span>{accountAvg.roas_3d ? (accountAvg.roas_3d * 2).toFixed(1) + 'x' : ''}</span>
+                  </div>
+                </div>
+                <span className={`cv2-trend ${trendClass}`}>{trendIcon}</span>
+              </div>
+
+              {/* Metrics grid */}
+              <div className="cv2-card-metrics">
+                <div className="cv2-metric">
+                  <span className="cv2-metric-val">{fmtMoney(m3.spend)}</span>
+                  <span className="cv2-metric-key">Gasto</span>
+                </div>
+                <div className="cv2-metric">
+                  <span className="cv2-metric-val">{fmtInt(m3.clicks)}</span>
+                  <span className="cv2-metric-key">Clicks</span>
+                </div>
+                <div className="cv2-metric">
+                  <span className="cv2-metric-val">{fmtPct(m3.ctr)}</span>
+                  <span className="cv2-metric-key">CTR</span>
+                </div>
+                <div className="cv2-metric">
+                  <span className="cv2-metric-val">{fmtInt(m3.purchases)}</span>
+                  <span className="cv2-metric-key">Compras</span>
+                </div>
+                <div className="cv2-metric">
+                  <span className="cv2-metric-val">{fmtMoney(m3.cpa)}</span>
+                  <span className="cv2-metric-key">CPA</span>
+                </div>
+                <div className="cv2-metric">
+                  <span className="cv2-metric-val">{m3.frequency > 0 ? m3.frequency.toFixed(1) : '--'}</span>
+                  <span className={`cv2-metric-key ${(m3.frequency || 0) >= 3.5 ? 'cv2-freq-warn' : ''}`}>
+                    Freq{(m3.frequency || 0) >= 3.5 ? ' !' : ''}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
