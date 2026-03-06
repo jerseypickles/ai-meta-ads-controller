@@ -3,7 +3,7 @@ const router = express.Router();
 const { getLatestSnapshots, getSnapshotHistory, getAccountOverview, getAdsForAdSet, getOverviewHistory } = require('../../db/queries');
 const ActionLog = require('../../db/models/ActionLog');
 const { getMetaClient } = require('../../meta/client');
-const { parseInsightRow, parseBudget, getTimeRanges, calculateROASTrend, calculateSpendVelocity } = require('../../meta/helpers');
+const { parseInsightRow, aggregateDailyInsights, parseBudget, getTimeRanges, calculateROASTrend, calculateSpendVelocity } = require('../../meta/helpers');
 const kpiTargets = require('../../../config/kpi-targets');
 const logger = require('../../utils/logger');
 
@@ -90,14 +90,11 @@ const FETCH_DEADLINE_MS = 25000; // 25 seconds — well under Render's 30s proxy
 async function _fetchLiveAdSets() {
   const meta = getMetaClient();
 
-  // Pre-flight: skip only if truly rate-limited (not just because data-collector is running).
-  // Meta allows concurrent reads; data-collector shouldn't block live dashboard queries.
+  // Pre-flight: skip only if truly rate-limited
   if (meta.isRateLimited()) {
     return _getSnapshotFallback('rate_limited');
   }
 
-  // Only fall back if API usage is critically high (>80%), not because of busy flag.
-  // data-collector and live fetch can coexist — Bottleneck serializes the actual calls.
   const usage = meta.getRateLimitUsage();
   if (usage && usage.max > 80) {
     return _getSnapshotFallback(`api_usage_critical: ${usage.max}%`);
@@ -111,104 +108,71 @@ async function _fetchLiveAdSets() {
     }
   };
 
-  // Live endpoint uses 4 windows (today, 3d, 7d, 14d) — fetched in parallel.
-  // 30d is available via snapshots from the data-collector.
-  const timeRanges = getTimeRanges();
-  const liveWindows = { today: timeRanges.today, last_3d: timeRanges.last_3d, last_7d: timeRanges.last_7d, last_14d: timeRanges.last_14d };
-
-  // 1. Get campaigns + ad sets in parallel where possible
-  let campaigns, campaignMap = {}, adSetMap = {};
+  // ── 1. Structural: campaigns + ad sets in 1 call (field expansion) ──
+  let adSetMap = {};
 
   try {
-    campaigns = await meta.getCampaigns();
-    for (const c of campaigns) campaignMap[c.id] = c;
-    checkDeadline('after_campaigns');
+    const result = await meta.getCampaignsWithAdSets();
+    adSetMap = result.adSetMap;
+    checkDeadline('after_structural');
   } catch (err) {
     if (err.message.startsWith('DEADLINE_EXCEEDED')) throw err;
-    return _getSnapshotFallback(`campaigns_error: ${err.message}`);
-  }
+    // Fallback to separate calls
+    try {
+      const campaigns = await meta.getCampaigns();
+      const campaignMap = {};
+      for (const c of campaigns) campaignMap[c.id] = c;
+      checkDeadline('after_campaigns_fallback');
 
-  try {
-    // Fast path: single account-level query
-    const allAdSets = await meta.getAllAdSets();
-    for (const as of allAdSets) {
-      const campaign = campaignMap[as.campaign_id] || { name: 'Unknown', id: as.campaign_id };
-      adSetMap[as.id] = { ...as, campaign_name: campaign.name };
-    }
-    checkDeadline('after_adsets');
-  } catch (err) {
-    if (err.message.startsWith('DEADLINE_EXCEEDED')) throw err;
-    // Check if this is a rate limit error — fall back to snapshots immediately
-    const metaError = err.response?.data?.error;
-    if (metaError?.code === 17 || metaError?.code === 4) {
-      return _getSnapshotFallback('rate_limited_on_adsets');
-    }
-    // Fallback: campaign-by-campaign (works on all account types)
-    logger.warn(`[LIVE] getAllAdSets() failed (${err.message}), falling back to campaign-based fetch`);
-    for (const c of campaigns) {
-      checkDeadline('campaign_loop');
-      try {
-        const adSets = await meta.getAdSets(c.id);
-        for (const as of adSets) {
-          adSetMap[as.id] = { ...as, campaign_name: c.name, campaign_id: c.id };
-        }
-      } catch (e) {
-        if (e.message.startsWith('DEADLINE_EXCEEDED')) throw e;
-        const eCode = e.response?.data?.error?.code;
-        if (eCode === 17 || eCode === 4) {
-          return _getSnapshotFallback('rate_limited_on_campaign_adsets');
-        }
-        logger.warn(`[LIVE] Error fetching ad sets for campaign ${c.id}: ${e.message}`);
+      const allAdSets = await meta.getAllAdSets();
+      for (const as of allAdSets) {
+        const campaign = campaignMap[as.campaign_id] || { name: 'Unknown', id: as.campaign_id };
+        adSetMap[as.id] = { ...as, campaign_name: campaign.name };
       }
+      checkDeadline('after_adsets_fallback');
+    } catch (fallbackErr) {
+      if (fallbackErr.message.startsWith('DEADLINE_EXCEEDED')) throw fallbackErr;
+      const metaError = fallbackErr.response?.data?.error;
+      if (metaError?.code === 17 || metaError?.code === 4) {
+        return _getSnapshotFallback('rate_limited_on_structural');
+      }
+      return _getSnapshotFallback(`structural_error: ${fallbackErr.message}`);
     }
   }
 
-  // If we got no ad sets from Meta, fall back to snapshots
   if (Object.keys(adSetMap).length === 0) {
     return _getSnapshotFallback('no_adsets_from_api');
   }
 
-  // 2. Fetch insights for all time windows IN PARALLEL (4 concurrent calls)
-  const adSetInsights = {};
-  const insightEntries = Object.entries(liveWindows);
+  // ── 2. Insights: 1 call with time_increment=1 for 30 days ──
+  //    aggregateDailyInsights() computes today/3d/7d/14d/30d locally
+  let adSetInsights = {};
 
-  const insightResults = await Promise.allSettled(
-    insightEntries.map(([window, range]) =>
-      meta.getAccountInsights('adset', range)
-        .then(rows => ({ window, rows }))
-    )
-  );
-
-  for (const result of insightResults) {
-    if (result.status === 'fulfilled') {
-      const { window, rows } = result.value;
-      for (const row of rows) {
-        const asid = row.adset_id;
-        if (!adSetInsights[asid]) adSetInsights[asid] = {};
-        adSetInsights[asid][window] = parseInsightRow(row);
-      }
+  try {
+    const dailyRows = await meta.getAccountInsightsDaily('adset');
+    checkDeadline('after_insights');
+    adSetInsights = aggregateDailyInsights(dailyRows, 'adset_id');
+    logger.debug(`[LIVE] ${dailyRows.length} daily rows → ${Object.keys(adSetInsights).length} ad sets`);
+  } catch (err) {
+    if (err.message.startsWith('DEADLINE_EXCEEDED')) throw err;
+    const eCode = err?.response?.data?.error?.code;
+    if (eCode === 17 || eCode === 4) {
+      logger.warn(`[LIVE] Rate limited on daily insights — using partial data`);
     } else {
-      const err = result.reason;
-      const eCode = err?.response?.data?.error?.code;
-      if (eCode === 17 || eCode === 4) {
-        logger.warn(`[LIVE] Rate limited on parallel insights — using partial data`);
-      } else {
-        logger.warn(`[LIVE] Parallel insight fetch failed: ${err?.message}`);
-      }
+      logger.warn(`[LIVE] Daily insight fetch failed: ${err?.message} — continuing with empty metrics`);
     }
   }
 
-  checkDeadline('after_insights');
-
-  // 3. Build response array
+  // ── 3. Build response ──
   const emptyMetrics = {
     spend: 0, impressions: 0, clicks: 0, ctr: 0, cpm: 0, cpc: 0,
     purchases: 0, purchase_value: 0, roas: 0, cpa: 0, reach: 0, frequency: 0
   };
+  const LIVE_WINDOWS = ['today', 'last_3d', 'last_7d', 'last_14d'];
 
   const adsets = Object.entries(adSetMap).map(([id, as]) => {
     const metrics = {};
-    for (const window of Object.keys(liveWindows)) {
+    for (const window of LIVE_WINDOWS) {
       metrics[window] = adSetInsights[id]?.[window] || { ...emptyMetrics };
     }
 

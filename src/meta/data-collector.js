@@ -1,6 +1,6 @@
-const axios = require('axios');
 const { getMetaClient } = require('./client');
-const { parseInsightRow, calculateROASTrend, calculateSpendVelocity, parseBudget, getTimeRanges } = require('./helpers');
+const { parseInsightRow, aggregateDailyInsights, calculateROASTrend, calculateSpendVelocity, parseBudget } = require('./helpers');
+const { withRetry, shouldRetryMetaError } = require('../utils/retry');
 const MetricSnapshot = require('../db/models/MetricSnapshot');
 const AICreation = require('../db/models/AICreation');
 const logger = require('../utils/logger');
@@ -12,61 +12,55 @@ class DataCollector {
   }
 
   /**
-   * Ciclo principal de recolección de datos.
-   * Usa llamadas a nivel de cuenta (level=campaign/adset) para obtener
-   * TODAS las métricas en pocas llamadas API (~8 total).
+   * Ciclo principal de recolección de datos — OPTIMIZADO.
+   *
+   * Antes: ~18 API calls seriales (5 ventanas × 3 niveles + structural queries)
+   * Ahora:  ~5 API calls (1 field-expansion + 3 daily-insights + 1 ads-status)
+   *
+   * Optimizaciones aplicadas:
+   * 1. getCampaignsWithAdSets() — field expansion: 2 calls → 1
+   * 2. getAccountInsightsDaily() — time_increment=1: 5 calls/level → 1 call/level
+   * 3. getMultipleObjects() — multi-object read for AI creations: N calls → 1
+   * 4. Promise.allSettled — 3 insight levels fetched in parallel
+   * 5. Pagination with retry + rate limit header monitoring
    */
   async collect() {
     const startTime = Date.now();
     logger.info('═══ Iniciando ciclo de recolección de datos ═══');
 
-    // Signal to other callers (live endpoints) that data-collector is running
     this.meta.setBusy('data-collector');
 
     try {
-      const timeRanges = getTimeRanges(); // today, last_3d, last_7d
+      const WINDOWS = ['today', 'last_3d', 'last_7d', 'last_14d', 'last_30d'];
       let totalSnapshots = 0;
 
-      // 1. Obtener listado de campañas y ad sets (para status, budget, etc.)
-      const campaigns = await this.meta.getCampaigns();
-      logger.info(`Campañas encontradas: ${campaigns.length}`);
-
-      const campaignMap = {};
-      const adSetMap = {};
-
-      for (const c of campaigns) {
-        campaignMap[c.id] = c;
-      }
-
-      // Obtener ad sets — try account-level first (1 call), fall back to campaign-by-campaign
-      let totalAdSets = 0;
+      // ── 1. Structural data: campaigns + ad sets in 1 call (field expansion) ──
+      let campaigns, campaignMap, adSetMap;
       try {
-        const allAdSets = await this.meta.getAllAdSets();
-        for (const as of allAdSets) {
-          const campaign = campaignMap[as.campaign_id] || { id: as.campaign_id, name: 'Unknown' };
-          adSetMap[as.id] = { ...as, campaign };
-        }
-        totalAdSets = allAdSets.length;
-        logger.info(`  ${totalAdSets} ad sets obtenidos (account-level, 1 API call)`);
+        const result = await this.meta.getCampaignsWithAdSets();
+        campaigns = result.campaigns;
+        campaignMap = result.campaignMap;
+        adSetMap = result.adSetMap;
+        logger.info(`  ${campaigns.length} campañas + ${Object.keys(adSetMap).length} ad sets (1 API call, field expansion)`);
       } catch (err) {
-        logger.warn(`  getAllAdSets() failed (${err.message}), falling back to campaign-based fetch`);
-        for (const campaign of campaigns) {
-          try {
-            const adSets = await this.meta.getAdSets(campaign.id);
-            for (const as of adSets) {
-              adSetMap[as.id] = { ...as, campaign };
-            }
-            totalAdSets += adSets.length;
-            logger.info(`  Campaña "${campaign.name}": ${adSets.length} ad sets`);
-          } catch (e) {
-            const errMsg = e.response?.data?.error?.message || e.message || 'Error desconocido';
-            logger.warn(`  Error obteniendo ad sets de campaña ${campaign.id}: ${errMsg}`);
+        // Fallback: separate calls if field expansion fails (some account types)
+        logger.warn(`  getCampaignsWithAdSets() failed (${err.message}), falling back to separate calls`);
+        campaigns = await this.meta.getCampaigns();
+        campaignMap = {};
+        adSetMap = {};
+        for (const c of campaigns) campaignMap[c.id] = c;
+        try {
+          const allAdSets = await this.meta.getAllAdSets();
+          for (const as of allAdSets) {
+            adSetMap[as.id] = { ...as, campaign_name: campaignMap[as.campaign_id]?.name || 'Unknown', campaign_id: as.campaign_id };
           }
+        } catch (e) {
+          logger.warn(`  getAllAdSets() also failed: ${e.message}`);
         }
+        logger.info(`  ${campaigns.length} campañas + ${Object.keys(adSetMap).length} ad sets (fallback, 2 API calls)`);
       }
 
-      // 1.5. Inyectar ad sets AI-managed que no aparecieron en el listado
-      //       (pueden tener status DELETED, ARCHIVED, o campaña padre pausada)
+      // ── 1.5. Inject AI-managed ad sets using multi-object read (N calls → 1) ──
       try {
         const aiCreations = await AICreation.find({
           creation_type: 'create_adset',
@@ -74,53 +68,95 @@ class DataCollector {
           meta_entity_id: { $exists: true, $ne: null }
         }).lean();
 
-        let injected = 0;
-        for (const creation of aiCreations) {
-          const asId = creation.meta_entity_id;
-          if (adSetMap[asId]) continue; // Ya capturado normalmente
+        const missingIds = aiCreations
+          .map(c => c.meta_entity_id)
+          .filter(id => !adSetMap[id]);
 
-          try {
-            const info = await this.meta.get(`/${asId}`, {
-              fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id'
-            });
+        if (missingIds.length > 0) {
+          const fields = 'id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id';
+          const fetched = await this.meta.getMultipleObjects(missingIds, fields);
+
+          let injected = 0;
+          for (const [asId, info] of Object.entries(fetched)) {
+            if (info.error) continue; // Object not accessible
             const campaignId = info.campaign_id;
-            const campaign = campaignMap[campaignId] || { id: campaignId, name: creation.campaign_name || 'Unknown' };
-            adSetMap[asId] = { ...info, campaign };
+            const creation = aiCreations.find(c => c.meta_entity_id === asId);
+            adSetMap[asId] = {
+              ...info,
+              campaign_name: campaignMap[campaignId]?.name || creation?.campaign_name || 'Unknown',
+              campaign_id: campaignId
+            };
             injected++;
-          } catch (err) {
-            // Ad set puede estar eliminado permanentemente — ignorar
-            logger.debug(`  Ad set AI ${asId} no accesible: ${err.message}`);
           }
-        }
-        if (injected > 0) {
-          logger.info(`  ${injected} ad sets AI-managed inyectados (no estaban en listado ACTIVE/PAUSED)`);
-          totalAdSets += injected;
+          if (injected > 0) {
+            logger.info(`  ${injected} ad sets AI-managed inyectados (multi-object read, 1 API call)`);
+          }
         }
       } catch (err) {
         logger.warn(`  Error inyectando ad sets AI-managed: ${err.message}`);
       }
 
-      // 2. Obtener insights a nivel de cuenta con level=campaign (5 llamadas)
-      logger.info('Recolectando insights de campañas (level=campaign)...');
-      const campaignInsights = {};
+      const totalAdSets = Object.keys(adSetMap).length;
 
-      for (const [window, range] of Object.entries(timeRanges)) {
-        const rows = await this.meta.getAccountInsights('campaign', range);
-        for (const row of rows) {
-          const cid = row.campaign_id;
-          if (!campaignInsights[cid]) campaignInsights[cid] = {};
-          campaignInsights[cid][window] = parseInsightRow(row);
-        }
+      // ── 2. Fetch daily insights for all 3 levels IN PARALLEL (3 calls total) ──
+      //    Each call returns 1 row per entity per day for 30 days.
+      //    aggregateDailyInsights() computes today/3d/7d/14d/30d locally.
+      logger.info('Recolectando insights diarios (3 calls paralelas: campaign + adset + ad)...');
+
+      const [campaignResult, adsetResult, adResult] = await Promise.allSettled([
+        this.meta.getAccountInsightsDaily('campaign'),
+        this.meta.getAccountInsightsDaily('adset'),
+        this.meta.getAccountInsightsDaily('ad')
+      ]);
+
+      // Process campaign insights
+      const campaignInsights = campaignResult.status === 'fulfilled'
+        ? aggregateDailyInsights(campaignResult.value, 'campaign_id')
+        : {};
+      if (campaignResult.status === 'rejected') {
+        logger.warn(`  Campaign insights failed: ${campaignResult.reason?.message}`);
+      } else {
+        logger.info(`  Campaign insights: ${campaignResult.value.length} daily rows → ${Object.keys(campaignInsights).length} entidades`);
       }
 
-      // 3. Guardar snapshots de campañas
+      // Process adset insights
+      const adSetInsights = adsetResult.status === 'fulfilled'
+        ? aggregateDailyInsights(adsetResult.value, 'adset_id')
+        : {};
+      if (adsetResult.status === 'rejected') {
+        logger.warn(`  Ad set insights failed: ${adsetResult.reason?.message}`);
+      } else {
+        logger.info(`  Ad set insights: ${adsetResult.value.length} daily rows → ${Object.keys(adSetInsights).length} entidades`);
+      }
+
+      // Process ad insights (also extract ad metadata from the rows)
+      const adMetadata = {}; // { adId: { ad_name, adset_id, campaign_id } }
+      let adDailyInsights = {};
+      if (adResult.status === 'fulfilled') {
+        // Extract ad names/parents from the raw rows before aggregation
+        for (const row of adResult.value) {
+          const adId = row.ad_id;
+          if (!adId) continue;
+          if (!adMetadata[adId]) {
+            adMetadata[adId] = {
+              ad_name: row.ad_name || 'Sin nombre',
+              adset_id: row.adset_id,
+              campaign_id: row.campaign_id
+            };
+          }
+        }
+        adDailyInsights = aggregateDailyInsights(adResult.value, 'ad_id');
+        logger.info(`  Ad insights: ${adResult.value.length} daily rows → ${Object.keys(adDailyInsights).length} entidades`);
+      } else {
+        logger.warn(`  Ad insights failed: ${adResult.reason?.message}`);
+      }
+
+      // ── 3. Save campaign snapshots ──
       for (const campaign of campaigns) {
         const metrics = {};
-        for (const window of Object.keys(timeRanges)) {
-          metrics[window] = campaignInsights[campaign.id]?.[window] || this._emptyMetrics();
+        for (const w of WINDOWS) {
+          metrics[w] = campaignInsights[campaign.id]?.[w] || this._emptyMetrics();
         }
-        const analysis = this._buildAnalysis(metrics);
-
         await MetricSnapshot.create({
           entity_type: 'campaign',
           entity_id: campaign.id,
@@ -132,61 +168,17 @@ class DataCollector {
           lifetime_budget: parseBudget(campaign.lifetime_budget),
           budget_remaining: parseBudget(campaign.budget_remaining),
           metrics,
-          analysis,
+          analysis: this._buildAnalysis(metrics),
           snapshot_at: new Date()
         });
         totalSnapshots++;
       }
       logger.info(`  ${campaigns.length} snapshots de campañas guardados`);
 
-      // 4. Obtener insights a nivel de cuenta con level=adset (5 llamadas)
-      logger.info('Recolectando insights de ad sets (level=adset)...');
-      const adSetInsights = {};
-
-      for (const [window, range] of Object.entries(timeRanges)) {
-        const rows = await this.meta.getAccountInsights('adset', range);
-        for (const row of rows) {
-          const asid = row.adset_id;
-          if (!adSetInsights[asid]) adSetInsights[asid] = {};
-          adSetInsights[asid][window] = parseInsightRow(row);
-        }
-      }
-
-      // 5. Preparar datos de snapshots de ad sets (guardar después de obtener ads para incluir ads_count)
-      const adSetSnapshotData = [];
-      let adSetSnapshots = 0;
-      for (const [adSetId, info] of Object.entries(adSetMap)) {
-        const adSet = info;
-        const campaign = info.campaign;
-
-        const metrics = {};
-        for (const window of Object.keys(timeRanges)) {
-          metrics[window] = adSetInsights[adSetId]?.[window] || this._emptyMetrics();
-        }
-        const analysis = this._buildAnalysis(metrics);
-
-        adSetSnapshotData.push({
-          entity_type: 'adset',
-          entity_id: adSet.id,
-          entity_name: adSet.name,
-          parent_id: campaign.id,
-          campaign_id: campaign.id,
-          status: adSet.effective_status,
-          daily_budget: parseBudget(adSet.daily_budget),
-          lifetime_budget: parseBudget(adSet.lifetime_budget),
-          budget_remaining: parseBudget(adSet.budget_remaining),
-          metrics,
-          analysis,
-          snapshot_at: new Date()
-        });
-      }
-
-      // 6. Obtener status real de todos los ads — single account-level query
-      //    instead of N individual getAds() calls (was ~40 calls, now 1)
+      // ── 4. Get ad status (account-level, 1 call) ──
       logger.info('Recolectando status de ads (account-level)...');
-      const adStatusMap = {}; // { adId: 'ACTIVE' | 'PAUSED' | ... }
-      const adSetsFetchedOk = new Set(); // Track which ad sets had ads returned
-      const adsPerAdSet = {}; // { adSetId: count of active ads }
+      const adStatusMap = {};
+      const adsPerAdSet = {};
       let adsFetchSuccess = false;
       try {
         const allAdsData = await this.meta.get(`/${this.meta.adAccountId}/ads`, {
@@ -199,10 +191,15 @@ class DataCollector {
 
         let allAds = allAdsData.data || [];
 
-        // Handle pagination
+        // Paginate with retry and auth header
         let paging = allAdsData.paging;
         while (paging?.next) {
-          const nextRes = await this.meta.limiter.schedule(() => axios.get(paging.next));
+          const nextRes = await this.meta.limiter.schedule(() =>
+            withRetry(
+              () => require('axios').get(paging.next, { headers: { 'Authorization': `Bearer ${this.meta.accessToken}` } }),
+              { maxRetries: 2, baseDelay: 2000, shouldRetry: shouldRetryMetaError, label: 'META PAGINATION ads' }
+            )
+          );
           allAds = allAds.concat(nextRes.data?.data || []);
           paging = nextRes.data?.paging;
         }
@@ -210,73 +207,59 @@ class DataCollector {
         adsFetchSuccess = true;
         for (const ad of allAds) {
           adStatusMap[ad.id] = ad.effective_status || 'ACTIVE';
-          if (ad.adset_id) {
-            adSetsFetchedOk.add(ad.adset_id);
-            // Count active ads per ad set (ACTIVE status only)
-            if (ad.effective_status === 'ACTIVE') {
-              adsPerAdSet[ad.adset_id] = (adsPerAdSet[ad.adset_id] || 0) + 1;
-            }
+          if (ad.adset_id && ad.effective_status === 'ACTIVE') {
+            adsPerAdSet[ad.adset_id] = (adsPerAdSet[ad.adset_id] || 0) + 1;
           }
         }
-        logger.info(`  ${allAds.length} ads con status real obtenido (1 API call, ${adSetsFetchedOk.size} ad sets covered)`);
+        logger.info(`  ${allAds.length} ads con status real obtenido`);
       } catch (err) {
         logger.warn(`  Error obteniendo ads a nivel de cuenta: ${err.message} — preservando status existente`);
       }
 
-      // 6.5. Guardar snapshots de ad sets (ahora con ads_count)
-      for (const snapData of adSetSnapshotData) {
-        snapData.ads_count = adsPerAdSet[snapData.entity_id] || 0;
-        await MetricSnapshot.create(snapData);
+      // ── 5. Save ad set snapshots (with ads_count) ──
+      let adSetSnapshots = 0;
+      for (const [adSetId, info] of Object.entries(adSetMap)) {
+        const metrics = {};
+        for (const w of WINDOWS) {
+          metrics[w] = adSetInsights[adSetId]?.[w] || this._emptyMetrics();
+        }
+        await MetricSnapshot.create({
+          entity_type: 'adset',
+          entity_id: info.id,
+          entity_name: info.name,
+          parent_id: info.campaign_id,
+          campaign_id: info.campaign_id,
+          status: info.effective_status,
+          daily_budget: parseBudget(info.daily_budget),
+          lifetime_budget: parseBudget(info.lifetime_budget),
+          budget_remaining: parseBudget(info.budget_remaining),
+          metrics,
+          analysis: this._buildAnalysis(metrics),
+          ads_count: adsPerAdSet[adSetId] || 0,
+          snapshot_at: new Date()
+        });
         totalSnapshots++;
         adSetSnapshots++;
       }
       logger.info(`  ${adSetSnapshots} snapshots de ad sets guardados`);
 
-      // 7. Obtener insights a nivel de cuenta con level=ad (5 llamadas)
-      logger.info('Recolectando insights de ads/creativos (level=ad)...');
-      const adInsights = {}; // { adId: { today: {...}, last_3d: {...}, ... } }
-
-      for (const [window, range] of Object.entries(timeRanges)) {
-        const rows = await this.meta.getAccountInsights('ad', range);
-        for (const row of rows) {
-          const adId = row.ad_id;
-          if (!adId) continue;
-          if (!adInsights[adId]) {
-            adInsights[adId] = {
-              ad_name: row.ad_name || 'Sin nombre',
-              adset_id: row.adset_id,
-              campaign_id: row.campaign_id
-            };
-          }
-          adInsights[adId][window] = parseInsightRow(row);
-        }
-      }
-
-      // 8. Guardar snapshots de ads
+      // ── 6. Save ad snapshots ──
       let adSnapshots = 0;
-      for (const [adId, adData] of Object.entries(adInsights)) {
-        // Determine ad status:
-        // - If we have it from the API, use it
-        // - If the account-level ads fetch failed entirely, preserve existing status from DB
-        // - If fetch succeeded but ad not in response — it may be deleted
+      for (const [adId, adData] of Object.entries(adMetadata)) {
         let adStatus = adStatusMap[adId];
         if (!adStatus && !adsFetchSuccess) {
-          // API call failed — preserve existing status from DB
           const existingSnap = await MetricSnapshot.findOne({
             entity_type: 'ad', entity_id: adId
           }).sort({ snapshot_at: -1 }).select('status').lean();
           adStatus = existingSnap?.status || 'ACTIVE';
         } else if (!adStatus) {
-          // API succeeded but ad not in response — it's deleted/archived
           adStatus = 'DELETED';
         }
 
         const metrics = {};
-        for (const window of Object.keys(timeRanges)) {
-          metrics[window] = adData[window] || this._emptyMetrics();
+        for (const w of WINDOWS) {
+          metrics[w] = adDailyInsights[adId]?.[w] || this._emptyMetrics();
         }
-        const analysis = this._buildAnalysis(metrics);
-
         await MetricSnapshot.create({
           entity_type: 'ad',
           entity_id: adId,
@@ -285,7 +268,7 @@ class DataCollector {
           campaign_id: adData.campaign_id,
           status: adStatus,
           metrics,
-          analysis,
+          analysis: this._buildAnalysis(metrics),
           snapshot_at: new Date()
         });
         totalSnapshots++;
@@ -295,8 +278,7 @@ class DataCollector {
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       logger.info(`${totalSnapshots} snapshots guardados en MongoDB`);
-      const apiCalls = Object.keys(timeRanges).length * 3 + 1; // campaign + adset + ad per window + 1 account-level ads query
-      logger.info(`═══ Recolección completada en ${elapsed}s (${totalAdSets} ad sets, ${adSnapshots} ads, ~${apiCalls} API calls) ═══`);
+      logger.info(`═══ Recolección completada en ${elapsed}s (${totalAdSets} ad sets, ${adSnapshots} ads, ~5 API calls) ═══`);
 
       this.meta.clearBusy();
 

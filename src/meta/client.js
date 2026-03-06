@@ -78,8 +78,8 @@ class MetaClient {
       logger.debug('Usando token de Meta desde .env (MongoDB no disponible)');
     }
 
-    // Actualizar params del client con el token actual
-    this.client.defaults.params = { access_token: this.accessToken };
+    // Set token in Authorization header (best practice: avoids token in URL/logs/proxies)
+    this.client.defaults.headers.common['Authorization'] = `Bearer ${this.accessToken}`;
   }
 
   /**
@@ -229,7 +229,7 @@ class MetaClient {
     await this._ensureToken();
     return this.limiter.schedule(() =>
       withRetry(
-        () => this.client.post(endpoint, null, { params: { ...data, access_token: this.accessToken } }),
+        () => this.client.post(endpoint, null, { params: data }),
         {
           maxRetries: 3,
           baseDelay: 2000,
@@ -264,8 +264,7 @@ class MetaClient {
         withRetry(
           () => this.client.post('/', null, {
             params: {
-              batch: JSON.stringify(batchPayload),
-              access_token: this.accessToken
+              batch: JSON.stringify(batchPayload)
             }
           }),
           {
@@ -373,15 +372,18 @@ class MetaClient {
       const data = await this.get(`/${this.adAccountId}/adsets`, params);
       let results = data.data || [];
 
-      // Handle pagination
+      // Handle pagination (with auth header and rate limit monitoring)
       let paging = data.paging;
       while (paging?.next) {
         const nextData = await this.limiter.schedule(() =>
           withRetry(
-            () => axios.get(paging.next),
+            () => axios.get(paging.next, { headers: { 'Authorization': `Bearer ${this.accessToken}` } }),
             { maxRetries: 2, baseDelay: 2000, shouldRetry: shouldRetryMetaError, label: 'META PAGINATION adsets' }
           )
-        ).then(res => res.data);
+        ).then(res => {
+          this._checkRateLimitHeaders(res);
+          return res.data;
+        });
         results = results.concat(nextData.data || []);
         paging = nextData.paging;
       }
@@ -502,15 +504,18 @@ class MetaClient {
       const data = await this.get(`/${this.adAccountId}/insights`, params);
       let results = data.data || [];
 
-      // Manejar paginación si hay más resultados
+      // Manejar paginación si hay más resultados (with auth header and rate limit monitoring)
       let paging = data.paging;
       while (paging?.next) {
         const nextData = await this.limiter.schedule(() =>
           withRetry(
-            () => axios.get(paging.next),
+            () => axios.get(paging.next, { headers: { 'Authorization': `Bearer ${this.accessToken}` } }),
             { maxRetries: 2, baseDelay: 2000, shouldRetry: shouldRetryMetaError, label: 'META PAGINATION' }
           )
-        ).then(res => res.data);
+        ).then(res => {
+          this._checkRateLimitHeaders(res);
+          return res.data;
+        });
         results = results.concat(nextData.data || []);
         paging = nextData.paging;
       }
@@ -523,6 +528,134 @@ class MetaClient {
       }
       throw error;
     }
+  }
+
+  /**
+   * Obtener insights diarios (time_increment=1) para los últimos 30 días a nivel de cuenta.
+   * UNA sola llamada devuelve 1 row por entidad por día → el caller agrega localmente
+   * en ventanas (today, 3d, 7d, 14d, 30d), eliminando la necesidad de 5 calls separadas.
+   *
+   * Reduce ~5 insight calls por nivel a ~1 call por nivel.
+   */
+  async getAccountInsightsDaily(level) {
+    const moment = require('moment-timezone');
+    const TIMEZONE = require('../../config').system.timezone || 'America/New_York';
+    const today = moment().tz(TIMEZONE).format('YYYY-MM-DD');
+    const since30d = moment().tz(TIMEZONE).subtract(29, 'days').format('YYYY-MM-DD');
+
+    const fieldList = [
+      'campaign_id', 'campaign_name',
+      'adset_id', 'adset_name',
+      'spend', 'impressions', 'clicks', 'ctr', 'cpm', 'cpc',
+      'inline_link_clicks', 'inline_link_click_ctr', 'cost_per_inline_link_click',
+      'actions', 'action_values', 'cost_per_action_type',
+      'reach', 'frequency'
+    ];
+
+    if (level === 'ad') {
+      fieldList.push('ad_id', 'ad_name');
+    }
+
+    const params = {
+      level,
+      fields: fieldList.join(','),
+      time_range: JSON.stringify({ since: since30d, until: today }),
+      time_increment: 1, // 1 row per entity per day
+      limit: 500
+    };
+
+    try {
+      const data = await this.get(`/${this.adAccountId}/insights`, params);
+      let results = data.data || [];
+
+      // Paginate (daily breakdown × many entities can exceed 500 rows)
+      let paging = data.paging;
+      while (paging?.next) {
+        const nextData = await this.limiter.schedule(() =>
+          withRetry(
+            () => axios.get(paging.next, { headers: { 'Authorization': `Bearer ${this.accessToken}` } }),
+            { maxRetries: 2, baseDelay: 2000, shouldRetry: shouldRetryMetaError, label: `META PAGINATION daily ${level}` }
+          )
+        ).then(res => {
+          this._checkRateLimitHeaders(res);
+          return res.data;
+        });
+        results = results.concat(nextData.data || []);
+        paging = nextData.paging;
+      }
+
+      return results;
+    } catch (error) {
+      if (error.response?.status === 400) {
+        logger.debug(`Sin insights diarios de cuenta para level=${level}`);
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Obtener campañas con sus ad sets en 1 sola call usando field expansion.
+   * Reemplaza getCampaigns() + getAllAdSets() (2 calls → 1).
+   */
+  async getCampaignsWithAdSets() {
+    const campaignFields = 'id,name,status,effective_status,objective,daily_budget,lifetime_budget,budget_remaining,created_time,updated_time';
+    const adsetFields = 'id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,bid_strategy,optimization_goal,campaign_id,created_time,updated_time';
+
+    const params = {
+      fields: `${campaignFields},adsets.limit(200){${adsetFields}}`,
+      filtering: JSON.stringify([
+        { field: 'effective_status', operator: 'IN', value: ['ACTIVE', 'PAUSED'] }
+      ]),
+      limit: 100
+    };
+
+    const data = await this.get(`/${this.adAccountId}/campaigns`, params);
+    const campaigns = data.data || [];
+
+    const campaignMap = {};
+    const adSetMap = {};
+
+    for (const c of campaigns) {
+      const { adsets, ...campaignData } = c;
+      campaignMap[c.id] = campaignData;
+
+      if (adsets?.data) {
+        for (const as of adsets.data) {
+          adSetMap[as.id] = { ...as, campaign_name: c.name, campaign_id: c.id };
+        }
+      }
+    }
+
+    return { campaigns: Object.values(campaignMap), campaignMap, adSetMap };
+  }
+
+  /**
+   * Multi-object read: obtener datos de múltiples objetos en 1 sola call usando ?ids=.
+   * Acepta un array de IDs y devuelve un map { id: data }.
+   */
+  async getMultipleObjects(ids, fields) {
+    if (!ids || ids.length === 0) return {};
+
+    // Meta permite ~50 IDs por call (similar a batch limit)
+    const results = {};
+    const CHUNK_SIZE = 50;
+
+    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + CHUNK_SIZE);
+      try {
+        const data = await this.get('/', {
+          ids: chunk.join(','),
+          fields
+        });
+        Object.assign(results, data);
+      } catch (err) {
+        logger.warn(`[getMultipleObjects] Error fetching chunk ${i}-${i + chunk.length}: ${err.message}`);
+        // Continue with next chunk — partial results are better than none
+      }
+    }
+
+    return results;
   }
 
   /**
@@ -561,7 +694,7 @@ class MetaClient {
     try {
       const res = await this.limiter.schedule(() =>
         withRetry(
-          () => this.client.delete(`/${objectId}`, { params: { access_token: this.accessToken } }),
+          () => this.client.delete(`/${objectId}`),
           {
             maxRetries: 1,
             baseDelay: 2000,
@@ -580,7 +713,7 @@ class MetaClient {
     // Approach 2: POST /{object_id} with status=DELETED
     const res = await this.limiter.schedule(() =>
       withRetry(
-        () => this.client.post(`/${objectId}`, null, { params: { status: 'DELETED', access_token: this.accessToken } }),
+        () => this.client.post(`/${objectId}`, null, { params: { status: 'DELETED' } }),
         {
           maxRetries: 2,
           baseDelay: 2000,

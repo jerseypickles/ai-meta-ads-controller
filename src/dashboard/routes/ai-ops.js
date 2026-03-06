@@ -12,7 +12,7 @@ const MetricSnapshot = require('../../db/models/MetricSnapshot');
 const CreativeAsset = require('../../db/models/CreativeAsset');
 const BrainRecommendation = require('../../db/models/BrainRecommendation');
 const { getMetaClient } = require('../../meta/client');
-const { parseInsightRow, getTimeRanges, parseBudget } = require('../../meta/helpers');
+const { parseInsightRow, aggregateDailyInsights, parseBudget } = require('../../meta/helpers');
 const logger = require('../../utils/logger');
 const config = require('../../../config');
 
@@ -479,7 +479,6 @@ router.get('/status', async (req, res) => {
 async function refreshAIOpsMetrics() {
   const startTime = Date.now();
   const meta = getMetaClient();
-  const timeRanges = getTimeRanges();
 
   // 1. Obtener todos los ad sets AI-managed (cualquier status)
   const managedCreations = await AICreation.find({
@@ -513,42 +512,66 @@ async function refreshAIOpsMetrics() {
 
   logger.info(`[AI-OPS REFRESH] Refrescando métricas de ${adSetIds.length} ad sets AI-managed...`);
 
-  // 2. Obtener insights directamente desde Meta API
-  const adSetInsights = {};
+  // 2. Obtener insights diarios en paralelo (2 calls en vez de 10)
+  const adSetIdSet = new Set(adSetIds);
+  let adSetInsights = {};
   const adInsights = {};
+  const adMetadata = {};
 
-  for (const [window, range] of Object.entries(timeRanges)) {
-    const adSetRows = await meta.getAccountInsights('adset', range);
-    for (const row of adSetRows) {
-      if (!adSetIds.includes(row.adset_id)) continue;
-      if (!adSetInsights[row.adset_id]) adSetInsights[row.adset_id] = {};
-      adSetInsights[row.adset_id][window] = parseInsightRow(row);
-    }
+  const [adsetResult, adResult] = await Promise.allSettled([
+    meta.getAccountInsightsDaily('adset'),
+    meta.getAccountInsightsDaily('ad')
+  ]);
 
-    const adRows = await meta.getAccountInsights('ad', range);
-    for (const row of adRows) {
-      if (!row.ad_id || !adSetIds.includes(row.adset_id)) continue;
-      if (!adInsights[row.ad_id]) {
-        adInsights[row.ad_id] = {
+  if (adsetResult.status === 'fulfilled') {
+    // Filter to only AI-managed ad sets, then aggregate
+    const filtered = adsetResult.value.filter(row => adSetIdSet.has(row.adset_id));
+    adSetInsights = aggregateDailyInsights(filtered, 'adset_id');
+  } else {
+    logger.warn(`[AI-OPS REFRESH] Ad set insights failed: ${adsetResult.reason?.message}`);
+  }
+
+  if (adResult.status === 'fulfilled') {
+    // Filter to only ads belonging to AI-managed ad sets
+    const filtered = adResult.value.filter(row => row.ad_id && adSetIdSet.has(row.adset_id));
+    for (const row of filtered) {
+      if (!adMetadata[row.ad_id]) {
+        adMetadata[row.ad_id] = {
           ad_name: row.ad_name || 'Sin nombre',
           adset_id: row.adset_id,
           campaign_id: row.campaign_id
         };
       }
-      adInsights[row.ad_id][window] = parseInsightRow(row);
     }
+    const adAggregated = aggregateDailyInsights(filtered, 'ad_id');
+    // Merge metadata + windowed insights
+    for (const [adId, windows] of Object.entries(adAggregated)) {
+      if (!adInsights[adId]) adInsights[adId] = { ...adMetadata[adId] };
+      Object.assign(adInsights[adId], windows);
+    }
+  } else {
+    logger.warn(`[AI-OPS REFRESH] Ad insights failed: ${adResult.reason?.message}`);
   }
 
-  // 3. Obtener info actual de ad sets desde Meta (status, budget, campaign_id)
+  // 3. Obtener info actual de ad sets desde Meta (multi-object read: N calls → 1)
   const adSetInfoMap = {};
-  for (const adSetId of adSetIds) {
-    try {
-      const data = await meta.get(`/${adSetId}`, {
-        fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id'
-      });
-      adSetInfoMap[adSetId] = data;
-    } catch (err) {
-      logger.debug(`[AI-OPS REFRESH] No se pudo obtener info de ad set ${adSetId}: ${err.message}`);
+  try {
+    const fields = 'id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id';
+    const fetched = await meta.getMultipleObjects(adSetIds, fields);
+    for (const [id, data] of Object.entries(fetched)) {
+      if (!data.error) adSetInfoMap[id] = data;
+    }
+  } catch (err) {
+    logger.warn(`[AI-OPS REFRESH] Multi-object read failed, falling back to individual: ${err.message}`);
+    for (const adSetId of adSetIds) {
+      try {
+        const data = await meta.get(`/${adSetId}`, {
+          fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id'
+        });
+        adSetInfoMap[adSetId] = data;
+      } catch (e) {
+        logger.debug(`[AI-OPS REFRESH] No se pudo obtener info de ad set ${adSetId}: ${e.message}`);
+      }
     }
   }
 
@@ -608,9 +631,10 @@ async function refreshAIOpsMetrics() {
       continue;
     }
 
+    const WINDOWS = ['today', 'last_3d', 'last_7d', 'last_14d', 'last_30d'];
     const metrics = {};
-    for (const window of Object.keys(timeRanges)) {
-      metrics[window] = adSetInsights[adSetId]?.[window] || { ...emptyMetrics };
+    for (const w of WINDOWS) {
+      metrics[w] = adSetInsights[adSetId]?.[w] || { ...emptyMetrics };
     }
 
     await MetricSnapshot.create({
@@ -649,9 +673,10 @@ async function refreshAIOpsMetrics() {
       continue;
     }
 
+    const WINDOWS_AD = ['today', 'last_3d', 'last_7d', 'last_14d', 'last_30d'];
     const metrics = {};
-    for (const window of Object.keys(timeRanges)) {
-      metrics[window] = adData[window] || { ...emptyMetrics };
+    for (const w of WINDOWS_AD) {
+      metrics[w] = adData[w] || { ...emptyMetrics };
     }
 
     await MetricSnapshot.create({

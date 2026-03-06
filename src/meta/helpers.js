@@ -207,6 +207,95 @@ function getTimeRanges() {
   return ranges;
 }
 
+/**
+ * Agrega rows diarios (de time_increment=1) en ventanas de tiempo.
+ * Recibe un array de rows parseados con parseInsightRow, cada uno con un campo `date_start`.
+ * Devuelve un objeto { today: {...}, last_3d: {...}, last_7d: {...}, last_14d: {...}, last_30d: {...} }
+ *
+ * Esto permite hacer UNA sola call a Meta con 30 días de datos diarios
+ * y calcular las 5 ventanas localmente, en vez de 5 calls separadas.
+ */
+function aggregateDailyInsights(dailyRows, entityIdField) {
+  const moment = require('moment-timezone');
+  const TIMEZONE = require('../../config').system.timezone || 'America/New_York';
+  const today = moment().tz(TIMEZONE).format('YYYY-MM-DD');
+
+  // Boundaries for each window (inclusive)
+  const windows = {
+    today:    { since: today },
+    last_3d:  { since: moment().tz(TIMEZONE).subtract(2, 'days').format('YYYY-MM-DD') },
+    last_7d:  { since: moment().tz(TIMEZONE).subtract(6, 'days').format('YYYY-MM-DD') },
+    last_14d: { since: moment().tz(TIMEZONE).subtract(13, 'days').format('YYYY-MM-DD') },
+    last_30d: { since: moment().tz(TIMEZONE).subtract(29, 'days').format('YYYY-MM-DD') }
+  };
+
+  // Group rows by entity
+  const byEntity = {};
+  for (const row of dailyRows) {
+    const eid = row[entityIdField];
+    if (!eid) continue;
+    if (!byEntity[eid]) byEntity[eid] = [];
+    byEntity[eid].push(row);
+  }
+
+  // For each entity, sum daily rows into each window
+  const result = {}; // { entityId: { today: metrics, last_3d: metrics, ... } }
+
+  for (const [eid, rows] of Object.entries(byEntity)) {
+    result[eid] = {};
+
+    for (const [windowName, { since }] of Object.entries(windows)) {
+      // Filter rows that fall within this window
+      const windowRows = rows.filter(r => r.date_start >= since && r.date_start <= today);
+
+      if (windowRows.length === 0) {
+        result[eid][windowName] = null; // Will be filled with emptyMetrics by caller
+        continue;
+      }
+
+      // Sum additive metrics across days
+      const summed = {
+        spend: 0, impressions: 0, clicks: 0, purchases: 0, purchase_value: 0,
+        reach: 0, add_to_cart: 0, add_to_cart_value: 0, initiate_checkout: 0
+      };
+
+      for (const r of windowRows) {
+        const parsed = parseInsightRow(r);
+        summed.spend += parsed.spend;
+        summed.impressions += parsed.impressions;
+        summed.clicks += parsed.clicks;
+        summed.purchases += parsed.purchases;
+        summed.purchase_value += parsed.purchase_value;
+        summed.reach += parsed.reach; // Note: reach across days is approximate (not deduplicated)
+        summed.add_to_cart += parsed.add_to_cart;
+        summed.add_to_cart_value += parsed.add_to_cart_value;
+        summed.initiate_checkout += parsed.initiate_checkout;
+      }
+
+      // Compute derived metrics from summed values
+      result[eid][windowName] = {
+        spend: summed.spend,
+        impressions: summed.impressions,
+        clicks: summed.clicks,
+        ctr: summed.impressions > 0 ? (summed.clicks / summed.impressions) * 100 : 0,
+        cpm: summed.impressions > 0 ? (summed.spend / summed.impressions) * 1000 : 0,
+        cpc: summed.clicks > 0 ? summed.spend / summed.clicks : 0,
+        purchases: summed.purchases,
+        purchase_value: summed.purchase_value,
+        roas: summed.spend > 0 ? summed.purchase_value / summed.spend : 0,
+        cpa: summed.purchases > 0 ? summed.spend / summed.purchases : 0,
+        reach: summed.reach,
+        frequency: summed.reach > 0 ? summed.impressions / summed.reach : 0,
+        add_to_cart: summed.add_to_cart,
+        add_to_cart_value: summed.add_to_cart_value,
+        initiate_checkout: summed.initiate_checkout
+      };
+    }
+  }
+
+  return result;
+}
+
 module.exports = {
   extractPurchaseValue,
   extractPurchaseCount,
@@ -215,6 +304,7 @@ module.exports = {
   extractAddToCartValue,
   extractCPA,
   parseInsightRow,
+  aggregateDailyInsights,
   calculateROASTrend,
   calculateSpendVelocity,
   parseBudget,
