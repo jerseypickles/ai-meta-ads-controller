@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import {
@@ -427,6 +427,8 @@ export default function BrainIntelligence() {
             insightsTotal={insightsTotal}
             stats={stats}
             unreadCount={unreadCount}
+            pendingCount={recsPendingCount}
+            entityCount={stats?.entities_tracked || 0}
             onTypeFilter={setTypeFilter}
             onSeverityFilter={setSeverityFilter}
             onAnalyze={handleAnalyze}
@@ -539,266 +541,237 @@ export default function BrainIntelligence() {
   );
 }
 
-// ═══ FEED PANEL ═══
+// ═══ FEED PANEL — Split-panel: compact list left, detail right ═══
 
 function FeedPanel({
   insights, loadingInsights, analyzing, typeFilter, severityFilter,
-  insightsPage, totalPages, insightsTotal, stats, unreadCount,
+  insightsPage, totalPages, insightsTotal, stats, unreadCount, pendingCount, entityCount,
   onTypeFilter, onSeverityFilter, onAnalyze, onMarkAllRead, onInsightClick, onPageChange,
   formatTime
 }) {
-  const [expandedId, setExpandedId] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
+  const selectedInsight = insights.find(i => i._id === selectedId) || null;
+
+  // Auto-select first insight when list loads
+  useEffect(() => {
+    if (insights.length > 0 && !selectedId) {
+      setSelectedId(insights[0]._id);
+      onInsightClick(insights[0]);
+    }
+  }, [insights]);
+
+  const brainState = analyzing ? 'analyzing' : (unreadCount > 10 ? 'alert' : (unreadCount > 0 ? 'idle' : 'idle'));
+  const thoughtText = analyzing ? 'Procesando patrones...' : '';
 
   return (
-    <div className="feed-panel">
-      {/* Brain Orb Hero */}
-      <div className="feed-hero">
-        <Suspense fallback={<div className="brain-orb-fallback"><div className="orb-placeholder" /></div>}>
-          <BrainOrb stats={stats} unreadCount={unreadCount || 0} analyzing={analyzing} />
-        </Suspense>
-        <div className="feed-hero-info">
-          <h2 className="feed-hero-title">Brain Neural Feed</h2>
-          <p className="feed-hero-subtitle">
-            {analyzing ? 'Procesando nuevos patrones...' :
-             insightsTotal > 0 ? `${insightsTotal} observaciones del cerebro` :
-             'Esperando primer ciclo de análisis'}
-          </p>
+    <div className="feed-panel split-layout">
+      {/* Brain Orb Hero — compact */}
+      <div className="feed-hero-compact">
+        <div className="feed-hero-orb">
+          <Suspense fallback={<div className="brain-orb-fallback"><div className="orb-placeholder" /></div>}>
+            <BrainOrb
+              stats={stats}
+              unreadCount={unreadCount || 0}
+              analyzing={analyzing}
+              brainState={brainState}
+              thoughtText={thoughtText}
+              pendingCount={pendingCount || 0}
+              entityCount={entityCount || stats?.entities_tracked || 0}
+            />
+          </Suspense>
         </div>
-      </div>
-
-      {/* Toolbar */}
-      <div className="feed-toolbar">
-        <div className="feed-filters">
-          <select
-            className="feed-select"
-            value={typeFilter}
-            onChange={(e) => onTypeFilter(e.target.value)}
-          >
-            <option value="all">Todos los tipos</option>
-            {Object.entries(INSIGHT_TYPE_CONFIG).map(([key, cfg]) => (
-              <option key={key} value={key}>{cfg.icon} {cfg.label}</option>
-            ))}
-          </select>
-          <select
-            className="feed-select"
-            value={severityFilter}
-            onChange={(e) => onSeverityFilter(e.target.value)}
-          >
-            <option value="all">Toda severidad</option>
-            {Object.entries(SEVERITY_CONFIG).map(([key, cfg]) => (
-              <option key={key} value={key}>{cfg.label}</option>
-            ))}
-          </select>
-        </div>
-        <div className="feed-actions">
-          <button className="btn-secondary btn-small" onClick={onMarkAllRead}>
-            Marcar todo leído
+        <div className="feed-hero-actions-compact">
+          <button className="btn-ghost btn-small" onClick={onMarkAllRead} title="Marcar todo leido">
+            ✓ Todo leido
           </button>
           <button
-            className={`btn-primary ${analyzing ? 'btn-analyzing' : ''}`}
+            className={`btn-primary btn-small ${analyzing ? 'btn-analyzing' : ''}`}
             onClick={onAnalyze}
             disabled={analyzing}
           >
-            {analyzing ? 'Analizando...' : 'Analizar ahora'}
+            {analyzing ? '...' : 'Analizar'}
           </button>
         </div>
       </div>
 
-      {/* Insights List — separated by urgency */}
-      <div className="insights-list">
-        {loadingInsights ? (
-          <div className="feed-empty">
-            <div className="feed-loading-pulse" />
-            <p>Cargando insights...</p>
+      {/* Split container */}
+      <div className="split-container">
+        {/* LEFT: Compact list */}
+        <div className="split-list">
+          {/* Mini toolbar */}
+          <div className="split-list-toolbar">
+            <select className="feed-select-mini" value={typeFilter} onChange={(e) => onTypeFilter(e.target.value)}>
+              <option value="all">Tipo</option>
+              {Object.entries(INSIGHT_TYPE_CONFIG).map(([key, cfg]) => (
+                <option key={key} value={key}>{cfg.icon} {cfg.label}</option>
+              ))}
+            </select>
+            <select className="feed-select-mini" value={severityFilter} onChange={(e) => onSeverityFilter(e.target.value)}>
+              <option value="all">Sev.</option>
+              {Object.entries(SEVERITY_CONFIG).map(([key, cfg]) => (
+                <option key={key} value={key}>{cfg.label}</option>
+              ))}
+            </select>
+            <span className="split-list-count">{insightsTotal}</span>
           </div>
-        ) : insights.length === 0 ? (
-          <div className="feed-empty">
-            <div className="feed-empty-icon">🧠</div>
-            <p>El Brain aún no ha generado insights.</p>
-            <p className="feed-empty-hint">Ejecuta un análisis o espera al próximo ciclo de datos.</p>
-          </div>
-        ) : (() => {
-          const urgent = insights.filter(i => i.severity === 'critical' || i.severity === 'high');
-          const info = insights.filter(i => i.severity !== 'critical' && i.severity !== 'high');
-          return (
-            <>
-              {urgent.length > 0 && (
-                <div className="feed-urgency-section">
-                  <div className="feed-section-header urgent">
-                    <span className="feed-section-dot urgent" />
-                    <span>Requiere atención ({urgent.length})</span>
-                  </div>
-                  {urgent.map((insight, idx) => (
-                    <InsightCard
-                      key={insight._id}
-                      insight={insight}
-                      expanded={expandedId === insight._id}
-                      animDelay={idx * 0.05}
-                      onToggle={() => {
-                        setExpandedId(expandedId === insight._id ? null : insight._id);
-                        onInsightClick(insight);
-                      }}
-                      formatTime={formatTime}
-                    />
-                  ))}
-                </div>
-              )}
-              {info.length > 0 && (
-                <div className="feed-urgency-section">
-                  {urgent.length > 0 && (
-                    <div className="feed-section-header informative">
-                      <span className="feed-section-dot informative" />
-                      <span>Informativo ({info.length})</span>
+
+          {/* List items */}
+          <div className="split-list-items">
+            {loadingInsights ? (
+              <div className="split-list-empty"><div className="feed-loading-pulse" /></div>
+            ) : insights.length === 0 ? (
+              <div className="split-list-empty">
+                <span className="split-list-empty-icon">🧠</span>
+                <span>Sin insights aun</span>
+              </div>
+            ) : (
+              insights.map((insight) => {
+                const typeCfg = INSIGHT_TYPE_CONFIG[insight.insight_type] || INSIGHT_TYPE_CONFIG.anomaly;
+                const sevCfg = SEVERITY_CONFIG[insight.severity] || SEVERITY_CONFIG.medium;
+                const isSelected = selectedId === insight._id;
+                return (
+                  <div
+                    key={insight._id}
+                    className={`split-row ${isSelected ? 'selected' : ''} ${!insight.read ? 'unread' : ''} severity-${insight.severity}`}
+                    onClick={() => {
+                      setSelectedId(insight._id);
+                      onInsightClick(insight);
+                    }}
+                  >
+                    <div className="split-row-accent" style={{ background: sevCfg.color }} />
+                    <div className="split-row-icon" style={{ color: typeCfg.color }}>{typeCfg.icon}</div>
+                    <div className="split-row-content">
+                      <div className="split-row-title">
+                        {insight.title}
+                        {!insight.read && <span className="split-row-dot" />}
+                      </div>
+                      <div className="split-row-meta">
+                        <span className="split-row-type" style={{ color: typeCfg.color }}>{typeCfg.label}</span>
+                        {insight.entities?.[0] && (
+                          <span className="split-row-entity">{insight.entities[0].entity_name}</span>
+                        )}
+                        <span className="split-row-time">{formatTime(insight.created_at)}</span>
+                      </div>
                     </div>
-                  )}
-                  {info.map((insight, idx) => (
-                    <InsightCard
-                      key={insight._id}
-                      insight={insight}
-                      expanded={expandedId === insight._id}
-                      animDelay={(urgent.length + idx) * 0.05}
-                      onToggle={() => {
-                        setExpandedId(expandedId === insight._id ? null : insight._id);
-                        onInsightClick(insight);
-                      }}
-                      formatTime={formatTime}
-                    />
-                  ))}
-                </div>
-              )}
-            </>
-          );
-        })()}
-      </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
 
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="feed-pagination">
-          <button
-            className="btn-page"
-            disabled={insightsPage <= 1}
-            onClick={() => onPageChange(insightsPage - 1)}
-          >
-            Anterior
-          </button>
-          <span className="page-info">
-            Página {insightsPage} de {totalPages} ({insightsTotal} insights)
-          </span>
-          <button
-            className="btn-page"
-            disabled={insightsPage >= totalPages}
-            onClick={() => onPageChange(insightsPage + 1)}
-          >
-            Siguiente
-          </button>
+          {/* Pagination — compact */}
+          {totalPages > 1 && (
+            <div className="split-list-pagination">
+              <button className="btn-page-mini" disabled={insightsPage <= 1} onClick={() => onPageChange(insightsPage - 1)}>←</button>
+              <span className="page-info-mini">{insightsPage}/{totalPages}</span>
+              <button className="btn-page-mini" disabled={insightsPage >= totalPages} onClick={() => onPageChange(insightsPage + 1)}>→</button>
+            </div>
+          )}
         </div>
-      )}
+
+        {/* RIGHT: Detail panel */}
+        <div className="split-detail">
+          {selectedInsight ? (
+            <InsightDetail insight={selectedInsight} formatTime={formatTime} />
+          ) : (
+            <div className="split-detail-empty">
+              <div className="split-detail-empty-icon">🧠</div>
+              <p>Selecciona un insight</p>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
-// ═══ INSIGHT CARD ═══
+// ═══ INSIGHT DETAIL — Full detail panel for selected insight ═══
 
-function InsightCard({ insight, expanded, onToggle, formatTime, animDelay = 0 }) {
+function InsightDetail({ insight, formatTime }) {
   const typeCfg = INSIGHT_TYPE_CONFIG[insight.insight_type] || INSIGHT_TYPE_CONFIG.anomaly;
   const sevCfg = SEVERITY_CONFIG[insight.severity] || SEVERITY_CONFIG.medium;
 
   return (
-    <div
-      className={`insight-card ${!insight.read ? 'unread' : ''} ${expanded ? 'expanded' : ''} severity-${insight.severity || 'medium'} insight-type-${insight.insight_type || 'anomaly'}`}
-      onClick={onToggle}
-      style={{
-        '--card-accent': typeCfg.color,
-        '--severity-color': sevCfg.color,
-        animationDelay: `${animDelay}s`,
-      }}
-    >
-      {/* Severity glow bar */}
-      <div className="insight-severity-bar" style={{ background: `linear-gradient(180deg, ${sevCfg.color}, transparent)` }} />
-
-      <div className="insight-header">
-        <div className="insight-left">
-          <div className="insight-type-badge" style={{ background: `${typeCfg.color}20`, borderColor: `${typeCfg.color}40` }}>
+    <div className="insight-detail" style={{ '--card-accent': typeCfg.color, '--severity-color': sevCfg.color }}>
+      {/* Header */}
+      <div className="insight-detail-header">
+        <div className="insight-detail-severity-bar" style={{ background: `linear-gradient(90deg, ${sevCfg.color}, transparent)` }} />
+        <div className="insight-detail-top">
+          <div className="insight-detail-type-badge" style={{ background: `${typeCfg.color}20`, borderColor: `${typeCfg.color}40` }}>
             <span className="insight-type-icon">{typeCfg.icon}</span>
           </div>
-          <div className="insight-meta">
-            <div className="insight-title-row">
-              <span className="insight-title">{insight.title}</span>
-              {!insight.read && <span className="insight-dot" />}
-            </div>
-            <div className="insight-tags">
+          <div className="insight-detail-title-area">
+            <h3 className="insight-detail-title">{insight.title}</h3>
+            <div className="insight-detail-tags">
               <span className="insight-tag type" style={{ color: typeCfg.color, backgroundColor: `${typeCfg.color}18` }}>
                 {typeCfg.label}
               </span>
               <span className="insight-tag severity" style={{ color: sevCfg.color, backgroundColor: sevCfg.bg }}>
                 {sevCfg.label}
               </span>
-              {insight.follows_up && (
-                <span className="insight-tag followup">Seguimiento</span>
-              )}
-              {insight.diagnosis && (
-                <span className="insight-tag diagnosis">{insight.diagnosis}</span>
-              )}
+              {insight.follows_up && <span className="insight-tag followup">Seguimiento</span>}
+              {insight.diagnosis && <span className="insight-tag diagnosis">{insight.diagnosis}</span>}
+              <span className={`insight-source source-${insight.generated_by}`}>
+                {insight.generated_by === 'ai' ? 'IA' : insight.generated_by === 'hybrid' ? 'Hybrid' : insight.generated_by === 'brain' ? 'Brain' : 'Math'}
+              </span>
             </div>
-            {/* Entity badges - prominent */}
-            {insight.entities && insight.entities.length > 0 && (
-              <div className="insight-entities">
-                {insight.entities.map((e, i) => (
-                  <span key={i} className="insight-entity-badge">
-                    <span className="entity-type-dot" style={{
-                      background: e.entity_type === 'adset' ? '#3b82f6' :
-                                  e.entity_type === 'campaign' ? '#8b5cf6' :
-                                  e.entity_type === 'ad' ? '#10b981' : '#6b7280'
-                    }} />
-                    <span className="entity-type-label">
-                      {e.entity_type === 'adset' ? 'Ad Set' :
-                       e.entity_type === 'campaign' ? 'Campaign' :
-                       e.entity_type === 'ad' ? 'Ad' : 'Account'}
-                    </span>
-                    <span className="entity-name">{e.entity_name}</span>
-                  </span>
-                ))}
-              </div>
-            )}
           </div>
+          <span className="insight-detail-time">{formatTime(insight.created_at)}</span>
         </div>
-        <div className="insight-right">
-          <span className="insight-time">{formatTime(insight.created_at)}</span>
-          <span className={`insight-source source-${insight.generated_by}`}>
-            {insight.generated_by === 'ai' ? 'IA' : insight.generated_by === 'hybrid' ? 'Hybrid' : insight.generated_by === 'brain' ? 'Brain' : 'Math'}
-          </span>
-        </div>
+
+        {/* Entity badges */}
+        {insight.entities && insight.entities.length > 0 && (
+          <div className="insight-detail-entities">
+            {insight.entities.map((e, i) => (
+              <span key={i} className="insight-entity-badge">
+                <span className="entity-type-dot" style={{
+                  background: e.entity_type === 'adset' ? '#3b82f6' :
+                              e.entity_type === 'campaign' ? '#8b5cf6' :
+                              e.entity_type === 'ad' ? '#10b981' : '#6b7280'
+                }} />
+                <span className="entity-type-label">
+                  {e.entity_type === 'adset' ? 'Ad Set' :
+                   e.entity_type === 'campaign' ? 'Campaign' :
+                   e.entity_type === 'ad' ? 'Ad' : 'Account'}
+                </span>
+                <span className="entity-name">{e.entity_name}</span>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
-      {expanded && (
-        <div className="insight-body">
-          <div className="insight-body-text markdown-body">
-            <ReactMarkdown>{insight.body}</ReactMarkdown>
-          </div>
-          {insight.data_points && Object.keys(insight.data_points).length > 0 && (
-            <div className="insight-data-points">
-              {Object.entries(insight.data_points).map(([k, v]) => (
-                <span key={k} className="data-point">
-                  <span className="dp-key">{k}</span>
-                  <span className="dp-value">{typeof v === 'number' ? v.toFixed(2) : String(v)}</span>
-                </span>
-              ))}
-            </div>
-          )}
-          {insight.related_recommendation && (
-            <div className="insight-rec-link">
-              <span className="rec-link-icon">📋</span>
-              <span>Recomendación pendiente vinculada</span>
-              <span className="rec-link-arrow">→ Recomendaciones</span>
-            </div>
-          )}
-          {insight.follow_up_count > 0 && (
-            <div className="insight-follow-info">
-              {insight.follow_up_count} seguimiento{insight.follow_up_count > 1 ? 's' : ''} posterior{insight.follow_up_count > 1 ? 'es' : ''}
-            </div>
-          )}
+      {/* Body — always visible in detail panel */}
+      <div className="insight-detail-body">
+        <div className="insight-detail-body-text markdown-body">
+          <ReactMarkdown>{insight.body}</ReactMarkdown>
         </div>
-      )}
+
+        {insight.data_points && Object.keys(insight.data_points).length > 0 && (
+          <div className="insight-data-points">
+            {Object.entries(insight.data_points).map(([k, v]) => (
+              <span key={k} className="data-point">
+                <span className="dp-key">{k}</span>
+                <span className="dp-value">{typeof v === 'number' ? v.toFixed(2) : String(v)}</span>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {insight.related_recommendation && (
+          <div className="insight-rec-link">
+            <span className="rec-link-icon">📋</span>
+            <span>Recomendacion pendiente vinculada</span>
+            <span className="rec-link-arrow">→ Recomendaciones</span>
+          </div>
+        )}
+
+        {insight.follow_up_count > 0 && (
+          <div className="insight-follow-info">
+            {insight.follow_up_count} seguimiento{insight.follow_up_count > 1 ? 's' : ''} posterior{insight.follow_up_count > 1 ? 'es' : ''}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -837,243 +810,194 @@ function RecommendationsPanel({
   onStatusFilter, onGenerate, onApprove, onReject, onPageChange,
   onDiscussRec, onGoToFollowUp, formatTime
 }) {
-  const [expandedId, setExpandedId] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
+  const selectedRec = recommendations.find(r => r._id === selectedId) || null;
 
-  const pendingRecs = recommendations.filter(r => r.status === 'pending' && !r.related_follow_up?.rec_id);
-  // Approved with active follow-up (not yet fully measured)
-  const trackingRecs = recommendations.filter(r =>
-    r.status === 'approved' && !r.follow_up?.checked && r.follow_up?.current_phase !== 'complete'
-  );
-  // Everything else that's been decided
-  const historyRecs = recommendations.filter(r =>
-    r.status !== 'pending' && !(r.status === 'approved' && !r.follow_up?.checked && r.follow_up?.current_phase !== 'complete')
-  );
+  // Build ordered list: pending first, then tracking, then history
+  const orderedRecs = useMemo(() => {
+    if (statusFilter) return recommendations;
+    const pending = recommendations.filter(r => r.status === 'pending' && !r.related_follow_up?.rec_id);
+    const tracking = recommendations.filter(r =>
+      r.status === 'approved' && !r.follow_up?.checked && r.follow_up?.current_phase !== 'complete'
+    );
+    const history = recommendations.filter(r =>
+      r.status !== 'pending' && !(r.status === 'approved' && !r.follow_up?.checked && r.follow_up?.current_phase !== 'complete')
+    );
+    return [...pending, ...tracking, ...history];
+  }, [recommendations, statusFilter]);
+
+  // Auto-select first rec when list loads
+  useEffect(() => {
+    if (orderedRecs.length > 0 && !selectedId) {
+      setSelectedId(orderedRecs[0]._id);
+    }
+  }, [orderedRecs]);
 
   return (
-    <div className="recs-panel">
-      {/* Hero stats row */}
-      <div className="recs-hero-stats">
-        <div className="recs-hero-stat highlight">
-          <span className="recs-hero-value">{pendingCount}</span>
-          <span className="recs-hero-label">Pendientes</span>
+    <div className="recs-panel split-layout">
+      {/* Compact hero bar */}
+      <div className="recs-hero-compact">
+        <div className="recs-hero-stats-compact">
+          <div className="recs-hero-stat-mini highlight">
+            <span className="recs-stat-val">{pendingCount}</span>
+            <span className="recs-stat-lbl">Pendientes</span>
+          </div>
+          <div className="recs-hero-stat-mini">
+            <span className="recs-stat-val">{recsTotal}</span>
+            <span className="recs-stat-lbl">Total</span>
+          </div>
         </div>
-        <div className="recs-hero-stat">
-          <span className="recs-hero-value">{recsTotal}</span>
-          <span className="recs-hero-label">Total</span>
-        </div>
-        <div className="recs-hero-stat">
-          <span className="recs-hero-value generate-action" onClick={!generating ? onGenerate : undefined}>
-            {generating ? '...' : '+'}
-          </span>
-          <span className="recs-hero-label">{generating ? 'Generando' : 'Generar'}</span>
-        </div>
-      </div>
-
-      {/* Toolbar */}
-      <div className="feed-toolbar">
-        <div className="feed-filters">
-          <select
-            className="feed-select"
-            value={statusFilter}
-            onChange={(e) => onStatusFilter(e.target.value)}
-          >
+        <div className="recs-hero-actions-compact">
+          <select className="feed-select-mini" value={statusFilter} onChange={(e) => onStatusFilter(e.target.value)}>
             <option value="">Todas</option>
-            <option value="pending">Pendientes ({pendingCount})</option>
+            <option value="pending">Pendientes</option>
             <option value="approved">Aprobadas</option>
             <option value="rejected">Rechazadas</option>
             <option value="expired">Expiradas</option>
           </select>
-        </div>
-        <div className="recs-info-inline">
-          El Brain aprende de tus decisiones — aprueba o rechaza cada recomendacion.
+          <button
+            className={`btn-primary btn-small ${generating ? 'btn-analyzing' : ''}`}
+            onClick={!generating ? onGenerate : undefined}
+            disabled={generating}
+          >
+            {generating ? '...' : '+ Generar'}
+          </button>
         </div>
       </div>
 
-      {/* Recommendations List */}
-      <div className="recs-list">
-        {loading ? (
-          <div className="feed-empty">Cargando recomendaciones...</div>
-        ) : recommendations.length === 0 ? (
-          <div className="feed-empty">
-            <div className="feed-empty-icon">🎯</div>
-            <p>Sin recomendaciones aun.</p>
-            <p className="feed-empty-hint">Genera recomendaciones manualmente o espera al proximo ciclo automatico (cada 6h).</p>
+      {/* Split container */}
+      <div className="split-container">
+        {/* LEFT: Compact rec list */}
+        <div className="split-list">
+          <div className="split-list-items">
+            {loading ? (
+              <div className="split-list-empty"><div className="feed-loading-pulse" /></div>
+            ) : orderedRecs.length === 0 ? (
+              <div className="split-list-empty">
+                <span className="split-list-empty-icon">🎯</span>
+                <span>Sin recomendaciones</span>
+              </div>
+            ) : (
+              orderedRecs.map((rec) => {
+                const priorityCfg = PRIORITY_CONFIG[rec.priority] || PRIORITY_CONFIG.evaluar;
+                const actionCfg = ACTION_TYPE_CONFIG[rec.action_type] || ACTION_TYPE_CONFIG.other;
+                const statusCfg = STATUS_LABELS[rec.status] || STATUS_LABELS.pending;
+                const isSelected = selectedId === rec._id;
+                const isTracking = rec.status === 'approved' && !rec.follow_up?.checked && rec.follow_up?.current_phase !== 'complete';
+                return (
+                  <div
+                    key={rec._id}
+                    className={`split-row ${isSelected ? 'selected' : ''} rec-status-${rec.status} ${isTracking ? 'tracking' : ''}`}
+                    onClick={() => setSelectedId(rec._id)}
+                  >
+                    <div className="split-row-accent" style={{ background: priorityCfg.color }} />
+                    <div className="split-row-icon" style={{ color: priorityCfg.color }}>{actionCfg.icon}</div>
+                    <div className="split-row-content">
+                      <div className="split-row-title">
+                        {rec.title}
+                        <span className="rec-status-dot" style={{ background: statusCfg.color }} title={statusCfg.label} />
+                      </div>
+                      <div className="split-row-meta">
+                        <span className="split-row-type" style={{ color: priorityCfg.color }}>{priorityCfg.label}</span>
+                        {rec.entity && <span className="split-row-entity">{rec.entity.entity_name}</span>}
+                        <span className="split-row-time">{formatTime(rec.created_at)}</span>
+                      </div>
+                    </div>
+                    {/* Mini confidence */}
+                    <div className="split-row-confidence" title={`${rec.confidence_score || 50}%`}>
+                      <span className="split-row-conf-val">{rec.confidence_score || 50}</span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
-        ) : (
-          <>
-            {pendingRecs.length > 0 && !statusFilter && (
-              <div className="recs-section-label">Requieren tu decision</div>
-            )}
-            {(statusFilter ? recommendations : pendingRecs).map((rec, idx) => (
-              <RecommendationCard
-                key={rec._id}
-                rec={rec}
-                expanded={expandedId === rec._id}
-                onToggle={() => setExpandedId(expandedId === rec._id ? null : rec._id)}
-                onApprove={() => onApprove(rec._id)}
-                onReject={() => onReject(rec._id)}
-                onDiscuss={onDiscussRec ? () => onDiscussRec(rec) : undefined}
-                formatTime={formatTime}
-                animDelay={idx * 0.04}
-                showTracker={rec.status === 'approved' && !rec.follow_up?.checked && rec.follow_up?.current_phase !== 'complete'}
-              />
-            ))}
-            {!statusFilter && trackingRecs.length > 0 && (
-              <>
-                <div className="recs-section-label tracking">
-                  <span className="recs-tracking-dot" />
-                  En seguimiento ({trackingRecs.length})
-                  {onGoToFollowUp && (
-                    <span className="recs-followup-link" onClick={(e) => { e.stopPropagation(); onGoToFollowUp(); }}>
-                      Ver panel completo →
-                    </span>
-                  )}
-                </div>
-                {trackingRecs.map((rec, idx) => (
-                  <RecommendationCard
-                    key={rec._id}
-                    rec={rec}
-                    expanded={expandedId === rec._id}
-                    onToggle={() => setExpandedId(expandedId === rec._id ? null : rec._id)}
-                    onApprove={() => onApprove(rec._id)}
-                    onReject={() => onReject(rec._id)}
-                    onDiscuss={onDiscussRec ? () => onDiscussRec(rec) : undefined}
-                    formatTime={formatTime}
-                    animDelay={idx * 0.04}
-                    showTracker
-                  />
-                ))}
-              </>
-            )}
-            {!statusFilter && historyRecs.length > 0 && (
-              <>
-                <div className="recs-section-label decided">Historial</div>
-                {historyRecs.map((rec, idx) => (
-                  <RecommendationCard
-                    key={rec._id}
-                    rec={rec}
-                    expanded={expandedId === rec._id}
-                    onToggle={() => setExpandedId(expandedId === rec._id ? null : rec._id)}
-                    onApprove={() => onApprove(rec._id)}
-                    onReject={() => onReject(rec._id)}
-                    onDiscuss={onDiscussRec ? () => onDiscussRec(rec) : undefined}
-                    formatTime={formatTime}
-                    animDelay={idx * 0.04}
-                  />
-                ))}
-              </>
-            )}
-          </>
-        )}
-      </div>
 
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="feed-pagination">
-          <button
-            className="btn-page"
-            disabled={recsPage <= 1}
-            onClick={() => onPageChange(recsPage - 1)}
-          >
-            Anterior
-          </button>
-          <span className="page-info">
-            Pagina {recsPage} de {totalPages} ({recsTotal} recomendaciones)
-          </span>
-          <button
-            className="btn-page"
-            disabled={recsPage >= totalPages}
-            onClick={() => onPageChange(recsPage + 1)}
-          >
-            Siguiente
-          </button>
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="split-list-pagination">
+              <button className="btn-page-mini" disabled={recsPage <= 1} onClick={() => onPageChange(recsPage - 1)}>←</button>
+              <span className="page-info-mini">{recsPage}/{totalPages}</span>
+              <button className="btn-page-mini" disabled={recsPage >= totalPages} onClick={() => onPageChange(recsPage + 1)}>→</button>
+            </div>
+          )}
         </div>
-      )}
+
+        {/* RIGHT: Rec detail */}
+        <div className="split-detail">
+          {selectedRec ? (
+            <RecDetail
+              rec={selectedRec}
+              onApprove={() => onApprove(selectedRec._id)}
+              onReject={() => onReject(selectedRec._id)}
+              onDiscuss={onDiscussRec ? () => onDiscussRec(selectedRec) : undefined}
+              onGoToFollowUp={onGoToFollowUp}
+              formatTime={formatTime}
+            />
+          ) : (
+            <div className="split-detail-empty">
+              <div className="split-detail-empty-icon">🎯</div>
+              <p>Selecciona una recomendacion</p>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
-// ═══ RECOMMENDATION CARD ═══
+// ═══ REC DETAIL — Full detail panel for selected recommendation ═══
 
-function RecommendationCard({ rec, expanded, onToggle, onApprove, onReject, onDiscuss, formatTime, animDelay = 0, showTracker = false }) {
+function RecDetail({ rec, onApprove, onReject, onDiscuss, onGoToFollowUp, formatTime }) {
   const priorityCfg = PRIORITY_CONFIG[rec.priority] || PRIORITY_CONFIG.evaluar;
   const actionCfg = ACTION_TYPE_CONFIG[rec.action_type] || ACTION_TYPE_CONFIG.other;
   const statusCfg = STATUS_LABELS[rec.status] || STATUS_LABELS.pending;
   const confidencePct = rec.confidence_score || 50;
 
-  // Follow-up tracking data
   const followUp = rec.follow_up || {};
   const currentPhase = followUp.current_phase || 'awaiting_day_3';
   const phases = followUp.phases || {};
-  const isTracking = showTracker && rec.status === 'approved';
+  const isTracking = rec.status === 'approved' && !followUp.checked && currentPhase !== 'complete';
   const hoursSinceApproval = rec.decided_at ? Math.round((Date.now() - new Date(rec.decided_at).getTime()) / 3600000) : 0;
   const daysAgo = hoursSinceApproval >= 24
     ? `${Math.floor(hoursSinceApproval / 24)}d ${hoursSinceApproval % 24}h`
     : `${hoursSinceApproval}h`;
 
   return (
-    <div
-      className={`rec-card ${rec.status} ${expanded ? 'expanded' : ''} ${isTracking ? 'tracking' : ''}`}
-      onClick={onToggle}
-      style={{ animationDelay: `${animDelay}s` }}
-    >
-      {/* Priority accent bar */}
-      <div className="rec-priority-bar" style={{ background: priorityCfg.color }} />
-
-      <div className="rec-inner">
-        <div className="rec-header">
-          <div className="rec-left">
-            <div className="rec-action-icon" style={{ background: priorityCfg.bg, color: priorityCfg.color }}>
-              {actionCfg.icon}
-            </div>
-            <div className="rec-meta">
-              <div className="rec-title-row">
-                <span className="rec-title">{rec.title}</span>
-                <span className="rec-status-pill" style={{ color: statusCfg.color, borderColor: statusCfg.color }}>
-                  {statusCfg.label}
-                </span>
-              </div>
-              <div className="rec-tags">
-                <span className="rec-tag priority" style={{ color: priorityCfg.color, backgroundColor: priorityCfg.bg }}>
-                  {priorityCfg.label}
-                </span>
-                <span className="rec-tag action">
-                  {actionCfg.label}
-                </span>
-              </div>
-              {/* Entity badge */}
-              {rec.entity && (
-                <div className="rec-entity-row">
-                  <span className="rec-entity-badge">
-                    <span className="entity-type-dot" style={{
-                      background: rec.entity.entity_type === 'adset' ? '#3b82f6' :
-                                  rec.entity.entity_type === 'campaign' ? '#8b5cf6' : '#10b981'
-                    }} />
-                    <span className="entity-type-label">
-                      {rec.entity.entity_type === 'adset' ? 'Ad Set' :
-                       rec.entity.entity_type === 'campaign' ? 'Campaign' : 'Ad'}
-                    </span>
-                    <span className="entity-name">{rec.entity.entity_name}</span>
-                  </span>
-                </div>
-              )}
+    <div className="rec-detail">
+      {/* Header */}
+      <div className="rec-detail-header">
+        <div className="rec-detail-priority-bar" style={{ background: `linear-gradient(90deg, ${priorityCfg.color}, transparent)` }} />
+        <div className="rec-detail-top">
+          <div className="rec-action-icon" style={{ background: priorityCfg.bg, color: priorityCfg.color }}>
+            {actionCfg.icon}
+          </div>
+          <div className="rec-detail-title-area">
+            <h3 className="rec-detail-title">{rec.title}</h3>
+            <div className="rec-detail-tags">
+              <span className="rec-tag priority" style={{ color: priorityCfg.color, backgroundColor: priorityCfg.bg }}>
+                {priorityCfg.label}
+              </span>
+              <span className="rec-tag action">{actionCfg.label}</span>
+              <span className="rec-status-pill" style={{ color: statusCfg.color, borderColor: statusCfg.color }}>
+                {statusCfg.label}
+              </span>
             </div>
           </div>
-          <div className="rec-right">
-            <span className="rec-time">{formatTime(rec.created_at)}</span>
-            {/* Confidence gauge */}
+          <div className="rec-detail-right">
+            <span className="rec-detail-time">{formatTime(rec.created_at)}</span>
             <div className="rec-confidence-gauge" title={`Confianza: ${confidencePct}%`}>
-              <svg width="36" height="36" viewBox="0 0 36 36">
-                <circle cx="18" cy="18" r="15" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3" />
-                <circle cx="18" cy="18" r="15" fill="none"
+              <svg width="44" height="44" viewBox="0 0 44 44">
+                <circle cx="22" cy="22" r="18" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3" />
+                <circle cx="22" cy="22" r="18" fill="none"
                   stroke={confidencePct >= 70 ? '#10b981' : confidencePct >= 45 ? '#f59e0b' : '#ef4444'}
                   strokeWidth="3"
-                  strokeDasharray={`${(confidencePct / 100) * 94.2} 94.2`}
+                  strokeDasharray={`${(confidencePct / 100) * 113.1} 113.1`}
                   strokeLinecap="round"
-                  transform="rotate(-90 18 18)"
+                  transform="rotate(-90 22 22)"
                 />
-                <text x="18" y="19" textAnchor="middle" dominantBaseline="middle"
-                  fill="var(--text-primary)" fontSize="9" fontWeight="700">
+                <text x="22" y="23" textAnchor="middle" dominantBaseline="middle"
+                  fill="var(--text-primary)" fontSize="11" fontWeight="700">
                   {confidencePct}
                 </text>
               </svg>
@@ -1081,284 +1005,269 @@ function RecommendationCard({ rec, expanded, onToggle, onApprove, onReject, onDi
           </div>
         </div>
 
-        {expanded && (
-          <div className="rec-body">
-            {/* Related follow-up context badge */}
-            {rec.related_follow_up?.rec_id && (
-              <div className={`rec-followup-context ${rec.related_follow_up.day_3_verdict || 'pending'}`}>
-                <div className="rec-followup-context-header">
-                  <span className="rec-followup-context-icon">{'\uD83D\uDD17'}</span>
-                  <span className="rec-followup-context-title">
-                    Seguimiento previo: "{rec.related_follow_up.title}"
-                  </span>
-                  <span className="rec-followup-context-phase">
-                    {rec.related_follow_up.current_phase === 'awaiting_day_7' ? 'dia 3 medido' :
-                     rec.related_follow_up.current_phase === 'awaiting_day_14' ? 'dia 7 medido' :
-                     rec.related_follow_up.current_phase === 'complete' ? 'completo' : 'dia 3'}
-                  </span>
-                </div>
-                {rec.related_follow_up.day_3_verdict && (
-                  <div className="rec-followup-context-verdict">
-                    <span className={`rec-followup-verdict-badge ${rec.related_follow_up.day_3_verdict}`}>
-                      {rec.related_follow_up.day_3_verdict === 'negative' ? '\u274C' :
-                       rec.related_follow_up.day_3_verdict === 'positive' ? '\u2705' : '\u2796'}
-                      {' '}Veredicto dia 3: {rec.related_follow_up.day_3_verdict === 'negative' ? 'negativo' :
-                       rec.related_follow_up.day_3_verdict === 'positive' ? 'positivo' : 'neutral'}
-                    </span>
-                    <span className="rec-followup-context-action">
-                      Accion previa: {ACTION_TYPE_CONFIG[rec.related_follow_up.action_type]?.label || rec.related_follow_up.action_type}
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
-            {/* Structured diagnosis section */}
-            {rec.diagnosis && (
-              <div className="rec-structured-section rec-section-diagnosis">
-                <span className="rec-section-icon">{'\uD83D\uDD0D'}</span>
-                <div className="rec-section-content">
-                  <span className="rec-section-label">Causa raiz</span>
-                  <span className="rec-section-text">{rec.diagnosis}</span>
-                </div>
-              </div>
-            )}
+        {/* Entity badge */}
+        {rec.entity && (
+          <div className="rec-detail-entity">
+            <span className="rec-entity-badge">
+              <span className="entity-type-dot" style={{
+                background: rec.entity.entity_type === 'adset' ? '#3b82f6' :
+                            rec.entity.entity_type === 'campaign' ? '#8b5cf6' : '#10b981'
+              }} />
+              <span className="entity-type-label">
+                {rec.entity.entity_type === 'adset' ? 'Ad Set' :
+                 rec.entity.entity_type === 'campaign' ? 'Campaign' : 'Ad'}
+              </span>
+              <span className="entity-name">{rec.entity.entity_name}</span>
+            </span>
+          </div>
+        )}
+      </div>
 
-            <div className="rec-action-detail">
-              <strong>Accion:</strong> {rec.action_detail}
+      {/* Body — always visible */}
+      <div className="rec-detail-body">
+        {/* Related follow-up context */}
+        {rec.related_follow_up?.rec_id && (
+          <div className={`rec-followup-context ${rec.related_follow_up.day_3_verdict || 'pending'}`}>
+            <div className="rec-followup-context-header">
+              <span className="rec-followup-context-icon">{'\uD83D\uDD17'}</span>
+              <span className="rec-followup-context-title">
+                Seguimiento previo: "{rec.related_follow_up.title}"
+              </span>
+              <span className="rec-followup-context-phase">
+                {rec.related_follow_up.current_phase === 'awaiting_day_7' ? 'dia 3 medido' :
+                 rec.related_follow_up.current_phase === 'awaiting_day_14' ? 'dia 7 medido' :
+                 rec.related_follow_up.current_phase === 'complete' ? 'completo' : 'dia 3'}
+              </span>
             </div>
-
-            {rec.expected_outcome && (
-              <div className="rec-structured-section rec-section-outcome">
-                <span className="rec-section-icon">{'\uD83C\uDFAF'}</span>
-                <div className="rec-section-content">
-                  <span className="rec-section-label">Resultado esperado</span>
-                  <span className="rec-section-text">{rec.expected_outcome}</span>
-                </div>
-              </div>
-            )}
-
-            {rec.risk && (
-              <div className="rec-structured-section rec-section-risk">
-                <span className="rec-section-icon">{'\u26A0\uFE0F'}</span>
-                <div className="rec-section-content">
-                  <span className="rec-section-label">Riesgo si no actuas</span>
-                  <span className="rec-section-text">{rec.risk}</span>
-                </div>
-              </div>
-            )}
-
-            {/* Extra context (body) — only show if there's meaningful content */}
-            {rec.body && !rec.diagnosis && (
-              <div className="rec-body-text markdown-body">
-                <ReactMarkdown>{rec.body}</ReactMarkdown>
-              </div>
-            )}
-            {rec.body && rec.diagnosis && rec.body.length > 10 && (
-              <div className="rec-body-text rec-body-extra">
-                <ReactMarkdown>{rec.body}</ReactMarkdown>
-              </div>
-            )}
-
-            {/* Supporting data — visual comparison grid */}
-            {rec.supporting_data && (
-              <div className="rec-data-grid">
-                {rec.supporting_data.current_roas_7d > 0 && (
-                  <div className={`rec-data-item ${rec.supporting_data.account_avg_roas_7d > 0 && rec.supporting_data.current_roas_7d < rec.supporting_data.account_avg_roas_7d * 0.7 ? 'bad' : rec.supporting_data.current_roas_7d >= rec.supporting_data.account_avg_roas_7d ? 'good' : ''}`}>
-                    <span className="rec-data-label">ROAS 7d</span>
-                    <span className="rec-data-value">{rec.supporting_data.current_roas_7d.toFixed(2)}x</span>
-                    {rec.supporting_data.account_avg_roas_7d > 0 && (
-                      <span className="rec-data-ref">cuenta: {rec.supporting_data.account_avg_roas_7d.toFixed(2)}x</span>
-                    )}
-                  </div>
-                )}
-                {rec.supporting_data.current_cpa_7d > 0 && (
-                  <div className="rec-data-item">
-                    <span className="rec-data-label">CPA 7d</span>
-                    <span className="rec-data-value">${rec.supporting_data.current_cpa_7d.toFixed(2)}</span>
-                  </div>
-                )}
-                {rec.supporting_data.current_spend_7d > 0 && (
-                  <div className="rec-data-item">
-                    <span className="rec-data-label">Spend 7d</span>
-                    <span className="rec-data-value">${rec.supporting_data.current_spend_7d.toFixed(0)}</span>
-                  </div>
-                )}
-                {rec.supporting_data.current_frequency_7d > 0 && (
-                  <div className={`rec-data-item ${rec.supporting_data.current_frequency_7d >= 3.5 ? 'bad' : rec.supporting_data.current_frequency_7d >= 2.5 ? 'warn' : ''}`}>
-                    <span className="rec-data-label">Freq 7d</span>
-                    <span className="rec-data-value">{rec.supporting_data.current_frequency_7d.toFixed(1)}</span>
-                  </div>
-                )}
-                {rec.supporting_data.current_ctr_7d > 0 && (
-                  <div className="rec-data-item">
-                    <span className="rec-data-label">CTR 7d</span>
-                    <span className="rec-data-value">{rec.supporting_data.current_ctr_7d.toFixed(2)}%</span>
-                  </div>
-                )}
-                {rec.supporting_data.current_purchases_7d > 0 && (
-                  <div className="rec-data-item">
-                    <span className="rec-data-label">Compras 7d</span>
-                    <span className="rec-data-value">{rec.supporting_data.current_purchases_7d}</span>
-                  </div>
-                )}
-                {rec.supporting_data.trend_direction && rec.supporting_data.trend_direction !== 'unknown' && (
-                  <div className={`rec-data-item ${rec.supporting_data.trend_direction === 'declining' ? 'bad' : rec.supporting_data.trend_direction === 'improving' ? 'good' : ''}`}>
-                    <span className="rec-data-label">Tendencia</span>
-                    <span className="rec-data-value">
-                      {rec.supporting_data.trend_direction === 'declining' ? '\u2198 Bajando' :
-                       rec.supporting_data.trend_direction === 'improving' ? '\u2197 Subiendo' : '\u2192 Estable'}
-                      {rec.supporting_data.days_declining > 0 && ` (${rec.supporting_data.days_declining}d)`}
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Follow-up info */}
-            {rec.follow_up?.checked && (
-              <div className={`rec-followup ${rec.follow_up.impact_verdict}`}>
-                <div className="rec-followup-header">
-                  <span className="rec-followup-icon">
-                    {rec.follow_up.impact_verdict === 'positive' ? '\u2705' : rec.follow_up.impact_verdict === 'negative' ? '\u274C' : '\u2796'}
-                  </span>
-                  <strong>Follow-up: {rec.follow_up.action_executed ? 'Accion ejecutada' : 'Accion no detectada'}</strong>
-                </div>
-                <p className="rec-followup-text">{rec.follow_up.impact_summary}</p>
-              </div>
-            )}
-
-            {/* Action bar */}
-            <div className="rec-action-bar">
-              {rec.status === 'pending' && (
-                <>
-                  <button
-                    className="rec-btn approve"
-                    onClick={(e) => { e.stopPropagation(); onApprove(); }}
-                  >
-                    Aprobar
-                  </button>
-                  <button
-                    className="rec-btn reject"
-                    onClick={(e) => { e.stopPropagation(); onReject(); }}
-                  >
-                    Rechazar
-                  </button>
-                </>
-              )}
-              {onDiscuss && (
-                <button
-                  className="rec-btn discuss"
-                  onClick={(e) => { e.stopPropagation(); onDiscuss(); }}
-                >
-                  Discutir con Brain
-                </button>
-              )}
-            </div>
-
-            {/* Decided info — simple for rejected/completed, rich tracker for active follow-up */}
-            {rec.status === 'rejected' && rec.decided_at && (
-              <div className="rec-decided-info">
-                Rechazada {formatTime(rec.decided_at)}
-                {rec.decision_note && ` — "${rec.decision_note}"`}
-              </div>
-            )}
-            {rec.status === 'approved' && rec.decided_at && !isTracking && (
-              <div className="rec-decided-info">
-                Aprobada {formatTime(rec.decided_at)}
-                {rec.decision_note && ` — "${rec.decision_note}"`}
-              </div>
-            )}
-            {isTracking && (
-              <div className="rec-tracker">
-                <div className="rec-tracker-header">
-                  <div className="rec-tracker-status">
-                    <span className={`rec-tracker-exec ${followUp.action_executed ? 'done' : 'waiting'}`}>
-                      {followUp.action_executed ? '✅ Ejecutada' : '⏳ Pendiente ejecucion'}
-                    </span>
-                    {!followUp.action_executed && (
-                      <button
-                        className="rec-btn-mark-executed"
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          try {
-                            await markRecommendationExecuted(rec._id);
-                            setRecommendations(prev => prev.map(r =>
-                              r._id === rec._id
-                                ? { ...r, follow_up: { ...r.follow_up, action_executed: true, execution_detected_at: new Date().toISOString() } }
-                                : r
-                            ));
-                          } catch (err) { console.error('Error marking executed:', err); }
-                        }}
-                        title="Ya hice este cambio en Meta Ads"
-                      >
-                        Marcar ejecutada
-                      </button>
-                    )}
-                    <span className="rec-tracker-time">{daysAgo}</span>
-                  </div>
-                  <div className="rec-tracker-phases">
-                    <span className={`rec-tracker-phase ${phases.day_3?.measured ? 'done' : currentPhase === 'awaiting_day_3' ? 'active' : ''}`}>3d</span>
-                    <span className="rec-tracker-phase-line" />
-                    <span className={`rec-tracker-phase ${phases.day_7?.measured ? 'done' : currentPhase === 'awaiting_day_7' ? 'active' : ''}`}>7d</span>
-                    <span className="rec-tracker-phase-line" />
-                    <span className={`rec-tracker-phase ${phases.day_14?.measured ? 'done' : currentPhase === 'awaiting_day_14' ? 'active' : ''}`}>14d</span>
-                  </div>
-                </div>
-                {/* Metrics at approval */}
-                {followUp.metrics_at_recommendation && (
-                  <div className="rec-tracker-metrics">
-                    {followUp.metrics_at_recommendation.roas_7d > 0 && (
-                      <div className="rec-tracker-metric">
-                        <span className="rec-tracker-metric-label">ROAS</span>
-                        <span className="rec-tracker-metric-value">{followUp.metrics_at_recommendation.roas_7d.toFixed(2)}x</span>
-                      </div>
-                    )}
-                    {followUp.metrics_at_recommendation.cpa_7d > 0 && (
-                      <div className="rec-tracker-metric">
-                        <span className="rec-tracker-metric-label">CPA</span>
-                        <span className="rec-tracker-metric-value">${followUp.metrics_at_recommendation.cpa_7d.toFixed(2)}</span>
-                      </div>
-                    )}
-                    {followUp.metrics_at_recommendation.daily_budget > 0 && (
-                      <div className="rec-tracker-metric">
-                        <span className="rec-tracker-metric-label">Budget</span>
-                        <span className="rec-tracker-metric-value">${followUp.metrics_at_recommendation.daily_budget.toFixed(0)}/d</span>
-                      </div>
-                    )}
-                    {followUp.metrics_at_recommendation.ctr_7d > 0 && (
-                      <div className="rec-tracker-metric">
-                        <span className="rec-tracker-metric-label">CTR</span>
-                        <span className="rec-tracker-metric-value">{followUp.metrics_at_recommendation.ctr_7d.toFixed(2)}%</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-                {/* Early signal from day 3 */}
-                {phases.day_3?.measured && (
-                  <div className="rec-tracker-signal">
-                    <span className="rec-tracker-signal-label">Dia 3:</span>
-                    {phases.day_3.deltas?.roas_pct != null && (
-                      <span className={`rec-tracker-signal-delta ${(phases.day_3.deltas.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
-                        ROAS {phases.day_3.deltas.roas_pct > 0 ? '+' : ''}{phases.day_3.deltas.roas_pct?.toFixed(0)}%
-                      </span>
-                    )}
-                    {phases.day_3.deltas?.cpa_pct != null && (
-                      <span className={`rec-tracker-signal-delta ${(phases.day_3.deltas.cpa_pct || 0) <= 0 ? 'positive' : 'negative'}`}>
-                        CPA {phases.day_3.deltas.cpa_pct > 0 ? '+' : ''}{phases.day_3.deltas.cpa_pct?.toFixed(0)}%
-                      </span>
-                    )}
-                    <span className={`rec-tracker-signal-verdict ${phases.day_3.verdict}`}>
-                      {phases.day_3.verdict === 'positive' ? '✅' : phases.day_3.verdict === 'negative' ? '❌' : '➖'}
-                    </span>
-                  </div>
-                )}
-                {rec.decision_note && (
-                  <div className="rec-tracker-note">📝 {rec.decision_note}</div>
-                )}
+            {rec.related_follow_up.day_3_verdict && (
+              <div className="rec-followup-context-verdict">
+                <span className={`rec-followup-verdict-badge ${rec.related_follow_up.day_3_verdict}`}>
+                  {rec.related_follow_up.day_3_verdict === 'negative' ? '\u274C' :
+                   rec.related_follow_up.day_3_verdict === 'positive' ? '\u2705' : '\u2796'}
+                  {' '}Veredicto dia 3: {rec.related_follow_up.day_3_verdict === 'negative' ? 'negativo' :
+                   rec.related_follow_up.day_3_verdict === 'positive' ? 'positivo' : 'neutral'}
+                </span>
+                <span className="rec-followup-context-action">
+                  Accion previa: {ACTION_TYPE_CONFIG[rec.related_follow_up.action_type]?.label || rec.related_follow_up.action_type}
+                </span>
               </div>
             )}
           </div>
         )}
+
+        {/* Structured sections */}
+        {rec.diagnosis && (
+          <div className="rec-structured-section rec-section-diagnosis">
+            <span className="rec-section-icon">{'\uD83D\uDD0D'}</span>
+            <div className="rec-section-content">
+              <span className="rec-section-label">Causa raiz</span>
+              <span className="rec-section-text">{rec.diagnosis}</span>
+            </div>
+          </div>
+        )}
+
+        <div className="rec-action-detail">
+          <strong>Accion:</strong> {rec.action_detail}
+        </div>
+
+        {rec.expected_outcome && (
+          <div className="rec-structured-section rec-section-outcome">
+            <span className="rec-section-icon">{'\uD83C\uDFAF'}</span>
+            <div className="rec-section-content">
+              <span className="rec-section-label">Resultado esperado</span>
+              <span className="rec-section-text">{rec.expected_outcome}</span>
+            </div>
+          </div>
+        )}
+
+        {rec.risk && (
+          <div className="rec-structured-section rec-section-risk">
+            <span className="rec-section-icon">{'\u26A0\uFE0F'}</span>
+            <div className="rec-section-content">
+              <span className="rec-section-label">Riesgo si no actuas</span>
+              <span className="rec-section-text">{rec.risk}</span>
+            </div>
+          </div>
+        )}
+
+        {rec.body && !rec.diagnosis && (
+          <div className="rec-body-text markdown-body">
+            <ReactMarkdown>{rec.body}</ReactMarkdown>
+          </div>
+        )}
+        {rec.body && rec.diagnosis && rec.body.length > 10 && (
+          <div className="rec-body-text rec-body-extra">
+            <ReactMarkdown>{rec.body}</ReactMarkdown>
+          </div>
+        )}
+
+        {/* Supporting data grid */}
+        {rec.supporting_data && (
+          <div className="rec-data-grid">
+            {rec.supporting_data.current_roas_7d > 0 && (
+              <div className={`rec-data-item ${rec.supporting_data.account_avg_roas_7d > 0 && rec.supporting_data.current_roas_7d < rec.supporting_data.account_avg_roas_7d * 0.7 ? 'bad' : rec.supporting_data.current_roas_7d >= rec.supporting_data.account_avg_roas_7d ? 'good' : ''}`}>
+                <span className="rec-data-label">ROAS 7d</span>
+                <span className="rec-data-value">{rec.supporting_data.current_roas_7d.toFixed(2)}x</span>
+                {rec.supporting_data.account_avg_roas_7d > 0 && (
+                  <span className="rec-data-ref">cuenta: {rec.supporting_data.account_avg_roas_7d.toFixed(2)}x</span>
+                )}
+              </div>
+            )}
+            {rec.supporting_data.current_cpa_7d > 0 && (
+              <div className="rec-data-item">
+                <span className="rec-data-label">CPA 7d</span>
+                <span className="rec-data-value">${rec.supporting_data.current_cpa_7d.toFixed(2)}</span>
+              </div>
+            )}
+            {rec.supporting_data.current_spend_7d > 0 && (
+              <div className="rec-data-item">
+                <span className="rec-data-label">Spend 7d</span>
+                <span className="rec-data-value">${rec.supporting_data.current_spend_7d.toFixed(0)}</span>
+              </div>
+            )}
+            {rec.supporting_data.current_frequency_7d > 0 && (
+              <div className={`rec-data-item ${rec.supporting_data.current_frequency_7d >= 3.5 ? 'bad' : rec.supporting_data.current_frequency_7d >= 2.5 ? 'warn' : ''}`}>
+                <span className="rec-data-label">Freq 7d</span>
+                <span className="rec-data-value">{rec.supporting_data.current_frequency_7d.toFixed(1)}</span>
+              </div>
+            )}
+            {rec.supporting_data.current_ctr_7d > 0 && (
+              <div className="rec-data-item">
+                <span className="rec-data-label">CTR 7d</span>
+                <span className="rec-data-value">{rec.supporting_data.current_ctr_7d.toFixed(2)}%</span>
+              </div>
+            )}
+            {rec.supporting_data.current_purchases_7d > 0 && (
+              <div className="rec-data-item">
+                <span className="rec-data-label">Compras 7d</span>
+                <span className="rec-data-value">{rec.supporting_data.current_purchases_7d}</span>
+              </div>
+            )}
+            {rec.supporting_data.trend_direction && rec.supporting_data.trend_direction !== 'unknown' && (
+              <div className={`rec-data-item ${rec.supporting_data.trend_direction === 'declining' ? 'bad' : rec.supporting_data.trend_direction === 'improving' ? 'good' : ''}`}>
+                <span className="rec-data-label">Tendencia</span>
+                <span className="rec-data-value">
+                  {rec.supporting_data.trend_direction === 'declining' ? '\u2198 Bajando' :
+                   rec.supporting_data.trend_direction === 'improving' ? '\u2197 Subiendo' : '\u2192 Estable'}
+                  {rec.supporting_data.days_declining > 0 && ` (${rec.supporting_data.days_declining}d)`}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Follow-up info */}
+        {followUp.checked && (
+          <div className={`rec-followup ${followUp.impact_verdict}`}>
+            <div className="rec-followup-header">
+              <span className="rec-followup-icon">
+                {followUp.impact_verdict === 'positive' ? '\u2705' : followUp.impact_verdict === 'negative' ? '\u274C' : '\u2796'}
+              </span>
+              <strong>Follow-up: {followUp.action_executed ? 'Accion ejecutada' : 'Accion no detectada'}</strong>
+            </div>
+            <p className="rec-followup-text">{followUp.impact_summary}</p>
+          </div>
+        )}
+
+        {/* Tracking timeline */}
+        {isTracking && (
+          <div className="rec-tracker">
+            <div className="rec-tracker-header">
+              <div className="rec-tracker-status">
+                <span className={`rec-tracker-exec ${followUp.action_executed ? 'done' : 'waiting'}`}>
+                  {followUp.action_executed ? 'Ejecutada' : 'Pendiente ejecucion'}
+                </span>
+                {!followUp.action_executed && (
+                  <button
+                    className="rec-btn-mark-executed"
+                    onClick={async () => {
+                      try { await markRecommendationExecuted(rec._id); } catch (err) { console.error(err); }
+                    }}
+                    title="Ya hice este cambio en Meta Ads"
+                  >
+                    Marcar ejecutada
+                  </button>
+                )}
+                <span className="rec-tracker-time">{daysAgo}</span>
+              </div>
+              <div className="rec-tracker-phases">
+                <span className={`rec-tracker-phase ${phases.day_3?.measured ? 'done' : currentPhase === 'awaiting_day_3' ? 'active' : ''}`}>3d</span>
+                <span className="rec-tracker-phase-line" />
+                <span className={`rec-tracker-phase ${phases.day_7?.measured ? 'done' : currentPhase === 'awaiting_day_7' ? 'active' : ''}`}>7d</span>
+                <span className="rec-tracker-phase-line" />
+                <span className={`rec-tracker-phase ${phases.day_14?.measured ? 'done' : currentPhase === 'awaiting_day_14' ? 'active' : ''}`}>14d</span>
+              </div>
+            </div>
+            {followUp.metrics_at_recommendation && (
+              <div className="rec-tracker-metrics">
+                {followUp.metrics_at_recommendation.roas_7d > 0 && (
+                  <div className="rec-tracker-metric">
+                    <span className="rec-tracker-metric-label">ROAS</span>
+                    <span className="rec-tracker-metric-value">{followUp.metrics_at_recommendation.roas_7d.toFixed(2)}x</span>
+                  </div>
+                )}
+                {followUp.metrics_at_recommendation.cpa_7d > 0 && (
+                  <div className="rec-tracker-metric">
+                    <span className="rec-tracker-metric-label">CPA</span>
+                    <span className="rec-tracker-metric-value">${followUp.metrics_at_recommendation.cpa_7d.toFixed(2)}</span>
+                  </div>
+                )}
+                {followUp.metrics_at_recommendation.daily_budget > 0 && (
+                  <div className="rec-tracker-metric">
+                    <span className="rec-tracker-metric-label">Budget</span>
+                    <span className="rec-tracker-metric-value">${followUp.metrics_at_recommendation.daily_budget.toFixed(0)}/d</span>
+                  </div>
+                )}
+              </div>
+            )}
+            {phases.day_3?.measured && (
+              <div className="rec-tracker-signal">
+                <span className="rec-tracker-signal-label">Dia 3:</span>
+                {phases.day_3.deltas?.roas_pct != null && (
+                  <span className={`rec-tracker-signal-delta ${(phases.day_3.deltas.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
+                    ROAS {phases.day_3.deltas.roas_pct > 0 ? '+' : ''}{phases.day_3.deltas.roas_pct?.toFixed(0)}%
+                  </span>
+                )}
+                {phases.day_3.deltas?.cpa_pct != null && (
+                  <span className={`rec-tracker-signal-delta ${(phases.day_3.deltas.cpa_pct || 0) <= 0 ? 'positive' : 'negative'}`}>
+                    CPA {phases.day_3.deltas.cpa_pct > 0 ? '+' : ''}{phases.day_3.deltas.cpa_pct?.toFixed(0)}%
+                  </span>
+                )}
+                <span className={`rec-tracker-signal-verdict ${phases.day_3.verdict}`}>
+                  {phases.day_3.verdict === 'positive' ? '\u2705' : phases.day_3.verdict === 'negative' ? '\u274C' : '\u2796'}
+                </span>
+              </div>
+            )}
+            {rec.decision_note && (
+              <div className="rec-tracker-note">📝 {rec.decision_note}</div>
+            )}
+          </div>
+        )}
+
+        {/* Action bar — sticky at bottom of detail */}
+        <div className="rec-detail-action-bar">
+          {rec.status === 'pending' && (
+            <>
+              <button className="rec-btn approve" onClick={onApprove}>Aprobar</button>
+              <button className="rec-btn reject" onClick={onReject}>Rechazar</button>
+            </>
+          )}
+          {onDiscuss && (
+            <button className="rec-btn discuss" onClick={onDiscuss}>Discutir con Brain</button>
+          )}
+          {rec.status === 'rejected' && rec.decided_at && (
+            <div className="rec-decided-info">
+              Rechazada {formatTime(rec.decided_at)}
+              {rec.decision_note && ` — "${rec.decision_note}"`}
+            </div>
+          )}
+          {rec.status === 'approved' && rec.decided_at && !isTracking && (
+            <div className="rec-decided-info">
+              Aprobada {formatTime(rec.decided_at)}
+              {rec.decision_note && ` — "${rec.decision_note}"`}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
