@@ -128,7 +128,8 @@ class UnifiedBrain {
         diagnosticContext,
         validatedHypotheses,
         memories: sharedData.memories,
-        temporalPatterns: sharedData.temporalPatterns
+        temporalPatterns: sharedData.temporalPatterns,
+        pauseContextMap: sharedData.pauseContextMap
       });
 
       logger.info(`[BRAIN] Prompt enviado a Claude: ${userPrompt.length} chars`);
@@ -415,6 +416,36 @@ class UnifiedBrain {
       logger.warn(`[BRAIN] Error cargando temporal patterns: ${e.message}`);
     }
 
+    // Load pause context for paused ad sets (who paused, why, when)
+    let pauseContextMap = {};
+    try {
+      const pausedIds = adSetSnapshots
+        .filter(s => ['PAUSED', 'ADSET_PAUSED', 'CAMPAIGN_PAUSED'].includes(s.status))
+        .map(s => s.entity_id);
+
+      if (pausedIds.length > 0) {
+        const pauseActions = await ActionLog.find({
+          entity_id: { $in: pausedIds },
+          action: { $in: ['pause', 'kill_switch'] },
+          success: true
+        }).sort({ executed_at: -1 }).lean();
+
+        for (const a of pauseActions) {
+          if (!pauseContextMap[a.entity_id]) {
+            pauseContextMap[a.entity_id] = {
+              paused_by: a.agent_type || 'unknown',
+              reasoning: a.reasoning || null,
+              executed_at: a.executed_at,
+              days_ago: Math.round((Date.now() - new Date(a.executed_at).getTime()) / 86400000),
+              metrics_at_pause: a.metrics_at_execution || null
+            };
+          }
+        }
+      }
+    } catch (e) {
+      logger.warn(`[BRAIN] Error cargando contexto de pausas: ${e.message}`);
+    }
+
     logger.info(`[BRAIN] Datos cargados: ${adSetSnapshots.length} ad sets, ${adSnapshots.length} ads, ${campaignSnapshots.length} campanas, ${activeCooldowns.length} cooldowns, ${recommendationHistory.length} rec history, ${cycleMemories.length} cycle memories`);
 
     return {
@@ -433,7 +464,8 @@ class UnifiedBrain {
       recommendationHistory,
       cycleMemories,
       memories,
-      temporalPatterns
+      temporalPatterns,
+      pauseContextMap
     };
   }
 

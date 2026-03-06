@@ -9,6 +9,7 @@ const BrainInsight = require('../../db/models/BrainInsight');
 const BrainChat = require('../../db/models/BrainChat');
 const BrainRecommendation = require('../../db/models/BrainRecommendation');
 const BrainCycleMemory = require('../../db/models/BrainCycleMemory');
+const ActionLog = require('../../db/models/ActionLog');
 const DiagnosticEngine = require('./diagnostic-engine');
 const BrainTemporalPattern = require('../../db/models/BrainTemporalPattern');
 const DataCollector = require('../../meta/data-collector');
@@ -80,6 +81,9 @@ class BrainAnalyzer {
 
       // 3. Fase matemática: detectar cambios significativos
       const findings = this._detectChanges(adsetSnapshots, memoryMap, accountOverview, todayPattern);
+
+      // 3.3. Enrich status_change findings with ActionLog context (who paused/reactivated and why)
+      await this._enrichStatusChangeFindings(findings);
 
       // 3.5. Diagnostic engine: pre-compute structured diagnostic signals
       let diagnostics = {};
@@ -309,6 +313,84 @@ class BrainAnalyzer {
   }
 
   /**
+   * Enrich status_change findings with ActionLog context.
+   * For paused entities: who paused it, why, when, and with what metrics.
+   * This prevents false alarms like "APAGADO con ROAS élite — error operativo".
+   */
+  async _enrichStatusChangeFindings(findings) {
+    const statusFindings = findings.filter(f => f.type === 'status_change');
+    if (statusFindings.length === 0) return;
+
+    // Get entity IDs that changed status
+    const entityIds = statusFindings.map(f => f.entity.entity_id);
+
+    // Query ActionLog for the most recent pause/reactivate actions on these entities
+    const recentActions = await ActionLog.find({
+      entity_id: { $in: entityIds },
+      action: { $in: ['pause', 'reactivate', 'kill_switch'] },
+      success: true
+    }).sort({ executed_at: -1 }).lean().catch(() => []);
+
+    // Query BrainRecommendation for approved pause/reactivate recs on these entities
+    const approvedRecs = await BrainRecommendation.find({
+      'entity.entity_id': { $in: entityIds },
+      action_type: { $in: ['pause', 'reactivate'] },
+      status: 'approved'
+    }).sort({ decided_at: -1 }).lean().catch(() => []);
+
+    // Build lookup maps
+    const actionByEntity = {};
+    for (const a of recentActions) {
+      if (!actionByEntity[a.entity_id]) actionByEntity[a.entity_id] = a;
+    }
+    const recByEntity = {};
+    for (const r of approvedRecs) {
+      if (!recByEntity[r.entity.entity_id]) recByEntity[r.entity.entity_id] = r;
+    }
+
+    // Enrich each status_change finding
+    for (const f of statusFindings) {
+      const eid = f.entity.entity_id;
+      const action = actionByEntity[eid];
+      const rec = recByEntity[eid];
+
+      if (action) {
+        const daysAgo = Math.round((Date.now() - new Date(action.executed_at).getTime()) / 86400000);
+        f.data.pause_context = {
+          paused_by: action.agent_type || 'unknown',
+          reasoning: action.reasoning || null,
+          executed_at: action.executed_at,
+          days_ago: daysAgo,
+          metrics_at_pause: action.metrics_at_execution || null
+        };
+      }
+
+      if (rec) {
+        f.data.recommendation_context = {
+          action_type: rec.action_type,
+          reasoning: rec.reasoning || null,
+          decided_at: rec.decided_at,
+          priority: rec.priority,
+          confidence: rec.confidence
+        };
+      }
+
+      // Downgrade severity if we know who paused it and why
+      if (f.data.to === 'PAUSED' && action) {
+        if (action.agent_type === 'brain' || action.agent_type === 'ai_manager') {
+          // Brain or AI Manager paused it intentionally — not an error
+          f.severity = 'low';
+          f.data.intentional_pause = true;
+        } else if (action.agent_type === 'manual') {
+          // Human paused it — informational only
+          f.severity = 'info';
+          f.data.intentional_pause = true;
+        }
+      }
+    }
+  }
+
+  /**
    * Extract findings from diagnostic engine results.
    * These catch things the threshold-based detection misses:
    * funnel leaks, creative fatigue patterns, audience saturation.
@@ -509,6 +591,14 @@ REGLAS CRÍTICAS:
    - Si hay frequency alta con CTR cayendo → audiencia saturada, no mal ad
    - Si hay CPA subiendo con CTR estable → posible competencia CPM, no fatiga creativa
 8. USA LOS DATOS DE DIAGNÓSTICO PRE-COMPUTADOS cuando estén disponibles. No ignores las etiquetas diagnósticas.
+9. AD SETS PAUSADOS — CONTEXTO OBLIGATORIO:
+   - Si un hallazgo es status_change a PAUSED y tiene CONTEXTO DE PAUSA, DEBES mencionarlo.
+   - Si fue pausado por Brain/AI Manager → es una PAUSA INTENCIONAL. NO generes alarma de "error operativo".
+     Ejemplo correcto: "Ad set pausado por el Brain hace 3 días por fatiga creativa. ROAS histórico 5.3x."
+     Ejemplo INCORRECTO: "Ad set APAGADO con ROAS élite 5.3x — error operativo crítico"
+   - Si fue pausado por operador humano → informativo. No sugerir reactivar automáticamente.
+   - Si no hay contexto de pausa → puede ser pausa manual antigua. Indicar que no hay registro del motivo.
+   - Solo sugerir reactivación si la RAZÓN ORIGINAL de la pausa ya no aplica (ej: fatiga resuelta con nuevos creativos).
 
 FORMATO DE RESPUESTA:
 Responde con un JSON array. Cada elemento:
@@ -568,6 +658,26 @@ IMPORTANTE: Responde SOLO con el JSON array, sin texto adicional ni markdown.`;
         if (diag.fatigue.score > 10) prompt += `  Fatiga creativa: ${diag.fatigue.level} (${diag.fatigue.score}/100) | ${diag.active_ads} ads activos\n`;
         if (diag.saturation.score > 10) prompt += `  Saturación audiencia: ${diag.saturation.level} (${diag.saturation.score}/100)\n`;
         prompt += `  Acción sugerida: ${diag.overall.primary_action}\n`;
+      }
+
+      // Pause context: who paused it, why, and when
+      if (f.data.pause_context) {
+        const pc = f.data.pause_context;
+        const agentLabels = { brain: 'el Brain (IA)', ai_manager: 'el AI Manager', manual: 'el operador humano', scaling: 'agente de escalamiento', performance: 'agente de performance' };
+        const who = agentLabels[pc.paused_by] || pc.paused_by;
+        prompt += `CONTEXTO DE PAUSA: Pausado por ${who} hace ${pc.days_ago} día(s)\n`;
+        if (pc.reasoning) prompt += `  Razón: ${pc.reasoning}\n`;
+        if (pc.metrics_at_pause) {
+          prompt += `  Métricas al pausar: ROAS 7d: ${(pc.metrics_at_pause.roas_7d || 0).toFixed(2)}x, CPA: $${(pc.metrics_at_pause.cpa_7d || 0).toFixed(2)}, Freq: ${(pc.metrics_at_pause.frequency || 0).toFixed(1)}\n`;
+        }
+        if (f.data.intentional_pause) {
+          prompt += `  ⚠️ PAUSA INTENCIONAL — NO es un error operativo\n`;
+        }
+      }
+      if (f.data.recommendation_context) {
+        const rc = f.data.recommendation_context;
+        prompt += `  Recomendación aprobada: ${rc.action_type} (prioridad: ${rc.priority}, confianza: ${rc.confidence})\n`;
+        if (rc.reasoning) prompt += `  Razón de la recomendación: ${rc.reasoning}\n`;
       }
 
       const prev = previousMap[f.entity.entity_id];

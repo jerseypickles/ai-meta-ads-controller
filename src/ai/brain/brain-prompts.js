@@ -45,6 +45,12 @@ REGLAS CRITICAS:
 8. CREATIVOS: Solo usa creative_asset_id de assets "ad-ready" (NO references). Necesitas 3-5+ ads por ad set. Para create_ad: ad_name, ad_headline, and ad_primary_text MUST ALWAYS be in ENGLISH — they go directly to Meta Ads and are shown to US customers. Write compelling, native-sounding English ad copy. The ad_headline is the bold text under the image (max 40 chars). The ad_primary_text is the body text above the image (max 125 chars, persuasive, with emoji if fits the style).
 9. MAX BUDGET CHANGE: Nunca mas de 20-25% por ajuste. Cambios mayores resetean learning phase.
 10. CONSERVADOR CUANDO HAY DUDA: Si no tienes suficientes datos, no actues. Es mejor esperar.
+11. AD SETS PAUSADOS — CONTEXTO OBLIGATORIO:
+   - En la seccion "AD SETS PAUSADOS" se muestra QUIEN pauso cada ad set y POR QUE.
+   - Si fue pausado por Brain/AI Manager → fue una decision deliberada. NO lo trates como "error operativo".
+   - Si fue pausado por el operador humano → respetar la decision, no sugerir reactivar salvo que lo pidan.
+   - Solo sugerir "reactivate" si la RAZON ORIGINAL de la pausa ya no aplica (ej: se agregaron creativos frescos, audiencia descansó).
+   - Un ad set pausado con ROAS historico alto NO es automaticamente un candidato a reactivar si fue pausado intencionalmente.
 
 REGLA — AD SETS GESTIONADOS POR AI MANAGER (managed_by_ai):
 Los ad sets marcados con "[AI-MANAGED]" son gestionados autonomamente por el AI Manager.
@@ -173,7 +179,8 @@ function buildUserPrompt({
   diagnosticContext,
   validatedHypotheses,
   memories,
-  temporalPatterns
+  temporalPatterns,
+  pauseContextMap
 }) {
   const now = moment().tz(TIMEZONE);
   const hourET = now.hours();
@@ -347,12 +354,29 @@ Budget ceiling diario: $${budgetCeiling} | Pacing mensual estimado: ${monthlyPac
   }
 
   if (pausedAdSets.length > 0) {
-    prompt += `═══ AD SETS PAUSADOS (${pausedAdSets.length}) — candidatos a reactivar ═══\n`;
+    const pcMap = pauseContextMap || {};
+    prompt += `═══ AD SETS PAUSADOS (${pausedAdSets.length}) ═══\n`;
+    prompt += `  NOTA: Antes de sugerir reactivar, verifica QUIÉN lo pausó y POR QUÉ.\n`;
+    prompt += `  Si fue pausado por Brain/AI Manager/operador con razón válida → NO es error operativo.\n\n`;
     for (const s of pausedAdSets.slice(0, 10)) {
       const m7 = s.metrics?.last_7d || {};
       const m14 = s.metrics?.last_14d || {};
       const m30 = s.metrics?.last_30d || {};
-      prompt += `[${s.entity_id}] ${s.entity_name} — ROAS 7d: ${(m7.roas || 0).toFixed(2)}x, 14d: ${(m14.roas || 0).toFixed(2)}x, 30d: ${(m30.roas || 0).toFixed(2)}x, CPA 7d: $${(m7.cpa || 0).toFixed(2)}, Compras 30d: ${m30.purchases || 0}, Spend 30d: $${(m30.spend || 0).toFixed(0)}\n`;
+      const pc = pcMap[s.entity_id];
+      prompt += `[${s.entity_id}] ${s.entity_name}\n`;
+      prompt += `  ROAS: 7d ${(m7.roas || 0).toFixed(2)}x | 14d ${(m14.roas || 0).toFixed(2)}x | 30d ${(m30.roas || 0).toFixed(2)}x\n`;
+      prompt += `  CPA 7d: $${(m7.cpa || 0).toFixed(2)} | Compras 30d: ${m30.purchases || 0} | Spend 30d: $${(m30.spend || 0).toFixed(0)}\n`;
+      if (pc) {
+        const agentLabels = { brain: 'Brain (IA)', ai_manager: 'AI Manager', manual: 'Operador humano', scaling: 'Agente escalamiento', performance: 'Agente performance' };
+        const who = agentLabels[pc.paused_by] || pc.paused_by || 'desconocido';
+        prompt += `  PAUSADO POR: ${who} | Hace ${pc.days_ago} día(s)\n`;
+        if (pc.reasoning) prompt += `  RAZÓN: ${pc.reasoning}\n`;
+        if (pc.metrics_at_pause) {
+          prompt += `  Métricas al pausar: ROAS ${(pc.metrics_at_pause.roas_7d || 0).toFixed(2)}x, Freq ${(pc.metrics_at_pause.frequency || 0).toFixed(1)}\n`;
+        }
+      } else {
+        prompt += `  PAUSADO POR: desconocido (sin registro en ActionLog — posible pausa manual antigua o desde Meta Ads Manager)\n`;
+      }
     }
     prompt += '\n';
   }
