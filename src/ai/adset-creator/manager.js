@@ -5,7 +5,7 @@ const AICreation = require('../../db/models/AICreation');
 const CreativeAsset = require('../../db/models/CreativeAsset');
 const ActionLog = require('../../db/models/ActionLog');
 const { getMetaClient } = require('../../meta/client');
-const { getLatestSnapshots, getAdsForAdSet } = require('../../db/queries');
+const { getLatestSnapshots, getAdsForAdSet, getSnapshotFreshness } = require('../../db/queries');
 const MetricSnapshot = require('../../db/models/MetricSnapshot');
 const StrategicDirective = require('../../db/models/StrategicDirective');
 const { CooldownManager } = require('../../safety/cooldown-manager');
@@ -161,6 +161,13 @@ IMPORTANT:
  * Manage all AI-created ad sets that have managed_by_ai: true
  */
 async function runManager() {
+  // Freshness guard — no tomar decisiones con datos stale (> 15 min)
+  const freshness = await getSnapshotFreshness('adset');
+  if (!freshness.fresh) {
+    logger.warn(`[AI-MANAGER] Datos stale (${freshness.age_minutes} min) — abortando. Umbral: 15 min.`);
+    return { managed: 0, actions_taken: 0, results: [], abortReason: `Datos stale: ${freshness.age_minutes} min` };
+  }
+
   const managed = await AICreation.find({
     creation_type: 'create_adset',
     managed_by_ai: true,
@@ -172,7 +179,7 @@ async function runManager() {
     return { managed: 0, actions_taken: 0, results: [] };
   }
 
-  logger.info(`[AI-MANAGER] Gestionando ${managed.length} ad sets`);
+  logger.info(`[AI-MANAGER] Gestionando ${managed.length} ad sets (datos: ${freshness.age_minutes} min)`);
   let totalActions = 0;
   const results = [];
 

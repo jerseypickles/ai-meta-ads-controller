@@ -1,7 +1,7 @@
 const safetyGuards = require('../../config/safety-guards');
 const kpiTargets = require('../../config/kpi-targets');
 const { getMetaClient } = require('../meta/client');
-const { getLatestSnapshots, isKillSwitchActive } = require('../db/queries');
+const { getLatestSnapshots, isKillSwitchActive, getSnapshotFreshness } = require('../db/queries');
 const SafetyEvent = require('../db/models/SafetyEvent');
 const logger = require('../utils/logger');
 
@@ -26,6 +26,20 @@ class KillSwitch {
     }
 
     try {
+      // Freshness check — stale data means we CAN'T trust the safety metrics
+      const freshness = await getSnapshotFreshness('adset');
+      if (!freshness.fresh) {
+        logger.error(`[KILL-SWITCH] ⚠ Datos stale (${freshness.age_minutes} min) — no se puede evaluar seguridad con precisión`);
+        // Registrar evento de seguridad para visibilidad
+        await SafetyEvent.create({
+          event_type: 'stale_data_warning',
+          severity: 'warning',
+          description: `Kill switch monitor no puede evaluar con precisión: datos tienen ${freshness.age_minutes} min de antigüedad (máximo 15 min). DataCollector puede estar fallando.`,
+          details: { age_minutes: freshness.age_minutes, last_snapshot_at: freshness.last_snapshot_at }
+        }).catch(() => {});
+        return { triggered: false, reason: `Datos stale (${freshness.age_minutes} min) — evaluación no confiable`, stale: true };
+      }
+
       const snapshots = await getLatestSnapshots('adset');
       if (snapshots.length === 0) {
         return { triggered: false, reason: 'Sin datos para evaluar' };

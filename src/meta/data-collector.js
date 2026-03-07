@@ -26,9 +26,41 @@ class DataCollector {
    */
   async collect() {
     const startTime = Date.now();
+    const COLLECT_TIMEOUT_MS = 4 * 60 * 1000; // 4 minutos máximo — abortar si excede
     logger.info('═══ Iniciando ciclo de recolección de datos ═══');
 
     this.meta.setBusy('data-collector');
+
+    // Global timeout: si el collect toma más de 4 min, abortar y limpiar busy flag
+    const timeoutPromise = new Promise((_, reject) => {
+      this._collectTimeout = setTimeout(() => {
+        reject(new Error('COLLECT_TIMEOUT: Recolección excedió 4 minutos — abortando'));
+      }, COLLECT_TIMEOUT_MS);
+    });
+
+    try {
+      // Race entre la recolección real y el timeout global
+      const result = await Promise.race([
+        this._doCollect(),
+        timeoutPromise
+      ]);
+      clearTimeout(this._collectTimeout);
+      this.meta.clearBusy();
+      return result;
+    } catch (error) {
+      clearTimeout(this._collectTimeout);
+      this.meta.clearBusy();
+      const errMsg = error.response?.data?.error?.message || error.message || 'Error desconocido';
+      logger.error(`Error en ciclo de recolección: ${errMsg}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Lógica interna de recolección — separada para poder aplicar timeout global.
+   */
+  async _doCollect() {
+    const startTime = Date.now();
 
     try {
       const WINDOWS = ['today', 'last_3d', 'last_7d', 'last_14d', 'last_30d'];
@@ -302,8 +334,6 @@ class DataCollector {
       logger.info(`${totalSnapshots} snapshots guardados en MongoDB`);
       logger.info(`═══ Recolección completada en ${elapsed}s (${totalAdSets} ad sets, ${adSnapshots} ads, ~5 API calls) ═══`);
 
-      this.meta.clearBusy();
-
       return {
         success: true,
         campaigns: campaigns.length,
@@ -313,9 +343,8 @@ class DataCollector {
         elapsed: `${elapsed}s`
       };
     } catch (error) {
-      this.meta.clearBusy();
       const errMsg = error.response?.data?.error?.message || error.message || 'Error desconocido';
-      logger.error(`Error en ciclo de recolección: ${errMsg}`);
+      logger.error(`Error en _doCollect: ${errMsg}`);
       throw error;
     }
   }

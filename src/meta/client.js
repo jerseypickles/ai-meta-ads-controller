@@ -171,20 +171,29 @@ class MetaClient {
       logger.debug(`[META-CLIENT] No longer busy (was: ${this._busy.label})`);
     }
     this._busy = null;
+    this._lastCollectCompletedAt = Date.now();
   }
 
   /**
    * Returns { label, since } if another process is busy, or null.
-   * Auto-clears stale busy flags older than 5 minutes.
+   * Auto-clears stale busy flags older than 4 minutes (matches collect timeout).
    */
   isBusy() {
     if (!this._busy) return null;
-    if (Date.now() - this._busy.since > 5 * 60 * 1000) {
+    if (Date.now() - this._busy.since > 4 * 60 * 1000) {
       logger.warn(`[META-CLIENT] Clearing stale busy flag: ${this._busy.label}`);
       this._busy = null;
       return null;
     }
     return this._busy;
+  }
+
+  /**
+   * Returns timestamp of the last successful collect completion, or null.
+   * Used by the live endpoint to decide if recent snapshots are trustworthy.
+   */
+  getLastCollectTime() {
+    return this._lastCollectCompletedAt || null;
   }
 
   /**

@@ -3,7 +3,7 @@ const config = require('../../../config');
 const safetyGuards = require('../../../config/safety-guards');
 const unifiedPolicyConfig = require('../../../config/unified-policy');
 const deepResearchPriors = require('../../../config/deep-research-priors');
-const { getLatestSnapshots, getAccountOverview, getRecentActions, getActiveDirectives } = require('../../db/queries');
+const { getLatestSnapshots, getAccountOverview, getRecentActions, getActiveDirectives, getSnapshotFreshness } = require('../../db/queries');
 const { CooldownManager } = require('../../safety/cooldown-manager');
 const { buildFeatureSet } = require('../unified/feature-builder');
 const AdaptiveScorer = require('../unified/adaptive-scorer');
@@ -53,6 +53,17 @@ class UnifiedBrain {
     logger.info(`═══ Iniciando ciclo del Cerebro IA [${cycleId}] ═══`);
 
     try {
+      // 0. Freshness guard — no tomar decisiones con datos stale (> 15 min)
+      const freshness = await getSnapshotFreshness('adset');
+      if (!freshness.fresh) {
+        logger.warn(`[BRAIN] Datos stale (${freshness.age_minutes} min) — abortando ciclo. Umbral: 15 min.`);
+        return {
+          cycleId, elapsed: '0s', recommendations: 0, autoExecuted: 0,
+          abortReason: `Snapshots tienen ${freshness.age_minutes} min de antigüedad (máximo 15 min). DataCollector puede estar fallando.`
+        };
+      }
+      logger.info(`[BRAIN] Datos frescos: ${freshness.age_minutes} min de antigüedad`);
+
       // 1. Expirar recomendaciones pendientes de ciclos anteriores
       await this._expirePendingRecommendations();
 

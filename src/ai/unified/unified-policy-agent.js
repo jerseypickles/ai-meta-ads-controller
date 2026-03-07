@@ -4,7 +4,7 @@ const kpiTargets = require('../../../config/kpi-targets');
 const safetyGuards = require('../../../config/safety-guards');
 const unifiedPolicyConfig = require('../../../config/unified-policy');
 const deepResearchPriors = require('../../../config/deep-research-priors');
-const { getLatestSnapshots, getAccountOverview, getRecentActions, getActiveDirectives } = require('../../db/queries');
+const { getLatestSnapshots, getAccountOverview, getRecentActions, getActiveDirectives, getSnapshotFreshness } = require('../../db/queries');
 const { CooldownManager } = require('../../safety/cooldown-manager');
 const ActionExecutor = require('../../meta/action-executor');
 const { buildFeatureSet } = require('./feature-builder');
@@ -31,6 +31,13 @@ class UnifiedPolicyAgent {
     const cycleId = `unified_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const runMode = options.mode || this.config.mode || 'shadow';
     logger.info(`═══ Iniciando ciclo de politica unificada [${cycleId}] (${runMode}) ═══`);
+
+    // Freshness guard — no tomar decisiones con datos stale (> 15 min)
+    const freshness = await getSnapshotFreshness('adset');
+    if (!freshness.fresh) {
+      logger.warn(`[UNIFIED] Datos stale (${freshness.age_minutes} min) — abortando ciclo. Umbral: 15 min.`);
+      return null;
+    }
 
     const [adSetSnapshots, adSnapshots, accountOverview, recentActions, activeCooldowns, strategicDirectives] = await Promise.all([
       getLatestSnapshots('adset'),

@@ -30,6 +30,7 @@ const TIMEZONE = config.system.timezone;
 /**
  * Job: Recolección de datos — cada 10 minutos, 24/7.
  */
+let _dataCollectionRetryTimer = null;
 async function jobDataCollection() {
   try {
     logger.info('[CRON] Iniciando recolección de datos...');
@@ -50,7 +51,22 @@ async function jobDataCollection() {
       logger.error(`[CRON] Brain Analyzer error: ${brainErr.message}`);
     }
   } catch (error) {
-    logger.error('[CRON] Error en recolección de datos:', error);
+    logger.error(`[CRON] Error en recolección de datos: ${error.message}`);
+    // Reintentar UNA vez después de 2 minutos si falló (timeout, rate limit, etc.)
+    if (!_dataCollectionRetryTimer) {
+      logger.warn('[CRON] Programando reintento de recolección en 2 minutos...');
+      _dataCollectionRetryTimer = setTimeout(async () => {
+        _dataCollectionRetryTimer = null;
+        try {
+          logger.info('[CRON] Reintento de recolección de datos...');
+          const retryCollector = new DataCollector();
+          const retryResult = await retryCollector.collect();
+          logger.info(`[CRON] Reintento exitoso: ${retryResult.snapshots} snapshots en ${retryResult.elapsed}`);
+        } catch (retryErr) {
+          logger.error(`[CRON] Reintento de recolección también falló: ${retryErr.message}`);
+        }
+      }, 2 * 60 * 1000);
+    }
   }
 }
 

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getLatestSnapshots, getSnapshotHistory, getAccountOverview, getAdsForAdSet, getOverviewHistory } = require('../../db/queries');
+const { getLatestSnapshots, getSnapshotHistory, getAccountOverview, getAdsForAdSet, getOverviewHistory, getSnapshotFreshness } = require('../../db/queries');
 const ActionLog = require('../../db/models/ActionLog');
 const { getMetaClient } = require('../../meta/client');
 const { parseInsightRow, aggregateDailyInsights, parseBudget, getTimeRanges, calculateROASTrend, calculateSpendVelocity } = require('../../meta/helpers');
@@ -21,7 +21,10 @@ router.get('/overview/history', async (req, res) => {
 // GET /api/metrics/overview — Resumen general de la cuenta
 router.get('/overview', async (req, res) => {
   try {
-    const overview = await getAccountOverview();
+    const [overview, freshness] = await Promise.all([
+      getAccountOverview(),
+      getSnapshotFreshness('adset')
+    ]);
     // Mapear a nombres que el frontend espera
     res.json({
       spend_today: overview.today_spend,
@@ -36,7 +39,10 @@ router.get('/overview', async (req, res) => {
       paused_adsets: overview.paused_adsets,
       total_adsets: overview.total_adsets,
       today_revenue: overview.today_revenue,
-      today_roas: overview.today_roas
+      today_roas: overview.today_roas,
+      data_age_minutes: freshness.age_minutes,
+      last_snapshot_at: freshness.last_snapshot_at,
+      data_fresh: freshness.fresh
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -75,11 +81,17 @@ function _broadcastSSE(event, data) {
 // ── Snapshot fallback — returns data from MongoDB when Meta API is unavailable ──
 async function _getSnapshotFallback(reason) {
   logger.info(`[LIVE] Using snapshot fallback: ${reason}`);
-  const snapshots = await getLatestSnapshots('adset');
+  const [snapshots, freshness] = await Promise.all([
+    getLatestSnapshots('adset'),
+    getSnapshotFreshness('adset')
+  ]);
   return {
     adsets: snapshots.map(_mapSnapshot),
     fallback: true,
-    fallback_reason: reason
+    fallback_reason: reason,
+    data_age_minutes: freshness.age_minutes,
+    last_snapshot_at: freshness.last_snapshot_at,
+    data_fresh: freshness.fresh
   };
 }
 
@@ -430,13 +442,18 @@ router.get('/adsets/live', async (req, res) => {
       });
     }
 
+    // Include freshness info in all responses
+    const freshness = await getSnapshotFreshness('adset');
     safeRespond(() => res.json({
       adsets,
       cached: result.fallback,
       fallback: result.fallback || false,
       fallback_reason: result.fallback_reason || null,
       fetched_at: new Date().toISOString(),
-      age_seconds: 0
+      age_seconds: 0,
+      data_age_minutes: result.fallback ? (result.data_age_minutes || freshness.age_minutes) : 0,
+      last_snapshot_at: freshness.last_snapshot_at,
+      data_fresh: result.fallback ? freshness.fresh : true
     }));
   } catch (error) {
     clearTimeout(timeoutHandle);
@@ -495,6 +512,48 @@ router.get('/rate-limit', (req, res) => {
     cache_age_seconds: _liveCache.ts ? Math.round((Date.now() - _liveCache.ts) / 1000) : null,
     bg_refresh_active: !!_bgRefreshTimer
   });
+});
+
+// GET /api/metrics/data-health — Data freshness health check
+router.get('/data-health', async (req, res) => {
+  try {
+    const meta = getMetaClient();
+    const [adsetFreshness, campaignFreshness, adFreshness] = await Promise.all([
+      getSnapshotFreshness('adset'),
+      getSnapshotFreshness('campaign'),
+      getSnapshotFreshness('ad')
+    ]);
+
+    const busy = meta.isBusy();
+    const lastCollect = meta.getLastCollectTime();
+    const rateLimitUsage = meta.getRateLimitUsage();
+
+    const isHealthy = adsetFreshness.fresh && campaignFreshness.fresh;
+    const status = isHealthy ? 'healthy' : (adsetFreshness.age_minutes > 30 ? 'critical' : 'stale');
+
+    res.json({
+      status,
+      healthy: isHealthy,
+      snapshots: {
+        adset: adsetFreshness,
+        campaign: campaignFreshness,
+        ad: adFreshness
+      },
+      collector: {
+        busy: busy ? { label: busy.label, running_for_seconds: Math.round((Date.now() - busy.since) / 1000) } : null,
+        last_completed_at: lastCollect ? new Date(lastCollect).toISOString() : null,
+        last_completed_ago_minutes: lastCollect ? Math.round((Date.now() - lastCollect) / 60000) : null
+      },
+      rate_limit: rateLimitUsage ? { max: rateLimitUsage.max, call_count: rateLimitUsage.call_count } : null,
+      thresholds: {
+        fresh_max_minutes: 15,
+        stale_warning_minutes: 20,
+        critical_minutes: 30
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // GET /api/metrics/adsets/actions — Acciones recientes de agentes por ad set (con cooldown)

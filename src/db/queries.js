@@ -384,6 +384,33 @@ async function getOverviewHistory(days = 7) {
   }));
 }
 
+// ═══ DATA FRESHNESS ═══
+
+/**
+ * Verifica la frescura de los snapshots más recientes.
+ * Retorna la edad en minutos del snapshot más reciente del tipo dado.
+ * Usado por Brain, Manager, PolicyAgent, KillSwitch para decidir si actuar o no.
+ */
+async function getSnapshotFreshness(entityType = 'adset') {
+  const latest = await MetricSnapshot.findOne({ entity_type: entityType })
+    .sort({ snapshot_at: -1 })
+    .select('snapshot_at')
+    .lean();
+
+  if (!latest || !latest.snapshot_at) {
+    return { fresh: false, age_minutes: Infinity, last_snapshot_at: null };
+  }
+
+  const ageMs = Date.now() - new Date(latest.snapshot_at).getTime();
+  const ageMinutes = Math.round(ageMs / 60000);
+
+  return {
+    fresh: ageMinutes <= 15,
+    age_minutes: ageMinutes,
+    last_snapshot_at: latest.snapshot_at
+  };
+}
+
 // ═══ LIMPIEZA ═══
 
 async function cleanupOldSnapshots(daysToKeep = 90) {
@@ -418,5 +445,6 @@ module.exports = {
   cleanupOldSnapshots,
   getActiveDirectives,
   getLatestPolicyDecisions,
-  getOverviewHistory
+  getOverviewHistory,
+  getSnapshotFreshness
 };
