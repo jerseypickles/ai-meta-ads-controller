@@ -3,6 +3,7 @@ const config = require('../../../config');
 const safetyGuards = require('../../../config/safety-guards');
 const unifiedPolicyConfig = require('../../../config/unified-policy');
 const deepResearchPriors = require('../../../config/deep-research-priors');
+const kpiTargets = require('../../../config/kpi-targets');
 const { getLatestSnapshots, getAccountOverview, getRecentActions, getActiveDirectives, getSnapshotFreshness } = require('../../db/queries');
 const { CooldownManager } = require('../../safety/cooldown-manager');
 const { buildFeatureSet } = require('../unified/feature-builder');
@@ -895,10 +896,11 @@ class UnifiedBrain {
         const spend7d = ad.metrics?.last_7d?.spend || 0;
         const freq7d = ad.metrics?.last_7d?.frequency || 0;
 
+        const kpiRoasTarget = kpiTargets.roas_target || 3;
         let tag;
         if (ageHours < 72) {
           tag = 'learning';
-        } else if (freq7d >= 4.0 || ageDays >= 28) {
+        } else if ((freq7d >= 4.0 || ageDays >= 28) && roas7d < kpiRoasTarget * 0.8) {
           tag = 'fatigued';
         } else if (roas7d < (adset.metrics?.roas_7d || 0) * 0.4 && spend7d > 5) {
           tag = 'drag';

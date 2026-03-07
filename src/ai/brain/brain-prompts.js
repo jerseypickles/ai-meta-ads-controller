@@ -87,19 +87,28 @@ Los ads marcados como [LEARNING] tienen MENOS de 72 horas activos. REGLAS ABSOLU
 5. Si TODOS los ads de un ad set son [LEARNING], el ad set esta en fase de aprendizaje — no actuar.
 
 DIAGNOSTICO POR AD INDIVIDUAL:
-Los ads en la seccion "ADS INDIVIDUALES" ahora incluyen etiquetas:
+Los ads en la seccion "ADS INDIVIDUALES" incluyen etiquetas basicas:
 - [LEARNING]: <72h activo. Protegido. No tocar.
-- [FATIGUED]: Frequency >= 4.0 o edad >= 28 dias. Candidato a pausar.
+- [FATIGUED]: Frequency >= 4.0 o edad >= 28 dias Y ROAS bajo. Candidato a pausar. (Si ROAS es bueno, se protege aunque tenga freq alta)
 - [DRAG]: ROAS muy por debajo del promedio del ad set (< 40%). Arrastra el rendimiento. Candidato a pausar.
 - [HEALTHY]: Rendimiento normal. Mantener.
-Usa estas etiquetas para tomar decisiones GRANULARES: pausa los [FATIGUED] y [DRAG], mantén los [HEALTHY], protege los [LEARNING].
+
+ADEMAS, la seccion "SALUD DE ADS INDIVIDUALES" en el diagnostico pre-analisis detecta anomalias especificas:
+- ZERO_CONVERSIONS: Gastando budget con 0 compras — pausar inmediatamente.
+- BUDGET_HOG: Consume >30% del spend del ad set con ROAS bajo — acapara budget y rinde mal, pausar.
+- CTR_DEAD: CTR <0.3% con 1000+ impressions — audiencia ignora este ad completamente, pausar.
+- DECLINING_FAST: ROAS cayendo >40% (3d vs 7d) — deterioro acelerado, monitorear y pausar si continua.
+- TOP_PERFORMER_FATIGUING: ROAS excelente pero frequency alta — NO pausar, pero preparar reemplazo proactivamente.
+- UNDERPERFORMER: Post-learning con datos suficientes y ROAS persistentemente bajo — pausar.
 
 ORDEN DE PRIORIDAD cuando un ad set declina:
-1ro: Identificar cuales ads especificos son [FATIGUED] o [DRAG] y recomendar pausarlos (update_ad_status)
-2do: Refrescar creativos (create_ad) — especialmente si hay ads fatigados que se van a pausar
-3ro: Bajar budget (scale_down) — si todos los ads (no-learning) estan mal pero el ad set tiene historial bueno
-4to: Pausar ad set completo (pause) — ULTIMO RECURSO, solo si ya se intento lo anterior o tiene 0 potencial
+1ro: Revisar "SALUD DE ADS INDIVIDUALES" — pausar los ads con anomalias criticas (ZERO_CONVERSIONS, BUDGET_HOG, CTR_DEAD)
+2do: Crear ads de reemplazo (create_ad) — ESPECIALMENTE si al pausar quedarian <3 ads activos
+3ro: Las dos acciones anteriores van JUNTAS — pausar + crear es un paquete coordinado, no uno u otro
+4to: Bajar budget (scale_down) — si todos los ads (no-learning) estan mal pero el ad set tiene historial bueno
+5to: Pausar ad set completo (pause) — ULTIMO RECURSO, solo si ya se intento lo anterior o tiene 0 potencial
 
+REGLA CLAVE: Nunca recomiendes scale_up en un ad set que tiene ads con anomalias sin resolver. Primero limpia, luego escala.
 Pausar un ad set es la accion MAS destructiva. Pierdes toda la data de aprendizaje de Meta. Siempre intenta salvar el ad set primero con creativos frescos.
 
 ACCIONES DISPONIBLES:
@@ -419,10 +428,12 @@ Budget ceiling diario: $${budgetCeiling} | Pacing mensual estimado: ${monthlyPac
         const roas = m7.roas || 0;
 
         // Determine per-ad tag
+        // Improved: protects top performers from being tagged FATIGUED
+        const roasTarget = kpiTargets.roas_target || 3;
         let tag;
         if (ageHours >= 0 && ageHours < 72) {
           tag = 'LEARNING';
-        } else if (freq >= 4.0 || (typeof ageDays === 'number' && ageDays >= 28)) {
+        } else if ((freq >= 4.0 || (typeof ageDays === 'number' && ageDays >= 28)) && roas < roasTarget * 0.8) {
           tag = 'FATIGUED';
         } else if (roas < adsetAvgRoas * 0.4 && (m7.spend || 0) > 5) {
           tag = 'DRAG';
@@ -667,13 +678,15 @@ Budget ceiling diario: $${budgetCeiling} | Pacing mensual estimado: ${monthlyPac
 
   prompt += `\n═══ GENERA TUS RECOMENDACIONES AHORA ═══
 Analiza TODA la informacion anterior de forma holistica. Recuerda:
-- Una sola recomendacion por entidad
+- Una sola recomendacion por entidad (pero un ad y su ad set padre son entidades diferentes — puedes pausar un ad Y crear otro ad en el mismo ad set)
 - Prioriza por impacto esperado
 - Aprende de los resultados pasados
 - No toques entidades en cooldown, medicion, o learning phase (pero usa "observe" para monitorear entidades en cooldown)
 - Coordina: si subes budget a un ad set, asegurate que sus creativos no estan fatigados
-- CRITICO: Si un ad set tiene pocos creativos (< 3 ads activos) y metricas en declive, recomienda create_ad PRIMERO — NO pausar
-- Pausar un ad set es ULTIMO RECURSO. Prioriza: create_ad > update_ad_status > scale_down > pause
+- LIMPIEZA PRIMERO: Si el diagnostico "SALUD DE ADS" muestra ads con anomalias (ZERO_CONVERSIONS, BUDGET_HOG, CTR_DEAD, UNDERPERFORMER), genera update_ad_status para pausarlos ANTES de cualquier scale_up. No subas budget a un ad set sucio.
+- PAQUETE COORDINADO: Cuando pauses un ad, evalua si necesitas crear un ad de reemplazo (create_ad). Pausar + crear van juntos. Si al pausar quedarian <3 ads activos, SIEMPRE genera create_ad junto.
+- CRITICO: Si un ad set tiene pocos creativos (< 3 ads activos) y metricas en declive, recomienda create_ad PRIMERO — NO pausar el ad set
+- Pausar un ad set completo es ULTIMO RECURSO. Prioriza: update_ad_status (pausar ads malos) > create_ad > scale_down > pause
 - USA EL DIAGNOSTICO PRE-ANALISIS: Cada ad set tiene un diagnostico computado matematicamente. Si dice FUNNEL_LEAK, no pausar — investigar funnel. Si dice CREATIVE_FATIGUE, refrescar creativos primero. Si dice AUDIENCE_SATURATED, expandir o reducir budget.
 - DIAGNOSTICA EL "POR QUE" en tu reasoning: En cada recomendacion, explica la CAUSA RAIZ del problema (fatiga creativa? saturacion? funnel? estacionalidad?) y por que tu accion ataca esa causa.
 - HISTORIAL POR ENTIDAD: Revisa el "Historial" de cada ad set. Si una acción FALLÓ antes (✗), NO la repitas en esa entidad. Si una acción FUNCIONÓ (✓), priorízala. Esto es conocimiento validado.

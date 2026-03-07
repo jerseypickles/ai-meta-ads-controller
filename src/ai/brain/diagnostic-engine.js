@@ -57,6 +57,7 @@ class DiagnosticEngine {
       const benchmarkComparison = this._diagnoseBenchmarks(m7d);
       const funnelGrades = this._gradeFunnelThresholds(funnel);
       const creativeLifespan = this._diagnoseCreativeLifespan(ads);
+      const adHealth = this._diagnoseAdHealth(ads, m7d, accountOverview);
       const overall = this._computeOverallDiagnosis(funnel, fatigue, saturation, efficiency, m7d, snap);
 
       // Attach statistical confidence + attribution if available from feature map
@@ -74,6 +75,7 @@ class DiagnosticEngine {
         efficiency,
         benchmark_comparison: benchmarkComparison,
         creative_lifespan: creativeLifespan,
+        ad_health: adHealth,
         overall,
         active_ads: ads.filter(a => a.status === 'ACTIVE').length,
         total_ads: ads.length,
@@ -318,6 +320,9 @@ class DiagnosticEngine {
     // ── Per-ad fatigue breakdown ──
     // Classify each ad individually: learning / healthy / fatigued / drag
     const now = new Date();
+    const adsetRoas7d = m7d.roas || 0;
+    const roasTarget = this.kpi.roas_target || 3;
+
     const adBreakdown = activeAds.map(ad => {
       const adM7 = ad.metrics?.last_7d || {};
       const adM3 = ad.metrics?.last_3d || {};
@@ -329,15 +334,18 @@ class DiagnosticEngine {
       const adCtr = adM7.ctr || 0;
       const adSpend = adM7.spend || 0;
 
-      // Determine per-ad status
+      // Determine per-ad status — improved classification:
+      // Protects top performers from being tagged FATIGUED just by age/frequency.
       let adStatus, adAction;
       if (ageHours < 72) {
         adStatus = 'learning';
         adAction = 'protect'; // Never touch learning ads
-      } else if (adFreq >= 4.0 || ageDays >= 28) {
+      } else if ((adFreq >= 4.0 || ageDays >= 28) && adRoas < roasTarget * 0.8) {
+        // FATIGUED: high freq OR old, BUT only if not performing well.
+        // A top performer with high frequency still deserves to run.
         adStatus = 'fatigued';
         adAction = 'pause_candidate';
-      } else if (adRoas < (m7d.roas || 0) * 0.4 && adSpend > 5) {
+      } else if (adRoas < adsetRoas7d * 0.4 && adSpend > 5) {
         adStatus = 'drag'; // Dragging ad set performance down
         adAction = 'pause_candidate';
       } else if (ageDays >= 14 || adFreq >= 2.5) {
@@ -1037,6 +1045,197 @@ class DiagnosticEngine {
   }
 
   // ═══════════════════════════════════════════════════════════════
+  // 9. AD HEALTH — Per-ad anomaly detection (runs ALWAYS, not just on fatigue)
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Diagnóstico de salud por ad individual, independiente de fatiga del ad set.
+   * Detecta anomalías que requieren acción inmediata:
+   * - ZERO_CONVERSIONS: gastando sin ninguna compra
+   * - BUDGET_HOG: acapara budget con bajo retorno
+   * - CTR_DEAD: audiencia ignora completamente el ad
+   * - DECLINING_FAST: ROAS cayendo rápidamente (3d vs 7d)
+   * - TOP_PERFORMER_FATIGUING: rinde bien pero frecuencia subiendo peligrosamente
+   * - UNDERPERFORMER: post-learning, sigue sin rendir tras suficientes datos
+   */
+  _diagnoseAdHealth(ads, adsetMetrics7d, accountOverview) {
+    const now = new Date();
+    const anomalies = [];
+    const activeAds = ads.filter(a => a.status === 'ACTIVE');
+    if (activeAds.length === 0) {
+      return { anomalies, summary: null, has_issues: false, pause_candidates: [], healthy_count: 0 };
+    }
+
+    const adsetRoas7d = adsetMetrics7d.roas || 0;
+    const adsetSpend7d = adsetMetrics7d.spend || 0;
+    const cpaTarget = this.kpi.cpa_target || 25;
+    const roasTarget = this.kpi.roas_target || 3;
+    const roasMinimum = this.kpi.roas_minimum || 1.5;
+    const ctrMinimum = this.kpi.ctr_minimum || 1.0;
+
+    for (const ad of activeAds) {
+      const adM7 = ad.metrics?.last_7d || {};
+      const adM3 = ad.metrics?.last_3d || {};
+      const createdTime = ad.meta_created_time || ad.created_time || ad.created_at;
+      const ageHours = createdTime ? (now - new Date(createdTime)) / (1000 * 60 * 60) : Infinity;
+      const ageDays = Math.floor(ageHours / 24);
+      const adSpend = adM7.spend || 0;
+      const adRoas = adM7.roas || 0;
+      const adRoas3d = adM3.roas || 0;
+      const adCtr = adM7.ctr || 0;
+      const adFreq = adM7.frequency || 0;
+      const adPurchases = adM7.purchases || 0;
+      const adImpressions = adM7.impressions || 0;
+      const adClicks = adM7.clicks || 0;
+      const adId = ad.entity_id || ad.id;
+      const adName = ad.entity_name || ad.name || 'Unknown';
+      const adAnomalies = [];
+
+      // Skip learning ads — protected
+      if (ageHours < 72) continue;
+
+      // --- ZERO_CONVERSIONS: spending with 0 purchases ---
+      // Threshold: spend > $15 (or 60% of CPA target) with zero purchases
+      if (adPurchases === 0 && adSpend > Math.min(15, cpaTarget * 0.6)) {
+        const severity = adSpend > cpaTarget * 2 ? 'critical' : (adSpend > cpaTarget ? 'high' : 'medium');
+        adAnomalies.push({
+          type: 'ZERO_CONVERSIONS',
+          severity,
+          detail: `$${adSpend.toFixed(0)} gastado en 7d con 0 compras (${adClicks} clicks, CTR ${adCtr.toFixed(2)}%). Quemando budget sin retorno.`,
+          action: severity === 'critical' ? 'pause' : 'pause',
+          waste_amount: adSpend
+        });
+      }
+
+      // --- BUDGET_HOG: consuming >30% of ad set spend but ROAS well below target ---
+      if (adsetSpend7d > 0 && adSpend > adsetSpend7d * 0.30 && adRoas < roasMinimum && adSpend > 10) {
+        const spendShare = (adSpend / adsetSpend7d * 100);
+        adAnomalies.push({
+          type: 'BUDGET_HOG',
+          severity: 'high',
+          detail: `Consume ${spendShare.toFixed(0)}% del spend del ad set ($${adSpend.toFixed(0)}/$${adsetSpend7d.toFixed(0)}) con ROAS ${adRoas.toFixed(2)}x (mínimo: ${roasMinimum}x). Acapara budget y rinde mal.`,
+          action: 'pause',
+          waste_amount: adSpend * (1 - (adRoas / Math.max(roasTarget, 0.1)))
+        });
+      }
+
+      // --- CTR_DEAD: audience completely ignores this ad ---
+      if (adCtr < 0.3 && adImpressions > 1000 && ageDays >= 4) {
+        adAnomalies.push({
+          type: 'CTR_DEAD',
+          severity: adImpressions > 3000 ? 'high' : 'medium',
+          detail: `CTR ${adCtr.toFixed(2)}% con ${adImpressions.toLocaleString()} impressions — audiencia ignora este ad. Mínimo aceptable: ${ctrMinimum}%.`,
+          action: 'pause',
+          waste_amount: adSpend
+        });
+      }
+
+      // --- DECLINING_FAST: ROAS dropping rapidly 3d vs 7d ---
+      if (adRoas > 0 && adRoas3d > 0 && adM3.spend > 3) {
+        const declinePct = ((adRoas3d - adRoas) / adRoas) * 100;
+        if (declinePct < -40) {
+          adAnomalies.push({
+            type: 'DECLINING_FAST',
+            severity: declinePct < -60 ? 'high' : 'medium',
+            detail: `ROAS cayó ${Math.abs(declinePct).toFixed(0)}% en 3d vs 7d (${adRoas3d.toFixed(2)}x → ${adRoas.toFixed(2)}x). Deterioro acelerado.`,
+            action: 'monitor',
+            waste_amount: 0
+          });
+        }
+      }
+
+      // --- TOP_PERFORMER_FATIGUING: great ROAS but frequency rising dangerously ---
+      if (adRoas >= roasTarget && adFreq >= 3.0 && adSpend > 10) {
+        const freqWarning = this.kpi.frequency_warning || 2.5;
+        adAnomalies.push({
+          type: 'TOP_PERFORMER_FATIGUING',
+          severity: adFreq >= 4.0 ? 'high' : 'medium',
+          detail: `ROAS excelente (${adRoas.toFixed(2)}x) PERO frequency ${adFreq.toFixed(1)} (warning: ${freqWarning}). Hoy funciona, pronto caerá. Preparar reemplazo.`,
+          action: 'monitor_prepare_replacement',
+          waste_amount: 0
+        });
+      }
+
+      // --- UNDERPERFORMER: post-learning, enough data, still bad ---
+      if (ageDays >= 5 && adSpend > cpaTarget && adPurchases > 0 && adRoas < roasMinimum && adRoas < adsetRoas7d * 0.5) {
+        adAnomalies.push({
+          type: 'UNDERPERFORMER',
+          severity: 'medium',
+          detail: `${ageDays}d activo con $${adSpend.toFixed(0)} spend. ROAS ${adRoas.toFixed(2)}x (<50% del ad set ${adsetRoas7d.toFixed(2)}x). Datos suficientes para concluir bajo rendimiento.`,
+          action: 'pause',
+          waste_amount: adSpend * (1 - (adRoas / Math.max(adsetRoas7d, 0.1)))
+        });
+      }
+
+      if (adAnomalies.length > 0) {
+        // Pick the highest severity anomaly as the primary
+        const severityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+        adAnomalies.sort((a, b) => (severityOrder[a.severity] || 3) - (severityOrder[b.severity] || 3));
+
+        anomalies.push({
+          ad_id: adId,
+          ad_name: adName,
+          age_days: ageDays,
+          spend_7d: adSpend,
+          roas_7d: adRoas,
+          ctr_7d: adCtr,
+          frequency_7d: adFreq,
+          purchases_7d: adPurchases,
+          primary_anomaly: adAnomalies[0],
+          all_anomalies: adAnomalies,
+          recommended_action: adAnomalies[0].action
+        });
+      }
+    }
+
+    // Sort by severity (critical first), then by waste amount
+    const severityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+    anomalies.sort((a, b) => {
+      const sevDiff = (severityOrder[a.primary_anomaly.severity] || 3) - (severityOrder[b.primary_anomaly.severity] || 3);
+      if (sevDiff !== 0) return sevDiff;
+      return (b.primary_anomaly.waste_amount || 0) - (a.primary_anomaly.waste_amount || 0);
+    });
+
+    const pauseCandidates = anomalies.filter(a => a.recommended_action === 'pause');
+    const learningCount = activeAds.filter(a => {
+      const ct = a.meta_created_time || a.created_time || a.created_at;
+      return ct && (now - new Date(ct)) / (1000 * 60 * 60) < 72;
+    }).length;
+    const healthyNonLearning = activeAds.length - pauseCandidates.length - learningCount;
+    const totalWaste = pauseCandidates.reduce((s, a) => s + (a.primary_anomaly.waste_amount || 0), 0);
+
+    // Build coordinated action summary
+    let summary = null;
+    if (anomalies.length > 0) {
+      const parts = [];
+      if (pauseCandidates.length > 0) {
+        parts.push(`${pauseCandidates.length} ad${pauseCandidates.length > 1 ? 's' : ''} para pausar (~$${totalWaste.toFixed(0)}/sem desperdiciado)`);
+      }
+      const monitorCount = anomalies.filter(a => a.recommended_action !== 'pause').length;
+      if (monitorCount > 0) {
+        parts.push(`${monitorCount} ad${monitorCount > 1 ? 's' : ''} para monitorear`);
+      }
+      // Coordinated action: if pausing would leave <3 active ads, recommend create_ad too
+      const remainingAfterPause = activeAds.length - pauseCandidates.length;
+      if (pauseCandidates.length > 0 && remainingAfterPause < 3) {
+        parts.push(`ALERTA: quedarían ${remainingAfterPause} ad${remainingAfterPause !== 1 ? 's' : ''} activo${remainingAfterPause !== 1 ? 's' : ''} — crear ${3 - remainingAfterPause}+ ads nuevos antes o junto con las pausas`);
+      }
+      summary = parts.join('. ') + '.';
+    }
+
+    return {
+      anomalies,
+      summary,
+      has_issues: anomalies.length > 0,
+      pause_candidates: pauseCandidates,
+      pause_count: pauseCandidates.length,
+      healthy_count: healthyNonLearning,
+      total_waste_7d: totalWaste,
+      remaining_after_pause: activeAds.length - pauseCandidates.length
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   // HELPERS
   // ═══════════════════════════════════════════════════════════════
 
@@ -1125,6 +1324,28 @@ class DiagnosticEngine {
         }
       }
 
+      // Ad Health — per-ad anomalies (always shown when issues exist)
+      if (d.ad_health && d.ad_health.has_issues) {
+        const ah = d.ad_health;
+        text += `  ═ SALUD DE ADS INDIVIDUALES ═\n`;
+        for (const a of ah.anomalies) {
+          const icon = a.recommended_action === 'pause' ? '⚠' : '⟳';
+          const anomalyTypes = a.all_anomalies.map(an => an.type).join(' + ');
+          text += `    ${icon} "${a.ad_name}" — ${anomalyTypes} [${a.primary_anomaly.severity.toUpperCase()}]\n`;
+          text += `      ${a.primary_anomaly.detail}\n`;
+          text += `      Métricas: ROAS ${a.roas_7d.toFixed(2)}x | CTR ${a.ctr_7d.toFixed(2)}% | Freq ${a.frequency_7d.toFixed(1)} | $${a.spend_7d.toFixed(0)}/sem | ${a.purchases_7d} compras | ${a.age_days}d activo\n`;
+          const actionLabel = a.recommended_action === 'pause' ? 'PAUSAR' :
+            a.recommended_action === 'monitor_prepare_replacement' ? 'PREPARAR REEMPLAZO' : 'MONITOREAR';
+          text += `      → Acción: ${actionLabel}\n`;
+        }
+        if (ah.summary) {
+          text += `    RESUMEN COORDINADO: ${ah.summary}\n`;
+        }
+        if (ah.total_waste_7d > 0) {
+          text += `    Desperdicio estimado: ~$${ah.total_waste_7d.toFixed(0)}/semana en ads con anomalías.\n`;
+        }
+      }
+
       // Saturation
       if (d.saturation.score > 10) {
         text += `  Saturación: ${d.saturation.level} (${d.saturation.score}/100)`;
@@ -1187,6 +1408,12 @@ class DiagnosticEngine {
     text += `9. CREATIVE LIFESPAN: Ads con >14d necesitan evaluación, >21d refresh recomendado, >28d refresh urgente. La edad del ad es un predictor de fatiga ANTES de que se vea en métricas.\n`;
     text += `10. CONFIANZA ESTADÍSTICA: Si un ad set tiene confianza "low" o "insufficient" (<55%), NO actúes agresivamente (no pausar, no scale_down fuerte). Usa "observe" o acciones conservadoras. Con <10 compras en 7d, ROAS es ruido estadístico.\n`;
     text += `11. CORRECCIÓN DE ATRIBUCIÓN: El ROAS "corregido" estima el ROAS real ajustando por conversiones que Meta aún no ha atribuido. Si el ROAS reportado es bajo pero el corregido es aceptable, es probable que los datos aún estén madurando — NO actuar precipitadamente.\n`;
+    text += `12. SALUD DE ADS — ACCIÓN COORDINADA: Cuando el diagnóstico muestra ads con anomalías (ZERO_CONVERSIONS, BUDGET_HOG, CTR_DEAD, UNDERPERFORMER), genera recomendaciones COORDINADAS:\n`;
+    text += `    a) Pausar los ads marcados como "PAUSAR" usando update_ad_status (recommended_value=0)\n`;
+    text += `    b) Si al pausar quedarían <3 ads activos, genera también create_ad para reemplazar\n`;
+    text += `    c) Los ads con TOP_PERFORMER_FATIGUING NO se pausan — son una ALERTA para preparar reemplazos proactivamente\n`;
+    text += `    d) Los ads con DECLINING_FAST se monitorean — pueden recuperarse. Solo pausar si la tendencia continúa en el próximo ciclo\n`;
+    text += `    e) PRIORIZA la limpieza de ads sobre scale_up. No tiene sentido subir budget a un ad set con ads basura corriendo\n`;
 
     return text;
   }
