@@ -975,7 +975,7 @@ export default function AdSetsManager() {
       setError(null);
       const result = await getAllAdSets(force);
       setAdSets(result.adsets || result || []);
-      setFetchMeta({ cached: result.cached, fetched_at: result.fetched_at, age_seconds: result.age_seconds, fallback: result.fallback });
+      setFetchMeta({ cached: result.cached, fetched_at: result.fetched_at, age_seconds: result.age_seconds, fallback: result.fallback, fallback_reason: result.fallback_reason, data_age_minutes: result.data_age_minutes, data_fresh: result.data_fresh });
       setLastUpdate(new Date());
     } catch (err) {
       setError(err?.response?.data?.error || err.message || 'Failed to fetch data');
@@ -988,7 +988,7 @@ export default function AdSetsManager() {
     const es = connectSSE(
       (data) => {
         setAdSets(data.adsets || []);
-        setFetchMeta({ cached: data.cached, fetched_at: data.fetched_at, age_seconds: data.age_seconds, fallback: data.fallback });
+        setFetchMeta({ cached: data.cached, fetched_at: data.fetched_at, age_seconds: data.age_seconds, fallback: data.fallback, fallback_reason: data.fallback_reason, data_age_minutes: data.data_age_minutes, data_fresh: data.data_fresh });
         setLastUpdate(new Date());
         setLoading(false);
         setSseConnected(true);
@@ -1189,19 +1189,36 @@ export default function AdSetsManager() {
               {counts.total} ad sets &middot; {counts.active} active &middot; {counts.paused} paused
               {brainRecs.length > 0 && <span className="header-brain-count"> &middot; <Sparkles size={9} style={{ verticalAlign: 'middle' }} /> {brainRecs.length} recs</span>}
               <span className="fetch-meta">
-                {sseConnected ? (
-                  <span className="sse-live"> &middot; <span className="live-dot" /> LIVE</span>
-                ) : (
-                  <span> &middot; polling</span>
-                )}
-                {fetchMeta?.fallback && ' · snapshot'}
+                {(() => {
+                  const isFallback = fetchMeta?.fallback;
+                  if (sseConnected && !isFallback) {
+                    return <span className="sse-live"> &middot; <span className="live-dot" /> LIVE</span>;
+                  } else if (isFallback) {
+                    const reason = fetchMeta?.fallback_reason || '';
+                    const shortReason = reason.startsWith('collector_busy') ? 'collector activo'
+                      : reason === 'rate_limited' ? 'rate limit'
+                      : reason === 'route_timeout' ? 'timeout'
+                      : reason.startsWith('api_usage') ? 'API al límite'
+                      : reason ? reason.split(':')[0].replace(/_/g, ' ') : '';
+                    return (
+                      <span className="sse-snapshot"> &middot; <span className="snapshot-dot" /> SNAPSHOT
+                        {shortReason && <span className="snapshot-reason"> ({shortReason})</span>}
+                      </span>
+                    );
+                  } else {
+                    return <span> &middot; polling</span>;
+                  }
+                })()}
                 {fetchMeta?.fetched_at && (() => {
                   const ageSec = Math.round((Date.now() - new Date(fetchMeta.fetched_at).getTime()) / 1000);
                   const ageMin = Math.floor(ageSec / 60);
                   const label = ageSec < 60 ? `${ageSec}s` : `${ageMin}m`;
-                  const freshClass = ageSec < 120 ? 'fresh' : ageSec < 300 ? 'stale' : 'old';
+                  const freshClass = !fetchMeta?.fallback && ageSec < 120 ? 'fresh' : ageSec < 300 ? 'stale' : 'old';
                   return <span className={`data-age data-age-${freshClass}`}> · <Clock size={9} style={{ verticalAlign: 'middle' }} /> {label}</span>;
                 })()}
+                {fetchMeta?.fallback && fetchMeta?.data_age_minutes != null && (
+                  <span className={`data-age ${fetchMeta.data_age_minutes <= 15 ? 'data-age-stale' : 'data-age-old'}`}> · datos: {fetchMeta.data_age_minutes}m</span>
+                )}
               </span>
             </span>
           </div>
@@ -1472,6 +1489,16 @@ export default function AdSetsManager() {
           0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16,185,129,0.4); }
           50% { opacity: 0.7; box-shadow: 0 0 0 4px rgba(16,185,129,0); }
         }
+        .sse-snapshot { color: #f59e0b; font-weight: 600; opacity: 1; }
+        .snapshot-dot {
+          display: inline-block;
+          width: 7px; height: 7px;
+          background: #f59e0b;
+          border-radius: 50%;
+          margin-right: 3px;
+          vertical-align: middle;
+        }
+        .snapshot-reason { font-weight: 400; opacity: 0.8; font-size: 0.85em; }
         .data-age { font-weight: 600; opacity: 1; }
         .data-age-fresh { color: var(--green); }
         .data-age-stale { color: #f59e0b; }

@@ -252,6 +252,7 @@ async function _backgroundRefresh() {
       _broadcastSSE('adsets', {
         adsets: _liveCache.adsets,
         cached: true,
+        fallback: false,
         fetched_at: new Date(_liveCache.ts).toISOString(),
         age_seconds: Math.round(cacheAge / 1000)
       });
@@ -301,6 +302,8 @@ async function _backgroundRefresh() {
         cached: result.fallback,
         fallback: result.fallback || false,
         fallback_reason: result.fallback_reason || null,
+        data_age_minutes: result.data_age_minutes || null,
+        data_fresh: result.fallback ? (result.data_fresh != null ? result.data_fresh : null) : true,
         fetched_at: new Date().toISOString(),
         age_seconds: 0
       });
@@ -346,6 +349,7 @@ router.get('/stream', (req, res) => {
     const payload = `event: adsets\ndata: ${JSON.stringify({
       adsets: _liveCache.adsets,
       cached: true,
+      fallback: false,
       fetched_at: new Date(_liveCache.ts).toISOString(),
       age_seconds: Math.round((Date.now() - _liveCache.ts) / 1000)
     })}\n\n`;
@@ -437,6 +441,9 @@ router.get('/adsets/live', async (req, res) => {
         adsets,
         cached: result.fallback,
         fallback: result.fallback || false,
+        fallback_reason: result.fallback_reason || null,
+        data_age_minutes: result.data_age_minutes || null,
+        data_fresh: result.fallback ? (result.data_fresh != null ? result.data_fresh : null) : true,
         fetched_at: new Date().toISOString(),
         age_seconds: 0
       });
