@@ -223,8 +223,29 @@ class AdaptiveScorer {
 
   _estimateUncertainty({ feature, learningSignal, dataQuality, roasVolatility }) {
     const metrics = feature.metrics || {};
+    const derived = feature.derived || {};
     const minSpend = toNumber(this.config.min_spend_for_action, 20);
 
+    // Use real statistical confidence if available (from StatisticalConfidence module)
+    const statConfidence = toNumber(derived.statistical_confidence, 0);
+    const attributionMaturity = toNumber(derived.attribution_maturity, 0);
+
+    if (statConfidence > 0) {
+      // New path: use computed statistical confidence + attribution maturity
+      const learningConfidence = clamp(toNumber(learningSignal?.confidence), 0, 1);
+      const stabilitySignal = 1 - clamp(roasVolatility, 0, 1);
+
+      const certainty =
+        (statConfidence * 0.40) +         // Statistical confidence is primary signal
+        (attributionMaturity * 0.15) +     // Attribution maturity
+        (learningConfidence * 0.15) +      // Bandit learning confidence
+        (stabilitySignal * 0.15) +         // ROAS stability between windows
+        (dataQuality * 0.15);              // Legacy data quality score
+
+      return clamp(1 - certainty, 0, 1);
+    }
+
+    // Fallback: original heuristic-based uncertainty (for ads without stat confidence)
     const spendSignal = clamp(toNumber(metrics.spend_7d) / Math.max(minSpend * 4, 1), 0, 1);
     const impressionSignal = clamp(toNumber(metrics.impressions_7d) / 12000, 0, 1);
     const purchaseSignal = clamp(toNumber(metrics.purchases_7d) / 10, 0, 1);

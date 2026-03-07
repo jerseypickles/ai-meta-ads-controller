@@ -1,3 +1,6 @@
+const { computeStatisticalConfidence } = require('./statistical-confidence');
+const { applyAttributionCorrection } = require('./attribution-model');
+
 function toNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -33,6 +36,10 @@ function buildFeatureSet({ adSetSnapshots, adSnapshots, accountOverview, recentA
       top_creative_share_7d: creativeStats.top_creative_share_7d
     });
 
+    // Statistical confidence + attribution correction
+    const statConfidence = computeStatisticalConfidence(metrics);
+    const attribution = applyAttributionCorrection(metrics);
+
     return {
       entity_type: 'adset',
       entity_id: adset.entity_id,
@@ -61,8 +68,16 @@ function buildFeatureSet({ adSetSnapshots, adSnapshots, accountOverview, recentA
         top_creative_share_7d: creativeStats.top_creative_share_7d,
         creative_roas_spread_7d: creativeStats.creative_roas_spread_7d,
         creative_ctr_avg_7d: creativeStats.creative_ctr_avg_7d,
-        creative_fatigue_score: creativeFatigueScore
+        creative_fatigue_score: creativeFatigueScore,
+        statistical_confidence: statConfidence.confidence_level,
+        confidence_label: statConfidence.confidence_label,
+        roas_interval: statConfidence.roas_interval,
+        attribution_maturity: attribution.attribution_maturity.score,
+        roas_7d_corrected: attribution.corrected_roas.roas_7d_corrected,
+        roas_3d_corrected: attribution.corrected_roas.roas_3d_corrected
       },
+      statistical_confidence: statConfidence,
+      attribution: attribution,
       cooldown: cooldownMap.get(adset.entity_id) || null,
       recent_action: recentActionMap.get(adset.entity_id) || null
     };

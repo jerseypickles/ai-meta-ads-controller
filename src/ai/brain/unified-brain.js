@@ -96,7 +96,18 @@ class UnifiedBrain {
       const learnerState = await this.learner.loadState();
       const learnerSummary = this._buildLearnerSummary(learnerState, learningResult);
 
-      // 5.5. Run diagnostic engine for structured pre-analysis
+      // 5.5. Build feature set EARLY — used by both diagnostics and scorer
+      const features = this.buildFeatureSet({
+        adSetSnapshots: sharedData.adSetSnapshots,
+        adSnapshots: sharedData.adSnapshots,
+        accountOverview: sharedData.accountOverview,
+        recentActions: sharedData.recentActions,
+        activeCooldowns: sharedData.activeCooldowns
+      });
+      const featureMap = {};
+      for (const f of features) { featureMap[f.entity_id] = f; }
+
+      // 5.6. Run diagnostic engine for structured pre-analysis
       let diagnosticContext = '';
       try {
         const memoryMap = {};
@@ -107,7 +118,8 @@ class UnifiedBrain {
           sharedData.adSetSnapshots || [],
           sharedData.adSnapshots || [],
           memoryMap,
-          sharedData.accountOverview || {}
+          sharedData.accountOverview || {},
+          featureMap
         );
         diagnosticContext = this.diagnosticEngine.formatForPrompt(diagnostics);
         const diagCount = Object.keys(diagnostics).length;
@@ -195,14 +207,7 @@ class UnifiedBrain {
 
       logger.info(`[BRAIN] Post-filtro: ${filteredRecs.length} (${validRecs.length - filteredRecs.length} filtradas por cooldown/medicion)`);
 
-      // 9. Aplicar adaptive scorer a cada recomendacion
-      const features = this.buildFeatureSet({
-        adSetSnapshots: sharedData.adSetSnapshots,
-        adSnapshots: sharedData.adSnapshots,
-        accountOverview: sharedData.accountOverview,
-        recentActions: sharedData.recentActions,
-        activeCooldowns: sharedData.activeCooldowns
-      });
+      // 9. Aplicar adaptive scorer a cada recomendacion (features already built at step 5.5)
       const accountContext = this.scorer.buildAccountContext(sharedData.accountOverview, features);
 
       const scoredRecs = filteredRecs.map(rec => {

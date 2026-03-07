@@ -32,7 +32,7 @@ class DiagnosticEngine {
    * @param {Object} accountOverview - Overview de la cuenta
    * @returns {Object} diagnostics keyed by entity_id
    */
-  diagnoseAll(adsetSnapshots, adSnapshots = [], memoryMap = {}, accountOverview = {}) {
+  diagnoseAll(adsetSnapshots, adSnapshots = [], memoryMap = {}, accountOverview = {}, featureMap = {}) {
     const diagnostics = {};
     const adsByAdSet = this._groupAdsByAdSet(adSnapshots);
 
@@ -59,6 +59,11 @@ class DiagnosticEngine {
       const creativeLifespan = this._diagnoseCreativeLifespan(ads);
       const overall = this._computeOverallDiagnosis(funnel, fatigue, saturation, efficiency, m7d, snap);
 
+      // Attach statistical confidence + attribution if available from feature map
+      const featureData = featureMap[snap.entity_id];
+      const statConf = featureData?.statistical_confidence || null;
+      const attrData = featureData?.attribution || null;
+
       diagnostics[snap.entity_id] = {
         entity_id: snap.entity_id,
         entity_name: snap.entity_name,
@@ -71,7 +76,10 @@ class DiagnosticEngine {
         creative_lifespan: creativeLifespan,
         overall,
         active_ads: ads.filter(a => a.status === 'ACTIVE').length,
-        total_ads: ads.length
+        total_ads: ads.length,
+        statistical_confidence: statConf,
+        attribution: attrData,
+        attribution_maturity: attrData?.attribution_maturity?.label || null
       };
     }
 
@@ -1126,6 +1134,23 @@ class DiagnosticEngine {
         text += '\n';
       }
 
+      // Statistical Confidence + Attribution
+      if (d.statistical_confidence) {
+        const sc = d.statistical_confidence;
+        const attrLabel = d.attribution_maturity || '';
+        text += `  Confianza estadística: ${(sc.confidence_level * 100).toFixed(0)}% [${sc.confidence_label}] — ${sc.details}`;
+        if (sc.roas_interval && sc.roas_interval.reliable) {
+          text += ` | ROAS 90% CI: [${sc.roas_interval.lower}x, ${sc.roas_interval.upper}x]`;
+        }
+        text += '\n';
+      }
+      if (d.attribution) {
+        const attr = d.attribution;
+        if (attr.corrected_roas.roas_7d_corrected > 0 && attr.corrected_roas.roas_7d_corrected !== (d.efficiency?.roas_7d || 0)) {
+          text += `  Atribución: ROAS 7d reportado=${(d.efficiency?.roas_7d || (d._raw_metrics?.roas || 0)).toFixed(2)}x → corregido=${attr.corrected_roas.roas_7d_corrected.toFixed(2)}x (madurez: ${attr.attribution_maturity.label})\n`;
+        }
+      }
+
       // Efficiency
       text += `  Eficiencia: ROAS ${d.efficiency.roas_status} (trend: ${d.efficiency.roas_trend}) | vs cuenta: ${d.efficiency.relative_performance}`;
       if (d.efficiency.aov_7d > 0) text += ` | AOV: $${d.efficiency.aov_7d}`;
@@ -1160,6 +1185,8 @@ class DiagnosticEngine {
     text += `7. BENCHMARKS: Las métricas se comparan contra food_ecommerce_2025 con ajuste estacional. Si CPM está "well_above" con seasonal multiplier ya aplicado, es señal real de problema.\n`;
     text += `8. FUNNEL GRADES: Click→ATC <5% = problema de landing page. ATC→IC <50% = fricción en checkout. IC→Purchase <60% = problema de pago. Seguir la acción recomendada.\n`;
     text += `9. CREATIVE LIFESPAN: Ads con >14d necesitan evaluación, >21d refresh recomendado, >28d refresh urgente. La edad del ad es un predictor de fatiga ANTES de que se vea en métricas.\n`;
+    text += `10. CONFIANZA ESTADÍSTICA: Si un ad set tiene confianza "low" o "insufficient" (<55%), NO actúes agresivamente (no pausar, no scale_down fuerte). Usa "observe" o acciones conservadoras. Con <10 compras en 7d, ROAS es ruido estadístico.\n`;
+    text += `11. CORRECCIÓN DE ATRIBUCIÓN: El ROAS "corregido" estima el ROAS real ajustando por conversiones que Meta aún no ha atribuido. Si el ROAS reportado es bajo pero el corregido es aceptable, es probable que los datos aún estén madurando — NO actuar precipitadamente.\n`;
 
     return text;
   }
