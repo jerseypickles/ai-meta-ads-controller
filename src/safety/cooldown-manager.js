@@ -1,14 +1,29 @@
 const ActionLog = require('../db/models/ActionLog');
 const logger = require('../utils/logger');
 
-const COOLDOWN_DAYS = 3;
+const COOLDOWN_DAYS = 2;
 const MIN_HOURS_BETWEEN_ACTIONS = 24;
+
+// Tiered cooldowns: different action types need different observation windows.
+// Budget changes take effect immediately, creative/audience changes need longer.
+const TIERED_COOLDOWN_HOURS = {
+  scale_up: 36,          // Budget change — effect visible in 24-36h
+  scale_down: 36,        // Budget change — effect visible in 24-36h
+  move_budget: 36,       // Budget redistribution — same as scale
+  pause: 60,             // Pause/reactivate — needs re-learning time
+  reactivate: 60,        // Pause/reactivate — needs re-learning time
+  create_ad: 72,         // Creative change — needs learning phase (72h)
+  update_ad_creative: 72,// Creative change — needs learning phase
+  update_ad_status: 48,  // Ad-level pause/activate — moderate
+  duplicate_adset: 72,   // New ad set — needs learning phase
+  update_bid_strategy: 72// Bid strategy — algorithm needs time to adapt
+};
 
 class CooldownManager {
   /**
    * Verifica si algún agente (brain, ai_manager, anomaly_detector) actuó
    * sobre esta entidad en las últimas N horas. Esto es el "tiempo de respiración"
-   * mínimo entre cualquier acción — independiente del cooldown largo de 3 días.
+   * mínimo entre cualquier acción — independiente del cooldown tiered.
    *
    * Meta Ads necesita mínimo 24h para atribuir conversiones y estabilizar delivery.
    * Actuar más seguido es ruido.
@@ -42,7 +57,8 @@ class CooldownManager {
 
   /**
    * Verifica si una entidad está en período de cooldown.
-   * Basado en ActionLog: si hay una acción exitosa en los últimos 3 días, está en cooldown.
+   * Usa tiered cooldowns: el tiempo depende del tipo de acción ejecutada.
+   * Fallback a COOLDOWN_DAYS si la acción no tiene tier definido.
    */
   async isOnCooldown(entityId) {
     const since = new Date();
@@ -58,8 +74,9 @@ class CooldownManager {
 
     if (!lastAction) return { onCooldown: false };
 
-    const cooldownUntil = new Date(lastAction.executed_at);
-    cooldownUntil.setDate(cooldownUntil.getDate() + COOLDOWN_DAYS);
+    // Use tiered cooldown based on action type, fallback to COOLDOWN_DAYS
+    const tieredHours = TIERED_COOLDOWN_HOURS[lastAction.action] || (COOLDOWN_DAYS * 24);
+    const cooldownUntil = new Date(new Date(lastAction.executed_at).getTime() + tieredHours * 60 * 60 * 1000);
 
     const now = new Date();
     if (cooldownUntil > now) {
@@ -72,7 +89,8 @@ class CooldownManager {
         minutesLeft,
         lastAction: lastAction.action,
         lastAgent: _extractAgent(lastAction.reasoning),
-        executedAt: lastAction.executed_at
+        executedAt: lastAction.executed_at,
+        cooldownType: TIERED_COOLDOWN_HOURS[lastAction.action] ? 'tiered' : 'default'
       };
     }
 
@@ -84,11 +102,13 @@ class CooldownManager {
    * Se mantiene la firma para compatibilidad.
    */
   async setCooldown(entityId, entityType, action, modifiedBy = 'ai') {
-    logger.debug(`Cooldown de ${COOLDOWN_DAYS} días activo para ${entityId} (basado en ActionLog)`);
+    const tieredHours = TIERED_COOLDOWN_HOURS[action] || (COOLDOWN_DAYS * 24);
+    logger.debug(`Cooldown de ${tieredHours}h activo para ${entityId} — acción: ${action} (basado en ActionLog)`);
   }
 
   /**
    * Obtiene todos los cooldowns activos basados en ActionLog.
+   * Uses tiered cooldowns per action type.
    */
   async getActiveCooldowns() {
     const since = new Date();
@@ -120,8 +140,8 @@ class CooldownManager {
     const now = new Date();
     return actions
       .map(a => {
-        const cooldownUntil = new Date(a.executed_at);
-        cooldownUntil.setDate(cooldownUntil.getDate() + COOLDOWN_DAYS);
+        const tieredHours = TIERED_COOLDOWN_HOURS[a.last_action] || (COOLDOWN_DAYS * 24);
+        const cooldownUntil = new Date(new Date(a.executed_at).getTime() + tieredHours * 60 * 60 * 1000);
         const hoursLeft = Math.round((cooldownUntil - now) / (1000 * 60 * 60));
         return {
           entity_id: a._id,
@@ -131,6 +151,7 @@ class CooldownManager {
           executed_at: a.executed_at,
           cooldown_until: cooldownUntil,
           hours_left: hoursLeft,
+          cooldown_hours: tieredHours,
           agent: _extractAgent(a.reasoning)
         };
       })
@@ -159,4 +180,4 @@ function _extractAgent(reasoning) {
   return match ? match[1].toLowerCase() : 'unknown';
 }
 
-module.exports = { CooldownManager, COOLDOWN_DAYS, MIN_HOURS_BETWEEN_ACTIONS };
+module.exports = { CooldownManager, COOLDOWN_DAYS, MIN_HOURS_BETWEEN_ACTIONS, TIERED_COOLDOWN_HOURS };

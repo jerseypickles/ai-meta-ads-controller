@@ -1,8 +1,10 @@
 const moment = require('moment-timezone');
 const kpiTargets = require('../../../config/kpi-targets');
+const unifiedPolicyConfig = require('../../../config/unified-policy');
 const deepResearchPriors = require('../../../config/deep-research-priors');
 
 const safetyGuards = require('../../../config/safety-guards');
+const { TIERED_COOLDOWN_HOURS } = require('../../safety/cooldown-manager');
 const TIMEZONE = process.env.TIMEZONE || 'America/New_York';
 
 /**
@@ -38,7 +40,7 @@ REGLAS CRITICAS:
 1. COORDINACION: Cada entidad solo puede recibir UNA recomendacion. No recomiendes scale_up y pause para el mismo ad set.
 2. VENTANAS DE TIEMPO: "today" son datos PARCIALES del dia en curso (incompletos, no actuar sobre ellos). "3d/7d/14d/30d" son dias COMPLETADOS (excluyen hoy) — son confiables. Usa 3d para detectar cambios recientes, 7d como referencia principal, 14d/30d para tendencias a largo plazo y estacionalidad. NUNCA tomes decisiones urgentes basandote solo en "today" — el lag de atribucion de Meta (24h+) hace que ROAS de hoy siempre parezca bajo.
 3. LEARNING PHASE: Nunca toques entidades en learning phase. Estan protegidas.
-4. COOLDOWNS: No recomiendes cambios en entidades con cooldown activo o en medicion.
+4. COOLDOWNS: No recomiendes cambios en entidades con cooldown activo o en medicion. PERO puedes generar "observe" para monitorear como evolucionan despues de una accion reciente.
 5. FEEDBACK LOOP: Revisa los resultados de tus acciones pasadas ANTES de decidir. Repite lo que funciono, evita lo que fallo.
 6. HISTORIAL NEGATIVO: Si una entidad tuvo CUALQUIER caida de ROAS con una accion reciente (ej: scale_up hace 4d resulto en -3% o -15% ROAS), NO repitas la misma accion en esa entidad. Espera al menos 7 dias. Que las metricas actuales se vean bien NO justifica repetir una accion que ya demostro resultado negativo en esa misma entidad.
 7. PACING: Antes de las 10am la informacion de pacing es poco confiable. Despues de las 3pm es mas fiable.
@@ -110,7 +112,12 @@ ACCIONES DISPONIBLES:
 - update_ad_status: Pausar/activar un ad individual (entity_type: ad) — recommended_value: 0=pausar, 1=activar
 - move_budget: Redistribuir budget entre ad sets — requiere target_entity_id, target_entity_name
 - update_bid_strategy: Cambiar bid strategy de campana (entity_type: campaign) — requiere bid_strategy
+- observe: Seguimiento de una entidad en cooldown — NO ejecuta cambios, solo registra tu analisis de como evoluciona despues de una accion reciente. Usa esto para entidades con cooldown que quieras monitorear.
 - no_action: Sin accion necesaria
+
+COOLDOWNS TIERED — cada tipo de accion tiene su propio tiempo de cooldown:
+${Object.entries(TIERED_COOLDOWN_HOURS).map(([action, hours]) => `- ${action}: ${hours}h`).join('\n')}
+Las entidades en cooldown NO pueden recibir acciones de modificacion. Pero SI puedes generar "observe" para ellas — esto te permite monitorear como responden a la ultima accion sin tocarlas.
 
 FORMATO DE RESPUESTA (JSON estricto):
 {
@@ -118,7 +125,7 @@ FORMATO DE RESPUESTA (JSON estricto):
   "status": "healthy|warning|critical",
   "recommendations": [
     {
-      "action": "scale_up|scale_down|pause|reactivate|duplicate_adset|create_ad|update_ad_status|move_budget|update_bid_strategy|no_action",
+      "action": "scale_up|scale_down|pause|reactivate|duplicate_adset|create_ad|update_ad_status|move_budget|update_bid_strategy|observe|no_action",
       "entity_type": "adset|ad|campaign",
       "entity_id": "ID de la entidad",
       "entity_name": "Nombre legible",
@@ -154,7 +161,7 @@ FORMATO DE RESPUESTA (JSON estricto):
   ]
 }
 
-Maximo 10 recomendaciones por ciclo. Prioriza las de mayor impacto esperado.
+Maximo ${unifiedPolicyConfig.max_recommendations_per_cycle} recomendaciones por ciclo (acciones de modificacion). Las "observe" no cuentan contra este limite. Prioriza las de mayor impacto esperado.
 SIEMPRE responde SOLO con JSON valido. Sin texto adicional fuera del JSON.`;
 }
 
@@ -460,8 +467,10 @@ Budget ceiling diario: $${budgetCeiling} | Pacing mensual estimado: ${monthlyPac
   }
 
   if (activeCooldowns && activeCooldowns.length > 0) {
-    const cooldownIds = activeCooldowns.map(c => c.entity_id);
-    prompt += `\nENTIDADES CON COOLDOWN (NO recomendar cambios):\n${cooldownIds.join(', ')}\n`;
+    prompt += `\nENTIDADES CON COOLDOWN (NO recomendar cambios, pero puedes usar "observe" para seguimiento):\n`;
+    for (const c of activeCooldowns) {
+      prompt += `- ${c.entity_id} (${c.entity_name || 'N/A'}): ${c.last_action} hace ${Math.round((Date.now() - new Date(c.executed_at).getTime()) / 3600000)}h — cooldown ${c.cooldown_hours || 48}h, ${c.hours_left}h restantes\n`;
+    }
   }
 
   // === LEARNING PHASE PROTECTION ===
@@ -661,7 +670,7 @@ Analiza TODA la informacion anterior de forma holistica. Recuerda:
 - Una sola recomendacion por entidad
 - Prioriza por impacto esperado
 - Aprende de los resultados pasados
-- No toques entidades en cooldown, medicion, o learning phase
+- No toques entidades en cooldown, medicion, o learning phase (pero usa "observe" para monitorear entidades en cooldown)
 - Coordina: si subes budget a un ad set, asegurate que sus creativos no estan fatigados
 - CRITICO: Si un ad set tiene pocos creativos (< 3 ads activos) y metricas en declive, recomienda create_ad PRIMERO — NO pausar
 - Pausar un ad set es ULTIMO RECURSO. Prioriza: create_ad > update_ad_status > scale_down > pause

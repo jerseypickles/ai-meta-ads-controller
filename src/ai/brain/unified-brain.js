@@ -23,7 +23,7 @@ const StrategicDirective = require('../../db/models/StrategicDirective');
 const logger = require('../../utils/logger');
 
 const VALID_ACTIONS = [
-  'scale_up', 'scale_down', 'pause', 'reactivate', 'no_action',
+  'scale_up', 'scale_down', 'pause', 'reactivate', 'no_action', 'observe',
   'duplicate_adset', 'create_ad', 'update_bid_strategy',
   'update_ad_status', 'move_budget', 'update_ad_creative'
 ];
@@ -175,16 +175,18 @@ class UnifiedBrain {
 
       logger.info(`[BRAIN] Validacion: ${rawRecsCount} raw -> ${validRecs.length} validas (${rawRecsCount - validRecs.length} descartadas)`);
 
-      // Filtrar por cooldown
+      // Filtrar por cooldown — allow 'observe' actions through for follow-up monitoring
       const cooldownEntityIds = new Set((sharedData.activeCooldowns || []).map(c => c.entity_id));
       const pendingEntityIds = impactContext.pendingEntities || new Set();
 
       const filteredRecs = validRecs.filter(r => {
-        if (cooldownEntityIds.has(r.entity_id)) {
+        // 'observe' actions pass through cooldown — they are non-modifying follow-ups
+        const isObservation = r.action === 'observe';
+        if (cooldownEntityIds.has(r.entity_id) && !isObservation) {
           logger.info(`[BRAIN] Filtrada por cooldown: ${r.entity_name}`);
           return false;
         }
-        if (pendingEntityIds.has(r.entity_id)) {
+        if (pendingEntityIds.has(r.entity_id) && !isObservation) {
           logger.info(`[BRAIN] Filtrada por medicion pendiente: ${r.entity_name}`);
           return false;
         }
@@ -750,6 +752,7 @@ class UnifiedBrain {
     if (!VALID_ACTIONS.includes(rec.action)) return null;
     if (!rec.entity_id) return null;
     if (rec.action === 'no_action') return null;
+    // 'observe' is a valid non-modifying action (follow-up for cooldown entities)
 
     // Hard block: no changes to AI-created entities in learning phase
     const aiCreations = sharedData.aiCreations || [];
@@ -1539,7 +1542,7 @@ REGLAS:
       for (const report of reports) {
         let modified = false;
         for (const rec of report.recommendations) {
-          if (rec.status === 'pending' && rec.action !== 'no_action') {
+          if (rec.status === 'pending' && rec.action !== 'no_action' && rec.action !== 'observe') {
             rec.status = 'expired';
             modified = true;
             totalExpired++;
@@ -1573,7 +1576,7 @@ REGLAS:
     if (!freshReport) return 0;
 
     for (const rec of freshReport.recommendations) {
-      if (rec.status !== 'pending' || rec.action === 'no_action') continue;
+      if (rec.status !== 'pending' || rec.action === 'no_action' || rec.action === 'observe') continue;
 
       let shouldExecute = false;
 
