@@ -462,12 +462,6 @@ export default function BrainIntelligence() {
           Creativos
         </button>
         <button
-          className={`brain-tab ${activeTab === 'adhealth' ? 'active' : ''}`}
-          onClick={() => setActiveTab('adhealth')}
-        >
-          Salud de Ads
-        </button>
-        <button
           className={`brain-tab ${activeTab === 'chat' ? 'active' : ''}`}
           onClick={() => setActiveTab('chat')}
         >
@@ -524,8 +518,6 @@ export default function BrainIntelligence() {
           <KnowledgePanel formatTime={formatTime} />
         ) : activeTab === 'creatives' ? (
           <CreativesPanel formatTime={formatTime} />
-        ) : activeTab === 'adhealth' ? (
-          <AdHealthPanel formatTime={formatTime} />
         ) : (
           <ChatPanel
             messages={chatMessages}
@@ -2268,12 +2260,32 @@ const TIME_WINDOWS = [
   { key: 'last_7d', label: '7d' }
 ];
 
+const ANOMALY_CONFIG = {
+  ZERO_CONVERSIONS:        { icon: '\u26D4', label: 'Sin Conversiones', color: '#ef4444' },
+  BUDGET_HOG:              { icon: '\uD83D\uDCB8', label: 'Acapara Budget', color: '#f97316' },
+  CTR_DEAD:                { icon: '\uD83D\uDCC9', label: 'CTR Muerto', color: '#ef4444' },
+  DECLINING_FAST:          { icon: '\u26A1', label: 'Cayendo Rapido', color: '#f59e0b' },
+  TOP_PERFORMER_FATIGUING: { icon: '\u2B50', label: 'Top Fatigandose', color: '#a855f7' },
+  UNDERPERFORMER:          { icon: '\uD83D\uDCC9', label: 'Bajo Rendimiento', color: '#ef4444' }
+};
+
+const ACTION_LABELS = {
+  pause: { label: 'PAUSAR', color: '#ef4444', bg: 'rgba(239,68,68,0.15)' },
+  monitor: { label: 'MONITOREAR', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
+  monitor_prepare_replacement: { label: 'PREPARAR REEMPLAZO', color: '#a855f7', bg: 'rgba(168,85,247,0.15)' }
+};
+
 function CreativesPanel({ formatTime }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [sortBy, setSortBy] = useState('spend');
   const [filterVerdict, setFilterVerdict] = useState('all');
   const [timeWindow, setTimeWindow] = useState('last_3d');
+
+  // Ad Health state
+  const [adHealthData, setAdHealthData] = useState(null);
+  const [adHealthLoading, setAdHealthLoading] = useState(true);
+  const [expandedAdSet, setExpandedAdSet] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -2283,27 +2295,27 @@ function CreativesPanel({ formatTime }) {
       } catch (err) { console.error('Creative performance error:', err); }
       finally { setLoading(false); }
     })();
+    (async () => {
+      try {
+        const res = await getAdHealth();
+        setAdHealthData(res);
+      } catch (err) { console.error('Ad health error:', err); }
+      finally { setAdHealthLoading(false); }
+    })();
   }, []);
 
-  if (loading) return <div className="d-flex align-center justify-center p-4 text-muted"><div className="loading" /> Cargando creativos...</div>;
-  if (!data || !data.ads || data.ads.length === 0) {
-    return (
-      <div className="feed-empty">
-        <div className="feed-empty-icon">🎨</div>
-        <p>No hay creativos manuales todavia.</p>
-        <p className="feed-empty-hint">Cuando subas creativos desde Ad Sets Manager, el Brain rastreara su rendimiento aqui.</p>
-      </div>
-    );
-  }
+  if (loading && adHealthLoading) return <div className="d-flex align-center justify-center p-4 text-muted"><div className="loading" /> Cargando creativos...</div>;
 
-  const accountAvg = data.account_avg || {};
+  const hasCreatives = data?.ads?.length > 0;
+
+  const accountAvg = data?.account_avg || {};
 
   // Verdict counts
   const verdictCounts = { good: 0, bad: 0, watch: 0, learning: 0, new: 0 };
-  for (const ad of data.ads) verdictCounts[ad.verdict] = (verdictCounts[ad.verdict] || 0) + 1;
+  for (const ad of (data?.ads || [])) verdictCounts[ad.verdict] = (verdictCounts[ad.verdict] || 0) + 1;
 
   // Filter
-  let filtered = data.ads;
+  let filtered = data?.ads || [];
   if (filterVerdict !== 'all') filtered = filtered.filter(a => a.verdict === filterVerdict);
 
   // Sort (uses selected time window)
@@ -2337,6 +2349,15 @@ function CreativesPanel({ formatTime }) {
 
   return (
     <div className="cv2-panel">
+      {!hasCreatives && (
+        <div className="feed-empty" style={{ marginBottom: '24px' }}>
+          <div className="feed-empty-icon">{'\uD83C\uDFA8'}</div>
+          <p>No hay creativos manuales todavia.</p>
+          <p className="feed-empty-hint">Cuando subas creativos desde Ad Sets Manager, el Brain rastreara su rendimiento aqui.</p>
+        </div>
+      )}
+
+      {hasCreatives && <>
       {/* ── Hero: verdict summary cards ── */}
       <div className="cv2-hero">
         {[
@@ -2501,185 +2522,140 @@ function CreativesPanel({ formatTime }) {
           );
         })}
       </div>
-    </div>
-  );
-}
+      </>}
 
-// ═══ AD HEALTH PANEL — Live per-ad anomaly diagnostics ═══
-
-const ANOMALY_CONFIG = {
-  ZERO_CONVERSIONS:        { icon: '\u26D4', label: 'Sin Conversiones', color: '#ef4444', severity: 'critical' },
-  BUDGET_HOG:              { icon: '\uD83D\uDCB8', label: 'Acapara Budget', color: '#f97316', severity: 'high' },
-  CTR_DEAD:                { icon: '\uD83D\uDCC9', label: 'CTR Muerto', color: '#ef4444', severity: 'critical' },
-  DECLINING_FAST:          { icon: '\u26A1', label: 'Cayendo Rapido', color: '#f59e0b', severity: 'high' },
-  TOP_PERFORMER_FATIGUING: { icon: '\u2B50', label: 'Top Fatigandose', color: '#a855f7', severity: 'medium' },
-  UNDERPERFORMER:          { icon: '\uD83D\uDCC9', label: 'Bajo Rendimiento', color: '#ef4444', severity: 'high' }
-};
-
-const ACTION_LABELS = {
-  pause: { label: 'PAUSAR', color: '#ef4444', bg: 'rgba(239,68,68,0.15)' },
-  monitor: { label: 'MONITOREAR', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
-  monitor_prepare_replacement: { label: 'PREPARAR REEMPLAZO', color: '#a855f7', bg: 'rgba(168,85,247,0.15)' }
-};
-
-function AdHealthPanel({ formatTime }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [expandedAdSet, setExpandedAdSet] = useState(null);
-
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await getAdHealth();
-      setData(res);
-    } catch (err) { console.error('Ad health error:', err); }
-    finally { setLoading(false); }
-  }, []);
-
-  useEffect(() => { loadData(); }, [loadData]);
-
-  if (loading) return <div className="d-flex align-center justify-center p-4 text-muted"><div className="loading" /> Analizando salud de ads...</div>;
-
-  if (!data || !data.adsets || data.adsets.length === 0) {
-    return (
-      <div className="feed-empty">
-        <div className="feed-empty-icon">{'\u2705'}</div>
-        <p>Todos los ads estan saludables.</p>
-        <p className="feed-empty-hint">El motor de diagnostico no detecto anomalias en ningun ad individual. Se revisa en cada ciclo automaticamente.</p>
-        {data?.summary && (
-          <div style={{ marginTop: '12px', color: 'var(--text-secondary)', fontSize: '13px' }}>
-            {data.summary.adsets_total} ad sets analizados &middot; Ultimo analisis: {formatTime(data.summary.computed_at)}
-          </div>
-        )}
-        <button className="btn-primary btn-small" style={{ marginTop: '16px' }} onClick={loadData}>Refrescar</button>
-      </div>
-    );
-  }
-
-  const s = data.summary;
-
-  return (
-    <div className="adhealth-panel">
-      {/* Summary bar */}
-      <div className="adhealth-summary">
-        <div className="adhealth-summary-stats">
-          <div className="adhealth-stat critical">
-            <span className="adhealth-stat-val">{s.total_anomalies}</span>
-            <span className="adhealth-stat-label">Anomalias</span>
-          </div>
-          <div className="adhealth-stat warn">
-            <span className="adhealth-stat-val">{s.total_pause_candidates}</span>
-            <span className="adhealth-stat-label">Pausar</span>
-          </div>
-          <div className="adhealth-stat waste">
-            <span className="adhealth-stat-val">${Math.round(s.total_waste_7d)}</span>
-            <span className="adhealth-stat-label">Desperdicio/sem</span>
-          </div>
-          <div className="adhealth-stat healthy">
-            <span className="adhealth-stat-val">{s.adsets_healthy}/{s.adsets_total}</span>
-            <span className="adhealth-stat-label">Ad Sets OK</span>
-          </div>
+      {/* ═══ AD HEALTH SECTION — Per-ad anomaly diagnostics ═══ */}
+      <div className="adhealth-section">
+        <div className="adhealth-section-header">
+          <h3 className="adhealth-section-title">Salud de Ads — Anomalias Detectadas</h3>
+          <button className="btn-ghost btn-small" onClick={async () => {
+            setAdHealthLoading(true);
+            try { const res = await getAdHealth(); setAdHealthData(res); }
+            catch (err) { console.error(err); }
+            finally { setAdHealthLoading(false); }
+          }}>Refrescar</button>
         </div>
-        <button className="btn-primary btn-small" onClick={loadData}>Refrescar</button>
-      </div>
 
-      {/* Ad set cards with issues */}
-      <div className="adhealth-list">
-        {data.adsets.map(adset => {
-          const ah = adset.ad_health;
-          const isExpanded = expandedAdSet === adset.adset_id;
-
-          return (
-            <div key={adset.adset_id} className={`adhealth-adset ${isExpanded ? 'expanded' : ''}`}>
-              {/* Ad set header */}
-              <div className="adhealth-adset-header" onClick={() => setExpandedAdSet(isExpanded ? null : adset.adset_id)}>
-                <div className="adhealth-adset-info">
-                  <span className="adhealth-adset-name">{adset.adset_name}</span>
-                  <div className="adhealth-adset-meta">
-                    <span className="adhealth-meta-chip">{ah.anomalies.length} anomalia{ah.anomalies.length !== 1 ? 's' : ''}</span>
-                    {ah.pause_count > 0 && <span className="adhealth-meta-chip pause">{ah.pause_count} pausar</span>}
-                    {ah.total_waste_7d > 0 && <span className="adhealth-meta-chip waste">~${Math.round(ah.total_waste_7d)}/sem</span>}
-                    <span className="adhealth-meta-chip neutral">{adset.active_ads} ads activos</span>
-                    {ah.remaining_after_pause < 3 && ah.pause_count > 0 && (
-                      <span className="adhealth-meta-chip alert">Quedarian {ah.remaining_after_pause} ads</span>
-                    )}
-                  </div>
+        {adHealthLoading ? (
+          <div className="adhealth-loading"><div className="loading" /> Analizando...</div>
+        ) : !adHealthData?.adsets?.length ? (
+          <div className="adhealth-ok">
+            <span className="adhealth-ok-icon">{'\u2705'}</span>
+            <span>Todos los ads saludables — sin anomalias detectadas</span>
+            {adHealthData?.summary && (
+              <span className="adhealth-ok-detail">{adHealthData.summary.adsets_total} ad sets analizados</span>
+            )}
+          </div>
+        ) : (
+          <>
+            {/* Summary chips */}
+            <div className="adhealth-summary">
+              <div className="adhealth-summary-stats">
+                <div className="adhealth-stat critical">
+                  <span className="adhealth-stat-val">{adHealthData.summary.total_anomalies}</span>
+                  <span className="adhealth-stat-label">Anomalias</span>
                 </div>
-                <span className="adhealth-expand-icon">{isExpanded ? '\u25B2' : '\u25BC'}</span>
+                <div className="adhealth-stat warn">
+                  <span className="adhealth-stat-val">{adHealthData.summary.total_pause_candidates}</span>
+                  <span className="adhealth-stat-label">Pausar</span>
+                </div>
+                <div className="adhealth-stat waste">
+                  <span className="adhealth-stat-val">${Math.round(adHealthData.summary.total_waste_7d)}</span>
+                  <span className="adhealth-stat-label">Desperdicio/sem</span>
+                </div>
+                <div className="adhealth-stat healthy">
+                  <span className="adhealth-stat-val">{adHealthData.summary.adsets_healthy}/{adHealthData.summary.adsets_total}</span>
+                  <span className="adhealth-stat-label">Ad Sets OK</span>
+                </div>
               </div>
+            </div>
 
-              {/* Expanded: anomaly details */}
-              {isExpanded && (
-                <div className="adhealth-anomalies">
-                  {ah.summary && (
-                    <div className="adhealth-coordinated-summary">
-                      <span className="adhealth-coord-icon">{'\uD83C\uDFAF'}</span>
-                      <span>{ah.summary}</span>
-                    </div>
-                  )}
+            {/* Ad set cards with issues */}
+            <div className="adhealth-list">
+              {adHealthData.adsets.map(adset => {
+                const ah = adset.ad_health;
+                const isExpanded = expandedAdSet === adset.adset_id;
 
-                  {ah.anomalies.map((anomaly, idx) => {
-                    const primary = anomaly.primary_anomaly;
-                    const anomalyCfg = ANOMALY_CONFIG[primary.type] || ANOMALY_CONFIG.UNDERPERFORMER;
-                    const actionCfg = ACTION_LABELS[anomaly.recommended_action] || ACTION_LABELS.monitor;
-
-                    return (
-                      <div key={idx} className={`adhealth-anomaly severity-${primary.severity}`}>
-                        <div className="adhealth-anomaly-header">
-                          <span className="adhealth-anomaly-icon" style={{ color: anomalyCfg.color }}>{anomalyCfg.icon}</span>
-                          <div className="adhealth-anomaly-info">
-                            <span className="adhealth-anomaly-name" title={anomaly.ad_name}>{anomaly.ad_name}</span>
-                            <div className="adhealth-anomaly-types">
-                              {anomaly.all_anomalies.map((a, i) => {
-                                const cfg = ANOMALY_CONFIG[a.type] || ANOMALY_CONFIG.UNDERPERFORMER;
-                                return (
-                                  <span key={i} className="adhealth-type-tag" style={{ color: cfg.color, borderColor: cfg.color }}>
-                                    {cfg.label}
-                                  </span>
-                                );
-                              })}
-                            </div>
-                          </div>
-                          <span className="adhealth-action-tag" style={{ color: actionCfg.color, backgroundColor: actionCfg.bg }}>
-                            {actionCfg.label}
-                          </span>
-                        </div>
-
-                        <div className="adhealth-anomaly-detail">{primary.detail}</div>
-
-                        <div className="adhealth-anomaly-metrics">
-                          <span className={`adhealth-metric ${anomaly.roas_7d < 1.5 ? 'bad' : anomaly.roas_7d >= 3 ? 'good' : ''}`}>
-                            ROAS {anomaly.roas_7d.toFixed(2)}x
-                          </span>
-                          <span className={`adhealth-metric ${anomaly.ctr_7d < 0.5 ? 'bad' : ''}`}>
-                            CTR {anomaly.ctr_7d.toFixed(2)}%
-                          </span>
-                          <span className={`adhealth-metric ${anomaly.frequency_7d >= 3.5 ? 'bad' : anomaly.frequency_7d >= 2.5 ? 'warn' : ''}`}>
-                            Freq {anomaly.frequency_7d.toFixed(1)}
-                          </span>
-                          <span className="adhealth-metric">
-                            ${anomaly.spend_7d.toFixed(0)}/7d
-                          </span>
-                          <span className="adhealth-metric">
-                            {anomaly.purchases_7d} compras
-                          </span>
-                          <span className="adhealth-metric">
-                            {anomaly.age_days}d activo
-                          </span>
-                          {primary.waste_amount > 0 && (
-                            <span className="adhealth-metric waste">
-                              ~${primary.waste_amount.toFixed(0)} desperdicio
-                            </span>
+                return (
+                  <div key={adset.adset_id} className={`adhealth-adset ${isExpanded ? 'expanded' : ''}`}>
+                    <div className="adhealth-adset-header" onClick={() => setExpandedAdSet(isExpanded ? null : adset.adset_id)}>
+                      <div className="adhealth-adset-info">
+                        <span className="adhealth-adset-name">{adset.adset_name}</span>
+                        <div className="adhealth-adset-meta">
+                          <span className="adhealth-meta-chip">{ah.anomalies.length} anomalia{ah.anomalies.length !== 1 ? 's' : ''}</span>
+                          {ah.pause_count > 0 && <span className="adhealth-meta-chip pause">{ah.pause_count} pausar</span>}
+                          {ah.total_waste_7d > 0 && <span className="adhealth-meta-chip waste">~${Math.round(ah.total_waste_7d)}/sem</span>}
+                          <span className="adhealth-meta-chip neutral">{adset.active_ads} ads activos</span>
+                          {ah.remaining_after_pause < 3 && ah.pause_count > 0 && (
+                            <span className="adhealth-meta-chip alert">Quedarian {ah.remaining_after_pause} ads</span>
                           )}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
+                      <span className="adhealth-expand-icon">{isExpanded ? '\u25B2' : '\u25BC'}</span>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="adhealth-anomalies">
+                        {ah.summary && (
+                          <div className="adhealth-coordinated-summary">
+                            <span className="adhealth-coord-icon">{'\uD83C\uDFAF'}</span>
+                            <span>{ah.summary}</span>
+                          </div>
+                        )}
+                        {ah.anomalies.map((anomaly, idx) => {
+                          const primary = anomaly.primary_anomaly;
+                          const anomalyCfg = ANOMALY_CONFIG[primary.type] || ANOMALY_CONFIG.UNDERPERFORMER;
+                          const actionCfg = ACTION_LABELS[anomaly.recommended_action] || ACTION_LABELS.monitor;
+                          return (
+                            <div key={idx} className={`adhealth-anomaly severity-${primary.severity}`}>
+                              <div className="adhealth-anomaly-header">
+                                <span className="adhealth-anomaly-icon" style={{ color: anomalyCfg.color }}>{anomalyCfg.icon}</span>
+                                <div className="adhealth-anomaly-info">
+                                  <span className="adhealth-anomaly-name" title={anomaly.ad_name}>{anomaly.ad_name}</span>
+                                  <div className="adhealth-anomaly-types">
+                                    {anomaly.all_anomalies.map((a, i) => {
+                                      const cfg = ANOMALY_CONFIG[a.type] || ANOMALY_CONFIG.UNDERPERFORMER;
+                                      return (
+                                        <span key={i} className="adhealth-type-tag" style={{ color: cfg.color, borderColor: cfg.color }}>
+                                          {cfg.label}
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                                <span className="adhealth-action-tag" style={{ color: actionCfg.color, backgroundColor: actionCfg.bg }}>
+                                  {actionCfg.label}
+                                </span>
+                              </div>
+                              <div className="adhealth-anomaly-detail">{primary.detail}</div>
+                              <div className="adhealth-anomaly-metrics">
+                                <span className={`adhealth-metric ${anomaly.roas_7d < 1.5 ? 'bad' : anomaly.roas_7d >= 3 ? 'good' : ''}`}>
+                                  ROAS {anomaly.roas_7d.toFixed(2)}x
+                                </span>
+                                <span className={`adhealth-metric ${anomaly.ctr_7d < 0.5 ? 'bad' : ''}`}>
+                                  CTR {anomaly.ctr_7d.toFixed(2)}%
+                                </span>
+                                <span className={`adhealth-metric ${anomaly.frequency_7d >= 3.5 ? 'bad' : anomaly.frequency_7d >= 2.5 ? 'warn' : ''}`}>
+                                  Freq {anomaly.frequency_7d.toFixed(1)}
+                                </span>
+                                <span className="adhealth-metric">${anomaly.spend_7d.toFixed(0)}/7d</span>
+                                <span className="adhealth-metric">{anomaly.purchases_7d} compras</span>
+                                <span className="adhealth-metric">{anomaly.age_days}d activo</span>
+                                {primary.waste_amount > 0 && (
+                                  <span className="adhealth-metric waste">~${primary.waste_amount.toFixed(0)} desperdicio</span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
+          </>
+        )}
       </div>
     </div>
   );
