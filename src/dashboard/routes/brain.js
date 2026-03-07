@@ -1252,4 +1252,103 @@ router.get('/creative-performance', async (req, res) => {
   }
 });
 
+// ═══ AD HEALTH — Live per-ad anomaly diagnostics ═══
+
+/**
+ * GET /api/brain/ad-health — Live ad health diagnostics from DiagnosticEngine.
+ * Returns per-ad-set anomaly data computed in real-time from latest snapshots.
+ */
+router.get('/ad-health', async (req, res) => {
+  try {
+    const DiagnosticEngine = require('../../ai/brain/diagnostic-engine');
+    const { getLatestSnapshots, getAccountOverview } = require('../../db/queries');
+    const BrainMemoryModel = require('../../db/models/BrainMemory');
+
+    const diagnosticEngine = new DiagnosticEngine();
+
+    const [adsetSnapshots, adSnapshots, accountOverview, memories] = await Promise.all([
+      getLatestSnapshots('adset'),
+      getLatestSnapshots('ad'),
+      getAccountOverview(),
+      BrainMemoryModel.find({}).lean()
+    ]);
+
+    const memoryMap = {};
+    for (const m of memories) memoryMap[m.entity_id] = m;
+
+    const diagnostics = diagnosticEngine.diagnoseAll(adsetSnapshots, adSnapshots, memoryMap, accountOverview);
+
+    // Build response: only ad sets with ad_health issues (+ summary of healthy ones)
+    const adSetsWithIssues = [];
+    let totalAnomalies = 0;
+    let totalWaste = 0;
+    let totalPauseCandidates = 0;
+    let adSetsHealthy = 0;
+    let adSetsTotal = 0;
+
+    for (const [entityId, diag] of Object.entries(diagnostics)) {
+      adSetsTotal++;
+      const ah = diag.ad_health;
+      if (!ah || !ah.has_issues) {
+        adSetsHealthy++;
+        continue;
+      }
+
+      totalAnomalies += ah.anomalies.length;
+      totalWaste += ah.total_waste_7d || 0;
+      totalPauseCandidates += ah.pause_count || 0;
+
+      adSetsWithIssues.push({
+        adset_id: entityId,
+        adset_name: diag.entity_name,
+        active_ads: diag.active_ads,
+        total_ads: diag.total_ads,
+        overall_diagnosis: diag.overall?.labels || [],
+        overall_action: diag.overall?.primary_action || 'monitor',
+        fatigue_level: diag.fatigue?.fatigue_level || 'none',
+        fatigue_score: diag.fatigue?.fatigue_score || 0,
+        ad_health: {
+          anomalies: ah.anomalies.map(a => ({
+            ad_id: a.ad_id,
+            ad_name: a.ad_name,
+            age_days: a.age_days,
+            spend_7d: a.spend_7d,
+            roas_7d: a.roas_7d,
+            ctr_7d: a.ctr_7d,
+            frequency_7d: a.frequency_7d,
+            purchases_7d: a.purchases_7d,
+            primary_anomaly: a.primary_anomaly,
+            all_anomalies: a.all_anomalies,
+            recommended_action: a.recommended_action
+          })),
+          summary: ah.summary,
+          pause_count: ah.pause_count,
+          healthy_count: ah.healthy_count,
+          total_waste_7d: ah.total_waste_7d,
+          remaining_after_pause: ah.remaining_after_pause
+        }
+      });
+    }
+
+    // Sort by waste descending (worst first)
+    adSetsWithIssues.sort((a, b) => (b.ad_health.total_waste_7d || 0) - (a.ad_health.total_waste_7d || 0));
+
+    res.json({
+      summary: {
+        adsets_total: adSetsTotal,
+        adsets_with_issues: adSetsWithIssues.length,
+        adsets_healthy: adSetsHealthy,
+        total_anomalies: totalAnomalies,
+        total_pause_candidates: totalPauseCandidates,
+        total_waste_7d: Math.round(totalWaste * 100) / 100,
+        computed_at: new Date().toISOString()
+      },
+      adsets: adSetsWithIssues
+    });
+  } catch (error) {
+    logger.error(`[BRAIN-API] Error en ad-health: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;

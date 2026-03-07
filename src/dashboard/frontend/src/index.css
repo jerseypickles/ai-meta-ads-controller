@@ -8097,3 +8097,293 @@ a:hover {
     align-items: flex-start;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   AD HEALTH PANEL — Per-ad anomaly diagnostics
+   ═══════════════════════════════════════════════════════════════ */
+
+.adhealth-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Summary bar */
+.adhealth-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  min-height: 52px;
+}
+
+.adhealth-summary-stats {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.adhealth-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 14px;
+  border-radius: var(--radius-md);
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border-color);
+}
+
+.adhealth-stat.critical { border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.08); }
+.adhealth-stat.warn     { border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.08); }
+.adhealth-stat.waste    { border-color: rgba(249,115,22,0.3); background: rgba(249,115,22,0.08); }
+.adhealth-stat.healthy  { border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.08); }
+
+.adhealth-stat-val {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.adhealth-stat.critical .adhealth-stat-val { color: #ef4444; }
+.adhealth-stat.warn .adhealth-stat-val     { color: #f59e0b; }
+.adhealth-stat.waste .adhealth-stat-val    { color: #f97316; }
+.adhealth-stat.healthy .adhealth-stat-val  { color: #10b981; }
+
+.adhealth-stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+}
+
+/* Ad set list */
+.adhealth-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.adhealth-adset {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+
+.adhealth-adset:hover {
+  border-color: rgba(239,68,68,0.3);
+}
+
+.adhealth-adset.expanded {
+  border-color: rgba(239,68,68,0.4);
+}
+
+.adhealth-adset-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.adhealth-adset-header:hover {
+  background: rgba(255,255,255,0.02);
+}
+
+.adhealth-adset-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.adhealth-adset-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.adhealth-adset-meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.adhealth-meta-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.06);
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+}
+
+.adhealth-meta-chip.pause { color: #ef4444; border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.1); }
+.adhealth-meta-chip.waste { color: #f97316; border-color: rgba(249,115,22,0.3); background: rgba(249,115,22,0.1); }
+.adhealth-meta-chip.alert { color: #f59e0b; border-color: rgba(245,158,11,0.3); background: rgba(245,158,11,0.1); }
+.adhealth-meta-chip.neutral { color: var(--text-secondary); }
+
+.adhealth-expand-icon {
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 4px;
+}
+
+/* Anomalies expanded section */
+.adhealth-anomalies {
+  padding: 0 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 12px;
+}
+
+.adhealth-coordinated-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(59,130,246,0.08);
+  border: 1px solid rgba(59,130,246,0.2);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.adhealth-coord-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* Individual anomaly card */
+.adhealth-anomaly {
+  padding: 12px 14px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--border-color);
+}
+
+.adhealth-anomaly.severity-critical { border-left-color: #ef4444; }
+.adhealth-anomaly.severity-high     { border-left-color: #f59e0b; }
+.adhealth-anomaly.severity-medium   { border-left-color: #a855f7; }
+
+.adhealth-anomaly-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.adhealth-anomaly-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.adhealth-anomaly-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.adhealth-anomaly-name {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.adhealth-anomaly-types {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.adhealth-type-tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  border: 1px solid;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.adhealth-action-tag {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.adhealth-anomaly-detail {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  padding-left: 28px;
+}
+
+.adhealth-anomaly-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding-left: 28px;
+}
+
+.adhealth-metric {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.05);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.adhealth-metric.good  { color: #10b981; background: rgba(16,185,129,0.1); }
+.adhealth-metric.bad   { color: #ef4444; background: rgba(239,68,68,0.1); }
+.adhealth-metric.warn  { color: #f59e0b; background: rgba(245,158,11,0.1); }
+.adhealth-metric.waste { color: #f97316; background: rgba(249,115,22,0.12); font-weight: 600; }
+
+@media (max-width: 768px) {
+  .adhealth-summary {
+    flex-direction: column;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .adhealth-summary-stats {
+    flex-wrap: wrap;
+  }
+  .adhealth-anomaly-header {
+    flex-wrap: wrap;
+  }
+  .adhealth-anomaly-metrics {
+    padding-left: 0;
+  }
+  .adhealth-anomaly-detail {
+    padding-left: 0;
+  }
+}

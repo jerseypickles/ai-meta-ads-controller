@@ -416,4 +416,11 @@ export const getCreativePerformance = async () => {
   return response.data;
 };
 
+// ═══ BRAIN — Ad Health Diagnostics ═══
+
+export const getAdHealth = async () => {
+  const response = await api.get('/api/brain/ad-health');
+  return response.data;
+};
+
 export default api;
