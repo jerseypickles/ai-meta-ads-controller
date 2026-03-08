@@ -183,27 +183,35 @@ class DataCollector {
         logger.warn(`  Ad insights failed: ${adResult.reason?.message}`);
       }
 
-      // ── 3. Save campaign snapshots ──
-      for (const campaign of campaigns) {
+      // ── 3. Save campaign snapshots (bulkWrite — 1 round-trip instead of N) ──
+      const now = new Date();
+      const campaignOps = campaigns.map(campaign => {
         const metrics = {};
         for (const w of WINDOWS) {
           metrics[w] = campaignInsights[campaign.id]?.[w] || this._emptyMetrics();
         }
-        await MetricSnapshot.create({
-          entity_type: 'campaign',
-          entity_id: campaign.id,
-          entity_name: campaign.name,
-          parent_id: null,
-          campaign_id: campaign.id,
-          status: campaign.effective_status,
-          daily_budget: parseBudget(campaign.daily_budget),
-          lifetime_budget: parseBudget(campaign.lifetime_budget),
-          budget_remaining: parseBudget(campaign.budget_remaining),
-          metrics,
-          analysis: this._buildAnalysis(metrics),
-          snapshot_at: new Date()
-        });
-        totalSnapshots++;
+        return {
+          insertOne: {
+            document: {
+              entity_type: 'campaign',
+              entity_id: campaign.id,
+              entity_name: campaign.name,
+              parent_id: null,
+              campaign_id: campaign.id,
+              status: campaign.effective_status,
+              daily_budget: parseBudget(campaign.daily_budget),
+              lifetime_budget: parseBudget(campaign.lifetime_budget),
+              budget_remaining: parseBudget(campaign.budget_remaining),
+              metrics,
+              analysis: this._buildAnalysis(metrics),
+              snapshot_at: now
+            }
+          }
+        };
+      });
+      if (campaignOps.length > 0) {
+        await MetricSnapshot.bulkWrite(campaignOps, { ordered: false });
+        totalSnapshots += campaignOps.length;
       }
       logger.info(`  ${campaigns.length} snapshots de campañas guardados`);
 
@@ -269,42 +277,64 @@ class DataCollector {
         logger.warn(`  Error obteniendo ads a nivel de cuenta: ${err.message} — preservando status existente`);
       }
 
-      // ── 5. Save ad set snapshots (with ads_count) ──
-      let adSetSnapshots = 0;
-      for (const [adSetId, info] of Object.entries(adSetMap)) {
+      // ── 5. Save ad set snapshots (bulkWrite — 1 round-trip instead of N) ──
+      const adSetEntries = Object.entries(adSetMap);
+      const adSetOps = adSetEntries.map(([adSetId, info]) => {
         const metrics = {};
         for (const w of WINDOWS) {
           metrics[w] = adSetInsights[adSetId]?.[w] || this._emptyMetrics();
         }
-        await MetricSnapshot.create({
-          entity_type: 'adset',
-          entity_id: info.id,
-          entity_name: info.name,
-          parent_id: info.campaign_id,
-          campaign_id: info.campaign_id,
-          status: info.effective_status,
-          daily_budget: parseBudget(info.daily_budget),
-          lifetime_budget: parseBudget(info.lifetime_budget),
-          budget_remaining: parseBudget(info.budget_remaining),
-          metrics,
-          analysis: this._buildAnalysis(metrics),
-          ads_count: adsPerAdSet[adSetId] || 0,
-          snapshot_at: new Date()
-        });
-        totalSnapshots++;
-        adSetSnapshots++;
+        return {
+          insertOne: {
+            document: {
+              entity_type: 'adset',
+              entity_id: info.id,
+              entity_name: info.name,
+              parent_id: info.campaign_id,
+              campaign_id: info.campaign_id,
+              status: info.effective_status,
+              daily_budget: parseBudget(info.daily_budget),
+              lifetime_budget: parseBudget(info.lifetime_budget),
+              budget_remaining: parseBudget(info.budget_remaining),
+              metrics,
+              analysis: this._buildAnalysis(metrics),
+              ads_count: adsPerAdSet[adSetId] || 0,
+              snapshot_at: now
+            }
+          }
+        };
+      });
+      if (adSetOps.length > 0) {
+        await MetricSnapshot.bulkWrite(adSetOps, { ordered: false });
+        totalSnapshots += adSetOps.length;
       }
+      const adSetSnapshots = adSetOps.length;
       logger.info(`  ${adSetSnapshots} snapshots de ad sets guardados`);
 
-      // ── 6. Save ad snapshots ──
-      let adSnapshots = 0;
-      for (const [adId, adData] of Object.entries(adMetadata)) {
+      // ── 6. Save ad snapshots (bulkWrite — 1 round-trip instead of N) ──
+      // Pre-fetch existing statuses in bulk for ads that need fallback (1 query vs N)
+      const adEntries = Object.entries(adMetadata);
+      let fallbackStatusMap = {};
+      if (!adsFetchSuccess) {
+        const idsNeedingStatus = adEntries
+          .filter(([adId]) => !adStatusMap[adId])
+          .map(([adId]) => adId);
+        if (idsNeedingStatus.length > 0) {
+          const existing = await MetricSnapshot.aggregate([
+            { $match: { entity_type: 'ad', entity_id: { $in: idsNeedingStatus } } },
+            { $sort: { snapshot_at: -1 } },
+            { $group: { _id: '$entity_id', status: { $first: '$status' } } }
+          ]);
+          for (const doc of existing) {
+            fallbackStatusMap[doc._id] = doc.status;
+          }
+        }
+      }
+
+      const adOps = adEntries.map(([adId, adData]) => {
         let adStatus = adStatusMap[adId];
         if (!adStatus && !adsFetchSuccess) {
-          const existingSnap = await MetricSnapshot.findOne({
-            entity_type: 'ad', entity_id: adId
-          }).sort({ snapshot_at: -1 }).select('status').lean();
-          adStatus = existingSnap?.status || 'ACTIVE';
+          adStatus = fallbackStatusMap[adId] || 'ACTIVE';
         } else if (!adStatus) {
           adStatus = 'DELETED';
         }
@@ -313,21 +343,28 @@ class DataCollector {
         for (const w of WINDOWS) {
           metrics[w] = adDailyInsights[adId]?.[w] || this._emptyMetrics();
         }
-        await MetricSnapshot.create({
-          entity_type: 'ad',
-          entity_id: adId,
-          entity_name: adData.ad_name,
-          parent_id: adData.adset_id,
-          campaign_id: adData.campaign_id,
-          status: adStatus,
-          meta_created_time: adData.created_time ? new Date(adData.created_time) : null,
-          metrics,
-          analysis: this._buildAnalysis(metrics),
-          snapshot_at: new Date()
-        });
-        totalSnapshots++;
-        adSnapshots++;
+        return {
+          insertOne: {
+            document: {
+              entity_type: 'ad',
+              entity_id: adId,
+              entity_name: adData.ad_name,
+              parent_id: adData.adset_id,
+              campaign_id: adData.campaign_id,
+              status: adStatus,
+              meta_created_time: adData.created_time ? new Date(adData.created_time) : null,
+              metrics,
+              analysis: this._buildAnalysis(metrics),
+              snapshot_at: now
+            }
+          }
+        };
+      });
+      if (adOps.length > 0) {
+        await MetricSnapshot.bulkWrite(adOps, { ordered: false });
+        totalSnapshots += adOps.length;
       }
+      const adSnapshots = adOps.length;
       logger.info(`  ${adSnapshots} snapshots de ads/creativos guardados`);
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);

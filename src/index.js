@@ -29,14 +29,35 @@ const TIMEZONE = config.system.timezone;
 
 /**
  * Job: Recolección de datos — cada 10 minutos, 24/7.
+ *
+ * Circuit breaker: si hay N fallos consecutivos, hace backoff progresivo
+ * para no saturar Meta API con requests que van a fallar.
  */
 let _dataCollectionRetryTimer = null;
+let _collectFailCount = 0;
+const MAX_CONSECUTIVE_FAILS_BEFORE_BACKOFF = 3;
+
 async function jobDataCollection() {
+  // Circuit breaker: si hay muchos fallos consecutivos, saltar ciclos alternos
+  if (_collectFailCount >= MAX_CONSECUTIVE_FAILS_BEFORE_BACKOFF) {
+    if (_collectFailCount % 2 !== 0) {
+      logger.warn(`[CRON] Circuit breaker: ${_collectFailCount} fallos consecutivos — saltando ciclo (backoff)`);
+      return;
+    }
+    logger.warn(`[CRON] Circuit breaker: ${_collectFailCount} fallos consecutivos — reintentando este ciclo`);
+  }
+
   try {
     logger.info('[CRON] Iniciando recolección de datos...');
     const collector = new DataCollector();
     const result = await collector.collect();
     logger.info(`[CRON] Recolección completada: ${result.snapshots} snapshots en ${result.elapsed}`);
+
+    // Reset circuit breaker on success
+    if (_collectFailCount > 0) {
+      logger.info(`[CRON] Circuit breaker reset (${_collectFailCount} fallos previos resueltos)`);
+    }
+    _collectFailCount = 0;
 
     // Brain Analyzer: analizar cambios después de cada recolección
     try {
@@ -51,7 +72,9 @@ async function jobDataCollection() {
       logger.error(`[CRON] Brain Analyzer error: ${brainErr.message}`);
     }
   } catch (error) {
-    logger.error(`[CRON] Error en recolección de datos: ${error.message}`);
+    _collectFailCount++;
+    logger.error(`[CRON] Error en recolección de datos (fallo #${_collectFailCount}): ${error.message}`);
+
     // Reintentar UNA vez después de 2 minutos si falló (timeout, rate limit, etc.)
     if (!_dataCollectionRetryTimer) {
       logger.warn('[CRON] Programando reintento de recolección en 2 minutos...');
@@ -62,8 +85,13 @@ async function jobDataCollection() {
           const retryCollector = new DataCollector();
           const retryResult = await retryCollector.collect();
           logger.info(`[CRON] Reintento exitoso: ${retryResult.snapshots} snapshots en ${retryResult.elapsed}`);
+          if (_collectFailCount > 0) {
+            logger.info(`[CRON] Circuit breaker reset por reintento exitoso`);
+          }
+          _collectFailCount = 0;
         } catch (retryErr) {
-          logger.error(`[CRON] Reintento de recolección también falló: ${retryErr.message}`);
+          _collectFailCount++;
+          logger.error(`[CRON] Reintento también falló (fallo #${_collectFailCount}): ${retryErr.message}`);
         }
       }, 2 * 60 * 1000);
     }

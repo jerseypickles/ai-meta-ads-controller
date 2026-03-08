@@ -30,14 +30,15 @@ class MetaClient {
     this._dailyInsightsCacheTTL = 90 * 1000; // 90s — long enough to survive cron→live overlap
 
     // Rate limiter: Standard tier allows 190,000 + 400*active_ads per hour.
-    // We cap at 1,000/hour locally (very safe), with adaptive throttling via headers.
-    // minTime starts at 1000ms — _checkRateLimitHeaders speeds up to 500ms when headroom available.
+    // With ~60 active ads = ~214,000 pts/hour. We cap at 5,000/hour locally
+    // (still very conservative at ~2.3% of quota). Adaptive throttling via
+    // _checkRateLimitHeaders adjusts minTime dynamically when Meta reports high usage.
     this.limiter = new Bottleneck({
-      reservoir: 1000,
-      reservoirRefreshAmount: 1000,
+      reservoir: 5000,
+      reservoirRefreshAmount: 5000,
       reservoirRefreshInterval: 60 * 60 * 1000, // 1 hour
-      maxConcurrent: 4, // Allow parallel insight window fetches (3 concurrent + 1 buffer)
-      minTime: 500 // 500ms between calls — adaptive throttling adjusts dynamically
+      maxConcurrent: 8, // 3 parallel insight levels + pagination + structural + buffer
+      minTime: 300 // 300ms between calls — adaptive throttling adjusts dynamically
     });
 
     this.client = axios.create({
@@ -104,37 +105,57 @@ class MetaClient {
    */
   _checkRateLimitHeaders(response) {
     try {
+      // 1. BUC header — general API usage
       const bucHeader = response.headers?.['x-business-use-case-usage'];
-      if (!bucHeader) return;
+      // 2. Insights throttle header — specific to ads_insights endpoint
+      const insightsHeader = response.headers?.['x-fb-ads-insights-throttle'];
 
-      const usage = JSON.parse(bucHeader);
-      for (const [, entries] of Object.entries(usage)) {
-        for (const entry of (Array.isArray(entries) ? entries : [])) {
-          const maxUsage = Math.max(
-            entry.call_count || 0,
-            entry.total_cputime || 0,
-            entry.total_time || 0
-          );
+      let maxUsage = 0;
 
-          // Store latest usage for external monitoring
-          this._lastUsage = { ...entry, max: maxUsage, ts: Date.now() };
+      if (bucHeader) {
+        const usage = JSON.parse(bucHeader);
+        for (const [, entries] of Object.entries(usage)) {
+          for (const entry of (Array.isArray(entries) ? entries : [])) {
+            const entryMax = Math.max(
+              entry.call_count || 0,
+              entry.total_cputime || 0,
+              entry.total_time || 0
+            );
+            if (entryMax > maxUsage) maxUsage = entryMax;
 
-          if (maxUsage > 90) {
-            logger.warn(`[META-RATE] Usage critical at ${maxUsage}% — heavy throttle`);
-            this.limiter.updateSettings({ minTime: 5000 });
-          } else if (maxUsage > 75) {
-            logger.warn(`[META-RATE] Usage high at ${maxUsage}% — throttling`);
-            this.limiter.updateSettings({ minTime: 3000 });
-          } else if (maxUsage > 50) {
-            this.limiter.updateSettings({ minTime: 1500 });
-          } else {
-            this.limiter.updateSettings({ minTime: 500 }); // Faster when headroom available
-          }
+            // Store latest usage for external monitoring
+            this._lastUsage = { ...entry, max: entryMax, ts: Date.now() };
 
-          if (entry.estimated_time_to_regain_access > 0) {
-            logger.warn(`[META-RATE] Rate limited. Regain access in ${entry.estimated_time_to_regain_access}s`);
+            if (entry.estimated_time_to_regain_access > 0) {
+              logger.warn(`[META-RATE] Rate limited. Regain access in ${entry.estimated_time_to_regain_access}s`);
+            }
           }
         }
+      }
+
+      if (insightsHeader) {
+        const insights = JSON.parse(insightsHeader);
+        const insightsMax = Math.max(
+          insights.app_id_util_pct || 0,
+          insights.acc_id_util_pct || 0
+        );
+        if (insightsMax > maxUsage) maxUsage = insightsMax;
+        if (!this._lastUsage || insightsMax > (this._lastUsage.max || 0)) {
+          this._lastUsage = { app_id_util_pct: insights.app_id_util_pct, acc_id_util_pct: insights.acc_id_util_pct, max: insightsMax, ts: Date.now() };
+        }
+      }
+
+      // Adaptive throttling based on highest usage across all headers
+      if (maxUsage > 90) {
+        logger.warn(`[META-RATE] Usage critical at ${maxUsage}% — heavy throttle`);
+        this.limiter.updateSettings({ minTime: 5000 });
+      } else if (maxUsage > 75) {
+        logger.warn(`[META-RATE] Usage high at ${maxUsage}% — throttling`);
+        this.limiter.updateSettings({ minTime: 3000 });
+      } else if (maxUsage > 50) {
+        this.limiter.updateSettings({ minTime: 1500 });
+      } else if (maxUsage > 0) {
+        this.limiter.updateSettings({ minTime: 300 }); // Faster when headroom available
       }
     } catch (e) {
       // Non-critical — don't break the call if header parsing fails
@@ -207,8 +228,8 @@ class MetaClient {
       if (Date.now() < this._rateLimitedUntil) return true;
       // Cooldown just expired — reset throttle so live requests aren't stuck at 5000ms
       this._rateLimitedUntil = null;
-      this.limiter.updateSettings({ minTime: 1500 }); // Conservative restart, not full speed
-      logger.info('[META-RATE] Cooldown expired — resetting throttle to 1500ms');
+      this.limiter.updateSettings({ minTime: 1000 }); // Conservative restart, not full speed
+      logger.info('[META-RATE] Cooldown expired — resetting throttle to 1000ms');
     }
     return false;
   }

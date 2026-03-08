@@ -964,7 +964,15 @@ export default function AdSetsManager() {
   const [sseConnected, setSseConnected] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [, setAgeTick] = useState(0); // forces re-render so data-age updates
-  useEffect(() => { const t = setInterval(() => setAgeTick(k => k + 1), 30000); return () => clearInterval(t); }, []);
+  useEffect(() => {
+    let t;
+    const start = () => { t = setInterval(() => setAgeTick(k => k + 1), 30000); };
+    const stop = () => clearInterval(t);
+    const onVis = () => document.hidden ? stop() : start();
+    document.addEventListener('visibilitychange', onVis);
+    if (!document.hidden) start();
+    return () => { stop(); document.removeEventListener('visibilitychange', onVis); };
+  }, []);
 
   // Brain Intelligence data
   const [brainRecs, setBrainRecs] = useState([]);
@@ -982,7 +990,7 @@ export default function AdSetsManager() {
     } finally { setLoading(false); }
   }, []);
 
-  // SSE connection for real-time push updates
+  // SSE connection for real-time push updates (pauses fallback polling when tab hidden)
   useEffect(() => {
     fetchData();
     const es = connectSSE(
@@ -996,10 +1004,20 @@ export default function AdSetsManager() {
       () => { setSseConnected(false); }
     );
     es.onopen = () => setSseConnected(true);
-    const fallbackInterval = setInterval(() => {
-      if (!sseConnected) fetchData();
-    }, 180000); // 3 min — aligned with backend BG_REFRESH_INTERVAL
-    return () => { es.close(); clearInterval(fallbackInterval); setSseConnected(false); };
+    let fallbackInterval;
+    const startFallback = () => {
+      fallbackInterval = setInterval(() => {
+        if (!sseConnected && !document.hidden) fetchData();
+      }, 180000);
+    };
+    const stopFallback = () => clearInterval(fallbackInterval);
+    const onVis = () => {
+      if (document.hidden) { stopFallback(); }
+      else { startFallback(); if (!sseConnected) fetchData(); }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    if (!document.hidden) startFallback();
+    return () => { es.close(); stopFallback(); document.removeEventListener('visibilitychange', onVis); setSseConnected(false); };
   }, [fetchData]);
 
   // Fetch Brain data (recommendations + insights + tracking) for entity badges
@@ -1007,6 +1025,7 @@ export default function AdSetsManager() {
 
   useEffect(() => {
     const fetchBrainData = async () => {
+      if (document.hidden) return; // skip when tab not visible
       try {
         const [recsRes, insightsRes, trackingRes] = await Promise.allSettled([
           getBrainRecommendations(1, 100, 'pending'),
@@ -1016,7 +1035,6 @@ export default function AdSetsManager() {
         if (recsRes.status === 'fulfilled') setBrainRecs(recsRes.value?.recommendations || []);
         if (insightsRes.status === 'fulfilled') setBrainInsights(insightsRes.value?.insights || []);
         if (trackingRes.status === 'fulfilled') {
-          // Filter to only active tracking (not yet fully measured)
           const approved = trackingRes.value?.recommendations || [];
           setTrackingRecs(approved.filter(r =>
             !r.follow_up?.checked && r.follow_up?.current_phase !== 'complete'
@@ -1025,8 +1043,16 @@ export default function AdSetsManager() {
       } catch { /* silent — Brain data is supplemental */ }
     };
     fetchBrainData();
-    const brainInterval = setInterval(fetchBrainData, 120000);
-    return () => clearInterval(brainInterval);
+    let brainInterval;
+    const startBrain = () => { brainInterval = setInterval(fetchBrainData, 120000); };
+    const stopBrain = () => clearInterval(brainInterval);
+    const onVis = () => {
+      if (document.hidden) { stopBrain(); }
+      else { fetchBrainData(); startBrain(); }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    if (!document.hidden) startBrain();
+    return () => { stopBrain(); document.removeEventListener('visibilitychange', onVis); };
   }, []);
 
   // Maps: entity_id → [recs] and entity_id → [insights]
