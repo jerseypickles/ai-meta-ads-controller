@@ -5114,7 +5114,13 @@ a:hover {
   50% { opacity: 0.5; box-shadow: 0 0 12px rgba(59, 130, 246, 0.6); }
 }
 
-/* ═══ Follow-up Cards ═══ */
+/* ═══ Follow-up Cards — Grouped by Ad Set ═══ */
+
+.followup-grouped-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 
 .followup-pending-list {
   display: flex;
@@ -5122,22 +5128,66 @@ a:hover {
   gap: 12px;
 }
 
-.followup-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 16px;
+/* Entity group container */
+.followup-entity-group {
   background: var(--bg-tertiary);
   border-radius: var(--radius-md);
   border: 1px solid var(--border-color);
+  overflow: hidden;
+}
+
+.followup-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  background: rgba(59, 130, 246, 0.06);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.followup-group-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.followup-group-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--blue-primary);
+  background: rgba(59, 130, 246, 0.1);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.followup-group-items {
+  display: flex;
+  flex-direction: column;
+}
+
+.followup-group-items > .followup-card + .followup-card {
+  border-top: 1px solid var(--border-color);
+}
+
+/* Card base */
+.followup-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  background: var(--bg-tertiary);
   border-left: 3px solid var(--blue-primary);
   transition: all 0.2s ease;
   position: relative;
 }
 
+/* When card is the only item (no group wrapper), add its own border-radius */
+.followup-entity-group:has(> .followup-group-items > .followup-card:only-child) .followup-card {
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+}
+
 .followup-card:hover {
-  border-color: rgba(59, 130, 246, 0.3);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+  background: rgba(59, 130, 246, 0.03);
 }
 
 .followup-card.verdict-positive {
@@ -5152,7 +5202,149 @@ a:hover {
   border-left-color: var(--text-muted);
 }
 
-/* Card top bar */
+/* ── Compact row (always visible) ── */
+.followup-card-compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  gap: 10px;
+  min-height: 42px;
+  user-select: none;
+}
+
+.followup-card-compact:hover {
+  background: rgba(59, 130, 246, 0.04);
+}
+
+.followup-card-compact-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.followup-card-action-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.followup-card-action-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+
+.followup-card-entity-inline {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-left: 4px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-color);
+}
+
+.followup-card-compact-center {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Mini phase dots */
+.followup-phase-dots {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.followup-phase-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(107, 114, 128, 0.2);
+  border: 1.5px solid rgba(107, 114, 128, 0.3);
+}
+
+.followup-phase-dot.active {
+  background: var(--blue-primary);
+  border-color: var(--blue-primary);
+  box-shadow: 0 0 4px rgba(59, 130, 246, 0.4);
+}
+
+.followup-phase-dot.done {
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.followup-card-phase-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.followup-compact-verdict {
+  font-size: 12px;
+}
+
+.followup-compact-delta {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+
+.followup-compact-delta.positive {
+  color: var(--green);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.followup-compact-delta.negative {
+  color: var(--red);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.followup-card-compact-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.followup-card-chevron {
+  font-size: 11px;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+  display: inline-block;
+}
+
+.followup-card-chevron.open {
+  transform: rotate(90deg);
+}
+
+/* ── Expanded detail ── */
+.followup-card-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 14px 14px 14px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 12px;
+  animation: followup-expand 0.2s ease;
+}
+
+@keyframes followup-expand {
+  from { opacity: 0; max-height: 0; }
+  to { opacity: 1; max-height: 2000px; }
+}
+
+/* Legacy topbar hidden in new layout */
 .followup-card-topbar {
   display: flex;
   justify-content: space-between;
@@ -5186,8 +5378,8 @@ a:hover {
 
 .followup-card-exec {
   font-size: 12px;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -5533,17 +5725,25 @@ a:hover {
   font-style: italic;
 }
 
-/* ═══ Inline Rec (inside follow-up pending items) ═══ */
+/* ═══ Inline Rec (inside follow-up pending items) — Collapsible ═══ */
 
 .followup-inline-rec {
   margin-top: 8px;
-  padding: 10px 12px;
+  padding: 8px 12px;
   border-radius: var(--radius-sm);
   border-left: 3px solid #f59e0b;
   background: rgba(245, 158, 11, 0.06);
 }
 
 .followup-inline-rec-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0;
+  transition: margin 0.2s ease;
+}
+
+.followup-inline-rec.open .followup-inline-rec-header {
   margin-bottom: 6px;
 }
 
@@ -5553,6 +5753,17 @@ a:hover {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: #f59e0b;
+}
+
+.followup-inline-rec-chevron {
+  font-size: 10px;
+  color: #f59e0b;
+  transition: transform 0.2s ease;
+  display: inline-block;
+}
+
+.followup-inline-rec-chevron.open {
+  transform: rotate(90deg);
 }
 
 .followup-inline-rec-title {
