@@ -7206,6 +7206,19 @@ a:hover {
 .kv2-action-chip.improved .kv2-action-delta { color: #10b981; }
 .kv2-action-chip.worsened .kv2-action-delta { color: #ef4444; }
 
+.kv2-action-chip.shared {
+  border-style: dashed;
+  opacity: 0.85;
+}
+.kv2-action-shared {
+  font-size: 8px;
+  color: #f59e0b;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-left: 2px;
+}
+
 /* ── Hypothesis Zone ── */
 .kv2-hyp-list {
   display: flex;

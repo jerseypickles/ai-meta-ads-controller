@@ -984,10 +984,14 @@ router.get('/knowledge/deep', async (req, res) => {
       };
     }
 
-    // 5. Win/loss from follow-ups
-    const measured = followUpRecs.filter(r => r.status === 'measured');
+    // 5. Win/loss from follow-ups — use approved recs with completed impact measurement
+    const measured = followUpRecs.filter(r =>
+      r.status === 'approved' &&
+      r.follow_up?.impact_verdict &&
+      r.follow_up.impact_verdict !== 'pending'
+    );
     const winRate = measured.length > 0
-      ? Math.round((measured.filter(r => r.measurement?.verdict === 'positive').length / measured.length) * 100)
+      ? Math.round((measured.filter(r => r.follow_up.impact_verdict === 'positive').length / measured.length) * 100)
       : 0;
 
     res.json({
@@ -1049,7 +1053,7 @@ function _calculateIQ(memories, temporalPatterns, hypotheses, policy, measured) 
 
   // Win rate bonus: if measured > 5 and win > 60%, +5-10
   if (measured.length >= 5) {
-    const wr = measured.filter(r => r.measurement?.verdict === 'positive').length / measured.length;
+    const wr = measured.filter(r => r.follow_up?.impact_verdict === 'positive').length / measured.length;
     score += Math.min(10, Math.round(wr * 15));
   }
 

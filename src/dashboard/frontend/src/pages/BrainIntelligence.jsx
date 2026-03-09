@@ -2180,11 +2180,16 @@ function KnowledgePanel({ formatTime }) {
                   {entity.action_history.slice(-5).map((a, j) => {
                     const acfg = ACTION_TYPE_CONFIG[a.action_type] || { icon: '', label: a.action_type };
                     return (
-                      <span key={j} className={`kv2-action-chip ${a.result}`}>
+                      <span key={j} className={`kv2-action-chip ${a.result} ${a.attribution === 'shared' ? 'shared' : ''}`}>
                         {acfg.icon} {acfg.label}
                         {a.roas_delta_pct !== 0 && (
                           <span className="kv2-action-delta">
                             {a.roas_delta_pct > 0 ? '+' : ''}{Math.round(a.roas_delta_pct)}%
+                          </span>
+                        )}
+                        {a.attribution === 'shared' && (
+                          <span className="kv2-action-shared" title={`Compartido con: ${(a.concurrent_actions || []).join(', ')}`}>
+                            shared
                           </span>
                         )}
                       </span>
