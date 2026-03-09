@@ -1465,10 +1465,15 @@ Responde en español, con datos concretos (nombres, números). Causa raíz > sí
         'follow_up.current_phase': { $in: ['awaiting_day_3', 'awaiting_day_7', 'awaiting_day_14'] }
       }).lean();
 
-      // 3. Construir prompt con datos 7d estables + contexto de follow-ups + temporal patterns
+      // 2.8. Cargar lecciones aprendidas de seguimientos completados (Fix 1 — Learning Loop)
+      const recentLessons = await BrainRecommendation.find({
+        'follow_up.ai_analysis.lesson_learned': { $exists: true, $ne: '' }
+      }).sort({ updated_at: -1 }).limit(15).lean().catch(() => []);
+
+      // 3. Construir prompt con datos 7d estables + contexto de follow-ups + temporal patterns + lessons
       const prompt = this._buildRecommendationPrompt(
         adsetSnapshots, accountOverview, recentActions,
-        memoryMap, recentInsights, previousRecs, decidedRecs, diagnostics, activeFollowUps, temporalPatterns
+        memoryMap, recentInsights, previousRecs, decidedRecs, diagnostics, activeFollowUps, temporalPatterns, recentLessons
       );
 
       // 4. Llamar a Claude para recomendaciones
@@ -1659,7 +1664,7 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
   /**
    * Construye prompt para recomendaciones con datos estables 7d.
    */
-  _buildRecommendationPrompt(snapshots, accountOverview, recentActions, memoryMap, recentInsights, previousRecs, decidedRecs = [], diagnostics = {}, activeFollowUps = [], temporalPatterns = []) {
+  _buildRecommendationPrompt(snapshots, accountOverview, recentActions, memoryMap, recentInsights, previousRecs, decidedRecs = [], diagnostics = {}, activeFollowUps = [], temporalPatterns = [], recentLessons = []) {
     let prompt = `## DATOS DE CUENTA (7 DÍAS)\n`;
     prompt += `ROAS 7d: ${accountOverview.roas_7d?.toFixed(2)}x | Target: ${kpiTargets.roas_target}x | Mínimo: ${kpiTargets.roas_minimum}x\n`;
     prompt += `ROAS 3d: ${accountOverview.roas_3d?.toFixed(2)}x\n`;
@@ -1720,7 +1725,11 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
           const daysAgo = Math.round((Date.now() - new Date(h.executed_at).getTime()) / 86400000);
           const sign = h.roas_delta_pct > 0 ? '+' : '';
           const emoji = h.result === 'improved' ? '✓' : h.result === 'worsened' ? '✗' : '—';
-          return `${emoji}${h.action_type}(${sign}${h.roas_delta_pct.toFixed(0)}% ROAS, ${daysAgo}d ago)`;
+          // Fix 3: show shared attribution when concurrent actions existed
+          const sharedTag = h.attribution === 'shared' && h.concurrent_actions?.length > 0
+            ? `, shared w/ ${h.concurrent_actions.join('+')}`
+            : '';
+          return `${emoji}${h.action_type}(${sign}${h.roas_delta_pct.toFixed(0)}% ROAS, ${daysAgo}d ago${sharedTag})`;
         }).join(' | ');
         prompt += `  Historial: ${historyStr}\n`;
       }
@@ -1811,6 +1820,19 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
         prompt += `  ${isToday ? '→ ' : '  '}${dayNames[p.pattern_key] || p.pattern_key}: ROAS ${m.avg_roas.toFixed(2)}x, CPA $${m.avg_cpa.toFixed(0)}, CTR ${m.avg_ctr.toFixed(2)}% (${m.sample_count} muestras)${isToday ? ' ← HOY' : ''}\n`;
       }
       prompt += `INSTRUCCIÓN TEMPORAL: Si el rendimiento actual está dentro del rango normal para hoy (${dayNames[todayKey] || todayKey}), NO es una anomalía. Solo actúa si la desviación vs el patrón del día es significativa (>20%).\n\n`;
+    }
+
+    // Lecciones aprendidas de seguimientos completados (Fix 1 — Learning Loop)
+    if (recentLessons.length > 0) {
+      prompt += `## LECCIONES APRENDIDAS (de seguimientos completados)\n`;
+      for (const lesson of recentLessons) {
+        const ai = lesson.follow_up?.ai_analysis || {};
+        const verdict = lesson.follow_up?.impact_verdict || 'sin medir';
+        const entityName = lesson.entity?.entity_name || 'N/A';
+        const daysAgo = lesson.updated_at ? Math.round((Date.now() - new Date(lesson.updated_at).getTime()) / 86400000) : '?';
+        prompt += `- [${lesson.action_type}/${verdict}] "${ai.lesson_learned}" (${entityName}, hace ${daysAgo}d)\n`;
+      }
+      prompt += `INSTRUCCIÓN: Aplica estas lecciones. No repitas errores documentados. Prioriza patrones que funcionaron.\n\n`;
     }
 
     prompt += `Genera recomendaciones accionables basándote en los datos 7d. Si no hay acciones claras que tomar, devuelve un array vacío [].
@@ -2062,20 +2084,31 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
             if (mem?.trends?.roas_direction === 'declining') contextParts.push('declining_roas');
             if (mem?.trends?.roas_direction === 'improving') contextParts.push('improving_roas');
 
+            // Fix 3 — Learning Loop: detect concurrent actions on same entity
+            const concurrentForHistory = approvedRecs.filter(other =>
+              other._id.toString() !== rec._id.toString() &&
+              other.entity?.entity_id === rec.entity.entity_id &&
+              other.status === 'approved'
+            );
+            const concurrentActionTypes = concurrentForHistory.map(o => o.action_type);
+            const attribution = concurrentActionTypes.length > 0 ? 'shared' : 'sole';
+
             const historyEntry = {
               action_type: rec.action_type,
               executed_at: rec.decided_at || new Date(),
               result: verdict,
               roas_delta_pct: deltas.roas_pct || 0,
               cpa_delta_pct: deltas.cpa_pct || 0,
-              context: contextParts.join(',') || 'normal'
+              context: contextParts.join(',') || 'normal',
+              concurrent_actions: concurrentActionTypes,
+              attribution
             };
 
             await BrainMemory.findOneAndUpdate(
               { entity_id: rec.entity.entity_id },
               { $push: { action_history: { $each: [historyEntry], $slice: -20 } } }
             );
-            logger.debug(`[FOLLOW-UP] Action history recorded: ${rec.action_type} → ${verdict} on ${rec.entity.entity_name}`);
+            logger.debug(`[FOLLOW-UP] Action history recorded: ${rec.action_type} → ${verdict} (${attribution}) on ${rec.entity.entity_name}`);
           } catch (histErr) {
             logger.warn(`[FOLLOW-UP] Error writing action history (non-fatal): ${histErr.message}`);
           }
@@ -2088,7 +2121,13 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
 
         // Run AI analysis on day_14 (final phase)
         if (targetPhase === 'day_14') {
-          this._runAIImpactAnalysis(rec, snap, deltas, verdict).catch(err =>
+          // Fix 2 — Learning Loop: find concurrent actions on the same entity
+          const concurrentRecs = approvedRecs.filter(other =>
+            other._id.toString() !== rec._id.toString() &&
+            other.entity?.entity_id === rec.entity?.entity_id &&
+            other.status === 'approved'
+          );
+          this._runAIImpactAnalysis(rec, snap, deltas, verdict, concurrentRecs).catch(err =>
             logger.warn(`[FOLLOW-UP] AI analysis error (non-fatal): ${err.message}`)
           );
         }
@@ -2317,10 +2356,24 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
    * Claude analyzes the before/after data and explains WHY the action
    * worked or didn't, what lesson to learn, and confidence adjustment.
    */
-  async _runAIImpactAnalysis(rec, snap, deltas, verdict) {
+  async _runAIImpactAnalysis(rec, snap, deltas, verdict, concurrentRecs = []) {
     const prev = rec.follow_up?.metrics_at_recommendation || {};
     const phases = rec.follow_up?.phases || {};
     const m7d = snap.metrics?.last_7d || {};
+
+    // Fix 2 — Learning Loop: build concurrent actions context
+    let concurrentSection = '';
+    if (concurrentRecs.length > 0) {
+      const concurrentLines = concurrentRecs.map(other => {
+        const otherDaysAgo = other.decided_at ? Math.round((Date.now() - new Date(other.decided_at).getTime()) / 86400000) : '?';
+        const otherPhase = other.follow_up?.current_phase || 'complete';
+        const otherDay3 = other.follow_up?.phases?.day_3;
+        let otherInfo = `fase: ${otherPhase}`;
+        if (otherDay3?.measured) otherInfo += `, día 3: ${otherDay3.verdict || 'sin veredicto'}`;
+        return `- "${other.action_type}" aprobada hace ${otherDaysAgo}d, ${otherInfo}`;
+      }).join('\n');
+      concurrentSection = `\nACCIONES CONCURRENTES EN ESTA ENTIDAD:\n${concurrentLines}\nIMPORTANTE: El impacto medido puede estar compartido con estas acciones concurrentes. Considera esto en tu análisis.\n`;
+    }
 
     const prompt = `Analiza el impacto de esta recomendación de ads que fue aprobada hace 14 días.
 
@@ -2336,7 +2389,7 @@ EVOLUCIÓN POR FASES:
 ${phases.day_3?.measured ? `Día 3: ROAS ${(phases.day_3.deltas?.roas_pct||0) > 0 ? '+' : ''}${phases.day_3.deltas?.roas_pct||0}%, CPA ${(phases.day_3.deltas?.cpa_pct||0) > 0 ? '+' : ''}${phases.day_3.deltas?.cpa_pct||0}%, Veredicto: ${phases.day_3.verdict}` : 'Día 3: No medido'}
 ${phases.day_7?.measured ? `Día 7: ROAS ${(phases.day_7.deltas?.roas_pct||0) > 0 ? '+' : ''}${phases.day_7.deltas?.roas_pct||0}%, CPA ${(phases.day_7.deltas?.cpa_pct||0) > 0 ? '+' : ''}${phases.day_7.deltas?.cpa_pct||0}%, Veredicto: ${phases.day_7.verdict}` : 'Día 7: No medido'}
 Día 14: ROAS ${deltas.roas_pct > 0 ? '+' : ''}${deltas.roas_pct}%, CPA ${deltas.cpa_pct > 0 ? '+' : ''}${deltas.cpa_pct}%, CTR ${deltas.ctr_pct > 0 ? '+' : ''}${deltas.ctr_pct}%, Freq ${deltas.frequency_pct > 0 ? '+' : ''}${deltas.frequency_pct}%, Compras ${deltas.purchases_delta >= 0 ? '+' : ''}${deltas.purchases_delta}
-
+${concurrentSection}
 MÉTRICAS ACTUALES (14d después):
 ROAS=${(m7d.roas||0).toFixed(2)}x, CPA=$${(m7d.cpa||0).toFixed(2)}, CTR=${(m7d.ctr||0).toFixed(2)}%, Freq=${(m7d.frequency||0).toFixed(1)}, Compras=${m7d.purchases||0}
 

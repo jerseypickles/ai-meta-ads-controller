@@ -108,7 +108,8 @@ const actionLogSchema = new mongoose.Schema({
   // Trazabilidad de aprendizaje de la politica unificada
   learned_at: { type: Date, default: null, index: true },
   learned_reward: { type: Number, default: null },
-  learned_bucket: { type: String, default: null }
+  learned_bucket: { type: String, default: null },
+  learned_overlap_count: { type: Number, default: 0 }  // Fix 4: concurrent actions count for attribution
 });
 
 // Índice para buscar acciones recientes por entidad

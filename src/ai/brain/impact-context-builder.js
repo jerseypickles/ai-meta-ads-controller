@@ -26,6 +26,10 @@ class ImpactContextBuilder {
     const creativePerformance = this._extractCreativePerformance(processed, creativeAssets);
     const pendingEntities = this._extractPendingEntities(pending, trackingRecs);
 
+    // Fix 5 — Learning Loop: compute weighted success rate to avoid double counting
+    const weightedImproved = processed.reduce((sum, a) => sum + (a.result === 'improved' ? (a.weight || 1) : 0), 0);
+    const totalWeight = processed.reduce((sum, a) => sum + (a.weight || 1), 0);
+
     const summary = {
       total_measured: processed.length,
       improved: processed.filter(a => a.result === 'improved').length,
@@ -34,12 +38,9 @@ class ImpactContextBuilder {
       avg_roas_delta: processed.length > 0
         ? Math.round(processed.reduce((sum, a) => sum + a.delta_roas_pct, 0) / processed.length * 100) / 100
         : 0,
-      success_rate_pct: 0,
+      success_rate_pct: totalWeight > 0 ? Math.round(weightedImproved / totalWeight * 100) : 0,
       pending_count: pending.length
     };
-    summary.success_rate_pct = summary.total_measured > 0
-      ? Math.round(summary.improved / summary.total_measured * 100)
-      : 0;
 
     const feedbackText = this._buildFeedbackText(processed, summary, patterns, creativePerformance);
     const pendingText = this._buildPendingText(pending, pendingEntities, trackingRecs);
@@ -109,6 +110,14 @@ class ImpactContextBuilder {
 
       const checkpoint = (a.impact_7d_measured && a.metrics_after_7d?.roas_7d > 0) ? '7d' : '3d';
 
+      // Fix 5 — Learning Loop: weight by concurrent actions to avoid double counting
+      const concurrent = actions.filter(other =>
+        other._id.toString() !== a._id.toString() &&
+        other.entity_id === a.entity_id &&
+        Math.abs(new Date(other.executed_at).getTime() - new Date(a.executed_at).getTime()) < 7 * 86400000
+      );
+      const weight = concurrent.length > 0 ? 1 / (1 + concurrent.length) : 1.0;
+
       return {
         action: a.action,
         entity_id: a.entity_id,
@@ -126,7 +135,8 @@ class ImpactContextBuilder {
         result,
         checkpoint,
         agent_type: a.agent_type,
-        creative_asset_id: a.creative_asset_id || null
+        creative_asset_id: a.creative_asset_id || null,
+        weight
       };
     });
   }
@@ -134,21 +144,28 @@ class ImpactContextBuilder {
   _extractPatterns(processed) {
     const byAction = {};
     for (const a of processed) {
+      const w = a.weight || 1;
       if (!byAction[a.action]) {
-        byAction[a.action] = { total: 0, improved: 0, worsened: 0, deltas: [] };
+        byAction[a.action] = { total: 0, improved: 0, worsened: 0, deltas: [], weighted_improved: 0, total_weight: 0 };
       }
       byAction[a.action].total++;
       if (a.result === 'improved') byAction[a.action].improved++;
       if (a.result === 'worsened') byAction[a.action].worsened++;
       byAction[a.action].deltas.push(a.delta_roas_pct);
+      // Fix 5 — Learning Loop: weighted counters for accurate success_rate
+      byAction[a.action].weighted_improved += (a.result === 'improved' ? w : 0);
+      byAction[a.action].total_weight += w;
     }
 
     for (const [, stats] of Object.entries(byAction)) {
-      stats.success_rate = stats.total > 0 ? Math.round(stats.improved / stats.total * 100) : 0;
+      // Fix 5: use weighted success rate to avoid double counting overlapping actions
+      stats.success_rate = stats.total_weight > 0 ? Math.round(stats.weighted_improved / stats.total_weight * 100) : 0;
       stats.avg_delta = stats.deltas.length > 0
         ? Math.round(stats.deltas.reduce((s, d) => s + d, 0) / stats.deltas.length * 100) / 100
         : 0;
       delete stats.deltas;
+      delete stats.weighted_improved;
+      delete stats.total_weight;
     }
 
     return byAction;

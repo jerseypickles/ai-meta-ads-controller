@@ -29,9 +29,30 @@ class PolicyLearner {
     let processed = 0;
 
     for (const action of pending) {
-      const reward = this._calculateReward(action);
+      let reward = this._calculateReward(action);
       if (reward == null) {
         continue;
+      }
+
+      // Fix 4 — Learning Loop: detect concurrent actions and discount reward
+      let overlapCount = 0;
+      if (action.entity_id && action.executed_at) {
+        try {
+          const execTime = new Date(action.executed_at).getTime();
+          overlapCount = await ActionLog.countDocuments({
+            entity_id: action.entity_id,
+            _id: { $ne: action._id },
+            success: true,
+            executed_at: {
+              $gte: new Date(execTime - 7 * 86400000),
+              $lte: new Date(execTime + 7 * 86400000)
+            }
+          });
+        } catch { /* non-fatal — no discount applied */ }
+      }
+      if (overlapCount > 0) {
+        const overlapDiscount = 1 / (1 + overlapCount);
+        reward *= overlapDiscount;
       }
 
       const execDate = action.executed_at ? new Date(action.executed_at) : new Date();
@@ -54,7 +75,8 @@ class PolicyLearner {
                 learned_7d_at: now,
                 learned_7d_reward: reward,
                 learned_reward: reward, // Update to 7d-based reward
-                learned_bucket: bucket
+                learned_bucket: bucket,
+                learned_overlap_count: overlapCount
               }
             }
           }
@@ -69,7 +91,8 @@ class PolicyLearner {
               $set: {
                 learned_at: now,
                 learned_reward: reward,
-                learned_bucket: bucket
+                learned_bucket: bucket,
+                learned_overlap_count: overlapCount
               }
             }
           }

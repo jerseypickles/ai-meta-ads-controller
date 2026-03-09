@@ -49,6 +49,8 @@ const brainMemorySchema = new mongoose.Schema({
     roas_delta_pct: { type: Number, default: 0 },    // +12.5 o -8.3
     cpa_delta_pct: { type: Number, default: 0 },
     context: { type: String, default: '' },           // "high_frequency", "declining_roas", etc.
+    concurrent_actions: [{ type: String }],           // Fix 3: e.g. ['scale_up', 'creative_refresh']
+    attribution: { type: String, enum: ['sole', 'shared'], default: 'sole' }, // Fix 3: was this result shared?
     _id: false
   }],
 
