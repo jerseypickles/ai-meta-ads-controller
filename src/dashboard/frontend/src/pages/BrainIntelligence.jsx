@@ -2123,6 +2123,25 @@ function KnowledgePanel({ formatTime }) {
   const iq = data.iq_score || 10;
   const iqColor = iq >= 80 ? '#10b981' : iq >= 60 ? '#6366f1' : iq >= 40 ? '#3b82f6' : iq >= 25 ? '#f59e0b' : '#ef4444';
   const iqLabel = iq >= 80 ? 'Experto' : iq >= 60 ? 'Competente' : iq >= 40 ? 'Aprendiendo' : iq >= 25 ? 'Novato' : 'Inicial';
+  const breakdown = data.iq_breakdown || [];
+
+  // Zone preview helpers
+  const hypConfirmed = (data.hypotheses || []).filter(h => h.status === 'confirmed').length;
+  const hypActive = (data.hypotheses || []).filter(h => h.status === 'active').length;
+  const hypRejected = (data.hypotheses || []).filter(h => h.status === 'rejected').length;
+  const temporalPatterns = data.temporal_patterns || [];
+  const todayPattern = temporalPatterns.find(t => t.is_today);
+  const bestDay = temporalPatterns.filter(t => t.sample_count > 0).sort((a, b) => (b.metrics?.avg_roas || 0) - (a.metrics?.avg_roas || 0))[0];
+  const dayLabelsMap = { sunday: 'Dom', monday: 'Lun', tuesday: 'Mar', wednesday: 'Mie', thursday: 'Jue', friday: 'Vie', saturday: 'Sab' };
+  const topPolicyAction = (data.policy?.top_actions || [])[0];
+  const topPolicyCfg = topPolicyAction ? (ACTION_TYPE_CONFIG[topPolicyAction.action] || ACTION_TYPE_CONFIG.other) : null;
+
+  const zones = [
+    { key: 'memory', icon: '\uD83E\uDDE0', label: 'Memoria', count: data.entities_with_history, color: '#3b82f6' },
+    { key: 'hypothesis', icon: '\uD83E\uDD14', label: 'Hipotesis', count: data.hypotheses?.length || 0, color: '#a855f7' },
+    { key: 'temporal', icon: '\uD83D\uDCC5', label: 'Temporal', count: temporalPatterns.filter(t => t.sample_count > 0).length, color: '#f97316' },
+    { key: 'policy', icon: '\uD83C\uDFAF', label: 'Decisiones', count: data.policy?.total_samples || 0, color: '#10b981' }
+  ];
 
   return (
     <div className="knowledge-panel knowledge-panel-v2">
@@ -2162,14 +2181,61 @@ function KnowledgePanel({ formatTime }) {
         </div>
       </div>
 
-      {/* ── Zone Selector ── */}
+      {/* ── IQ Breakdown Bar ── */}
+      {breakdown.length > 0 && (
+        <div className="kv2-iq-breakdown">
+          <div className="kv2-iq-breakdown-bar">
+            {breakdown.map(seg => (
+              <div
+                key={seg.key}
+                className="kv2-iq-breakdown-seg"
+                style={{
+                  width: `${(seg.max / 90) * 100}%`,
+                  '--seg-color': seg.color
+                }}
+                title={`${seg.label}: ${seg.points}/${seg.max}`}
+              >
+                <div
+                  className="kv2-iq-breakdown-fill"
+                  style={{ width: seg.max > 0 ? `${(seg.points / seg.max) * 100}%` : '0%', background: seg.color }}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="kv2-iq-breakdown-labels">
+            {breakdown.map(seg => (
+              <div key={seg.key} className="kv2-iq-breakdown-item" style={{ width: `${(seg.max / 90) * 100}%` }}>
+                <span className="kv2-iq-breakdown-dot" style={{ background: seg.color }} />
+                <span className="kv2-iq-breakdown-name">{seg.label}</span>
+                <span className="kv2-iq-breakdown-pts" style={{ color: seg.points > 0 ? seg.color : 'var(--text-muted)' }}>
+                  {seg.points}/{seg.max}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Cycle Memory Card (promoted from footer) ── */}
+      {data.last_cycle && (
+        <div className="kv2-cycle-card">
+          <div className="kv2-cycle-card-header">
+            <span className="kv2-cycle-card-icon">{'\uD83D\uDD04'}</span>
+            <span className="kv2-cycle-card-title">Ultimo Ciclo del Brain</span>
+            <span className="kv2-cycle-card-time">
+              {data.last_cycle.created_at && formatTime(data.last_cycle.created_at)}
+            </span>
+          </div>
+          <div className="kv2-cycle-card-body">
+            <span className="kv2-cycle-card-assess">{data.last_cycle.account_assessment || 'N/A'}</span>
+            <span className="kv2-cycle-card-meta">{data.last_cycle.conclusions_count} conclusiones</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Zone Selector with Previews ── */}
       <div className="kv2-zone-tabs">
-        {[
-          { key: 'memory', icon: '\uD83E\uDDE0', label: 'Memoria', count: data.entities_with_history, color: '#3b82f6' },
-          { key: 'hypothesis', icon: '\uD83E\uDD14', label: 'Hipotesis', count: data.hypotheses?.length || 0, color: '#a855f7' },
-          { key: 'temporal', icon: '\uD83D\uDCC5', label: 'Temporal', count: data.temporal_patterns?.filter(t => t.sample_count > 0).length || 0, color: '#f97316' },
-          { key: 'policy', icon: '\uD83C\uDFAF', label: 'Decisiones', count: data.policy?.total_samples || 0, color: '#10b981' }
-        ].map(z => (
+        {zones.map(z => (
           <button
             key={z.key}
             className={`kv2-zone-tab ${activeZone === z.key ? 'active' : ''}`}
@@ -2179,6 +2245,34 @@ function KnowledgePanel({ formatTime }) {
             <span className="kv2-zone-icon">{z.icon}</span>
             <span className="kv2-zone-label">{z.label}</span>
             <span className="kv2-zone-count">{z.count}</span>
+            {/* ── Zone Previews ── */}
+            <div className="kv2-zone-preview">
+              {z.key === 'memory' && data.total_action_outcomes > 0 && (
+                <div className="kv2-preview-bar">
+                  <div className="kv2-preview-seg" style={{ width: `${(data.action_outcomes.improved / data.total_action_outcomes) * 100}%`, background: '#10b981' }} />
+                  <div className="kv2-preview-seg" style={{ width: `${(data.action_outcomes.neutral / data.total_action_outcomes) * 100}%`, background: '#6b7280' }} />
+                  <div className="kv2-preview-seg" style={{ width: `${(data.action_outcomes.worsened / data.total_action_outcomes) * 100}%`, background: '#ef4444' }} />
+                </div>
+              )}
+              {z.key === 'hypothesis' && (data.hypotheses?.length || 0) > 0 && (
+                <span className="kv2-preview-text">
+                  {hypConfirmed > 0 && <span style={{ color: '#10b981' }}>{hypConfirmed} ok</span>}
+                  {hypActive > 0 && <span style={{ color: '#a855f7' }}>{hypActive} act</span>}
+                  {hypRejected > 0 && <span style={{ color: '#ef4444' }}>{hypRejected} rej</span>}
+                </span>
+              )}
+              {z.key === 'temporal' && todayPattern && (
+                <span className="kv2-preview-text">
+                  <span>Hoy {todayPattern.metrics?.avg_roas?.toFixed(1) || '-'}x</span>
+                  {bestDay && <span style={{ color: '#f97316' }}>Mejor: {dayLabelsMap[bestDay.day]}</span>}
+                </span>
+              )}
+              {z.key === 'policy' && topPolicyAction && (
+                <span className="kv2-preview-text">
+                  <span>{topPolicyCfg.icon} {topPolicyAction.success_rate}%</span>
+                </span>
+              )}
+            </div>
           </button>
         ))}
       </div>
@@ -2242,7 +2336,10 @@ function KnowledgePanel({ formatTime }) {
               </div>
             ))}
             {(!data.entity_memories || data.entity_memories.length === 0) && (
-              <div className="kv2-empty-zone">Aun no hay entidades con historial. Se llenara cuando se midan acciones aprobadas.</div>
+              <div className="kv2-empty-zone">
+                <div className="kv2-empty-icon">{'\uD83E\uDDE0'}</div>
+                <div className="kv2-empty-msg">Aprueba recomendaciones y espera la medicion de impacto (dia 3-14) para generar historial.</div>
+              </div>
             )}
           </div>
         </div>
@@ -2271,7 +2368,10 @@ function KnowledgePanel({ formatTime }) {
               </div>
             ))}
             {(!data.hypotheses || data.hypotheses.length === 0) && (
-              <div className="kv2-empty-zone">El Brain aun no ha generado hipotesis. Se crean al final de cada ciclo de analisis.</div>
+              <div className="kv2-empty-zone">
+                <div className="kv2-empty-icon">{'\uD83E\uDD14'}</div>
+                <div className="kv2-empty-msg">Se generan automaticamente al final de cada ciclo del Brain (4x/dia).</div>
+              </div>
             )}
           </div>
         </div>
@@ -2286,12 +2386,12 @@ function KnowledgePanel({ formatTime }) {
           <div className="kv2-temporal-grid">
             {['sunday','monday','tuesday','wednesday','thursday','friday','saturday'].map((day, i) => {
               const dayLabels = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
-              const tp = (data.temporal_patterns || []).find(t => t.day === day);
+              const tp = temporalPatterns.find(t => t.day === day);
               const samples = tp?.sample_count || 0;
               const isToday = tp?.is_today;
               const roas = tp?.metrics?.avg_roas || 0;
               const cpa = tp?.metrics?.avg_cpa || 0;
-              const maxRoas = Math.max(...(data.temporal_patterns || []).map(t => t.metrics?.avg_roas || 0), 1);
+              const maxRoas = Math.max(...temporalPatterns.map(t => t.metrics?.avg_roas || 0), 1);
               return (
                 <div key={day} className={`kv2-temporal-card ${isToday ? 'today' : ''} ${samples === 0 ? 'empty' : ''}`}>
                   <div className="kv2-temporal-day">{dayLabels[i]}</div>
@@ -2338,20 +2438,12 @@ function KnowledgePanel({ formatTime }) {
               );
             })}
             {(!data.policy?.top_actions || data.policy.top_actions.length === 0) && (
-              <div className="kv2-empty-zone">Aun no hay datos de Thompson Sampling. Se llena cuando se miden acciones aprobadas.</div>
+              <div className="kv2-empty-zone">
+                <div className="kv2-empty-icon">{'\uD83C\uDFAF'}</div>
+                <div className="kv2-empty-msg">Se llena cuando acciones aprobadas completan su seguimiento de 14 dias.</div>
+              </div>
             )}
           </div>
-        </div>
-      )}
-
-      {/* ── Cycle Memory ── */}
-      {data.last_cycle && (
-        <div className="kv2-cycle-footer">
-          <span className="kv2-cycle-assess">{data.last_cycle.account_assessment || 'N/A'}</span>
-          <span className="kv2-cycle-meta">
-            Ultimo ciclo: {data.last_cycle.conclusions_count} conclusiones
-            {data.last_cycle.created_at && ` \u00B7 ${formatTime(data.last_cycle.created_at)}`}
-          </span>
         </div>
       )}
     </div>

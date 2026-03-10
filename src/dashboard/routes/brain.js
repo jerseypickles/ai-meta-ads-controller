@@ -1002,9 +1002,12 @@ router.get('/knowledge/deep', async (req, res) => {
       ? Math.round((measured.filter(r => r.follow_up.impact_verdict === 'positive').length / measured.length) * 100)
       : 0;
 
+    const iqResult = _calculateIQ(memories, temporalPatterns, hypotheses, policySummary, measured);
+
     res.json({
       // Summary stats
-      iq_score: _calculateIQ(memories, temporalPatterns, hypotheses, policySummary, measured),
+      iq_score: iqResult.score,
+      iq_breakdown: iqResult.breakdown,
       entities_tracked: memories.length,
       entities_with_history: entitiesWithHistory.length,
       total_action_outcomes: totalActions,
@@ -1039,28 +1042,25 @@ router.get('/knowledge/deep', async (req, res) => {
 function _calculateIQ(memories, temporalPatterns, hypotheses, policy, measured) {
   // IQ = conocimiento REAL, no acumulación de datos.
   // Para llegar a 80+ necesitas: muchas acciones medidas, buen win rate, hipótesis validadas.
-  let score = 10; // base mínimo — "existe"
+  const base = 10; // base mínimo — "existe"
 
   // ═══ EXPERIENCIA REAL (max 35pts) — el factor más importante ═══
-  // ¿Cuántas acciones se midieron con resultado?
   const measuredCount = measured.length;
-  // Escala: 0→0, 5→8, 10→14, 20→22, 40→30, 80+→35
-  score += Math.min(35, Math.round(Math.sqrt(measuredCount) * 5));
+  const experiencePts = Math.min(35, Math.round(Math.sqrt(measuredCount) * 5));
 
   // ═══ WIN RATE (max 25pts) — ¿sus decisiones funcionan? ═══
+  let winRatePts = 0;
   if (measuredCount >= 3) {
     const wins = measured.filter(r => r.follow_up?.impact_verdict === 'positive').length;
     const wr = wins / measuredCount;
-    // Solo da puntos significativos con win rate >50%
-    // wr=0.4→2pts, wr=0.6→10pts, wr=0.7→15pts, wr=0.8→20pts, wr=0.9→25pts
     if (wr > 0.3) {
-      score += Math.min(25, Math.round(Math.pow((wr - 0.3) / 0.7, 1.5) * 25));
+      winRatePts = Math.min(25, Math.round(Math.pow((wr - 0.3) / 0.7, 1.5) * 25));
     }
   }
 
   // ═══ HIPÓTESIS VALIDADAS (max 12pts) — ¿probó ideas y aprendió? ═══
   const validated = hypotheses.filter(h => h.status === 'confirmed' || h.status === 'rejected').length;
-  score += Math.min(12, validated * 3);
+  const hypothesesPts = Math.min(12, validated * 3);
 
   // ═══ DIVERSIDAD DE ACCIONES (max 8pts) — ¿sabe hacer más que una cosa? ═══
   const actionTypes = new Set();
@@ -1069,17 +1069,29 @@ function _calculateIQ(memories, temporalPatterns, hypotheses, policy, measured) 
       for (const a of m.action_history) actionTypes.add(a.action_type);
     }
   }
-  score += Math.min(8, actionTypes.size * 2);
+  const diversityPts = Math.min(8, actionTypes.size * 2);
 
   // ═══ PATRONES TEMPORALES (max 5pts) — data pasiva, bajo peso ═══
   const matureDays = temporalPatterns.filter(t => (t.metrics?.sample_count || 0) >= 4).length;
-  score += Math.min(5, Math.round(matureDays * 0.7));
+  const temporalPts = Math.min(5, Math.round(matureDays * 0.7));
 
   // ═══ THOMPSON SAMPLING DEPTH (max 5pts) — ¿tiene contextos explorados? ═══
   const samples = policy.total_samples || 0;
-  if (samples > 0) score += Math.min(5, Math.round(Math.log2(samples + 1)));
+  const thompsonPts = samples > 0 ? Math.min(5, Math.round(Math.log2(samples + 1))) : 0;
 
-  return Math.min(100, Math.round(score));
+  const totalScore = Math.min(100, Math.round(base + experiencePts + winRatePts + hypothesesPts + diversityPts + temporalPts + thompsonPts));
+
+  return {
+    score: totalScore,
+    breakdown: [
+      { key: 'experience', label: 'Experiencia', points: experiencePts, max: 35, color: '#3b82f6' },
+      { key: 'win_rate',   label: 'Win Rate',    points: winRatePts,    max: 25, color: '#10b981' },
+      { key: 'hypotheses', label: 'Hipotesis',   points: hypothesesPts, max: 12, color: '#a855f7' },
+      { key: 'diversity',  label: 'Diversidad',  points: diversityPts,  max: 8,  color: '#f59e0b' },
+      { key: 'temporal',   label: 'Temporal',    points: temporalPts,   max: 5,  color: '#f97316' },
+      { key: 'thompson',   label: 'Thompson',    points: thompsonPts,   max: 5,  color: '#06b6d4' }
+    ]
+  };
 }
 
 // ═══ CREATIVE / AD PERFORMANCE TRACKING ═══

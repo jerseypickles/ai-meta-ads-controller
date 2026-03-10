@@ -7597,6 +7597,176 @@ a:hover {
 }
 
 /* ── Cycle Footer ── */
+/* ── IQ Breakdown Bar ── */
+.kv2-iq-breakdown {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: var(--radius-md, 8px);
+  padding: 10px 14px;
+}
+
+.kv2-iq-breakdown-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.04);
+  gap: 1px;
+}
+
+.kv2-iq-breakdown-seg {
+  height: 100%;
+  background: rgba(255,255,255,0.03);
+  position: relative;
+  overflow: hidden;
+  transition: all 0.5s ease;
+}
+
+.kv2-iq-breakdown-seg:first-child { border-radius: 5px 0 0 5px; }
+.kv2-iq-breakdown-seg:last-child { border-radius: 0 5px 5px 0; }
+
+.kv2-iq-breakdown-fill {
+  height: 100%;
+  border-radius: inherit;
+  transition: width 0.8s ease;
+  min-width: 0;
+}
+
+.kv2-iq-breakdown-labels {
+  display: flex;
+  margin-top: 8px;
+  gap: 1px;
+}
+
+.kv2-iq-breakdown-item {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.kv2-iq-breakdown-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.kv2-iq-breakdown-name {
+  font-size: 9px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kv2-iq-breakdown-pts {
+  font-size: 9px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* ── Cycle Memory Card (promoted) ── */
+.kv2-cycle-card {
+  background: linear-gradient(135deg, rgba(99,102,241,0.06) 0%, rgba(16,185,129,0.04) 100%);
+  border: 1px solid rgba(99,102,241,0.15);
+  border-radius: var(--radius-md, 8px);
+  padding: 12px 14px;
+}
+
+.kv2-cycle-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.kv2-cycle-card-icon {
+  font-size: 14px;
+}
+
+.kv2-cycle-card-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex: 1;
+}
+
+.kv2-cycle-card-time {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.kv2-cycle-card-body {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.kv2-cycle-card-assess {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: capitalize;
+}
+
+.kv2-cycle-card-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.04);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+/* ── Zone Preview inside tabs ── */
+.kv2-zone-preview {
+  width: 100%;
+  min-height: 12px;
+  margin-top: 2px;
+}
+
+.kv2-preview-bar {
+  display: flex;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  width: 100%;
+  background: rgba(255,255,255,0.04);
+}
+
+.kv2-preview-seg {
+  height: 100%;
+  min-width: 0;
+  transition: width 0.5s ease;
+}
+
+.kv2-preview-text {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  font-size: 8px;
+  font-weight: 600;
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+
+/* ── Better Empty States ── */
+.kv2-empty-zone .kv2-empty-icon {
+  font-size: 24px;
+  margin-bottom: 8px;
+  opacity: 0.6;
+}
+
+.kv2-empty-zone .kv2-empty-msg {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  max-width: 320px;
+  margin: 0 auto;
+}
+
 .kv2-cycle-footer {
   display: flex;
   justify-content: space-between;
