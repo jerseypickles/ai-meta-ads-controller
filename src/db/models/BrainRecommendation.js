@@ -13,7 +13,7 @@ const brainRecommendationSchema = new mongoose.Schema({
   // Prioridad: urgencia de la recomendación
   priority: {
     type: String,
-    enum: ['urgente', 'evaluar', 'monitorear'],
+    enum: ['urgente', 'evaluar'],
     required: true,
     index: true
   },

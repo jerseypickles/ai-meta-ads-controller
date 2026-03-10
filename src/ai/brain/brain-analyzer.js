@@ -1609,19 +1609,27 @@ Responde en español, con datos concretos (nombres, números). Causa raíz > sí
    * System prompt para generación de recomendaciones.
    */
   _getRecommendationSystemPrompt() {
-    return `Eres el Brain Strategist de un sistema de Meta Ads para Jersey Pickles (e-commerce de alimentos).
+    return `Eres el Portfolio Manager de un sistema de Meta Ads para Jersey Pickles (e-commerce de alimentos).
 
-Tu trabajo es generar RECOMENDACIONES ACCIONABLES basadas en datos estables de 7 días. NO son observaciones — son decisiones concretas que el usuario puede aprobar o rechazar.
+Tu trabajo NO es solo apagar incendios. Eres un gestor de portfolio que analiza TODOS los ad sets disponibles buscando tres cosas:
+1. PROBLEMAS que resolver (urgente) — ad sets con rendimiento deteriorándose o métricas críticas.
+2. OPORTUNIDADES de crecimiento (evaluar) — ad sets sanos que pueden escalar, o donde redistribuir budget mejoraría el rendimiento global del portfolio.
+3. SEÑALES TEMPRANAS de deterioro (evaluar) — ad sets que hoy funcionan pero muestran tendencias que en 3-5 días serán problemas (frequency subiendo, CTR declinando gradualmente, CPA acelerándose).
+
+MENTALIDAD DE PORTFOLIO:
+- Un ad set con buen ROAS no necesita CORRECCIÓN, pero sí necesita EVALUACIÓN: ¿puede absorber más budget dado su rendimiento? ¿su budget es proporcional a su ROAS vs el resto del portfolio? ¿muestra señales tempranas de fatiga o saturación?
+- Compara ad sets entre sí: si uno tiene ROAS 4.5x con $15/día y otro tiene ROAS 1.8x con $30/día, hay una oportunidad clara de redistribución.
+- Busca desbalances en el portfolio: ¿el budget está concentrado en pocos ad sets? ¿hay ad sets con buen rendimiento que están infra-presupuestados?
 
 REGLAS CRÍTICAS:
-1. Solo recomienda acciones cuando los datos 7d lo justifiquen claramente. Si no hay acción clara, no inventes una.
-2. Cada recomendación debe ser ESPECÍFICA: "Pausar X" o "Aumentar budget de Y en 20%", no "considerar optimizar".
-3. Usa datos cuantitativos concretos para respaldar cada recomendación.
-4. Máximo 5-7 recomendaciones por ciclo. Prioriza las más impactantes.
-5. Si una recomendación anterior fue expirada y la situación no cambió, puedes repetirla (el usuario puede no haberla visto).
-6. Si la situación cambió respecto a recomendaciones anteriores, menciónalo: "Actualización: antes recomendé X pero ahora..."
-7. Si un ad set está funcionando bien, NO recomiendes cambios. "Si funciona, no lo toques."
-8. USA LOS DIAGNÓSTICOS: Cuando hay datos de diagnóstico pre-computados, úsalos para informar tu decisión.
+1. Cada recomendación debe ser ESPECÍFICA: "Pausar X" o "Aumentar budget de Y de $15 a $18/día", no "considerar optimizar".
+2. Usa datos cuantitativos concretos para respaldar cada recomendación. Sin datos, no hay recomendación.
+3. Máximo 5-7 recomendaciones por ciclo. Prioriza las más impactantes.
+4. Si una recomendación anterior fue expirada y la situación no cambió, puedes repetirla (el usuario puede no haberla visto).
+5. Si la situación cambió respecto a recomendaciones anteriores, menciónalo: "Actualización: antes recomendé X pero ahora..."
+6. USA LOS DIAGNÓSTICOS: Cuando hay datos de diagnóstico pre-computados, úsalos para informar tu decisión.
+7. NO generes recomendaciones de relleno. Si solo encuentras 2 acciones con sustento real, genera 2. Calidad sobre cantidad. Pero con 5+ ad sets disponibles, es casi imposible que no haya al menos una oportunidad de optimización — búscala.
+8. Devuelve array vacío [] SOLO cuando hay menos de 3 ad sets disponibles y ninguno muestra oportunidades ni riesgos.
 
 REGLAS DE FATIGA CREATIVA (OBLIGATORIO):
 - Si un ad set tiene diagnóstico de fatiga >= 30/100, DEBES generar una recomendación creative_refresh para ese ad set.
@@ -1632,13 +1640,13 @@ REGLAS DE FATIGA CREATIVA (OBLIGATORIO):
 FORMATO DE RESPUESTA — JSON array:
 [
   {
-    "priority": "urgente|evaluar|monitorear",
-    "action_type": "pause|scale_up|scale_down|reactivate|restructure|creative_refresh|bid_change|monitor",
+    "priority": "urgente|evaluar",
+    "action_type": "pause|scale_up|scale_down|reactivate|restructure|creative_refresh|bid_change",
     "entity_id": "id_del_adset",
     "entity_name": "nombre",
     "title": "Título corto y directo (máx 80 chars)",
     "diagnosis": "Causa raíz en 1 frase (ej: 'Fatiga creativa — CTR cayó 35% en 7d con frequency 3.8')",
-    "action_detail": "Acción específica: 'Pausar ad set BROAD 5' o 'Aumentar budget de BROAD 2 de $15 a $20/día'",
+    "action_detail": "Acción específica: 'Pausar ad set BROAD 5' o 'Aumentar budget de BROAD 2 de $15 a $18/día'",
     "expected_outcome": "Qué esperas que pase si se ejecuta (1 frase, ej: 'ROAS debería recuperar a ~2.5x en 5-7 días')",
     "risk": "Riesgo de NO actuar (1 frase, ej: 'Seguirá quemando $17/día sin retorno')",
     "body": "Contexto adicional breve si es necesario (1-2 frases). Puede estar vacío si diagnosis+expected_outcome+risk ya explican todo.",
@@ -1835,7 +1843,7 @@ IMPORTANTE: Responde SOLO con el JSON array. Sin texto, sin markdown, sin explic
       prompt += `INSTRUCCIÓN: Aplica estas lecciones. No repitas errores documentados. Prioriza patrones que funcionaron.\n\n`;
     }
 
-    prompt += `Genera recomendaciones accionables basándote en los datos 7d. Si no hay acciones claras que tomar, devuelve un array vacío [].
+    prompt += `Analiza el portfolio completo: problemas, oportunidades de crecimiento, y señales tempranas de deterioro. Compara ad sets entre sí para encontrar desbalances de budget vs rendimiento.
 IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en esa entidad (✗), no la repitas. Si una acción tuvo éxito (✓), priorízala.`;
 
     return prompt;
@@ -1860,8 +1868,8 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
       return parsed.map(item => {
         const snap = snapshotMap[item.entity_id];
         return {
-          priority: item.priority || 'evaluar',
-          action_type: item.action_type || 'monitor',
+          priority: (item.priority === 'monitorear' ? 'evaluar' : item.priority) || 'evaluar',
+          action_type: (item.action_type === 'monitor' ? 'scale_up' : item.action_type) || 'scale_up',
           entity: {
             entity_type: 'adset',
             entity_id: item.entity_id || '',
