@@ -171,7 +171,9 @@ class BrainAnalyzer {
 
       const rm = memory.remembered_metrics;
 
-      // Cambio de estado
+      // ── Solo eventos significativos — los deltas graduales ya los cubre UnifiedBrain → Recomendaciones ──
+
+      // Cambio de estado (ACTIVE ↔ PAUSED)
       if (memory.last_status !== snap.status) {
         findings.push({
           type: 'status_change',
@@ -184,59 +186,7 @@ class BrainAnalyzer {
         });
       }
 
-      // ROAS cambió significativamente
-      if (rm.roas_7d > 0 && (m7d.roas || 0) > 0) {
-        const roasDelta = ((m7d.roas - rm.roas_7d) / rm.roas_7d) * 100;
-        if (Math.abs(roasDelta) >= this.thresholds.roas_change_pct) {
-          // Temporal filter: if current ROAS is within ±15% of the day-of-week average,
-          // downgrade severity — it's likely normal daily variation, not a real anomaly
-          let adjustedSeverity = Math.abs(roasDelta) > 40 ? 'high' : 'medium';
-          let temporalNote = null;
-          if (hasTemporalBaseline && roasDelta < 0) {
-            const dayAvgRoas = todayPattern.metrics.avg_roas;
-            if (dayAvgRoas > 0) {
-              const vsTemporalPct = ((m7d.roas - dayAvgRoas) / dayAvgRoas) * 100;
-              if (Math.abs(vsTemporalPct) <= 15) {
-                adjustedSeverity = 'low';
-                temporalNote = `Dentro del rango normal para ${todayPattern.pattern_key} (avg ${dayAvgRoas.toFixed(2)}x)`;
-              }
-            }
-          }
-
-          findings.push({
-            type: roasDelta < 0 ? 'anomaly' : 'opportunity',
-            severity: adjustedSeverity,
-            entity: { entity_type: 'adset', entity_id: snap.entity_id, entity_name: snap.entity_name },
-            data: {
-              metric: 'roas_7d',
-              from: rm.roas_7d,
-              to: m7d.roas,
-              delta_pct: +roasDelta.toFixed(1),
-              ...(temporalNote && { temporal_note: temporalNote })
-            }
-          });
-        }
-      }
-
-      // CPA cambió significativamente
-      if (rm.cpa_7d > 0 && (m7d.cpa || 0) > 0) {
-        const cpaDelta = ((m7d.cpa - rm.cpa_7d) / rm.cpa_7d) * 100;
-        if (Math.abs(cpaDelta) >= this.thresholds.cpa_change_pct) {
-          findings.push({
-            type: cpaDelta > 0 ? 'warning' : 'opportunity',
-            severity: Math.abs(cpaDelta) > 50 ? 'high' : 'medium',
-            entity: { entity_type: 'adset', entity_id: snap.entity_id, entity_name: snap.entity_name },
-            data: {
-              metric: 'cpa_7d',
-              from: rm.cpa_7d,
-              to: m7d.cpa,
-              delta_pct: +cpaDelta.toFixed(1)
-            }
-          });
-        }
-      }
-
-      // Frecuencia en zona de alerta
+      // Frecuencia crítica — emergencia real
       if ((m7d.frequency || 0) >= this.thresholds.frequency_critical) {
         findings.push({
           type: 'warning',
@@ -249,22 +199,9 @@ class BrainAnalyzer {
             message: 'Frecuencia crítica — audiencia sobre-saturada'
           }
         });
-      } else if ((m7d.frequency || 0) >= this.thresholds.frequency_warning && (rm.frequency_7d || 0) < this.thresholds.frequency_warning) {
-        // Solo alertar si cruzó el umbral (no repetir cada ciclo)
-        findings.push({
-          type: 'warning',
-          severity: 'medium',
-          entity: { entity_type: 'adset', entity_id: snap.entity_id, entity_name: snap.entity_name },
-          data: {
-            metric: 'frequency_7d',
-            value: m7d.frequency,
-            threshold: this.thresholds.frequency_warning,
-            message: 'Frecuencia entrando en zona de fatiga'
-          }
-        });
       }
 
-      // ROAS cayó debajo del mínimo
+      // ROAS cruzó debajo del mínimo (threshold crossing, no delta gradual)
       if ((m7d.roas || 0) < this.thresholds.roas_minimum && rm.roas_7d >= this.thresholds.roas_minimum) {
         findings.push({
           type: 'warning',
@@ -280,7 +217,7 @@ class BrainAnalyzer {
         });
       }
 
-      // ROAS excelente nuevo
+      // ROAS alcanzó nivel excelente — milestone
       if ((m7d.roas || 0) >= this.thresholds.roas_excellent && rm.roas_7d < this.thresholds.roas_excellent) {
         findings.push({
           type: 'milestone',
