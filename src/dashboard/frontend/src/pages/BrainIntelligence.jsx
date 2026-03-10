@@ -1439,132 +1439,53 @@ function FollowUpPanel({ formatTime, onApprovalAction, onDiscuss }) {
 
   return (
     <div className="followup-panel">
-      {/* Hero: ImpactOrb + Summary Stats */}
-      <div className="followup-hero">
-        <div className="followup-hero-orb">
-          <Suspense fallback={<div className="followup-orb-fallback"><span className="followup-orb-pct">{summary.win_rate}%</span></div>}>
-            <ImpactOrb
-              winRate={summary.win_rate}
-              summary={summary}
-              latestPhases={latestPhases}
-            />
+
+      {/* ═══ ZONE 1: Score Strip — orb + headline + chips ═══ */}
+      <div className="fu-score-strip">
+        <div className="fu-score-orb">
+          <Suspense fallback={<div className="fu-score-orb-fallback"><span>{summary.win_rate}%</span></div>}>
+            <ImpactOrb winRate={summary.win_rate} summary={summary} latestPhases={latestPhases} />
           </Suspense>
         </div>
-        <div className="followup-hero-stats">
-          <div className="followup-stat-row">
-            <div className="followup-stat main">
-              <span className="followup-stat-value">{summary.win_rate}%</span>
-              <span className="followup-stat-label">Efectividad</span>
-            </div>
-            <div className="followup-stat">
-              <span className="followup-stat-value">{summary.total_measured}</span>
-              <span className="followup-stat-label">Medidas</span>
-            </div>
-            <div className="followup-stat">
-              <span className="followup-stat-value">{summary.total_approved || 0}</span>
-              <span className="followup-stat-label">Aprobadas</span>
-            </div>
+        <div className="fu-score-body">
+          <div className="fu-score-headline">
+            <span className="fu-score-pct">{summary.win_rate}%</span> efectividad
+            <span className="fu-score-sep">&middot;</span>{summary.total_measured} medidas
+            <span className="fu-score-sep">&middot;</span>
+            <span className="fu-score-pos">{summary.positive}</span> positivas
+            {summary.negative > 0 && <><span className="fu-score-sep">&middot;</span><span className="fu-score-neg">{summary.negative}</span> negativas</>}
+            {summary.pending_follow_up > 0 && <><span className="fu-score-sep">&middot;</span><span className="fu-score-pending">{summary.pending_follow_up} en espera</span></>}
           </div>
-          <div className="followup-verdict-row">
-            <span className="followup-verdict-pill positive">{summary.positive} positivas</span>
-            <span className="followup-verdict-pill negative">{summary.negative} negativas</span>
-            <span className="followup-verdict-pill neutral">{summary.neutral} neutrales</span>
-          </div>
-          <div className="followup-delta-row">
-            <div className="followup-delta-item">
-              <span className="followup-delta-label">ROAS</span>
-              <span className={`followup-delta-val ${summary.avg_roas_delta_pct >= 0 ? 'positive' : 'negative'}`}>
-                {summary.avg_roas_delta_pct > 0 ? '+' : ''}{summary.avg_roas_delta_pct}%
+          <div className="fu-score-chips">
+            {summary.avg_roas_delta_pct != null && (
+              <span className={`fu-chip ${summary.avg_roas_delta_pct >= 0 ? 'positive' : 'negative'}`}>
+                ROAS {summary.avg_roas_delta_pct > 0 ? '+' : ''}{summary.avg_roas_delta_pct}%
               </span>
-            </div>
-            <div className="followup-delta-item">
-              <span className="followup-delta-label">CPA</span>
-              <span className={`followup-delta-val ${(summary.avg_cpa_delta_pct || 0) <= 0 ? 'positive' : 'negative'}`}>
-                {(summary.avg_cpa_delta_pct || 0) > 0 ? '+' : ''}{summary.avg_cpa_delta_pct || 0}%
-              </span>
-            </div>
-            <div className="followup-delta-item">
-              <span className="followup-delta-label">CTR</span>
-              <span className={`followup-delta-val ${(summary.avg_ctr_delta_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
-                {(summary.avg_ctr_delta_pct || 0) > 0 ? '+' : ''}{summary.avg_ctr_delta_pct || 0}%
-              </span>
-            </div>
-            {summary.pending_follow_up > 0 && (
-              <div className="followup-delta-item pending">
-                <span className="followup-delta-label">En espera</span>
-                <span className="followup-delta-val">{summary.pending_follow_up}</span>
-              </div>
             )}
+            {summary.avg_cpa_delta_pct != null && (
+              <span className={`fu-chip ${(summary.avg_cpa_delta_pct || 0) <= 0 ? 'positive' : 'negative'}`}>
+                CPA {(summary.avg_cpa_delta_pct || 0) > 0 ? '+' : ''}{summary.avg_cpa_delta_pct || 0}%
+              </span>
+            )}
+            {summary.avg_ctr_delta_pct != null && summary.avg_ctr_delta_pct !== 0 && (
+              <span className={`fu-chip ${(summary.avg_ctr_delta_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
+                CTR {(summary.avg_ctr_delta_pct || 0) > 0 ? '+' : ''}{summary.avg_ctr_delta_pct || 0}%
+              </span>
+            )}
+            <span className="fu-chip-divider" />
+            {Object.entries(by_action_type).slice(0, 4).map(([action, stats]) => {
+              const cfg = ACTION_TYPE_CONFIG[action] || ACTION_TYPE_CONFIG.other;
+              const wr = stats.total > 0 ? Math.round((stats.positive / stats.total) * 100) : 0;
+              return (
+                <span key={action} className="fu-chip type">{cfg.icon} {cfg.label} {wr}%</span>
+              );
+            })}
           </div>
         </div>
       </div>
 
-      {/* By Action Type — with avg ROAS delta */}
-      {Object.keys(by_action_type).length > 0 && (
-        <div className="followup-section">
-          <h3 className="followup-section-title">Rendimiento por tipo de accion</h3>
-          <div className="followup-action-grid">
-            {Object.entries(by_action_type).map(([action, stats]) => {
-              const actionCfg = ACTION_TYPE_CONFIG[action] || ACTION_TYPE_CONFIG.other;
-              const wr = stats.total > 0 ? Math.round((stats.positive / stats.total) * 100) : 0;
-              return (
-                <div key={action} className="followup-action-row">
-                  <div className="followup-action-name">
-                    <span>{actionCfg.icon}</span> {actionCfg.label}
-                  </div>
-                  <div className="followup-action-bar-container">
-                    <div className="followup-action-bar">
-                      {stats.positive > 0 && (
-                        <div className="bar-segment positive" style={{ width: `${(stats.positive / stats.total) * 100}%` }} />
-                      )}
-                      {stats.neutral > 0 && (
-                        <div className="bar-segment neutral" style={{ width: `${(stats.neutral / stats.total) * 100}%` }} />
-                      )}
-                      {stats.negative > 0 && (
-                        <div className="bar-segment negative" style={{ width: `${(stats.negative / stats.total) * 100}%` }} />
-                      )}
-                    </div>
-                    <span className="followup-action-wr">
-                      {wr}% ({stats.total})
-                      {stats.avg_roas_delta != null && (
-                        <span className={`followup-action-delta ${stats.avg_roas_delta >= 0 ? 'positive' : 'negative'}`}>
-                          {stats.avg_roas_delta > 0 ? '+' : ''}{stats.avg_roas_delta}%
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* AI Lessons Learned */}
-      {lessons_learned && lessons_learned.length > 0 && (
-        <div className="followup-section followup-lessons">
-          <h3 className="followup-section-title">Lecciones del Brain</h3>
-          <div className="followup-lessons-list">
-            {lessons_learned.map((l, i) => {
-              const actionCfg = ACTION_TYPE_CONFIG[l.action_type] || ACTION_TYPE_CONFIG.other;
-              const vCfg = VERDICT_CONFIG[l.verdict] || VERDICT_CONFIG.neutral;
-              return (
-                <div key={i} className="followup-lesson-card">
-                  <div className="followup-lesson-header">
-                    <span className="followup-lesson-action">{actionCfg.icon} {actionCfg.label}</span>
-                    <span className="followup-lesson-verdict" style={{ color: vCfg.color }}>{vCfg.icon}</span>
-                  </div>
-                  <div className="followup-lesson-text">{l.lesson}</div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* In-Progress (pending measurement) — Grouped by Ad Set */}
+      {/* ═══ ZONE 2: Activos — clean monitoring cards ═══ */}
       {pending.length > 0 && (() => {
-        // Group pending items by entity (ad set)
         const groupedByEntity = {};
         for (const p of pending) {
           const key = p.entity_name || p._id;
@@ -1574,509 +1495,261 @@ function FollowUpPanel({ formatTime, onApprovalAction, onDiscuss }) {
         const entityGroups = Object.entries(groupedByEntity);
 
         return (
-          <div className="followup-section followup-active-section">
-            <h3 className="followup-section-title">
-              <span className="followup-active-pulse" />
-              Monitoreando ({pending.length})
+          <div className="fu-section">
+            <h3 className="fu-section-title">
+              <span className="fu-pulse" />
+              Activos ({pending.length})
             </h3>
-            <div className="followup-grouped-list">
-              {entityGroups.map(([entityName, items]) => {
-                const isSingleItem = items.length === 1;
-                return (
-                  <div key={entityName} className="followup-entity-group">
-                    {/* Group header (only if multiple items) */}
-                    {!isSingleItem && (
-                      <div className="followup-group-header">
-                        <span className="followup-group-name">{entityName}</span>
-                        <span className="followup-group-count">{items.length} activos</span>
-                      </div>
-                    )}
-                    <div className="followup-group-items">
-                      {items.map(p => {
-                        const actionCfg = ACTION_TYPE_CONFIG[p.action_type] || ACTION_TYPE_CONFIG.other;
-                        const daysAgo = p.hours_since_approved >= 24
-                          ? `${Math.floor(p.hours_since_approved / 24)}d ${p.hours_since_approved % 24}h`
-                          : `${p.hours_since_approved}h`;
-                        const priorityColor = p.priority === 'urgente' ? '#ef4444' : p.priority === 'evaluar' ? '#f59e0b' : '#3b82f6';
+            <div className="fu-activos-list">
+              {entityGroups.map(([entityName, items]) => (
+                <div key={entityName} className="fu-entity-group">
+                  {items.length > 1 && (
+                    <div className="fu-group-header">
+                      <span className="fu-group-name">{entityName}</span>
+                      <span className="fu-group-count">{items.length}</span>
+                    </div>
+                  )}
+                  {items.map(p => {
+                    const actionCfg = ACTION_TYPE_CONFIG[p.action_type] || ACTION_TYPE_CONFIG.other;
+                    const daysAgo = p.hours_since_approved >= 24
+                      ? `${Math.floor(p.hours_since_approved / 24)}d`
+                      : `${p.hours_since_approved}h`;
+                    const phaseIdx = p.current_phase === 'awaiting_day_3' ? 0
+                      : p.current_phase === 'awaiting_day_7' ? 1
+                      : p.current_phase === 'awaiting_day_14' ? 2 : 3;
+                    const phasePct = phaseIdx === 0 ? 15 : phaseIdx === 1 ? 40 : phaseIdx === 2 ? 70 : 100;
+                    const phaseLabel = ['3d', '7d', '14d', 'done'][Math.min(phaseIdx, 3)];
+                    const d3Verdict = p.day_3?.verdict;
+                    const isOpen = expandedCard === p._id;
+                    const phases = [
+                      { key: 'day_3', label: '3d', done: phaseIdx > 0, active: phaseIdx === 0, data: p.day_3 },
+                      { key: 'day_7', label: '7d', done: phaseIdx > 1, active: phaseIdx === 1, data: null },
+                      { key: 'day_14', label: '14d', done: phaseIdx > 2, active: phaseIdx === 2, data: null },
+                    ];
 
-                        const phaseIdx = p.current_phase === 'awaiting_day_3' ? 0
-                          : p.current_phase === 'awaiting_day_7' ? 1
-                          : p.current_phase === 'awaiting_day_14' ? 2 : 3;
-                        const phases = [
-                          { key: 'day_3', label: '3d', done: phaseIdx > 0, active: phaseIdx === 0, data: p.day_3 },
-                          { key: 'day_7', label: '7d', done: phaseIdx > 1, active: phaseIdx === 1, data: null },
-                          { key: 'day_14', label: '14d', done: phaseIdx > 2, active: phaseIdx === 2, data: null },
-                        ];
+                    return (
+                      <div key={p._id} className={`fu-activo ${d3Verdict ? `verdict-${d3Verdict}` : ''} ${isOpen ? 'open' : ''}`}>
+                        {/* Compact row */}
+                        <div className="fu-activo-row" onClick={() => setExpandedCard(isOpen ? null : p._id)}>
+                          <span className="fu-activo-icon" style={{ color: actionCfg.color }}>{actionCfg.icon}</span>
+                          <div className="fu-activo-info">
+                            <span className="fu-activo-name">{items.length === 1 ? p.entity_name : actionCfg.label}</span>
+                            {items.length === 1 && <span className="fu-activo-action">{actionCfg.label}</span>}
+                          </div>
+                          <div className="fu-activo-progress" title={`Fase: ${phaseLabel}`}>
+                            <div className="fu-activo-progress-fill" style={{ width: `${phasePct}%` }} />
+                            <span className="fu-activo-progress-label">{phaseLabel}</span>
+                          </div>
+                          {p.day_3?.roas_pct != null ? (
+                            <span className={`fu-activo-delta ${(p.day_3.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
+                              {p.day_3.roas_pct > 0 ? '+' : ''}{p.day_3.roas_pct}%
+                            </span>
+                          ) : (
+                            <span className="fu-activo-delta waiting">{daysAgo}</span>
+                          )}
+                          {d3Verdict && (
+                            <span className={`fu-activo-verdict ${d3Verdict}`}>
+                              {d3Verdict === 'positive' ? '\u2705' : d3Verdict === 'negative' ? '\u274C' : '\u2796'}
+                            </span>
+                          )}
+                          <span className={`fu-activo-chevron ${isOpen ? 'open' : ''}`}>{'\u25B8'}</span>
+                        </div>
 
-                        const d3Verdict = p.day_3?.verdict;
-                        const isExpanded = isSingleItem || expandedCard === p._id;
+                        {/* Expanded detail */}
+                        {isOpen && (
+                          <div className="fu-activo-detail">
+                            <div className="fu-activo-title">{p.title}</div>
 
-                        return (
-                          <div key={p._id} className={`followup-card ${d3Verdict ? `verdict-${d3Verdict}` : ''} ${isExpanded ? 'expanded' : 'collapsed'}`}>
-                            {/* Compact row — always visible, clickable to toggle */}
-                            <div
-                              className="followup-card-compact"
-                              onClick={() => {
-                                if (isSingleItem) return;
-                                setExpandedCard(expandedCard === p._id ? null : p._id);
-                              }}
-                              style={{ cursor: isSingleItem ? 'default' : 'pointer' }}
-                            >
-                              <div className="followup-card-compact-left">
-                                <span className="followup-card-action-icon" style={{ color: priorityColor }}>{actionCfg.icon}</span>
-                                <span className="followup-card-action-label" style={{ color: priorityColor }}>{actionCfg.label}</span>
-                                {isSingleItem && <span className="followup-card-entity-inline">{p.entity_name}</span>}
-                              </div>
-                              <div className="followup-card-compact-center">
-                                {/* Mini phase dots */}
-                                <div className="followup-phase-dots">
-                                  {phases.map(ph => (
-                                    <span key={ph.key} className={`followup-phase-dot ${ph.done ? 'done' : ph.active ? 'active' : ''}`} />
-                                  ))}
-                                </div>
-                                <span className="followup-card-phase-label">{phases[phaseIdx]?.label || '14d'}</span>
-                                {d3Verdict && (
-                                  <span className={`followup-compact-verdict ${d3Verdict}`}>
-                                    {d3Verdict === 'positive' ? '\u2705' : d3Verdict === 'negative' ? '\u274C' : '\u2796'}
-                                  </span>
-                                )}
-                                {p.day_3?.roas_pct != null && (
-                                  <span className={`followup-compact-delta ${(p.day_3.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
-                                    ROAS {p.day_3.roas_pct > 0 ? '+' : ''}{p.day_3.roas_pct}%
-                                  </span>
-                                )}
-                              </div>
-                              <div className="followup-card-compact-right">
-                                <span className="followup-card-elapsed">{daysAgo}</span>
-                                <span className={`followup-card-exec ${p.action_executed ? 'done' : ''}`}>
-                                  {p.action_executed ? '\u2713' : '\u23F3'}
-                                </span>
-                                {!isSingleItem && (
-                                  <span className={`followup-card-chevron ${isExpanded ? 'open' : ''}`}>{'\u25B8'}</span>
-                                )}
-                              </div>
+                            {/* Phase timeline */}
+                            <div className="followup-phase-track">
+                              {phases.map((ph, i) => (
+                                <React.Fragment key={ph.key}>
+                                  {i > 0 && <div className={`followup-phase-connector ${ph.done ? 'done' : ''}`} />}
+                                  <div className={`followup-phase-node-v2 ${ph.done ? 'done' : ph.active ? 'active' : ''}`}>
+                                    <span className="followup-phase-circle">
+                                      {ph.done ? '\u2713' : ph.active ? '\u25CF' : '\u25CB'}
+                                    </span>
+                                    <span className="followup-phase-label-v2">{ph.label}</span>
+                                    {ph.data && (
+                                      <span className={`followup-phase-delta ${(ph.data.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
+                                        {(ph.data.roas_pct || 0) > 0 ? '+' : ''}{ph.data.roas_pct}%
+                                      </span>
+                                    )}
+                                  </div>
+                                </React.Fragment>
+                              ))}
                             </div>
 
-                            {/* Expanded detail — only shown when expanded */}
-                            {isExpanded && (
-                              <div className="followup-card-detail">
-                                {/* Entity name + title (when inside a group, entity shown in header) */}
-                                <div className="followup-card-identity">
-                                  {isSingleItem && <span className="followup-card-title">{p.title}</span>}
-                                  {!isSingleItem && (
-                                    <>
-                                      <span className="followup-card-title">{p.title}</span>
-                                    </>
-                                  )}
+                            {/* Before → After (day_3 available) */}
+                            {p.day_3 && p.day_3.current_roas > 0 && (
+                              <div className="followup-comparison">
+                                <div className="followup-compare-col before">
+                                  <span className="followup-compare-header">Al aprobar</span>
+                                  <div className="followup-compare-grid">
+                                    <div className="followup-compare-item"><span className="followup-compare-label">ROAS</span><span className="followup-compare-val">{p.roas_at_approval.toFixed(2)}x</span></div>
+                                    <div className="followup-compare-item"><span className="followup-compare-label">CPA</span><span className="followup-compare-val">${p.cpa_at_approval.toFixed(2)}</span></div>
+                                  </div>
                                 </div>
-
-                                {/* Visual phase timeline */}
-                                <div className="followup-phase-track">
-                                  {phases.map((ph, i) => (
-                                    <React.Fragment key={ph.key}>
-                                      {i > 0 && <div className={`followup-phase-connector ${ph.done ? 'done' : ''}`} />}
-                                      <div className={`followup-phase-node-v2 ${ph.done ? 'done' : ph.active ? 'active' : ''}`}>
-                                        <span className="followup-phase-circle">
-                                          {ph.done ? '\u2713' : ph.active ? '\u25CF' : '\u25CB'}
-                                        </span>
-                                        <span className="followup-phase-label-v2">{ph.label}</span>
-                                        {ph.data && (
-                                          <span className={`followup-phase-delta ${(ph.data.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
-                                            {(ph.data.roas_pct || 0) > 0 ? '+' : ''}{ph.data.roas_pct}%
-                                          </span>
-                                        )}
-                                      </div>
-                                    </React.Fragment>
-                                  ))}
+                                <div className="followup-compare-arrow"><span className={`followup-arrow-icon ${(p.day_3.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>{'\u2192'}</span></div>
+                                <div className="followup-compare-col after">
+                                  <span className="followup-compare-header">Dia 3</span>
+                                  <div className="followup-compare-grid">
+                                    <div className="followup-compare-item"><span className="followup-compare-label">ROAS</span><span className={`followup-compare-val highlight ${p.day_3.current_roas >= 3 ? 'good' : p.day_3.current_roas >= 1.5 ? 'ok' : 'bad'}`}>{p.day_3.current_roas.toFixed(2)}x</span></div>
+                                    <div className="followup-compare-item"><span className="followup-compare-label">CPA</span><span className="followup-compare-val highlight">${p.day_3.current_cpa?.toFixed(2) || '\u2014'}</span></div>
+                                  </div>
                                 </div>
+                              </div>
+                            )}
 
-                                {/* Before → After comparison */}
-                                {p.day_3 && p.day_3.current_roas > 0 && (
-                                  <div className="followup-comparison">
-                                    <div className="followup-compare-col before">
-                                      <span className="followup-compare-header">Al aprobar</span>
-                                      <div className="followup-compare-grid">
-                                        <div className="followup-compare-item">
-                                          <span className="followup-compare-label">ROAS</span>
-                                          <span className="followup-compare-val">{p.roas_at_approval.toFixed(2)}x</span>
-                                        </div>
-                                        <div className="followup-compare-item">
-                                          <span className="followup-compare-label">CPA</span>
-                                          <span className="followup-compare-val">${p.cpa_at_approval.toFixed(2)}</span>
-                                        </div>
-                                        {p.daily_budget_at_approval > 0 && (
-                                          <div className="followup-compare-item">
-                                            <span className="followup-compare-label">Budget</span>
-                                            <span className="followup-compare-val">${p.daily_budget_at_approval.toFixed(0)}/d</span>
-                                          </div>
-                                        )}
-                                      </div>
-                                    </div>
-                                    <div className="followup-compare-arrow">
-                                      <span className={`followup-arrow-icon ${(p.day_3.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>{'\u2192'}</span>
-                                    </div>
-                                    <div className="followup-compare-col after">
-                                      <span className="followup-compare-header">Dia 3</span>
-                                      <div className="followup-compare-grid">
-                                        <div className="followup-compare-item">
-                                          <span className="followup-compare-label">ROAS</span>
-                                          <span className={`followup-compare-val highlight ${p.day_3.current_roas >= 3 ? 'good' : p.day_3.current_roas >= 1.5 ? 'ok' : 'bad'}`}>
-                                            {p.day_3.current_roas.toFixed(2)}x
-                                          </span>
-                                        </div>
-                                        <div className="followup-compare-item">
-                                          <span className="followup-compare-label">CPA</span>
-                                          <span className="followup-compare-val highlight">${p.day_3.current_cpa?.toFixed(2) || '\u2014'}</span>
-                                        </div>
-                                        {p.day_3.current_budget > 0 && (
-                                          <div className="followup-compare-item">
-                                            <span className="followup-compare-label">Budget</span>
-                                            <span className="followup-compare-val highlight">${p.day_3.current_budget}/d</span>
-                                          </div>
-                                        )}
-                                      </div>
-                                    </div>
+                            {/* Snapshot (no day_3 yet) */}
+                            {!p.day_3 && (
+                              <div className="followup-pending-snapshot">
+                                {p.roas_at_approval > 0 && <div className="followup-snap-metric"><span className="followup-snap-label">ROAS</span><span className="followup-snap-value">{p.roas_at_approval.toFixed(2)}x</span></div>}
+                                {p.cpa_at_approval > 0 && <div className="followup-snap-metric"><span className="followup-snap-label">CPA</span><span className="followup-snap-value">${p.cpa_at_approval.toFixed(2)}</span></div>}
+                                {p.spend_at_approval > 0 && <div className="followup-snap-metric"><span className="followup-snap-label">Spend</span><span className="followup-snap-value">${p.spend_at_approval.toFixed(0)}</span></div>}
+                              </div>
+                            )}
+
+                            {/* Execution + action */}
+                            {!p.action_executed && (
+                              <div className="followup-exec-row">
+                                <span className="followup-exec-badge not-executed">{'\u23F3'} Pendiente ejecucion</span>
+                                <button className="rec-btn-mark-executed" onClick={async () => { try { await markRecommendationExecuted(p._id); loadFollowUpStats(); } catch (err) { console.error(err); } }}>Marcar ejecutada</button>
+                              </div>
+                            )}
+                            {p.action_detail && <div className="followup-pending-detail">{p.action_detail}</div>}
+
+                            {/* New creative metrics */}
+                            {p.new_ad_name && (
+                              <div className="followup-new-ad-section">
+                                <div className="followup-new-ad-header"><span>{'\uD83C\uDFA8'}</span><span>Creativo: {p.new_ad_name}</span></div>
+                                {p.day_3?.new_ad_metrics ? (
+                                  <div className="followup-new-ad-metrics">
+                                    <div className="followup-new-ad-metric"><span className="followup-new-ad-label">ROAS</span><span className={`followup-new-ad-value ${p.day_3.new_ad_metrics.roas >= 3 ? 'good' : p.day_3.new_ad_metrics.roas >= 1.5 ? 'ok' : 'bad'}`}>{(p.day_3.new_ad_metrics.roas || 0).toFixed(2)}x</span></div>
+                                    <div className="followup-new-ad-metric"><span className="followup-new-ad-label">CTR</span><span className={`followup-new-ad-value ${p.day_3.new_ad_metrics.ctr >= 1.5 ? 'good' : 'ok'}`}>{(p.day_3.new_ad_metrics.ctr || 0).toFixed(2)}%</span></div>
+                                    <div className="followup-new-ad-metric"><span className="followup-new-ad-label">CPA</span><span className="followup-new-ad-value">${(p.day_3.new_ad_metrics.cpa || 0).toFixed(2)}</span></div>
                                   </div>
-                                )}
-
-                                {/* Metrics at approval (when no day_3 data yet) */}
-                                {!p.day_3 && (
-                                  <div className="followup-pending-snapshot">
-                                    {p.roas_at_approval > 0 && (
-                                      <div className="followup-snap-metric">
-                                        <span className="followup-snap-label">ROAS</span>
-                                        <span className="followup-snap-value">{p.roas_at_approval.toFixed(2)}x</span>
-                                      </div>
-                                    )}
-                                    {p.cpa_at_approval > 0 && (
-                                      <div className="followup-snap-metric">
-                                        <span className="followup-snap-label">CPA</span>
-                                        <span className="followup-snap-value">${p.cpa_at_approval.toFixed(2)}</span>
-                                      </div>
-                                    )}
-                                    {p.spend_at_approval > 0 && (
-                                      <div className="followup-snap-metric">
-                                        <span className="followup-snap-label">Spend 7d</span>
-                                        <span className="followup-snap-value">${p.spend_at_approval.toFixed(0)}</span>
-                                      </div>
-                                    )}
-                                    {p.daily_budget_at_approval > 0 && (
-                                      <div className="followup-snap-metric">
-                                        <span className="followup-snap-label">Budget</span>
-                                        <span className="followup-snap-value">${p.daily_budget_at_approval.toFixed(0)}/d</span>
-                                      </div>
-                                    )}
-                                    {p.frequency_at_approval > 0 && (
-                                      <div className="followup-snap-metric">
-                                        <span className="followup-snap-label">Freq</span>
-                                        <span className="followup-snap-value">{p.frequency_at_approval.toFixed(1)}</span>
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-
-                                {/* Day 3 signal deltas */}
-                                {p.day_3 && (
-                                  <div className="followup-signal-bar">
-                                    <span className="followup-signal-label">Dia 3</span>
-                                    <span className={`followup-signal-chip ${(p.day_3.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
-                                      ROAS {p.day_3.roas_pct > 0 ? '+' : ''}{p.day_3.roas_pct}%
-                                    </span>
-                                    {p.day_3.cpa_pct != null && (
-                                      <span className={`followup-signal-chip ${(p.day_3.cpa_pct || 0) <= 0 ? 'positive' : 'negative'}`}>
-                                        CPA {p.day_3.cpa_pct > 0 ? '+' : ''}{p.day_3.cpa_pct}%
-                                      </span>
-                                    )}
-                                    {p.day_3.ctr_pct != null && p.day_3.ctr_pct !== 0 && (
-                                      <span className={`followup-signal-chip ${(p.day_3.ctr_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
-                                        CTR {p.day_3.ctr_pct > 0 ? '+' : ''}{p.day_3.ctr_pct}%
-                                      </span>
-                                    )}
-                                    <span className="followup-signal-verdict">
-                                      {d3Verdict === 'positive' ? '\u2705' : d3Verdict === 'negative' ? '\u274C' : '\u2796'}
-                                    </span>
-                                  </div>
-                                )}
-
-                                {/* Execution status */}
-                                {!p.action_executed && (
-                                  <div className="followup-exec-row">
-                                    <span className="followup-exec-badge not-executed">{'\u23F3'} Pendiente ejecucion</span>
-                                    <button
-                                      className="rec-btn-mark-executed"
-                                      onClick={async () => {
-                                        try {
-                                          await markRecommendationExecuted(p._id);
-                                          loadFollowUpStats();
-                                        } catch (err) { console.error('Error marking executed:', err); }
-                                      }}
-                                      title="Ya hice este cambio en Meta Ads"
-                                    >
-                                      Marcar ejecutada
-                                    </button>
-                                  </div>
-                                )}
-
-                                {/* Action detail */}
-                                {p.action_detail && (
-                                  <div className="followup-pending-detail">{p.action_detail}</div>
-                                )}
-
-                                {/* New creative individual metrics */}
-                                {p.new_ad_name && (
-                                  <div className="followup-new-ad-section">
-                                    <div className="followup-new-ad-header">
-                                      <span>{'\uD83C\uDFA8'}</span>
-                                      <span>Creativo nuevo: {p.new_ad_name}</span>
-                                    </div>
-                                    {p.day_3?.new_ad_metrics ? (
-                                      <div className="followup-new-ad-metrics">
-                                        <div className="followup-new-ad-metric">
-                                          <span className="followup-new-ad-label">ROAS</span>
-                                          <span className={`followup-new-ad-value ${p.day_3.new_ad_metrics.roas >= 3 ? 'good' : p.day_3.new_ad_metrics.roas >= 1.5 ? 'ok' : 'bad'}`}>
-                                            {(p.day_3.new_ad_metrics.roas || 0).toFixed(2)}x
-                                          </span>
-                                        </div>
-                                        <div className="followup-new-ad-metric">
-                                          <span className="followup-new-ad-label">CTR</span>
-                                          <span className={`followup-new-ad-value ${p.day_3.new_ad_metrics.ctr >= 1.5 ? 'good' : p.day_3.new_ad_metrics.ctr >= 0.8 ? 'ok' : 'bad'}`}>
-                                            {(p.day_3.new_ad_metrics.ctr || 0).toFixed(2)}%
-                                          </span>
-                                        </div>
-                                        <div className="followup-new-ad-metric">
-                                          <span className="followup-new-ad-label">CPA</span>
-                                          <span className="followup-new-ad-value">
-                                            ${(p.day_3.new_ad_metrics.cpa || 0).toFixed(2)}
-                                          </span>
-                                        </div>
-                                        <div className="followup-new-ad-metric">
-                                          <span className="followup-new-ad-label">Spend</span>
-                                          <span className="followup-new-ad-value">${(p.day_3.new_ad_metrics.spend || 0).toFixed(0)}</span>
-                                        </div>
-                                        <div className="followup-new-ad-metric">
-                                          <span className="followup-new-ad-label">Clicks</span>
-                                          <span className="followup-new-ad-value">{p.day_3.new_ad_metrics.clicks || 0}</span>
-                                        </div>
-                                        <div className="followup-new-ad-metric">
-                                          <span className="followup-new-ad-label">Compras</span>
-                                          <span className="followup-new-ad-value">{p.day_3.new_ad_metrics.purchases || 0}</span>
-                                        </div>
-                                      </div>
-                                    ) : (
-                                      <div className="followup-new-ad-waiting">
-                                        Metricas disponibles en la medicion dia 3
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-
-                                {/* New recommendation inlined — COLLAPSIBLE */}
-                                {p.new_recommendation && (
-                                  <div className={`followup-inline-rec ${expandedInlineRec === p._id ? 'open' : ''}`}>
-                                    <div
-                                      className="followup-inline-rec-header"
-                                      onClick={(e) => { e.stopPropagation(); setExpandedInlineRec(expandedInlineRec === p._id ? null : p._id); }}
-                                      style={{ cursor: 'pointer' }}
-                                    >
-                                      <span className="followup-inline-rec-badge">{'\u26A1'} Nueva sugerencia del Brain</span>
-                                      <span className={`followup-inline-rec-chevron ${expandedInlineRec === p._id ? 'open' : ''}`}>{'\u25B8'}</span>
-                                    </div>
-                                    {expandedInlineRec === p._id && (
-                                      <>
-                                        <div className="followup-inline-rec-title">
-                                          {(ACTION_TYPE_CONFIG[p.new_recommendation.action_type] || ACTION_TYPE_CONFIG.other).icon}{' '}
-                                          {p.new_recommendation.title}
-                                        </div>
-                                        {p.new_recommendation.diagnosis && (
-                                          <div className="followup-inline-rec-detail">
-                                            <span className="followup-inline-rec-detail-label">Causa raiz:</span> {p.new_recommendation.diagnosis}
-                                          </div>
-                                        )}
-                                        {p.new_recommendation.action_detail && (
-                                          <div className="followup-inline-rec-detail">
-                                            <span className="followup-inline-rec-detail-label">Accion:</span> {p.new_recommendation.action_detail}
-                                          </div>
-                                        )}
-                                        {p.new_recommendation.expected_outcome && (
-                                          <div className="followup-inline-rec-detail outcome">
-                                            <span className="followup-inline-rec-detail-label">Resultado esperado:</span> {p.new_recommendation.expected_outcome}
-                                          </div>
-                                        )}
-                                        {p.new_recommendation.risk && (
-                                          <div className="followup-inline-rec-detail risk">
-                                            <span className="followup-inline-rec-detail-label">Riesgo:</span> {p.new_recommendation.risk}
-                                          </div>
-                                        )}
-                                        <div className="followup-inline-rec-actions">
-                                          <button
-                                            className="rec-btn approve"
-                                            onClick={() => onApprovalAction && onApprovalAction(p.new_recommendation._id, 'approve', p.new_recommendation)}
-                                          >
-                                            Aprobar
-                                          </button>
-                                          <button
-                                            className="rec-btn reject"
-                                            onClick={() => onApprovalAction && onApprovalAction(p.new_recommendation._id, 'reject', p.new_recommendation)}
-                                          >
-                                            Rechazar
-                                          </button>
-                                        </div>
-                                      </>
-                                    )}
-                                  </div>
-                                )}
-
-                                {/* Discuss with Brain */}
-                                {onDiscuss && (
-                                  <button className="btn-discuss-followup" onClick={() => onDiscuss(p)}>
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                                    </svg>
-                                    Discutir con Brain
-                                  </button>
+                                ) : (
+                                  <div className="followup-new-ad-waiting">Metricas en dia 3</div>
                                 )}
                               </div>
                             )}
+
+                            {/* Inline new recommendation */}
+                            {p.new_recommendation && (
+                              <div className={`followup-inline-rec ${expandedInlineRec === p._id ? 'open' : ''}`}>
+                                <div className="followup-inline-rec-header" onClick={(e) => { e.stopPropagation(); setExpandedInlineRec(expandedInlineRec === p._id ? null : p._id); }} style={{ cursor: 'pointer' }}>
+                                  <span className="followup-inline-rec-badge">{'\u26A1'} Nueva sugerencia</span>
+                                  <span className={`followup-inline-rec-chevron ${expandedInlineRec === p._id ? 'open' : ''}`}>{'\u25B8'}</span>
+                                </div>
+                                {expandedInlineRec === p._id && (
+                                  <>
+                                    <div className="followup-inline-rec-title">{(ACTION_TYPE_CONFIG[p.new_recommendation.action_type] || ACTION_TYPE_CONFIG.other).icon} {p.new_recommendation.title}</div>
+                                    {p.new_recommendation.action_detail && <div className="followup-inline-rec-detail"><span className="followup-inline-rec-detail-label">Accion:</span> {p.new_recommendation.action_detail}</div>}
+                                    <div className="followup-inline-rec-actions">
+                                      <button className="rec-btn approve" onClick={() => onApprovalAction && onApprovalAction(p.new_recommendation._id, 'approve', p.new_recommendation)}>Aprobar</button>
+                                      <button className="rec-btn reject" onClick={() => onApprovalAction && onApprovalAction(p.new_recommendation._id, 'reject', p.new_recommendation)}>Rechazar</button>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            )}
+
+                            {onDiscuss && (
+                              <button className="btn-discuss-followup" onClick={() => onDiscuss(p)}>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
+                                Discutir
+                              </button>
+                            )}
                           </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
             </div>
           </div>
         );
       })()}
 
-      {/* Timeline — with phase progression and AI analysis */}
+      {/* ═══ ZONE 3: Resultados — chronological feed with inline lessons ═══ */}
       {timeline.length > 0 && (
-        <div className="followup-section">
-          <h3 className="followup-section-title">Historial de impacto ({timeline.length})</h3>
-          <div className="followup-timeline">
+        <div className="fu-section">
+          <h3 className="fu-section-title">Resultados ({timeline.length})</h3>
+          <div className="fu-resultados-list">
             {timeline.map(item => {
               const vCfg = VERDICT_CONFIG[item.impact_verdict] || VERDICT_CONFIG.neutral;
-              const isExpanded = expandedItem === item._id;
+              const actionCfg = ACTION_TYPE_CONFIG[item.action_type] || ACTION_TYPE_CONFIG.other;
+              const lesson = item.ai_analysis?.lesson_learned;
+              const isOpen = expandedItem === item._id;
               return (
-                <div key={item._id}
-                  className={`followup-timeline-item ${isExpanded ? 'expanded' : ''}`}
-                  style={{ borderLeftColor: vCfg.color }}
-                  onClick={() => setExpandedItem(isExpanded ? null : item._id)}
-                >
-                  <div className="followup-timeline-header">
-                    <span className="followup-timeline-verdict" style={{ color: vCfg.color, backgroundColor: vCfg.bg }}>
-                      {vCfg.icon} {vCfg.label}
-                    </span>
-                    <div className="followup-timeline-header-right">
+                <div key={item._id} className={`fu-resultado ${isOpen ? 'open' : ''}`} onClick={() => setExpandedItem(isOpen ? null : item._id)}>
+                  {/* Compact: verdict + action + entity + delta + lesson */}
+                  <div className="fu-resultado-row">
+                    <span className="fu-resultado-verdict" style={{ color: vCfg.color }}>{vCfg.icon}</span>
+                    <div className="fu-resultado-body">
+                      <div className="fu-resultado-line">
+                        <span className="fu-resultado-action">{actionCfg.icon} {actionCfg.label}</span>
+                        <span className="fu-resultado-entity">{item.entity_name}</span>
+                        <span className={`fu-resultado-delta ${item.roas_delta_pct >= 0 ? 'positive' : 'negative'}`}>
+                          ROAS {item.roas_delta_pct > 0 ? '+' : ''}{item.roas_delta_pct}%
+                        </span>
+                      </div>
+                      {lesson && <div className="fu-resultado-lesson">{lesson}</div>}
+                    </div>
+                    <div className="fu-resultado-meta">
                       {item.impact_trend && (
-                        <span className={`followup-trend-badge ${item.impact_trend}`}>
+                        <span className={`fu-resultado-trend ${item.impact_trend}`}>
                           {item.impact_trend === 'improving' ? '\u2191' : item.impact_trend === 'declining' ? '\u2193' : '\u2194'}
                         </span>
                       )}
-                      <span className="followup-timeline-time">{formatTime(item.checked_at)}</span>
+                      <span className="fu-resultado-time">{formatTime(item.checked_at)}</span>
+                      <span className={`fu-activo-chevron ${isOpen ? 'open' : ''}`}>{'\u25B8'}</span>
                     </div>
                   </div>
-                  <div className="followup-timeline-title">{item.title}</div>
-                  <div className="followup-timeline-entity">{item.entity_name}</div>
 
-                  {/* Multi-metric comparison */}
-                  <div className="followup-timeline-metrics">
-                    <span className="followup-metric">
-                      ROAS: {item.roas_before.toFixed(2)}x
-                      <span className={`followup-arrow ${item.roas_delta_pct >= 0 ? 'up' : 'down'}`}>
-                        {item.roas_delta_pct >= 0 ? '\u2191' : '\u2193'}
-                      </span>
-                      {item.roas_after.toFixed(2)}x
-                      <span className={`followup-delta ${item.roas_delta_pct >= 0 ? 'positive' : 'negative'}`}>
-                        ({item.roas_delta_pct > 0 ? '+' : ''}{item.roas_delta_pct}%)
-                      </span>
-                    </span>
-                    {item.cpa_before > 0 && (
-                      <span className="followup-metric">
-                        CPA: ${item.cpa_before.toFixed(2)} {'\u2192'} ${item.cpa_after.toFixed(2)}
-                      </span>
-                    )}
-                    {item.ctr_before > 0 && (
-                      <span className="followup-metric">
-                        CTR: {item.ctr_before.toFixed(2)}% {'\u2192'} {item.ctr_after.toFixed(2)}%
-                      </span>
-                    )}
-                    {item.freq_before > 0 && (
-                      <span className="followup-metric">
-                        Freq: {item.freq_before.toFixed(1)} {'\u2192'} {item.freq_after.toFixed(1)}
-                      </span>
-                    )}
-                  </div>
+                  {/* Expanded: full analysis */}
+                  {isOpen && (
+                    <div className="fu-resultado-detail">
+                      {/* Metrics */}
+                      <div className="fu-resultado-metrics">
+                        <span className="fu-resultado-metric">ROAS: {item.roas_before.toFixed(2)}x {'\u2192'} {item.roas_after.toFixed(2)}x</span>
+                        {item.cpa_before > 0 && <span className="fu-resultado-metric">CPA: ${item.cpa_before.toFixed(2)} {'\u2192'} ${item.cpa_after.toFixed(2)}</span>}
+                        {item.ctr_before > 0 && <span className="fu-resultado-metric">CTR: {item.ctr_before.toFixed(2)}% {'\u2192'} {item.ctr_after.toFixed(2)}%</span>}
+                      </div>
 
-                  {/* Phase progression */}
-                  {(item.phases?.day_3 || item.phases?.day_7 || item.phases?.day_14) && (
-                    <div className="followup-phase-timeline">
-                      {['day_3', 'day_7', 'day_14'].map(phase => {
-                        const p = item.phases?.[phase];
-                        if (!p) return <div key={phase} className="followup-phase-node empty"><span className="phase-label">{phase.replace('day_', '')}d</span></div>;
-                        const pVCfg = VERDICT_CONFIG[p.verdict] || VERDICT_CONFIG.neutral;
-                        return (
-                          <div key={phase} className="followup-phase-node" style={{ borderColor: pVCfg.color }}>
-                            <span className="phase-label">{phase.replace('day_', '')}d</span>
-                            <span className="phase-roas" style={{ color: (p.roas_pct || 0) >= 0 ? '#10b981' : '#ef4444' }}>
-                              {(p.roas_pct || 0) > 0 ? '+' : ''}{p.roas_pct || 0}%
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                      {/* Phase progression */}
+                      {(item.phases?.day_3 || item.phases?.day_7 || item.phases?.day_14) && (
+                        <div className="fu-resultado-phases">
+                          {['day_3', 'day_7', 'day_14'].map(phase => {
+                            const ph = item.phases?.[phase];
+                            if (!ph) return <span key={phase} className="fu-resultado-phase empty">{phase.replace('day_', '')}d</span>;
+                            return (
+                              <span key={phase} className={`fu-resultado-phase ${(ph.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
+                                {phase.replace('day_', '')}d: {(ph.roas_pct || 0) > 0 ? '+' : ''}{ph.roas_pct || 0}%
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
 
-                  {/* Expanded: AI Analysis */}
-                  {isExpanded && item.ai_analysis && (
-                    <div className="followup-ai-analysis">
-                      <div className="followup-ai-header">Analisis del Brain</div>
-                      {item.ai_analysis.root_cause && (
-                        <div className="followup-ai-field">
-                          <span className="followup-ai-label">Causa raiz</span>
-                          <span className="followup-ai-text">{item.ai_analysis.root_cause}</span>
+                      {/* AI Analysis */}
+                      {item.ai_analysis && (
+                        <div className="fu-resultado-ai">
+                          {item.ai_analysis.root_cause && <div className="fu-resultado-ai-row"><span className="fu-resultado-ai-label">Causa raiz</span><span>{item.ai_analysis.root_cause}</span></div>}
+                          {item.ai_analysis.what_worked && item.ai_analysis.what_worked !== 'N/A' && <div className="fu-resultado-ai-row positive"><span className="fu-resultado-ai-label">Funciono</span><span>{item.ai_analysis.what_worked}</span></div>}
+                          {item.ai_analysis.what_didnt && item.ai_analysis.what_didnt !== 'N/A' && <div className="fu-resultado-ai-row negative"><span className="fu-resultado-ai-label">No funciono</span><span>{item.ai_analysis.what_didnt}</span></div>}
                         </div>
                       )}
-                      {item.ai_analysis.what_worked && item.ai_analysis.what_worked !== 'N/A' && (
-                        <div className="followup-ai-field positive">
-                          <span className="followup-ai-label">Funciono</span>
-                          <span className="followup-ai-text">{item.ai_analysis.what_worked}</span>
-                        </div>
-                      )}
-                      {item.ai_analysis.what_didnt && item.ai_analysis.what_didnt !== 'N/A' && (
-                        <div className="followup-ai-field negative">
-                          <span className="followup-ai-label">No funciono</span>
-                          <span className="followup-ai-text">{item.ai_analysis.what_didnt}</span>
-                        </div>
-                      )}
-                      {item.ai_analysis.lesson_learned && (
-                        <div className="followup-ai-field lesson">
-                          <span className="followup-ai-label">Leccion</span>
-                          <span className="followup-ai-text">{item.ai_analysis.lesson_learned}</span>
-                        </div>
-                      )}
-                      {item.ai_analysis.confidence_adjustment != null && (
-                        <div className="followup-ai-confidence">
-                          Ajuste confianza: <span className={item.ai_analysis.confidence_adjustment >= 0 ? 'positive' : 'negative'}>
-                            {item.ai_analysis.confidence_adjustment > 0 ? '+' : ''}{item.ai_analysis.confidence_adjustment}
-                          </span>
-                        </div>
+
+                      {onDiscuss && (
+                        <button className="btn-discuss-followup" onClick={(e) => { e.stopPropagation(); onDiscuss(item); }}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
+                          Discutir
+                        </button>
                       )}
                     </div>
-                  )}
-
-                  {item.impact_summary && !isExpanded && (
-                    <div className="followup-timeline-summary">{item.impact_summary}</div>
-                  )}
-
-                  {/* Discuss with Brain — visible when expanded */}
-                  {isExpanded && onDiscuss && (
-                    <button className="btn-discuss-followup" onClick={(e) => { e.stopPropagation(); onDiscuss(item); }}>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                      </svg>
-                      Discutir con Brain
-                    </button>
                   )}
                 </div>
               );
