@@ -983,28 +983,32 @@ IMPORTANTE: Responde SOLO con el JSON array, sin texto adicional ni markdown.`;
         `**Estado cuenta:** ROAS 7d ${accountOverview.roas_7d?.toFixed(2) || 'N/A'}x | Spend total 7d $${totalSpend.toFixed(0)} | Avg ROAS ${avgRoas.toFixed(2)}x`
       ].join('\n');
 
-      await BrainInsight.create({
-        insight_type: 'brain_activity',
-        severity: 'info',
-        title: findings.length > 0
-          ? `Ciclo completado: ${findings.length} hallazgo${findings.length > 1 ? 's' : ''}, ${insightsCreated} insight${insightsCreated > 1 ? 's' : ''}`
-          : 'Ciclo completado: sin hallazgos significativos',
-        body,
-        entities: [{ entity_type: 'account', entity_id: 'account', entity_name: 'Cuenta' }],
-        data_points: {
-          entities_scanned: snapshots.length,
-          active: activeAdsets.length,
-          paused: pausedAdsets.length,
-          findings: findings.length,
-          insights_created: insightsCreated,
-          in_cooldown: cooldownEntityIds.size,
-          pending_recs: pendingRecs,
-          account_roas_7d: +(accountOverview.roas_7d?.toFixed(2) || 0)
-        },
-        generated_by: 'brain'
-      });
+      // Solo crear insight de actividad cuando hay hallazgos reales
+      // Los ciclos vacíos solo se loguean para no llenar el feed de ruido
+      if (findings.length > 0 || insightsCreated > 0) {
+        await BrainInsight.create({
+          insight_type: 'brain_activity',
+          severity: 'info',
+          title: `Ciclo completado: ${findings.length} hallazgo${findings.length > 1 ? 's' : ''}, ${insightsCreated} insight${insightsCreated > 1 ? 's' : ''}`,
+          body,
+          entities: [{ entity_type: 'account', entity_id: 'account', entity_name: 'Cuenta' }],
+          data_points: {
+            entities_scanned: snapshots.length,
+            active: activeAdsets.length,
+            paused: pausedAdsets.length,
+            findings: findings.length,
+            insights_created: insightsCreated,
+            in_cooldown: cooldownEntityIds.size,
+            pending_recs: pendingRecs,
+            account_roas_7d: +(accountOverview.roas_7d?.toFixed(2) || 0)
+          },
+          generated_by: 'brain'
+        });
+      } else {
+        logger.info(`[BRAIN-ANALYZER] Ciclo sin hallazgos — ${snapshots.length} entidades escaneadas, ${cooldownEntityIds.size} en cooldown`);
+      }
 
-      return 1;
+      return findings.length > 0 ? 1 : 0;
     } catch (err) {
       logger.warn(`[BRAIN-ANALYZER] Error generando brain_activity: ${err.message}`);
       return 0;
