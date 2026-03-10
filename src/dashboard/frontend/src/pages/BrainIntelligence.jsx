@@ -968,6 +968,7 @@ function RecommendationsPanel({
                         </span>
                         <span className="split-row-type" style={{ color: priorityCfg.color }}>{priorityCfg.label}</span>
                         {rec.entity && <span className="split-row-entity">{rec.entity.entity_name}</span>}
+                        {rec.parent_adset_name && <span className="split-row-entity" style={{ opacity: 0.6 }}>en {rec.parent_adset_name}</span>}
                         <span className="split-row-time">{formatTime(rec.created_at)}</span>
                       </div>
                     </div>
@@ -1099,6 +1100,16 @@ function RecDetail({ rec, onApprove, onReject, onDiscuss, onGoToFollowUp, format
               </span>
               <span className="entity-name">{rec.entity.entity_name}</span>
             </span>
+            {rec.parent_adset_name && (
+              <span className="rec-entity-parent">
+                <span style={{ color: 'var(--text-tertiary)', margin: '0 6px' }}>en</span>
+                <span className="rec-entity-badge" style={{ opacity: 0.7 }}>
+                  <span className="entity-type-dot" style={{ background: '#3b82f6' }} />
+                  <span className="entity-type-label">Ad Set</span>
+                  <span className="entity-name">{rec.parent_adset_name}</span>
+                </span>
+              </span>
+            )}
           </div>
         )}
       </div>

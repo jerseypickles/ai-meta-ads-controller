@@ -1549,7 +1549,9 @@ Responde en español, con datos concretos (nombres, números). Causa raíz > sí
           }
 
           // Capturar snapshot de métricas al momento de la recomendación
-          const snap = adsetSnapshots.find(s => s.entity_id === entityId);
+          // For ad-level recs, use parent ad set snapshot for baseline metrics
+          const snapshotId = rec.parent_adset_id || entityId;
+          const snap = adsetSnapshots.find(s => s.entity_id === snapshotId);
           const m7d = snap?.metrics?.last_7d || {};
 
           const createData = {
@@ -1634,19 +1636,30 @@ REGLAS CRÍTICAS:
 REGLAS DE FATIGA CREATIVA (OBLIGATORIO):
 - Si un ad set tiene diagnóstico de fatiga >= 30/100, DEBES generar una recomendación creative_refresh para ese ad set.
 - Señales clave de fatiga: CTR declinando >20% vs 30d, frequency >= 2.5, CPM subiendo >30%, pocos ads activos (<3).
-- No pausar un ad set por bajo ROAS si la causa raíz es fatiga creativa — recomendar creative_refresh primero.
-- Cuando recomiendes creative_refresh, especifica: cuántos ads nuevos agregar, qué ángulos probar, y si hay que pausar ads fatigados.
+- No pausar el AD SET completo por bajo ROAS si la causa raíz es fatiga creativa — recomendar creative_refresh para el ad set.
+- Cuando recomiendes creative_refresh, especifica: cuántos ads nuevos agregar y qué ángulos probar.
+
+REGLAS DE PAUSA DE ADS INDIVIDUALES (OBLIGATORIO):
+- Si el diagnóstico muestra ads individuales marcados como "PAUSAR" (fatigados o drag), DEBES generar una recomendación "pause" SEPARADA para CADA ad individual que deba pausarse.
+- Estas recomendaciones de pause son COMPLEMENTARIAS al creative_refresh, no excluyentes. Genera ambas.
+- Para cada ad a pausar usa: entity_type="ad", entity_id=ID del ad individual, entity_name=nombre del ad.
+- Incluye parent_adset_id y parent_adset_name para referencia.
+- NUNCA pausar ads marcados como [LEARNING] (<72h activos).
+- Si pausar ads dejaría al ad set con <3 ads activos, marca la recomendación de pause con prioridad "evaluar" y en body indica: "Ejecutar después de que los nuevos ads del creative_refresh estén activos".
 
 FORMATO DE RESPUESTA — JSON array:
 [
   {
     "priority": "urgente|evaluar",
     "action_type": "pause|scale_up|scale_down|reactivate|restructure|creative_refresh|bid_change",
-    "entity_id": "id_del_adset",
+    "entity_type": "adset|ad",
+    "entity_id": "id_del_adset_o_ad",
     "entity_name": "nombre",
+    "parent_adset_id": "id_del_adset_padre (solo si entity_type=ad, null si es adset)",
+    "parent_adset_name": "nombre_del_adset_padre (solo si entity_type=ad, null si es adset)",
     "title": "Título corto y directo (máx 80 chars)",
     "diagnosis": "Causa raíz en 1 frase (ej: 'Fatiga creativa — CTR cayó 35% en 7d con frequency 3.8')",
-    "action_detail": "Acción específica: 'Pausar ad set BROAD 5' o 'Aumentar budget de BROAD 2 de $15 a $18/día'",
+    "action_detail": "Acción específica: 'Pausar ad Video Peppers en BROAD 5' o 'Aumentar budget de BROAD 2 de $15 a $18/día'",
     "expected_outcome": "Qué esperas que pase si se ejecuta (1 frase, ej: 'ROAS debería recuperar a ~2.5x en 5-7 días')",
     "risk": "Riesgo de NO actuar (1 frase, ej: 'Seguirá quemando $17/día sin retorno')",
     "body": "Contexto adicional breve si es necesario (1-2 frases). Puede estar vacío si diagnosis+expected_outcome+risk ya explican todo.",
@@ -1866,12 +1879,13 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
       for (const s of snapshots) snapshotMap[s.entity_id] = s;
 
       return parsed.map(item => {
-        const snap = snapshotMap[item.entity_id];
-        return {
+        const entityType = item.entity_type === 'ad' ? 'ad' : 'adset';
+        const snap = snapshotMap[item.entity_id] || snapshotMap[item.parent_adset_id];
+        const rec = {
           priority: (item.priority === 'monitorear' ? 'evaluar' : item.priority) || 'evaluar',
           action_type: (item.action_type === 'monitor' ? 'scale_up' : item.action_type) || 'scale_up',
           entity: {
-            entity_type: 'adset',
+            entity_type: entityType,
             entity_id: item.entity_id || '',
             entity_name: item.entity_name || snap?.entity_name || item.entity_id
           },
@@ -1895,6 +1909,12 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
             days_declining: item.supporting_data?.days_declining || 0
           }
         };
+        // For ad-level recommendations, store parent ad set reference
+        if (entityType === 'ad' && item.parent_adset_id) {
+          rec.parent_adset_id = item.parent_adset_id;
+          rec.parent_adset_name = item.parent_adset_name || snap?.entity_name || '';
+        }
+        return rec;
       }).filter(r => r.entity.entity_id && (r.diagnosis || r.body));
     } catch (parseErr) {
       logger.error(`[BRAIN-RECS] Error parseando respuesta: ${parseErr.message}`);

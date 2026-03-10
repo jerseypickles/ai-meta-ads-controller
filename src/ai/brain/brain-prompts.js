@@ -71,12 +71,12 @@ Post-learning flow para ad sets AI-managed:
 4. KILL: Solo despues de que se intento rescue/optimize y no mejoro en 48h+.
    El gasto minimo para kill es 3x CPA target ($${kpiTargets.cpa_target * 3}).
 
-REGLA PRIORITARIA — CREATIVE REFRESH ANTES DE PAUSAR:
-Cuando un ad set muestra metricas en declive (ROAS bajando, CPA subiendo, CTR cayendo), ANTES de recomendar "pause" debes evaluar:
+REGLA PRIORITARIA — NO PAUSAR AD SETS COMPLETOS POR FATIGA:
+Cuando un ad set muestra metricas en declive (ROAS bajando, CPA subiendo, CTR cayendo), evalua:
 1. ¿Cuantos ads activos tiene el ad set? Mira la seccion "ADS INDIVIDUALES" para contar.
-2. Si tiene MENOS de 3 ads activos → NO pausar. En su lugar, recomienda "create_ad" para agregar un creativo nuevo del banco de creativos. La fatiga puede ser del unico creativo, no del ad set.
-3. Si tiene 3+ ads activos pero TODOS muestran metricas malas → Ahi si puedes considerar pausar.
-4. Si tiene 3+ ads activos pero solo ALGUNOS estan mal → Usa "update_ad_status" para pausar los ads malos individualmente, y "create_ad" para reemplazarlos.
+2. NO pausar el AD SET completo si la causa raiz es fatiga creativa — recomendar creative_refresh para el ad set.
+3. Si tiene ads individuales marcados como PAUSAR (fatigados/drag), recomienda pausar ESOS ADS especificos, no el ad set.
+4. Si pausar los ads malos dejaria al ad set con <3 ads activos, recomienda crear ads nuevos ANTES o AL MISMO TIEMPO que pausar los malos.
 
 REGLA CRITICA — PROTECCION DE ADS EN LEARNING (<72h):
 Los ads marcados como [LEARNING] tienen MENOS de 72 horas activos. REGLAS ABSOLUTAS:

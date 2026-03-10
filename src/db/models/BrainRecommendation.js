@@ -42,6 +42,10 @@ const brainRecommendationSchema = new mongoose.Schema({
     entity_name: { type: String, required: true }
   },
 
+  // Para recomendaciones a nivel de ad individual: referencia al ad set padre
+  parent_adset_id: { type: String, default: null, index: true },
+  parent_adset_name: { type: String, default: null },
+
   // Contenido de la recomendación
   title: { type: String, required: true },         // "Pausar BROAD 5 — ROAS 0.8x con $120 gastados"
   diagnosis: { type: String, default: '' },        // Causa raíz en 1 frase: "Fatiga creativa — CTR cayó 35% en 7d"

@@ -58,7 +58,7 @@ class DiagnosticEngine {
       const funnelGrades = this._gradeFunnelThresholds(funnel);
       const creativeLifespan = this._diagnoseCreativeLifespan(ads);
       const adHealth = this._diagnoseAdHealth(ads, m7d, accountOverview);
-      const overall = this._computeOverallDiagnosis(funnel, fatigue, saturation, efficiency, m7d, snap);
+      const overall = this._computeOverallDiagnosis(funnel, fatigue, saturation, efficiency, m7d, snap, adHealth);
 
       // Attach statistical confidence + attribution if available from feature map
       const featureData = featureMap[snap.entity_id];
@@ -589,7 +589,7 @@ class DiagnosticEngine {
   /**
    * Computa etiqueta de diagnóstico principal con acción sugerida.
    */
-  _computeOverallDiagnosis(funnel, fatigue, saturation, efficiency, m7d, snap) {
+  _computeOverallDiagnosis(funnel, fatigue, saturation, efficiency, m7d, snap, adHealth = null) {
     const labels = [];
     let primaryAction = 'monitor';
     let urgency = 'low';
@@ -627,10 +627,14 @@ class DiagnosticEngine {
     // --- Efficiency ---
     if (efficiency.roas_status === 'critical') {
       labels.push('ROAS_CRITICAL');
-      // But DON'T auto-recommend pause — check why
       if (primaryAction === 'monitor') {
         if (funnel.primary_leak) primaryAction = 'investigate_funnel';
-        else if (fatigue.score > 30) primaryAction = 'refresh_creatives_first';
+        else if (fatigue.score > 30) {
+          // Fatigue + critical ROAS: refresh AND pause bad ads
+          primaryAction = adHealth && adHealth.pause_count > 0
+            ? 'refresh_and_pause_bad_ads'
+            : 'refresh_creatives_first';
+        }
         else if (saturation.score > 30) primaryAction = 'expand_audience_or_reduce_budget';
         else primaryAction = 'scale_down_or_investigate';
       }
@@ -1305,7 +1309,7 @@ class DiagnosticEngine {
           for (const ab of d.fatigue.ad_breakdown) {
             const tag = ab.status.toUpperCase();
             const action = ab.action === 'protect' ? 'NO TOCAR' : ab.action === 'pause_candidate' ? 'PAUSAR' : ab.action;
-            text += `    → [${tag}] "${ab.ad_name}" — ${ab.age_days}d | ROAS: ${ab.roas_7d.toFixed(2)}x | Freq: ${ab.frequency_7d.toFixed(1)} | $${ab.spend_7d.toFixed(0)}/sem | Acción: ${action}\n`;
+            text += `    → [${tag}] "${ab.ad_name}" (ID: ${ab.ad_id}) — ${ab.age_days}d | ROAS: ${ab.roas_7d.toFixed(2)}x | Freq: ${ab.frequency_7d.toFixed(1)} | $${ab.spend_7d.toFixed(0)}/sem | Acción: ${action}\n`;
           }
         }
       }
@@ -1331,7 +1335,7 @@ class DiagnosticEngine {
         for (const a of ah.anomalies) {
           const icon = a.recommended_action === 'pause' ? '⚠' : '⟳';
           const anomalyTypes = a.all_anomalies.map(an => an.type).join(' + ');
-          text += `    ${icon} "${a.ad_name}" — ${anomalyTypes} [${a.primary_anomaly.severity.toUpperCase()}]\n`;
+          text += `    ${icon} "${a.ad_name}" (ID: ${a.ad_id || 'N/A'}) — ${anomalyTypes} [${a.primary_anomaly.severity.toUpperCase()}]\n`;
           text += `      ${a.primary_anomaly.detail}\n`;
           text += `      Métricas: ROAS ${a.roas_7d.toFixed(2)}x | CTR ${a.ctr_7d.toFixed(2)}% | Freq ${a.frequency_7d.toFixed(1)} | $${a.spend_7d.toFixed(0)}/sem | ${a.purchases_7d} compras | ${a.age_days}d activo\n`;
           const actionLabel = a.recommended_action === 'pause' ? 'PAUSAR' :
