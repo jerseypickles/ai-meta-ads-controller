@@ -1037,33 +1037,47 @@ router.get('/knowledge/deep', async (req, res) => {
  * Calculate Brain IQ score (0-100) from knowledge systems
  */
 function _calculateIQ(memories, temporalPatterns, hypotheses, policy, measured) {
-  let score = 30; // base
+  // IQ = conocimiento REAL, no acumulación de datos.
+  // Para llegar a 80+ necesitas: muchas acciones medidas, buen win rate, hipótesis validadas.
+  let score = 10; // base mínimo — "existe"
 
-  // Memory breadth: +1 per entity with history, max +15
-  const withHistory = memories.filter(m => m.action_history && m.action_history.length > 0).length;
-  score += Math.min(15, withHistory * 2);
+  // ═══ EXPERIENCIA REAL (max 35pts) — el factor más importante ═══
+  // ¿Cuántas acciones se midieron con resultado?
+  const measuredCount = measured.length;
+  // Escala: 0→0, 5→8, 10→14, 20→22, 40→30, 80+→35
+  score += Math.min(35, Math.round(Math.sqrt(measuredCount) * 5));
 
-  // Temporal maturity: +2 per day with 4+ samples, max +14
-  const matureDays = temporalPatterns.filter(t => (t.metrics?.sample_count || 0) >= 4).length;
-  score += Math.min(14, matureDays * 2);
+  // ═══ WIN RATE (max 25pts) — ¿sus decisiones funcionan? ═══
+  if (measuredCount >= 3) {
+    const wins = measured.filter(r => r.follow_up?.impact_verdict === 'positive').length;
+    const wr = wins / measuredCount;
+    // Solo da puntos significativos con win rate >50%
+    // wr=0.4→2pts, wr=0.6→10pts, wr=0.7→15pts, wr=0.8→20pts, wr=0.9→25pts
+    if (wr > 0.3) {
+      score += Math.min(25, Math.round(Math.pow((wr - 0.3) / 0.7, 1.5) * 25));
+    }
+  }
 
-  // Hypothesis validation: +3 per validated, max +12
+  // ═══ HIPÓTESIS VALIDADAS (max 12pts) — ¿probó ideas y aprendió? ═══
   const validated = hypotheses.filter(h => h.status === 'confirmed' || h.status === 'rejected').length;
   score += Math.min(12, validated * 3);
 
-  // Active hypotheses: +1 per active, max +4
-  const active = hypotheses.filter(h => h.status === 'active').length;
-  score += Math.min(4, active);
-
-  // Thompson samples: logarithmic scale, max +15
-  const samples = policy.total_samples || 0;
-  if (samples > 0) score += Math.min(15, Math.round(Math.log2(samples + 1) * 2));
-
-  // Win rate bonus: if measured > 5 and win > 60%, +5-10
-  if (measured.length >= 5) {
-    const wr = measured.filter(r => r.follow_up?.impact_verdict === 'positive').length / measured.length;
-    score += Math.min(10, Math.round(wr * 15));
+  // ═══ DIVERSIDAD DE ACCIONES (max 8pts) — ¿sabe hacer más que una cosa? ═══
+  const actionTypes = new Set();
+  for (const m of memories) {
+    if (m.action_history) {
+      for (const a of m.action_history) actionTypes.add(a.action_type);
+    }
   }
+  score += Math.min(8, actionTypes.size * 2);
+
+  // ═══ PATRONES TEMPORALES (max 5pts) — data pasiva, bajo peso ═══
+  const matureDays = temporalPatterns.filter(t => (t.metrics?.sample_count || 0) >= 4).length;
+  score += Math.min(5, Math.round(matureDays * 0.7));
+
+  // ═══ THOMPSON SAMPLING DEPTH (max 5pts) — ¿tiene contextos explorados? ═══
+  const samples = policy.total_samples || 0;
+  if (samples > 0) score += Math.min(5, Math.round(Math.log2(samples + 1)));
 
   return Math.min(100, Math.round(score));
 }

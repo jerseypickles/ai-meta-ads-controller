@@ -2120,9 +2120,9 @@ function KnowledgePanel({ formatTime }) {
   if (loading) return <div className="feed-empty">Cargando conocimiento del Brain...</div>;
   if (!data) return <div className="feed-empty"><p>Error cargando datos de conocimiento.</p></div>;
 
-  const iq = data.iq_score || 30;
-  const iqColor = iq >= 75 ? '#10b981' : iq >= 55 ? '#6366f1' : iq >= 40 ? '#3b82f6' : '#f59e0b';
-  const iqLabel = iq >= 75 ? 'Experto' : iq >= 55 ? 'Aprendiendo' : iq >= 40 ? 'Principiante' : 'Inicial';
+  const iq = data.iq_score || 10;
+  const iqColor = iq >= 80 ? '#10b981' : iq >= 60 ? '#6366f1' : iq >= 40 ? '#3b82f6' : iq >= 25 ? '#f59e0b' : '#ef4444';
+  const iqLabel = iq >= 80 ? 'Experto' : iq >= 60 ? 'Competente' : iq >= 40 ? 'Aprendiendo' : iq >= 25 ? 'Novato' : 'Inicial';
 
   return (
     <div className="knowledge-panel knowledge-panel-v2">
