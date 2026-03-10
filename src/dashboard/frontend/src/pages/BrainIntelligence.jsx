@@ -1066,6 +1066,7 @@ function RecDetail({ rec, onApprove, onReject, onDiscuss, onGoToFollowUp, format
   const actionCfg = ACTION_TYPE_CONFIG[rec.action_type] || ACTION_TYPE_CONFIG.other;
   const statusCfg = STATUS_LABELS[rec.status] || STATUS_LABELS.pending;
   const confidencePct = rec.confidence_score || 50;
+  const [showContext, setShowContext] = useState(false);
 
   const followUp = rec.follow_up || {};
   const currentPhase = followUp.current_phase || 'awaiting_day_3';
@@ -1075,6 +1076,9 @@ function RecDetail({ rec, onApprove, onReject, onDiscuss, onGoToFollowUp, format
   const daysAgo = hoursSinceApproval >= 24
     ? `${Math.floor(hoursSinceApproval / 24)}d ${hoursSinceApproval % 24}h`
     : `${hoursSinceApproval}h`;
+
+  // Contar secciones colapsables para el toggle
+  const hasContextSections = rec.diagnosis || rec.expected_outcome || rec.risk || (rec.body && rec.body.length > 10);
 
   return (
     <div className="rec-detail">
@@ -1146,134 +1150,130 @@ function RecDetail({ rec, onApprove, onReject, onDiscuss, onGoToFollowUp, format
         )}
       </div>
 
-      {/* Body — always visible */}
+      {/* Body */}
       <div className="rec-detail-body">
-        {/* Related follow-up context */}
+        {/* Related follow-up context — compact inline */}
         {rec.related_follow_up?.rec_id && (
-          <div className={`rec-followup-context ${rec.related_follow_up.day_3_verdict || 'pending'}`}>
-            <div className="rec-followup-context-header">
-              <span className="rec-followup-context-icon">{'\uD83D\uDD17'}</span>
-              <span className="rec-followup-context-title">
-                Seguimiento previo: "{rec.related_follow_up.title}"
-              </span>
-              <span className="rec-followup-context-phase">
-                {rec.related_follow_up.current_phase === 'awaiting_day_7' ? 'dia 3 medido' :
-                 rec.related_follow_up.current_phase === 'awaiting_day_14' ? 'dia 7 medido' :
-                 rec.related_follow_up.current_phase === 'complete' ? 'completo' : 'dia 3'}
-              </span>
-            </div>
-            {rec.related_follow_up.day_3_verdict && (
-              <div className="rec-followup-context-verdict">
-                <span className={`rec-followup-verdict-badge ${rec.related_follow_up.day_3_verdict}`}>
-                  {rec.related_follow_up.day_3_verdict === 'negative' ? '\u274C' :
-                   rec.related_follow_up.day_3_verdict === 'positive' ? '\u2705' : '\u2796'}
-                  {' '}Veredicto dia 3: {rec.related_follow_up.day_3_verdict === 'negative' ? 'negativo' :
-                   rec.related_follow_up.day_3_verdict === 'positive' ? 'positivo' : 'neutral'}
-                </span>
-                <span className="rec-followup-context-action">
-                  Accion previa: {ACTION_TYPE_CONFIG[rec.related_follow_up.action_type]?.label || rec.related_follow_up.action_type}
-                </span>
-              </div>
-            )}
+          <div className={`rec-followup-context-inline ${rec.related_follow_up.day_3_verdict || 'pending'}`}>
+            <span className={`rec-followup-verdict-dot ${rec.related_follow_up.day_3_verdict || 'pending'}`} />
+            <span className="rec-followup-inline-label">
+              {rec.related_follow_up.day_3_verdict === 'negative' ? 'Seguimiento negativo' :
+               rec.related_follow_up.day_3_verdict === 'positive' ? 'Seguimiento positivo' : 'Seguimiento previo'}
+            </span>
+            <span className="rec-followup-inline-action">
+              {ACTION_TYPE_CONFIG[rec.related_follow_up.action_type]?.icon}{' '}
+              {ACTION_TYPE_CONFIG[rec.related_follow_up.action_type]?.label || rec.related_follow_up.action_type}
+            </span>
+            <span className="rec-followup-inline-phase">
+              {rec.related_follow_up.current_phase === 'awaiting_day_7' ? 'dia 3' :
+               rec.related_follow_up.current_phase === 'awaiting_day_14' ? 'dia 7' :
+               rec.related_follow_up.current_phase === 'complete' ? 'completo' : 'dia 3'}
+            </span>
           </div>
         )}
 
-        {/* Structured sections */}
-        {rec.diagnosis && (
-          <div className="rec-structured-section rec-section-diagnosis">
-            <span className="rec-section-icon">{'\uD83D\uDD0D'}</span>
-            <div className="rec-section-content">
-              <span className="rec-section-label">Causa raiz</span>
-              <span className="rec-section-text">{rec.diagnosis}</span>
-            </div>
-          </div>
-        )}
-
+        {/* === ACCION PRINCIPAL — siempre visible y prominente === */}
         <div className="rec-action-detail">
-          <strong>Accion:</strong> {rec.action_detail}
+          <strong>Que hacer:</strong> {rec.action_detail}
         </div>
 
-        {rec.expected_outcome && (
-          <div className="rec-structured-section rec-section-outcome">
-            <span className="rec-section-icon">{'\uD83C\uDFAF'}</span>
-            <div className="rec-section-content">
-              <span className="rec-section-label">Resultado esperado</span>
-              <span className="rec-section-text">{rec.expected_outcome}</span>
-            </div>
-          </div>
-        )}
-
-        {rec.risk && (
-          <div className="rec-structured-section rec-section-risk">
-            <span className="rec-section-icon">{'\u26A0\uFE0F'}</span>
-            <div className="rec-section-content">
-              <span className="rec-section-label">Riesgo si no actuas</span>
-              <span className="rec-section-text">{rec.risk}</span>
-            </div>
-          </div>
-        )}
-
-        {rec.body && !rec.diagnosis && (
-          <div className="rec-body-text markdown-body">
-            <ReactMarkdown>{rec.body}</ReactMarkdown>
-          </div>
-        )}
-        {rec.body && rec.diagnosis && rec.body.length > 10 && (
-          <div className="rec-body-text rec-body-extra">
-            <ReactMarkdown>{rec.body}</ReactMarkdown>
-          </div>
-        )}
-
-        {/* Supporting data grid */}
+        {/* Metrics strip — compact horizontal */}
         {rec.supporting_data && (
-          <div className="rec-data-grid">
+          <div className="rec-metrics-strip">
             {rec.supporting_data.current_roas_7d > 0 && (
-              <div className={`rec-data-item ${rec.supporting_data.account_avg_roas_7d > 0 && rec.supporting_data.current_roas_7d < rec.supporting_data.account_avg_roas_7d * 0.7 ? 'bad' : rec.supporting_data.current_roas_7d >= rec.supporting_data.account_avg_roas_7d ? 'good' : ''}`}>
-                <span className="rec-data-label">ROAS 7d</span>
-                <span className="rec-data-value">{rec.supporting_data.current_roas_7d.toFixed(2)}x</span>
+              <span className={`rec-metric-chip ${rec.supporting_data.account_avg_roas_7d > 0 && rec.supporting_data.current_roas_7d < rec.supporting_data.account_avg_roas_7d * 0.7 ? 'bad' : rec.supporting_data.current_roas_7d >= rec.supporting_data.account_avg_roas_7d ? 'good' : ''}`}>
+                ROAS <strong>{rec.supporting_data.current_roas_7d.toFixed(2)}x</strong>
                 {rec.supporting_data.account_avg_roas_7d > 0 && (
-                  <span className="rec-data-ref">cuenta: {rec.supporting_data.account_avg_roas_7d.toFixed(2)}x</span>
+                  <span className="rec-metric-ref">/ {rec.supporting_data.account_avg_roas_7d.toFixed(2)}x</span>
                 )}
-              </div>
+              </span>
             )}
             {rec.supporting_data.current_cpa_7d > 0 && (
-              <div className="rec-data-item">
-                <span className="rec-data-label">CPA 7d</span>
-                <span className="rec-data-value">${rec.supporting_data.current_cpa_7d.toFixed(2)}</span>
-              </div>
+              <span className="rec-metric-chip">
+                CPA <strong>${rec.supporting_data.current_cpa_7d.toFixed(0)}</strong>
+              </span>
             )}
             {rec.supporting_data.current_spend_7d > 0 && (
-              <div className="rec-data-item">
-                <span className="rec-data-label">Spend 7d</span>
-                <span className="rec-data-value">${rec.supporting_data.current_spend_7d.toFixed(0)}</span>
-              </div>
+              <span className="rec-metric-chip">
+                Spend <strong>${rec.supporting_data.current_spend_7d.toFixed(0)}</strong>
+              </span>
             )}
             {rec.supporting_data.current_frequency_7d > 0 && (
-              <div className={`rec-data-item ${rec.supporting_data.current_frequency_7d >= 3.5 ? 'bad' : rec.supporting_data.current_frequency_7d >= 2.5 ? 'warn' : ''}`}>
-                <span className="rec-data-label">Freq 7d</span>
-                <span className="rec-data-value">{rec.supporting_data.current_frequency_7d.toFixed(1)}</span>
-              </div>
+              <span className={`rec-metric-chip ${rec.supporting_data.current_frequency_7d >= 3.5 ? 'bad' : rec.supporting_data.current_frequency_7d >= 2.5 ? 'warn' : ''}`}>
+                Freq <strong>{rec.supporting_data.current_frequency_7d.toFixed(1)}</strong>
+              </span>
             )}
             {rec.supporting_data.current_ctr_7d > 0 && (
-              <div className="rec-data-item">
-                <span className="rec-data-label">CTR 7d</span>
-                <span className="rec-data-value">{rec.supporting_data.current_ctr_7d.toFixed(2)}%</span>
-              </div>
+              <span className="rec-metric-chip">
+                CTR <strong>{rec.supporting_data.current_ctr_7d.toFixed(2)}%</strong>
+              </span>
             )}
             {rec.supporting_data.current_purchases_7d > 0 && (
-              <div className="rec-data-item">
-                <span className="rec-data-label">Compras 7d</span>
-                <span className="rec-data-value">{rec.supporting_data.current_purchases_7d}</span>
-              </div>
+              <span className="rec-metric-chip">
+                Compras <strong>{rec.supporting_data.current_purchases_7d}</strong>
+              </span>
             )}
             {rec.supporting_data.trend_direction && rec.supporting_data.trend_direction !== 'unknown' && (
-              <div className={`rec-data-item ${rec.supporting_data.trend_direction === 'declining' ? 'bad' : rec.supporting_data.trend_direction === 'improving' ? 'good' : ''}`}>
-                <span className="rec-data-label">Tendencia</span>
-                <span className="rec-data-value">
-                  {rec.supporting_data.trend_direction === 'declining' ? '\u2198 Bajando' :
-                   rec.supporting_data.trend_direction === 'improving' ? '\u2197 Subiendo' : '\u2192 Estable'}
-                  {rec.supporting_data.days_declining > 0 && ` (${rec.supporting_data.days_declining}d)`}
-                </span>
+              <span className={`rec-metric-chip ${rec.supporting_data.trend_direction === 'declining' ? 'bad' : rec.supporting_data.trend_direction === 'improving' ? 'good' : ''}`}>
+                {rec.supporting_data.trend_direction === 'declining' ? '\u2198' :
+                 rec.supporting_data.trend_direction === 'improving' ? '\u2197' : '\u2192'}
+                {rec.supporting_data.days_declining > 0 && ` ${rec.supporting_data.days_declining}d`}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* === CONTEXTO COLAPSABLE === */}
+        {hasContextSections && (
+          <div className="rec-context-toggle-wrap">
+            <button className="rec-context-toggle" onClick={() => setShowContext(!showContext)}>
+              <span className="rec-context-toggle-icon">{showContext ? '\u25BC' : '\u25B6'}</span>
+              {showContext ? 'Ocultar contexto' : 'Ver contexto'}
+              {rec.diagnosis && !showContext && <span className="rec-context-preview"> — {rec.diagnosis.slice(0, 60)}...</span>}
+            </button>
+          </div>
+        )}
+
+        {showContext && (
+          <div className="rec-context-sections">
+            {rec.diagnosis && (
+              <div className="rec-structured-section rec-section-diagnosis">
+                <span className="rec-section-icon">{'\uD83D\uDD0D'}</span>
+                <div className="rec-section-content">
+                  <span className="rec-section-label">Causa raiz</span>
+                  <span className="rec-section-text">{rec.diagnosis}</span>
+                </div>
+              </div>
+            )}
+
+            {rec.expected_outcome && (
+              <div className="rec-structured-section rec-section-outcome">
+                <span className="rec-section-icon">{'\uD83C\uDFAF'}</span>
+                <div className="rec-section-content">
+                  <span className="rec-section-label">Resultado esperado</span>
+                  <span className="rec-section-text">{rec.expected_outcome}</span>
+                </div>
+              </div>
+            )}
+
+            {rec.risk && (
+              <div className="rec-structured-section rec-section-risk">
+                <span className="rec-section-icon">{'\u26A0\uFE0F'}</span>
+                <div className="rec-section-content">
+                  <span className="rec-section-label">Riesgo si no actuas</span>
+                  <span className="rec-section-text">{rec.risk}</span>
+                </div>
+              </div>
+            )}
+
+            {rec.body && !rec.diagnosis && (
+              <div className="rec-body-text markdown-body">
+                <ReactMarkdown>{rec.body}</ReactMarkdown>
+              </div>
+            )}
+            {rec.body && rec.diagnosis && rec.body.length > 10 && (
+              <div className="rec-body-text rec-body-extra">
+                <ReactMarkdown>{rec.body}</ReactMarkdown>
               </div>
             )}
           </div>

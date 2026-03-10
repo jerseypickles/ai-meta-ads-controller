@@ -4417,7 +4417,153 @@ a:hover {
   line-height: 1.5;
 }
 
-/* ═══ FOLLOW-UP CONTEXT BADGE (on new recs linked to active follow-up) ═══ */
+/* ═══ FOLLOW-UP CONTEXT — compact inline version ═══ */
+
+.rec-followup-context-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(107, 114, 128, 0.06);
+  border: 1px solid rgba(107, 114, 128, 0.15);
+  font-size: 0.72rem;
+  margin-bottom: 4px;
+}
+
+.rec-followup-context-inline.negative {
+  background: rgba(239, 68, 68, 0.06);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.rec-followup-context-inline.positive {
+  background: rgba(16, 185, 129, 0.06);
+  border-color: rgba(16, 185, 129, 0.2);
+}
+
+.rec-followup-verdict-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #6b7280;
+}
+
+.rec-followup-verdict-dot.negative { background: #ef4444; }
+.rec-followup-verdict-dot.positive { background: #10b981; }
+.rec-followup-verdict-dot.neutral { background: #f59e0b; }
+
+.rec-followup-inline-label {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.rec-followup-inline-action {
+  color: var(--text-muted);
+}
+
+.rec-followup-inline-phase {
+  margin-left: auto;
+  font-size: 0.65rem;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-color);
+  color: var(--text-tertiary);
+}
+
+/* ═══ METRICS STRIP — compact horizontal chips ═══ */
+
+.rec-metrics-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 4px;
+}
+
+.rec-metric-chip {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.rec-metric-chip strong {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.rec-metric-chip.good {
+  border-color: rgba(16, 185, 129, 0.25);
+}
+
+.rec-metric-chip.good strong { color: #10b981; }
+
+.rec-metric-chip.bad {
+  border-color: rgba(239, 68, 68, 0.25);
+}
+
+.rec-metric-chip.bad strong { color: #ef4444; }
+
+.rec-metric-chip.warn {
+  border-color: rgba(245, 158, 11, 0.25);
+}
+
+.rec-metric-chip.warn strong { color: #f59e0b; }
+
+.rec-metric-ref {
+  color: var(--text-muted);
+  font-size: 0.62rem;
+  opacity: 0.7;
+}
+
+/* ═══ CONTEXT TOGGLE — collapsible sections ═══ */
+
+.rec-context-toggle-wrap {
+  margin-bottom: 4px;
+}
+
+.rec-context-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  cursor: pointer;
+  padding: 4px 0;
+  font-family: var(--font-primary);
+  transition: color 0.15s;
+}
+
+.rec-context-toggle:hover {
+  color: var(--text-secondary);
+}
+
+.rec-context-toggle-icon {
+  font-size: 0.55rem;
+  opacity: 0.6;
+}
+
+.rec-context-preview {
+  color: var(--text-muted);
+  opacity: 0.5;
+  font-size: 0.68rem;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rec-context-sections {
+  animation: fadeInDetail 0.2s ease;
+}
+
+/* ═══ LEGACY FOLLOW-UP CONTEXT (keep for followup tab references) ═══ */
 
 .rec-followup-context {
   padding: 8px 12px;
