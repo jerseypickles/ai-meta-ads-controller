@@ -423,4 +423,14 @@ export const getAdHealth = async () => {
   return response.data;
 };
 
+export const suggestAdHealthAction = async (adsetId, adsetName, suggestionType, zombieAdIds = []) => {
+  const response = await api.post('/api/brain/ad-health/suggest', {
+    adset_id: adsetId,
+    adset_name: adsetName,
+    suggestion_type: suggestionType,
+    zombie_ad_ids: zombieAdIds
+  });
+  return response.data;
+};
+
 export default api;

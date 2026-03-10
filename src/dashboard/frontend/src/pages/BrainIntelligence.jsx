@@ -8,7 +8,7 @@ import {
   approveRecommendation, rejectRecommendation, markRecommendationExecuted,
   triggerBrainRecommendations, getFollowUpStats,
   getPolicyState, getKnowledgeHistory, getDeepKnowledge, getCreativePerformance,
-  getAdHealth, logout
+  getAdHealth, suggestAdHealthAction, logout
 } from '../api';
 
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
@@ -2125,28 +2125,16 @@ function KnowledgePanel({ formatTime }) {
 
 // ═══ CREATIVES PANEL ═══
 
-const CREATIVE_VERDICT = {
-  good:     { label: 'Buen rendimiento', color: '#10b981', glow: 'rgba(16,185,129,0.25)', bg: 'rgba(16,185,129,0.08)', border: 'rgba(16,185,129,0.3)' },
-  bad:      { label: 'Bajo rendimiento', color: '#ef4444', glow: 'rgba(239,68,68,0.25)', bg: 'rgba(239,68,68,0.08)', border: 'rgba(239,68,68,0.3)' },
-  watch:    { label: 'Monitorear',       color: '#f59e0b', glow: 'rgba(245,158,11,0.25)', bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.3)' },
-  learning: { label: 'Aprendiendo',      color: '#3b82f6', glow: 'rgba(59,130,246,0.25)', bg: 'rgba(59,130,246,0.08)', border: 'rgba(59,130,246,0.3)' },
-  new:      { label: 'Sin datos',        color: '#6b7280', glow: 'rgba(107,114,128,0.15)', bg: 'rgba(107,114,128,0.06)', border: 'rgba(107,114,128,0.2)' }
+const DIAGNOSIS_CONFIG = {
+  healthy:             { label: 'Saludable',           icon: '\u2705', color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+  learning:            { label: 'Aprendiendo',         icon: '\uD83E\uDDEA', color: '#3b82f6', bg: 'rgba(59,130,246,0.12)' },
+  new_untested:        { label: 'Sin probar',          icon: '\u2753', color: '#6b7280', bg: 'rgba(107,114,128,0.12)' },
+  starved:             { label: 'Sin oportunidad',     icon: '\uD83D\uDEAB', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
+  zombie:              { label: 'Zombie',              icon: '\uD83D\uDC80', color: '#ef4444', bg: 'rgba(239,68,68,0.12)' },
+  dominant_declining:  { label: 'Dominante cayendo',   icon: '\uD83D\uDD25', color: '#f97316', bg: 'rgba(249,115,22,0.12)' },
+  dominant_healthy:    { label: 'Dominante saludable', icon: '\uD83D\uDC51', color: '#22c55e', bg: 'rgba(34,197,94,0.12)' },
+  fatigued:            { label: 'Fatigado',            icon: '\u26A0\uFE0F', color: '#a855f7', bg: 'rgba(168,85,247,0.12)' }
 };
-
-const SORT_OPTIONS = [
-  { key: 'spend', label: 'Gasto' },
-  { key: 'roas', label: 'ROAS' },
-  { key: 'clicks', label: 'Clicks' },
-  { key: 'ctr', label: 'CTR' },
-  { key: 'cpa', label: 'CPA' },
-  { key: 'purchases', label: 'Compras' }
-];
-
-const TIME_WINDOWS = [
-  { key: 'today', label: 'Hoy' },
-  { key: 'last_3d', label: '3d' },
-  { key: 'last_7d', label: '7d' }
-];
 
 const ANOMALY_CONFIG = {
   ZERO_CONVERSIONS:        { icon: '\u26D4', label: 'Sin Conversiones', color: '#ef4444' },
@@ -2157,394 +2145,220 @@ const ANOMALY_CONFIG = {
   UNDERPERFORMER:          { icon: '\uD83D\uDCC9', label: 'Bajo Rendimiento', color: '#ef4444' }
 };
 
-const ACTION_LABELS = {
-  pause: { label: 'PAUSAR', color: '#ef4444', bg: 'rgba(239,68,68,0.15)' },
-  monitor: { label: 'MONITOREAR', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
-  monitor_prepare_replacement: { label: 'PREPARAR REEMPLAZO', color: '#a855f7', bg: 'rgba(168,85,247,0.15)' }
-};
-
 function CreativesPanel({ formatTime }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [sortBy, setSortBy] = useState('spend');
-  const [filterVerdict, setFilterVerdict] = useState('all');
-  const [timeWindow, setTimeWindow] = useState('last_3d');
-
-  // Ad Health state
   const [adHealthData, setAdHealthData] = useState(null);
   const [adHealthLoading, setAdHealthLoading] = useState(true);
-  const [expandedAdSet, setExpandedAdSet] = useState(null);
+  const [expandedAdSets, setExpandedAdSets] = useState(new Set());
+  const [suggestingFor, setSuggestingFor] = useState(null);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await getCreativePerformance();
-        setData(res);
-      } catch (err) { console.error('Creative performance error:', err); }
-      finally { setLoading(false); }
-    })();
-    (async () => {
-      try {
-        const res = await getAdHealth();
-        setAdHealthData(res);
-      } catch (err) { console.error('Ad health error:', err); }
-      finally { setAdHealthLoading(false); }
-    })();
+  const loadData = useCallback(async () => {
+    setAdHealthLoading(true);
+    try {
+      const res = await getAdHealth();
+      setAdHealthData(res);
+    } catch (err) { console.error('Ad health error:', err); }
+    finally { setAdHealthLoading(false); }
   }, []);
 
-  if (loading && adHealthLoading) return <div className="d-flex align-center justify-center p-4 text-muted"><div className="loading" /> Cargando creativos...</div>;
+  useEffect(() => { loadData(); }, [loadData]);
 
-  const hasCreatives = data?.ads?.length > 0;
-
-  const accountAvg = data?.account_avg || {};
-
-  // Verdict counts
-  const verdictCounts = { good: 0, bad: 0, watch: 0, learning: 0, new: 0 };
-  for (const ad of (data?.ads || [])) verdictCounts[ad.verdict] = (verdictCounts[ad.verdict] || 0) + 1;
-
-  // Filter
-  let filtered = data?.ads || [];
-  if (filterVerdict !== 'all') filtered = filtered.filter(a => a.verdict === filterVerdict);
-
-  // Sort (uses selected time window)
-  filtered = [...filtered].sort((a, b) => {
-    const ma = a.metrics?.[timeWindow] || {};
-    const mb = b.metrics?.[timeWindow] || {};
-    if (sortBy === 'spend') return (mb.spend || 0) - (ma.spend || 0);
-    if (sortBy === 'roas') return (mb.roas || 0) - (ma.roas || 0);
-    if (sortBy === 'clicks') return (mb.clicks || 0) - (ma.clicks || 0);
-    if (sortBy === 'ctr') return (mb.ctr || 0) - (ma.ctr || 0);
-    if (sortBy === 'cpa') return (ma.cpa || 0) - (mb.cpa || 0);
-    if (sortBy === 'purchases') return (mb.purchases || 0) - (ma.purchases || 0);
-    return 0;
-  });
-
-  const fmtMoney = (v) => v != null && v > 0 ? `$${v.toFixed(2)}` : '--';
-  const fmtPct = (v) => v != null && v > 0 ? `${v.toFixed(2)}%` : '--';
-  const fmtNum = (v) => v != null && v > 0 ? v.toFixed(2) : '--';
-  const fmtInt = (v) => v != null && v > 0 ? v.toLocaleString() : '--';
-
-  // ROAS gauge helper: returns width % relative to account avg (capped at 200%)
-  const windowAvg = accountAvg[timeWindow] || {};
-  const avgRoas = windowAvg.roas || accountAvg.roas_3d || 0;
-  const avgCtr = windowAvg.ctr || accountAvg.ctr_3d || 0;
-  const windowLabel = TIME_WINDOWS.find(w => w.key === timeWindow)?.label || '3d';
-
-  const roasGauge = (roas) => {
-    if (!avgRoas || avgRoas === 0 || !roas) return 0;
-    return Math.min((roas / avgRoas) * 50, 100);
+  const toggleAdSet = (id) => {
+    setExpandedAdSets(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   };
 
+  const handleSuggest = async (adset, type, zombieIds = []) => {
+    setSuggestingFor(`${adset.adset_id}-${type}`);
+    try {
+      await suggestAdHealthAction(adset.adset_id, adset.adset_name, type, zombieIds);
+      await loadData(); // Refresca para mostrar pending_rec
+    } catch (err) { console.error('Suggest error:', err); }
+    finally { setSuggestingFor(null); }
+  };
+
+  if (adHealthLoading) return <div className="d-flex align-center justify-center p-4 text-muted"><div className="loading" /> Cargando creativos...</div>;
+  if (!adHealthData) return <div className="feed-empty"><p>Error al cargar datos.</p></div>;
+
+  const { summary, adsets } = adHealthData;
+  const dc = summary.diagnosis_counts || {};
+
+  // Acciones sugeridas: ad sets con dominant_declining o zombies
+  const actionSuggestions = [];
+  for (const adset of adsets) {
+    const ads = adset.all_ads || [];
+    const dominantDeclining = ads.filter(a => a.diagnosis === 'dominant_declining');
+    const zombies = ads.filter(a => a.diagnosis === 'zombie');
+    if (dominantDeclining.length > 0 && !adset.pending_rec_id) {
+      actionSuggestions.push({ adset, type: 'refresh', label: `${adset.adset_name}: creativo dominante cayendo`, icon: '\uD83D\uDD25' });
+    }
+    if (zombies.length > 0 && !adset.pending_rec_id) {
+      actionSuggestions.push({ adset, type: 'pause_zombies', label: `${adset.adset_name}: ${zombies.length} ad${zombies.length > 1 ? 's' : ''} zombie`, icon: '\uD83D\uDC80', zombieIds: zombies.map(z => z.ad_name) });
+    }
+  }
+
   return (
-    <div className="cv2-panel">
-      {!hasCreatives && (
-        <div className="feed-empty" style={{ marginBottom: '24px' }}>
-          <div className="feed-empty-icon">{'\uD83C\uDFA8'}</div>
-          <p>No hay creativos manuales todavia.</p>
-          <p className="feed-empty-hint">Cuando subas creativos desde Ad Sets Manager, el Brain rastreara su rendimiento aqui.</p>
+    <div className="cv3-panel">
+      {/* ═══ ZONE 1: Summary Strip ═══ */}
+      <div className="cv3-summary">
+        <span className="cv3-summary-total">{summary.total_ads} ads</span>
+        {Object.entries(dc).filter(([, count]) => count > 0).map(([key, count]) => {
+          const cfg = DIAGNOSIS_CONFIG[key];
+          if (!cfg) return null;
+          return (
+            <span key={key} className="cv3-summary-chip" style={{ color: cfg.color, background: cfg.bg }}>
+              {cfg.icon} {count} {cfg.label.toLowerCase()}
+            </span>
+          );
+        })}
+        {summary.total_waste_7d > 0 && (
+          <span className="cv3-summary-chip cv3-waste">~${Math.round(summary.total_waste_7d)} desperdicio/sem</span>
+        )}
+        <button className="btn-ghost btn-small cv3-refresh-btn" onClick={loadData}>Refrescar</button>
+      </div>
+
+      {/* ═══ ZONE 3: Actions (above ad sets for visibility) ═══ */}
+      {actionSuggestions.length > 0 && (
+        <div className="cv3-actions">
+          <h3 className="cv3-actions-title">Acciones sugeridas</h3>
+          {actionSuggestions.map((s, i) => (
+            <div key={i} className="cv3-action-item">
+              <span className="cv3-action-icon">{s.icon}</span>
+              <span className="cv3-action-label">{s.label}</span>
+              <button
+                className="cv3-action-btn"
+                disabled={suggestingFor === `${s.adset.adset_id}-${s.type}`}
+                onClick={() => handleSuggest(s.adset, s.type, s.zombieIds)}
+              >
+                {suggestingFor === `${s.adset.adset_id}-${s.type}` ? 'Generando...' : s.type === 'refresh' ? 'Generar rec refresh' : 'Generar rec pausar'}
+              </button>
+            </div>
+          ))}
         </div>
       )}
 
-      {hasCreatives && <>
-      {/* ── Hero: verdict summary cards ── */}
-      <div className="cv2-hero">
-        {[
-          { key: 'good', count: verdictCounts.good },
-          { key: 'learning', count: verdictCounts.learning },
-          { key: 'watch', count: verdictCounts.watch },
-          { key: 'bad', count: verdictCounts.bad },
-          { key: 'new', count: verdictCounts.new }
-        ].map(({ key, count }) => {
-          const v = CREATIVE_VERDICT[key];
-          return (
-            <button key={key}
-              className={`cv2-hero-card ${filterVerdict === key ? 'selected' : ''}`}
-              style={{ '--vc': v.color, '--vg': v.glow, '--vbg': v.bg, '--vb': v.border }}
-              onClick={() => setFilterVerdict(filterVerdict === key ? 'all' : key)}
-            >
-              <span className="cv2-hero-count">{count}</span>
-              <span className="cv2-hero-label">{v.label}</span>
-              <span className="cv2-hero-dot" />
-            </button>
-          );
-        })}
-        <div className="cv2-hero-ref">
-          <div className="cv2-hero-ref-item">
-            <span className="cv2-hero-ref-val">{fmtNum(avgRoas)}x</span>
-            <span className="cv2-hero-ref-label">ROAS prom ({windowLabel})</span>
-          </div>
-          <div className="cv2-hero-ref-item">
-            <span className="cv2-hero-ref-val">{fmtPct(avgCtr)}</span>
-            <span className="cv2-hero-ref-label">CTR prom ({windowLabel})</span>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Toolbar: time window + sort pills ── */}
-      <div className="cv2-toolbar">
-        <div className="cv2-time-pills">
-          {TIME_WINDOWS.map(w => (
-            <button key={w.key}
-              className={`cv2-time-pill ${timeWindow === w.key ? 'active' : ''}`}
-              onClick={() => setTimeWindow(w.key)}
-            >{w.label}</button>
+      {/* Pending recs */}
+      {adsets.some(a => a.pending_rec_id) && (
+        <div className="cv3-pending-recs">
+          {adsets.filter(a => a.pending_rec_id).map(adset => (
+            <div key={adset.adset_id} className="cv3-pending-item">
+              <span className="cv3-pending-icon">{'\u23F3'}</span>
+              <span className="cv3-pending-text">
+                <strong>{adset.adset_name}</strong>: rec pendiente — {adset.pending_rec_title}
+              </span>
+            </div>
           ))}
         </div>
-        <div className="cv2-sort-pills">
-          {SORT_OPTIONS.map(s => (
-            <button key={s.key}
-              className={`cv2-sort-pill ${sortBy === s.key ? 'active' : ''}`}
-              onClick={() => setSortBy(s.key)}
-            >{s.label}</button>
-          ))}
+      )}
+
+      {/* ═══ ZONE 2: By Ad Set ═══ */}
+      {adsets.length === 0 ? (
+        <div className="feed-empty">
+          <div className="feed-empty-icon">{'\uD83C\uDFA8'}</div>
+          <p>No hay ad sets activos.</p>
         </div>
-        <span className="cv2-count">{filtered.length} de {data.ads.length}</span>
-      </div>
+      ) : (
+        <div className="cv3-adsets">
+          {adsets.map(adset => {
+            const isOpen = expandedAdSets.has(adset.adset_id);
+            const ads = adset.all_ads || [];
+            const hasIssues = adset.ad_health?.anomalies?.length > 0;
+            const topDiagnosis = ads.find(a => ['dominant_declining', 'zombie', 'fatigued', 'starved'].includes(a.diagnosis));
 
-      {/* ── Ad cards grid ── */}
-      <div className="cv2-grid">
-        {filtered.map(ad => {
-          const mw = ad.metrics?.[timeWindow] || {};
-          const vc = CREATIVE_VERDICT[ad.verdict] || CREATIVE_VERDICT.new;
-          const trendIcon = ad.trend === 'improving' ? '\u2197' : ad.trend === 'declining' ? '\u2198' : '\u2192';
-          const trendClass = ad.trend === 'improving' ? 'up' : ad.trend === 'declining' ? 'down' : 'flat';
-          const gauge = roasGauge(mw.roas);
-
-          return (
-            <div key={ad.ad_id} className="cv2-card" style={{ '--vc': vc.color, '--vg': vc.glow, '--vbg': vc.bg, '--vb': vc.border }}>
-              {/* Card header */}
-              <div className="cv2-card-head">
-                <div className="cv2-card-identity">
-                  <span className="cv2-card-name" title={ad.ad_name}>
-                    {ad.ad_name.replace(' [Manual Upload]', '')}
-                  </span>
-                  <span className="cv2-card-adset" title={ad.adset_name}>{ad.adset_name}</span>
-                </div>
-                <div className="cv2-card-badges">
-                  <span className={`cv2-status-pill ${ad.status === 'ACTIVE' ? 'active' : 'paused'}`}>
-                    {ad.status === 'ACTIVE' ? 'Active' : 'Paused'}
-                  </span>
-                  <span className="cv2-verdict-pill">{vc.label}</span>
-                  {ad.age_days != null && (
-                    <span className="cv2-age-pill" title={`${ad.age_hours || 0}h activo`}>
-                      {ad.age_days < 1 ? `${ad.age_hours || 0}h` : `${ad.age_days}d`}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Fatigue indicator bar (only for non-learning, non-new) */}
-              {ad.fatigue && ad.fatigue.level !== 'learning' && ad.fatigue.level !== 'healthy' && ad.verdict !== 'new' && (
-                <div className={`cv2-fatigue-bar cv2-fatigue-${ad.fatigue.level}`}>
-                  <span className="cv2-fatigue-icon">{ad.fatigue.level === 'severe' ? '🔥' : ad.fatigue.level === 'moderate' ? '⚠' : '📊'}</span>
-                  <span className="cv2-fatigue-text">
-                    {ad.fatigue.level === 'severe' ? 'Fatiga severa' : ad.fatigue.level === 'moderate' ? 'Fatiga moderada' : 'Fatiga temprana'}
-                    {ad.fatigue.signals && ad.fatigue.signals.length > 0 && ` (${ad.fatigue.signals.length} señales)`}
-                  </span>
-                </div>
-              )}
-
-              {/* Learning message for learning ads */}
-              {ad.verdict === 'learning' && (
-                <div className="cv2-learning-bar">
-                  <span className="cv2-learning-icon">🧪</span>
-                  <span className="cv2-learning-text">
-                    En fase de aprendizaje — {ad.age_hours != null ? `${Math.max(0, 72 - ad.age_hours)}h restantes` : 'evaluando'}
-                  </span>
-                  <div className="cv2-learning-progress">
-                    <div className="cv2-learning-fill" style={{ width: `${Math.min(100, ((ad.age_hours || 0) / 72) * 100)}%` }} />
-                  </div>
-                </div>
-              )}
-
-              {/* ROAS hero metric + gauge */}
-              <div className="cv2-card-roas">
-                <div className="cv2-roas-left">
-                  <span className="cv2-roas-value">{mw.roas > 0 ? `${mw.roas.toFixed(2)}x` : '--'}</span>
-                  <span className="cv2-roas-label">ROAS {windowLabel}</span>
-                </div>
-                <div className="cv2-roas-gauge">
-                  <div className="cv2-gauge-track">
-                    <div className="cv2-gauge-fill" style={{ width: `${gauge}%` }} />
-                    <div className="cv2-gauge-marker" style={{ left: '50%' }} title={`Promedio: ${fmtNum(avgRoas)}x`} />
-                  </div>
-                  <div className="cv2-gauge-labels">
-                    <span>0</span>
-                    <span>{fmtNum(avgRoas)}x avg</span>
-                    <span>{avgRoas ? (avgRoas * 2).toFixed(1) + 'x' : ''}</span>
-                  </div>
-                </div>
-                <span className={`cv2-trend ${trendClass}`}>{trendIcon}</span>
-              </div>
-
-              {/* Metrics grid */}
-              <div className="cv2-card-metrics">
-                <div className="cv2-metric">
-                  <span className="cv2-metric-val">{fmtMoney(mw.spend)}</span>
-                  <span className="cv2-metric-key">Gasto</span>
-                </div>
-                <div className="cv2-metric">
-                  <span className="cv2-metric-val">{fmtInt(mw.clicks)}</span>
-                  <span className="cv2-metric-key">Clicks</span>
-                </div>
-                <div className="cv2-metric">
-                  <span className="cv2-metric-val">{fmtPct(mw.ctr)}</span>
-                  <span className="cv2-metric-key">CTR</span>
-                </div>
-                <div className="cv2-metric">
-                  <span className="cv2-metric-val">{fmtInt(mw.purchases)}</span>
-                  <span className="cv2-metric-key">Compras</span>
-                </div>
-                <div className="cv2-metric">
-                  <span className="cv2-metric-val">{fmtMoney(mw.cpa)}</span>
-                  <span className="cv2-metric-key">CPA</span>
-                </div>
-                <div className="cv2-metric">
-                  <span className="cv2-metric-val">{mw.frequency > 0 ? mw.frequency.toFixed(1) : '--'}</span>
-                  <span className={`cv2-metric-key ${(mw.frequency || 0) >= 3.5 ? 'cv2-freq-warn' : ''}`}>
-                    Freq{(mw.frequency || 0) >= 3.5 ? ' !' : ''}
-                  </span>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      </>}
-
-      {/* ═══ AD HEALTH SECTION — Per-ad anomaly diagnostics ═══ */}
-      <div className="adhealth-section">
-        <div className="adhealth-section-header">
-          <h3 className="adhealth-section-title">Salud de Ads — Anomalias Detectadas</h3>
-          <button className="btn-ghost btn-small" onClick={async () => {
-            setAdHealthLoading(true);
-            try { const res = await getAdHealth(); setAdHealthData(res); }
-            catch (err) { console.error(err); }
-            finally { setAdHealthLoading(false); }
-          }}>Refrescar</button>
-        </div>
-
-        {adHealthLoading ? (
-          <div className="adhealth-loading"><div className="loading" /> Analizando...</div>
-        ) : !adHealthData?.adsets?.length ? (
-          <div className="adhealth-ok">
-            <span className="adhealth-ok-icon">{'\u2705'}</span>
-            <span>Todos los ads saludables — sin anomalias detectadas</span>
-            {adHealthData?.summary && (
-              <span className="adhealth-ok-detail">{adHealthData.summary.adsets_total} ad sets analizados</span>
-            )}
-          </div>
-        ) : (
-          <>
-            {/* Summary chips */}
-            <div className="adhealth-summary">
-              <div className="adhealth-summary-stats">
-                <div className="adhealth-stat critical">
-                  <span className="adhealth-stat-val">{adHealthData.summary.total_anomalies}</span>
-                  <span className="adhealth-stat-label">Anomalias</span>
-                </div>
-                <div className="adhealth-stat warn">
-                  <span className="adhealth-stat-val">{adHealthData.summary.total_pause_candidates}</span>
-                  <span className="adhealth-stat-label">Pausar</span>
-                </div>
-                <div className="adhealth-stat waste">
-                  <span className="adhealth-stat-val">${Math.round(adHealthData.summary.total_waste_7d)}</span>
-                  <span className="adhealth-stat-label">Desperdicio/sem</span>
-                </div>
-                <div className="adhealth-stat healthy">
-                  <span className="adhealth-stat-val">{adHealthData.summary.adsets_healthy}/{adHealthData.summary.adsets_total}</span>
-                  <span className="adhealth-stat-label">Ad Sets OK</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Ad set cards with issues */}
-            <div className="adhealth-list">
-              {adHealthData.adsets.map(adset => {
-                const ah = adset.ad_health;
-                const isExpanded = expandedAdSet === adset.adset_id;
-
-                return (
-                  <div key={adset.adset_id} className={`adhealth-adset ${isExpanded ? 'expanded' : ''}`}>
-                    <div className="adhealth-adset-header" onClick={() => setExpandedAdSet(isExpanded ? null : adset.adset_id)}>
-                      <div className="adhealth-adset-info">
-                        <span className="adhealth-adset-name">{adset.adset_name}</span>
-                        <div className="adhealth-adset-meta">
-                          <span className="adhealth-meta-chip">{ah.anomalies.length} anomalia{ah.anomalies.length !== 1 ? 's' : ''}</span>
-                          {ah.pause_count > 0 && <span className="adhealth-meta-chip pause">{ah.pause_count} pausar</span>}
-                          {ah.total_waste_7d > 0 && <span className="adhealth-meta-chip waste">~${Math.round(ah.total_waste_7d)}/sem</span>}
-                          <span className="adhealth-meta-chip neutral">{adset.active_ads} ads activos</span>
-                          {ah.remaining_after_pause < 3 && ah.pause_count > 0 && (
-                            <span className="adhealth-meta-chip alert">Quedarian {ah.remaining_after_pause} ads</span>
-                          )}
-                        </div>
-                      </div>
-                      <span className="adhealth-expand-icon">{isExpanded ? '\u25B2' : '\u25BC'}</span>
+            return (
+              <div key={adset.adset_id} className={`cv3-adset ${hasIssues ? 'has-issues' : ''} ${isOpen ? 'open' : ''}`}>
+                {/* Header */}
+                <div className="cv3-adset-header" onClick={() => toggleAdSet(adset.adset_id)}>
+                  <div className="cv3-adset-info">
+                    <span className="cv3-adset-name">{adset.adset_name}</span>
+                    <div className="cv3-adset-meta">
+                      <span className="cv3-meta-chip">${adset.daily_budget}/dia</span>
+                      <span className="cv3-meta-chip">${adset.total_spend_7d}/7d</span>
+                      <span className="cv3-meta-chip">{adset.active_ads} ads</span>
+                      {topDiagnosis && (
+                        <span className="cv3-meta-chip" style={{ color: DIAGNOSIS_CONFIG[topDiagnosis.diagnosis]?.color, background: DIAGNOSIS_CONFIG[topDiagnosis.diagnosis]?.bg }}>
+                          {DIAGNOSIS_CONFIG[topDiagnosis.diagnosis]?.icon} {DIAGNOSIS_CONFIG[topDiagnosis.diagnosis]?.label}
+                        </span>
+                      )}
                     </div>
+                  </div>
+                  <span className={`fu-activo-chevron ${isOpen ? 'open' : ''}`}>{'\u25B8'}</span>
+                </div>
 
-                    {isExpanded && (
-                      <div className="adhealth-anomalies">
-                        {ah.summary && (
-                          <div className="adhealth-coordinated-summary">
-                            <span className="adhealth-coord-icon">{'\uD83C\uDFAF'}</span>
-                            <span>{ah.summary}</span>
-                          </div>
-                        )}
-                        {ah.anomalies.map((anomaly, idx) => {
-                          const primary = anomaly.primary_anomaly;
-                          const anomalyCfg = ANOMALY_CONFIG[primary.type] || ANOMALY_CONFIG.UNDERPERFORMER;
-                          const actionCfg = ACTION_LABELS[anomaly.recommended_action] || ACTION_LABELS.monitor;
-                          return (
-                            <div key={idx} className={`adhealth-anomaly severity-${primary.severity}`}>
-                              <div className="adhealth-anomaly-header">
-                                <span className="adhealth-anomaly-icon" style={{ color: anomalyCfg.color }}>{anomalyCfg.icon}</span>
-                                <div className="adhealth-anomaly-info">
-                                  <span className="adhealth-anomaly-name" title={anomaly.ad_name}>{anomaly.ad_name}</span>
-                                  <div className="adhealth-anomaly-types">
-                                    {anomaly.all_anomalies.map((a, i) => {
-                                      const cfg = ANOMALY_CONFIG[a.type] || ANOMALY_CONFIG.UNDERPERFORMER;
-                                      return (
-                                        <span key={i} className="adhealth-type-tag" style={{ color: cfg.color, borderColor: cfg.color }}>
-                                          {cfg.label}
-                                        </span>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                                <span className="adhealth-action-tag" style={{ color: actionCfg.color, backgroundColor: actionCfg.bg }}>
-                                  {actionCfg.label}
-                                </span>
-                              </div>
-                              <div className="adhealth-anomaly-detail">{primary.detail}</div>
-                              <div className="adhealth-anomaly-metrics">
-                                <span className={`adhealth-metric ${anomaly.roas_7d < 1.5 ? 'bad' : anomaly.roas_7d >= 3 ? 'good' : ''}`}>
-                                  ROAS {anomaly.roas_7d.toFixed(2)}x
-                                </span>
-                                <span className={`adhealth-metric ${anomaly.ctr_7d < 0.5 ? 'bad' : ''}`}>
-                                  CTR {anomaly.ctr_7d.toFixed(2)}%
-                                </span>
-                                <span className={`adhealth-metric ${anomaly.frequency_7d >= 3.5 ? 'bad' : anomaly.frequency_7d >= 2.5 ? 'warn' : ''}`}>
-                                  Freq {anomaly.frequency_7d.toFixed(1)}
-                                </span>
-                                <span className="adhealth-metric">${anomaly.spend_7d.toFixed(0)}/7d</span>
-                                <span className="adhealth-metric">{anomaly.purchases_7d} compras</span>
-                                <span className="adhealth-metric">{anomaly.age_days}d activo</span>
-                                {primary.waste_amount > 0 && (
-                                  <span className="adhealth-metric waste">~${primary.waste_amount.toFixed(0)} desperdicio</span>
-                                )}
-                              </div>
+                {/* Expanded: all ads */}
+                {isOpen && (
+                  <div className="cv3-adset-body">
+                    {adset.ad_health?.summary && (
+                      <div className="cv3-adset-alert">{'\uD83C\uDFAF'} {adset.ad_health.summary}</div>
+                    )}
+                    <div className="cv3-ads-table">
+                      {/* Header row */}
+                      <div className="cv3-ad-row cv3-ad-header-row">
+                        <span className="cv3-ad-col name">Creativo</span>
+                        <span className="cv3-ad-col share">Spend %</span>
+                        <span className="cv3-ad-col diagnosis">Estado</span>
+                        <span className="cv3-ad-col roas">ROAS</span>
+                        <span className="cv3-ad-col ctr">CTR</span>
+                        <span className="cv3-ad-col spend">Gasto 7d</span>
+                        <span className="cv3-ad-col age">Edad</span>
+                      </div>
+                      {ads.map(ad => {
+                        const diagCfg = DIAGNOSIS_CONFIG[ad.diagnosis] || DIAGNOSIS_CONFIG.healthy;
+                        const roasColor = ad.roas_7d >= 3 ? '#10b981' : ad.roas_7d >= 1.5 ? '#3b82f6' : ad.roas_7d > 0 ? '#ef4444' : 'var(--text-muted)';
+                        return (
+                          <div key={ad.ad_id} className={`cv3-ad-row ${ad.has_anomaly ? 'anomaly' : ''}`}>
+                            <div className="cv3-ad-col name">
+                              <span className="cv3-ad-name" title={ad.ad_name}>{ad.ad_name.replace(' [Manual Upload]', '')}</span>
                             </div>
-                          );
-                        })}
+                            <div className="cv3-ad-col share">
+                              <div className="cv3-spend-bar">
+                                <div className="cv3-spend-bar-fill" style={{ width: `${Math.min(ad.spend_share_pct, 100)}%`, background: diagCfg.color }} />
+                              </div>
+                              <span className="cv3-spend-pct">{ad.spend_share_pct}%</span>
+                            </div>
+                            <div className="cv3-ad-col diagnosis">
+                              <span className="cv3-diagnosis-chip" style={{ color: diagCfg.color, background: diagCfg.bg }}>
+                                {diagCfg.icon} {diagCfg.label}
+                              </span>
+                            </div>
+                            <div className="cv3-ad-col roas">
+                              <span style={{ color: roasColor, fontWeight: 700 }}>
+                                {ad.roas_7d > 0 ? `${ad.roas_7d.toFixed(2)}x` : '--'}
+                              </span>
+                            </div>
+                            <div className="cv3-ad-col ctr">
+                              {ad.ctr_7d > 0 ? `${ad.ctr_7d.toFixed(2)}%` : '--'}
+                            </div>
+                            <div className="cv3-ad-col spend">
+                              ${ad.spend_7d.toFixed(0)}
+                            </div>
+                            <div className="cv3-ad-col age">
+                              {ad.age_days}d
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {/* Diagnosis explanations for problem ads */}
+                    {ads.filter(a => !['healthy', 'dominant_healthy', 'learning'].includes(a.diagnosis)).length > 0 && (
+                      <div className="cv3-diagnostics">
+                        {ads.filter(a => !['healthy', 'dominant_healthy', 'learning'].includes(a.diagnosis)).map(ad => (
+                          <div key={ad.ad_id} className="cv3-diagnostic-row">
+                            <span className="cv3-diagnostic-name">{ad.ad_name.replace(' [Manual Upload]', '').slice(0, 30)}</span>
+                            <span className="cv3-diagnostic-text">{ad.diagnosis_text}</span>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
-                );
-              })}
-            </div>
-          </>
-        )}
-      </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

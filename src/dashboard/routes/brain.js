@@ -1314,49 +1314,166 @@ router.get('/ad-health', async (req, res) => {
     const memoryMap = {};
     for (const m of memories) memoryMap[m.entity_id] = m;
 
+    // Agrupar ad snapshots por ad set (parent_id)
+    const adsByAdSet = {};
+    for (const ad of adSnapshots) {
+      const parentId = ad.parent_id;
+      if (!parentId) continue;
+      if (!adsByAdSet[parentId]) adsByAdSet[parentId] = [];
+      adsByAdSet[parentId].push(ad);
+    }
+
     const diagnostics = diagnosticEngine.diagnoseAll(adsetSnapshots, adSnapshots, memoryMap, accountOverview);
 
-    // Build response: only ad sets with ad_health issues (+ summary of healthy ones)
-    const adSetsWithIssues = [];
+    // Consultar recs pendientes para todos los ad sets
+    const allAdSetIds = adsetSnapshots.map(s => s.entity_id);
+    const pendingRecs = await BrainRecommendation.find({
+      status: 'pending',
+      action_type: { $in: ['creative_refresh', 'pause', 'update_ad_status'] },
+      'entity.entity_id': { $in: allAdSetIds }
+    }).select('entity.entity_id action_type title _id').lean();
+
+    const pendingMap = {};
+    for (const r of pendingRecs) {
+      pendingMap[r.entity.entity_id] = {
+        pending_rec_id: r._id,
+        pending_rec_type: r.action_type,
+        pending_rec_title: r.title
+      };
+    }
+
+    // Build response: TODOS los ad sets con todos sus ads + diagnóstico
+    const adSetResults = [];
     let totalAnomalies = 0;
     let totalWaste = 0;
     let totalPauseCandidates = 0;
     let adSetsHealthy = 0;
     let adSetsTotal = 0;
+    let totalAds = 0;
+    const diagnosisCounts = {
+      healthy: 0, learning: 0, new_untested: 0, starved: 0,
+      zombie: 0, dominant_declining: 0, dominant_healthy: 0, fatigued: 0
+    };
 
-    for (const [entityId, diag] of Object.entries(diagnostics)) {
+    for (const adsetSnap of adsetSnapshots) {
+      const entityId = adsetSnap.entity_id;
+      const diag = diagnostics[entityId];
+      if (!diag) continue;
+
       adSetsTotal++;
-      const ah = diag.ad_health;
-      if (!ah || !ah.has_issues) {
-        adSetsHealthy++;
-        continue;
-      }
+      const ah = diag.ad_health || { anomalies: [], has_issues: false, pause_count: 0, healthy_count: 0, total_waste_7d: 0, remaining_after_pause: 0 };
 
-      totalAnomalies += ah.anomalies.length;
+      if (!ah.has_issues) adSetsHealthy++;
+      totalAnomalies += (ah.anomalies || []).length;
       totalWaste += ah.total_waste_7d || 0;
       totalPauseCandidates += ah.pause_count || 0;
 
-      adSetsWithIssues.push({
+      // Construir all_ads con spend share + diagnóstico
+      const ads = adsByAdSet[entityId] || [];
+      const activeAds = ads.filter(a => a.status === 'ACTIVE');
+      const totalSpend7d = activeAds.reduce((sum, a) => sum + ((a.metrics?.last_7d?.spend) || 0), 0);
+
+      // Mapa de anomalías por ad_id
+      const anomalyMap = {};
+      for (const anom of (ah.anomalies || [])) {
+        anomalyMap[anom.ad_id] = anom;
+      }
+
+      const allAds = activeAds.map(ad => {
+        const m7d = ad.metrics?.last_7d || {};
+        const m3d = ad.metrics?.last_3d || {};
+        const spend7d = m7d.spend || 0;
+        const spendShare = totalSpend7d > 0 ? Math.round((spend7d / totalSpend7d) * 1000) / 10 : 0;
+        const ageHours = ad.meta_created_time ? Math.round((Date.now() - new Date(ad.meta_created_time).getTime()) / 3600000) : 0;
+        const ageDays = Math.floor(ageHours / 24);
+        const roas7d = m7d.roas || 0;
+        const roas3d = m3d.roas || 0;
+        const clicks7d = m7d.clicks || 0;
+        const freq7d = m7d.frequency || 0;
+
+        // Diagnóstico por prioridad
+        let diagnosis = 'healthy';
+        if (ageHours < 72) {
+          diagnosis = spendShare < 5 ? 'new_untested' : 'learning';
+        } else if (spendShare < 3 && ageDays > 5 && clicks7d < 5) {
+          diagnosis = 'zombie';
+        } else if (spendShare < 5 && ageHours > 48 && (m7d.impressions || 0) > 0) {
+          diagnosis = 'starved';
+        } else if (spendShare > 35 && roas7d > 0 && roas3d > 0 && ((roas7d - roas3d) / roas7d) > 0.20) {
+          diagnosis = 'dominant_declining';
+        } else if (spendShare > 35) {
+          diagnosis = 'dominant_healthy';
+        } else if (freq7d > 3.0 || anomalyMap[ad.entity_id]?.primary_anomaly?.type === 'TOP_PERFORMER_FATIGUING') {
+          diagnosis = 'fatigued';
+        }
+
+        diagnosisCounts[diagnosis] = (diagnosisCounts[diagnosis] || 0) + 1;
+        totalAds++;
+
+        const DIAG_TEXT = {
+          learning: 'En fase de aprendizaje — sin evaluar aún',
+          new_untested: 'Nuevo sin oportunidad — Meta no lo está probando',
+          zombie: 'Zombie — activo pero sin actividad real hace días',
+          starved: 'Sin oportunidad — Meta le asigna <5% del budget',
+          dominant_declining: 'Dominante pero cayendo — acapara budget y empeora',
+          dominant_healthy: 'Dominante y saludable — principal motor del ad set',
+          fatigued: 'Fatigado — frequency alta o señales de desgaste',
+          healthy: 'Saludable — rendimiento estable'
+        };
+
+        return {
+          ad_id: ad.entity_id,
+          ad_name: ad.entity_name,
+          status: ad.status,
+          age_hours: ageHours,
+          age_days: ageDays,
+          spend_7d: Math.round(spend7d * 100) / 100,
+          roas_7d: Math.round(roas7d * 100) / 100,
+          roas_3d: Math.round(roas3d * 100) / 100,
+          ctr_7d: Math.round((m7d.ctr || 0) * 100) / 100,
+          frequency_7d: Math.round(freq7d * 10) / 10,
+          purchases_7d: m7d.purchases || 0,
+          clicks_7d: clicks7d,
+          impressions_7d: m7d.impressions || 0,
+          spend_share_pct: spendShare,
+          diagnosis,
+          diagnosis_text: DIAG_TEXT[diagnosis] || 'Saludable',
+          has_anomaly: !!anomalyMap[ad.entity_id],
+          anomaly: anomalyMap[ad.entity_id] ? {
+            type: anomalyMap[ad.entity_id].primary_anomaly?.type,
+            severity: anomalyMap[ad.entity_id].primary_anomaly?.severity,
+            detail: anomalyMap[ad.entity_id].primary_anomaly?.detail,
+            action: anomalyMap[ad.entity_id].recommended_action,
+            waste: anomalyMap[ad.entity_id].primary_anomaly?.waste_amount || 0
+          } : null
+        };
+      });
+
+      // Ordenar: dominant primero, luego por spend descendente
+      allAds.sort((a, b) => b.spend_share_pct - a.spend_share_pct);
+
+      const pending = pendingMap[entityId] || null;
+
+      adSetResults.push({
         adset_id: entityId,
         adset_name: diag.entity_name,
         active_ads: diag.active_ads,
         total_ads: diag.total_ads,
+        daily_budget: adsetSnap.daily_budget || 0,
+        total_spend_7d: Math.round(totalSpend7d * 100) / 100,
         overall_diagnosis: diag.overall?.labels || [],
         overall_action: diag.overall?.primary_action || 'monitor',
         fatigue_level: diag.fatigue?.fatigue_level || 'none',
         fatigue_score: diag.fatigue?.fatigue_score || 0,
+        pending_rec_id: pending?.pending_rec_id || null,
+        pending_rec_type: pending?.pending_rec_type || null,
+        pending_rec_title: pending?.pending_rec_title || null,
         ad_health: {
-          anomalies: ah.anomalies.map(a => ({
-            ad_id: a.ad_id,
-            ad_name: a.ad_name,
-            age_days: a.age_days,
-            spend_7d: a.spend_7d,
-            roas_7d: a.roas_7d,
-            ctr_7d: a.ctr_7d,
-            frequency_7d: a.frequency_7d,
-            purchases_7d: a.purchases_7d,
-            primary_anomaly: a.primary_anomaly,
-            all_anomalies: a.all_anomalies,
+          anomalies: (ah.anomalies || []).map(a => ({
+            ad_id: a.ad_id, ad_name: a.ad_name, age_days: a.age_days,
+            spend_7d: a.spend_7d, roas_7d: a.roas_7d, ctr_7d: a.ctr_7d,
+            frequency_7d: a.frequency_7d, purchases_7d: a.purchases_7d,
+            primary_anomaly: a.primary_anomaly, all_anomalies: a.all_anomalies,
             recommended_action: a.recommended_action
           })),
           summary: ah.summary,
@@ -1364,27 +1481,139 @@ router.get('/ad-health', async (req, res) => {
           healthy_count: ah.healthy_count,
           total_waste_7d: ah.total_waste_7d,
           remaining_after_pause: ah.remaining_after_pause
-        }
+        },
+        all_ads: allAds
       });
     }
 
-    // Sort by waste descending (worst first)
-    adSetsWithIssues.sort((a, b) => (b.ad_health.total_waste_7d || 0) - (a.ad_health.total_waste_7d || 0));
+    // Ordenar: ad sets con issues primero (por waste), luego saludables por spend
+    adSetResults.sort((a, b) => {
+      const aIssues = a.ad_health.total_waste_7d || 0;
+      const bIssues = b.ad_health.total_waste_7d || 0;
+      if (aIssues !== bIssues) return bIssues - aIssues;
+      return b.total_spend_7d - a.total_spend_7d;
+    });
 
     res.json({
       summary: {
         adsets_total: adSetsTotal,
-        adsets_with_issues: adSetsWithIssues.length,
+        adsets_with_issues: adSetsTotal - adSetsHealthy,
         adsets_healthy: adSetsHealthy,
         total_anomalies: totalAnomalies,
         total_pause_candidates: totalPauseCandidates,
         total_waste_7d: Math.round(totalWaste * 100) / 100,
+        total_ads: totalAds,
+        diagnosis_counts: diagnosisCounts,
         computed_at: new Date().toISOString()
       },
-      adsets: adSetsWithIssues
+      adsets: adSetResults
     });
   } catch (error) {
     logger.error(`[BRAIN-API] Error en ad-health: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══ SUGGEST — Generar recomendación on-demand desde Ad Health ═══
+
+router.post('/ad-health/suggest', async (req, res) => {
+  try {
+    const { adset_id, adset_name, suggestion_type, zombie_ad_ids } = req.body;
+    if (!adset_id || !adset_name || !suggestion_type) {
+      return res.status(400).json({ error: 'Faltan campos: adset_id, adset_name, suggestion_type' });
+    }
+
+    // Evitar duplicados: verificar si ya hay rec pendiente similar
+    const existing = await BrainRecommendation.findOne({
+      status: 'pending',
+      action_type: suggestion_type === 'refresh' ? 'creative_refresh' : 'update_ad_status',
+      'entity.entity_id': adset_id
+    }).lean();
+
+    if (existing) {
+      return res.json({ ok: false, duplicate: true, recommendation: existing });
+    }
+
+    // Obtener snapshot actual para métricas
+    const { getLatestSnapshots } = require('../../db/queries');
+    const adsetSnaps = await getLatestSnapshots('adset');
+    const snap = adsetSnaps.find(s => s.entity_id === adset_id);
+    const m7d = snap?.metrics?.last_7d || {};
+
+    let recData;
+    if (suggestion_type === 'refresh') {
+      recData = {
+        priority: 'evaluar',
+        action_type: 'creative_refresh',
+        entity: { entity_type: 'adset', entity_id: adset_id, entity_name: adset_name },
+        title: `Refresh creativo: ${adset_name}`,
+        diagnosis: 'Creativo dominante en declive detectado por Ad Health',
+        expected_outcome: 'Nuevo creativo fresco debería estabilizar rendimiento del ad set',
+        risk: 'Sin refresh, el ad set seguirá declinando al depender de un creativo fatigado',
+        action_detail: `Agregar nuevo creativo al ad set ${adset_name} para reemplazar al dominante en declive`,
+        confidence: 'medium',
+        generated_by: 'hybrid',
+        supporting_data: {
+          current_roas_7d: m7d.roas || 0,
+          current_cpa_7d: m7d.cpa || 0,
+          current_spend_7d: m7d.spend || 0,
+          current_frequency_7d: m7d.frequency || 0,
+          current_ctr_7d: m7d.ctr || 0,
+          current_purchases_7d: m7d.purchases || 0
+        },
+        follow_up: {
+          metrics_at_recommendation: {
+            roas_7d: m7d.roas || 0,
+            cpa_7d: m7d.cpa || 0,
+            spend_7d: m7d.spend || 0,
+            frequency_7d: m7d.frequency || 0,
+            ctr_7d: m7d.ctr || 0,
+            purchases_7d: m7d.purchases || 0,
+            daily_budget: snap?.daily_budget || 0
+          }
+        }
+      };
+    } else {
+      // pause_zombies
+      const zombieNames = (zombie_ad_ids || []).join(', ') || 'ads sin rendimiento';
+      recData = {
+        priority: 'evaluar',
+        action_type: 'update_ad_status',
+        entity: { entity_type: 'adset', entity_id: adset_id, entity_name: adset_name },
+        title: `Pausar ads zombie en ${adset_name}`,
+        diagnosis: 'Ads sin actividad real detectados — consumen presupuesto sin generar clicks ni compras',
+        expected_outcome: 'Concentrar presupuesto en ads que sí generan rendimiento',
+        risk: 'Sin acción, el presupuesto se diluye entre ads que Meta ya descartó',
+        action_detail: `Pausar ads sin rendimiento en ${adset_name}: ${zombieNames}`,
+        confidence: 'high',
+        generated_by: 'hybrid',
+        supporting_data: {
+          current_roas_7d: m7d.roas || 0,
+          current_cpa_7d: m7d.cpa || 0,
+          current_spend_7d: m7d.spend || 0,
+          current_frequency_7d: m7d.frequency || 0,
+          current_ctr_7d: m7d.ctr || 0,
+          current_purchases_7d: m7d.purchases || 0
+        },
+        follow_up: {
+          metrics_at_recommendation: {
+            roas_7d: m7d.roas || 0,
+            cpa_7d: m7d.cpa || 0,
+            spend_7d: m7d.spend || 0,
+            frequency_7d: m7d.frequency || 0,
+            ctr_7d: m7d.ctr || 0,
+            purchases_7d: m7d.purchases || 0,
+            daily_budget: snap?.daily_budget || 0
+          }
+        }
+      };
+    }
+
+    const created = await BrainRecommendation.create(recData);
+    logger.info(`[AD-HEALTH] Rec generada: ${suggestion_type} para ${adset_name}`);
+    res.json({ ok: true, recommendation: created });
+  } catch (error) {
+    logger.error(`[BRAIN-API] Error en ad-health/suggest: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });
