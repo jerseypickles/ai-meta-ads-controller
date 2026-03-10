@@ -853,15 +853,22 @@ const PRIORITY_CONFIG = {
 };
 
 const ACTION_TYPE_CONFIG = {
-  pause:           { icon: '⏸️', label: 'Pausar' },
-  scale_up:        { icon: '📈', label: 'Escalar' },
-  scale_down:      { icon: '📉', label: 'Reducir' },
-  reactivate:      { icon: '▶️', label: 'Reactivar' },
-  restructure:     { icon: '🔧', label: 'Reestructurar' },
-  creative_refresh:{ icon: '🎨', label: 'Creativos' },
-  bid_change:      { icon: '💰', label: 'Puja' },
-  monitor:         { icon: '👁️', label: 'Monitorear' },
-  other:           { icon: '📋', label: 'Otro' }
+  pause:              { icon: '⏸️', label: 'Pausar',        color: '#ef4444', bg: 'rgba(239,68,68,0.10)' },
+  scale_up:           { icon: '📈', label: 'Escalar',       color: '#10b981', bg: 'rgba(16,185,129,0.10)' },
+  scale_down:         { icon: '📉', label: 'Reducir',       color: '#f59e0b', bg: 'rgba(245,158,11,0.10)' },
+  reactivate:         { icon: '▶️', label: 'Reactivar',     color: '#3b82f6', bg: 'rgba(59,130,246,0.10)' },
+  create_ad:          { icon: '🎨', label: 'Crear Ad',      color: '#8b5cf6', bg: 'rgba(139,92,246,0.10)' },
+  update_ad_status:   { icon: '⏸️', label: 'Pausar Ad',     color: '#f87171', bg: 'rgba(248,113,113,0.10)' },
+  duplicate_adset:    { icon: '📋', label: 'Duplicar',      color: '#06b6d4', bg: 'rgba(6,182,212,0.10)' },
+  move_budget:        { icon: '🔄', label: 'Mover Budget',  color: '#6366f1', bg: 'rgba(99,102,241,0.10)' },
+  update_bid_strategy:{ icon: '💰', label: 'Bid Strategy',  color: '#ec4899', bg: 'rgba(236,72,153,0.10)' },
+  observe:            { icon: '👁️', label: 'Observar',      color: '#6b7280', bg: 'rgba(107,114,128,0.10)' },
+  // Legacy — para recs históricas
+  restructure:        { icon: '🔧', label: 'Reestructurar', color: '#f97316', bg: 'rgba(249,115,22,0.10)' },
+  creative_refresh:   { icon: '🎨', label: 'Creativos',     color: '#8b5cf6', bg: 'rgba(139,92,246,0.10)' },
+  bid_change:         { icon: '💰', label: 'Puja',          color: '#ec4899', bg: 'rgba(236,72,153,0.10)' },
+  monitor:            { icon: '👁️', label: 'Monitorear',    color: '#6b7280', bg: 'rgba(107,114,128,0.10)' },
+  other:              { icon: '📋', label: 'Otro',           color: '#9ca3af', bg: 'rgba(156,163,175,0.10)' }
 };
 
 const STATUS_LABELS = {
@@ -879,20 +886,23 @@ function RecommendationsPanel({
   onDiscussRec, onGoToFollowUp, formatTime
 }) {
   const [selectedId, setSelectedId] = useState(null);
+  const [actionFilter, setActionFilter] = useState('');
   const selectedRec = recommendations.find(r => r._id === selectedId) || null;
 
   // Build ordered list: pending first, then tracking, then history
   const orderedRecs = useMemo(() => {
-    if (statusFilter) return recommendations;
-    const pending = recommendations.filter(r => r.status === 'pending' && !r.related_follow_up?.rec_id);
-    const tracking = recommendations.filter(r =>
+    let recs = recommendations;
+    if (actionFilter) recs = recs.filter(r => r.action_type === actionFilter);
+    if (statusFilter) return recs;
+    const pending = recs.filter(r => r.status === 'pending' && !r.related_follow_up?.rec_id);
+    const tracking = recs.filter(r =>
       r.status === 'approved' && !r.follow_up?.checked && r.follow_up?.current_phase !== 'complete'
     );
-    const history = recommendations.filter(r =>
+    const history = recs.filter(r =>
       r.status !== 'pending' && !(r.status === 'approved' && !r.follow_up?.checked && r.follow_up?.current_phase !== 'complete')
     );
     return [...pending, ...tracking, ...history];
-  }, [recommendations, statusFilter]);
+  }, [recommendations, statusFilter, actionFilter]);
 
   // Auto-select first rec when list loads
   useEffect(() => {
@@ -922,6 +932,18 @@ function RecommendationsPanel({
             <option value="approved">Aprobadas</option>
             <option value="rejected">Rechazadas</option>
             <option value="expired">Expiradas</option>
+          </select>
+          <select className="feed-select-mini" value={actionFilter} onChange={(e) => setActionFilter(e.target.value)}>
+            <option value="">Accion</option>
+            <option value="pause">⏸️ Pausar</option>
+            <option value="scale_up">📈 Escalar</option>
+            <option value="scale_down">📉 Reducir</option>
+            <option value="reactivate">▶️ Reactivar</option>
+            <option value="create_ad">🎨 Crear Ad</option>
+            <option value="update_ad_status">⏸️ Pausar Ad</option>
+            <option value="duplicate_adset">📋 Duplicar</option>
+            <option value="move_budget">🔄 Mover Budget</option>
+            <option value="observe">👁️ Observar</option>
           </select>
           <button
             className={`btn-primary btn-small ${generating ? 'btn-analyzing' : ''}`}
@@ -959,15 +981,25 @@ function RecommendationsPanel({
                     onClick={() => setSelectedId(rec._id)}
                   >
                     <div className="split-row-accent" style={{ background: priorityCfg.color }} />
-                    <div className="split-row-icon" style={{ color: priorityCfg.color }}>{actionCfg.icon}</div>
+                    <div className="split-row-icon" style={{ background: actionCfg.bg, color: actionCfg.color, borderRadius: 6, width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.85rem' }}>{actionCfg.icon}</div>
                     <div className="split-row-content">
                       <div className="split-row-title">{rec.title}</div>
                       <div className="split-row-meta">
                         <span className={`rec-status-tag status-${rec.status}`} style={{ color: statusCfg.color, borderColor: statusCfg.color }}>
                           {statusCfg.label}
                         </span>
+                        <span className="rec-action-chip" style={{ color: actionCfg.color, background: actionCfg.bg }}>
+                          {actionCfg.label}
+                        </span>
                         <span className="split-row-type" style={{ color: priorityCfg.color }}>{priorityCfg.label}</span>
-                        {rec.entity && <span className="split-row-entity">{rec.entity.entity_name}</span>}
+                        {rec.entity && (
+                          <span className="split-row-entity">
+                            <span className="entity-type-indicator" style={{
+                              background: rec.entity.entity_type === 'ad' ? '#10b981' : rec.entity.entity_type === 'campaign' ? '#8b5cf6' : '#3b82f6'
+                            }} />
+                            {rec.entity.entity_name}
+                          </span>
+                        )}
                         {rec.parent_adset_name && <span className="split-row-entity" style={{ opacity: 0.6 }}>en {rec.parent_adset_name}</span>}
                         <span className="split-row-time">{formatTime(rec.created_at)}</span>
                       </div>
@@ -1050,7 +1082,7 @@ function RecDetail({ rec, onApprove, onReject, onDiscuss, onGoToFollowUp, format
       <div className="rec-detail-header">
         <div className="rec-detail-priority-bar" style={{ background: `linear-gradient(90deg, ${priorityCfg.color}, transparent)` }} />
         <div className="rec-detail-top">
-          <div className="rec-action-icon" style={{ background: priorityCfg.bg, color: priorityCfg.color }}>
+          <div className="rec-action-icon" style={{ background: actionCfg.bg, color: actionCfg.color }}>
             {actionCfg.icon}
           </div>
           <div className="rec-detail-title-area">
@@ -1059,7 +1091,7 @@ function RecDetail({ rec, onApprove, onReject, onDiscuss, onGoToFollowUp, format
               <span className="rec-tag priority" style={{ color: priorityCfg.color, backgroundColor: priorityCfg.bg }}>
                 {priorityCfg.label}
               </span>
-              <span className="rec-tag action">{actionCfg.label}</span>
+              <span className="rec-tag action" style={{ color: actionCfg.color, background: actionCfg.bg }}>{actionCfg.icon} {actionCfg.label}</span>
               <span className="rec-status-pill" style={{ color: statusCfg.color, borderColor: statusCfg.color }}>
                 {statusCfg.label}
               </span>

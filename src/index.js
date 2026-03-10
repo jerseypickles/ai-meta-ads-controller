@@ -491,21 +491,10 @@ async function jobAIOpsRefresh() {
   }
 }
 
-/**
- * Job: Brain Recommendations — cada 6 horas.
- * Genera recomendaciones accionables usando datos estables de 7 días.
- * Separado del ciclo de insights (cada 10 min) para evitar volatilidad.
- */
-async function jobBrainRecommendations() {
-  try {
-    logger.info('[CRON] Generando recomendaciones del Brain...');
-    const brainAnalyzer = new BrainAnalyzer();
-    const result = await brainAnalyzer.generateRecommendations();
-    logger.info(`[CRON] Brain Recommendations: ${result.recommendations_created} generadas en ${result.elapsed}`);
-  } catch (error) {
-    logger.error('[CRON] Error en Brain Recommendations:', error.message);
-  }
-}
+// jobBrainRecommendations ELIMINADO — las recomendaciones ahora se generan
+// únicamente desde UnifiedBrain (jobAgentsCycle) y se guardan en BrainRecommendation.
+// Esto unifica el vocabulario de acciones (create_ad, update_ad_status, etc.)
+// con el follow-up multi-fase y el learning loop de Thompson Sampling.
 
 /**
  * Job: Limpieza de snapshots antiguos — diario a las 2:00 AM.
@@ -710,12 +699,9 @@ function initCronJobs() {
   });
   logger.info('  [*] AI Ops metrics refresh — cada 15 min (24/7)');
 
-  // Cada 6 horas: Brain Recommendations (datos estables 7d, no volátiles)
-  cron.schedule('0 6,12,18,0 * * *', jobBrainRecommendations, {
-    timezone: TIMEZONE,
-    name: 'brain-recommendations'
-  });
-  logger.info('  [*] Brain Recommendations — 4x/día: 6am, 12pm, 6pm, 12am ET');
+  // Brain Recommendations: ahora generadas por UnifiedBrain (jobAgentsCycle) a las 7am/1pm/7pm/11pm
+  // y guardadas en BrainRecommendation para follow-up unificado.
+  logger.info('  [*] Brain Recommendations — integradas en Cerebro IA (7am, 1pm, 7pm, 11pm ET)');
 
   // Cada 6 horas: Sync de métricas de creativos (después de data collection)
   cron.schedule('30 */6 * * *', jobCreativeMetricsSync, {

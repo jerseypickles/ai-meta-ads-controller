@@ -447,17 +447,17 @@ router.post('/recommendations/:id/mark-executed', async (req, res) => {
 
 /**
  * GET /api/brain/recommendations/pending-creative/:adsetId
- * Check if there's an approved creative_refresh recommendation pending execution for an ad set.
+ * Check if there's an approved create_ad/creative_refresh recommendation pending for an ad set.
  * Used by AddCreativePanel to show a banner when uploading a creative that fulfills a Brain rec.
  */
 router.get('/recommendations/pending-creative/:adsetId', async (req, res) => {
   try {
     const rec = await BrainRecommendation.findOne({
       status: 'approved',
-      action_type: 'creative_refresh',
+      action_type: { $in: ['create_ad', 'creative_refresh'] },
       'entity.entity_id': req.params.adsetId,
       'follow_up.action_executed': { $ne: true }
-    }).select('title action_detail entity priority created_at').lean();
+    }).select('title action_detail entity priority created_at action_type').lean();
 
     res.json({ has_pending: !!rec, recommendation: rec || null });
   } catch (error) {
@@ -467,11 +467,19 @@ router.get('/recommendations/pending-creative/:adsetId', async (req, res) => {
 
 /**
  * POST /api/brain/recommendations/generate — Trigger manual de ciclo de recomendaciones
+ * Ejecuta UnifiedBrain que genera recs con acciones ejecutables (create_ad, update_ad_status, etc.)
+ * y las guarda en BrainRecommendation para follow-up unificado.
  */
 router.post('/recommendations/generate', async (req, res) => {
   try {
-    const result = await analyzer.generateRecommendations();
-    res.json(result);
+    const UnifiedBrain = require('../../ai/brain/unified-brain');
+    const brain = new UnifiedBrain();
+    const result = await brain.runCycle();
+    res.json({
+      recommendations_created: result?.recommendations || 0,
+      elapsed: result?.elapsed || '0s',
+      cycle_id: result?.cycleId || null
+    });
   } catch (error) {
     logger.error(`[BRAIN-API] Error generando recomendaciones: ${error.message}`);
     res.status(500).json({ error: error.message });

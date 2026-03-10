@@ -876,7 +876,7 @@ const AdSetRow = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights, trac
   const hasHighPriority = brainRecs?.some(r => r.priority === 'high');
   const hasCriticalInsight = brainInsights?.some(i => i.severity === 'critical' || i.severity === 'warning');
   const hasExecution = trackingRecs?.some(r => r.follow_up?.action_executed);
-  const pendingCreativeRefresh = trackingRecs?.find(r => r.action_type === 'creative_refresh' && !r.follow_up?.action_executed);
+  const pendingCreativeRefresh = trackingRecs?.find(r => ['creative_refresh', 'create_ad'].includes(r.action_type) && !r.follow_up?.action_executed);
 
   return (
     <>

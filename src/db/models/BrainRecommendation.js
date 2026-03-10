@@ -22,15 +22,22 @@ const brainRecommendationSchema = new mongoose.Schema({
   action_type: {
     type: String,
     enum: [
-      'pause',           // Pausar ad set
-      'scale_up',        // Aumentar budget
-      'scale_down',      // Reducir budget
-      'reactivate',      // Reactivar ad set pausado
-      'restructure',     // Reestructurar (cambiar targeting, etc.)
-      'creative_refresh', // Rotar/agregar creativos
-      'bid_change',      // Cambiar estrategia de puja
-      'monitor',         // Solo monitorear (no acción inmediata)
-      'other'            // Otra acción
+      'pause',              // Pausar ad set
+      'scale_up',           // Aumentar budget
+      'scale_down',         // Reducir budget
+      'reactivate',         // Reactivar ad set pausado
+      'create_ad',          // Crear nuevo ad desde banco de creativos
+      'update_ad_status',   // Pausar/activar ad individual
+      'duplicate_adset',    // Duplicar ad set
+      'move_budget',        // Redistribuir budget entre ad sets
+      'update_bid_strategy',// Cambiar bid strategy
+      'observe',            // Seguimiento sin ejecutar cambios
+      // Legacy — mantener para recs históricas ya guardadas
+      'restructure',
+      'creative_refresh',
+      'bid_change',
+      'monitor',
+      'other'
     ],
     required: true
   },

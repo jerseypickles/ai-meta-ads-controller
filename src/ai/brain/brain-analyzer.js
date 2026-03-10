@@ -1957,8 +1957,8 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
       const snapshotMap = {};
       for (const s of snapshots) snapshotMap[s.entity_id] = s;
 
-      // Fetch ad-level snapshots for creative_refresh tracking (new ad metrics)
-      const hasCreativeRefresh = approvedRecs.some(r => r.action_type === 'creative_refresh' && r.follow_up?.new_ad_id);
+      // Fetch ad-level snapshots for create_ad/creative_refresh tracking (new ad metrics)
+      const hasCreativeRefresh = approvedRecs.some(r => ['creative_refresh', 'create_ad'].includes(r.action_type) && r.follow_up?.new_ad_id);
       let adSnapshotMap = {};
       if (hasCreativeRefresh) {
         try {
@@ -2007,8 +2007,8 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
         const actionExecuted = this._detectActionExecution(rec, snap);
 
         // Capture current metrics snapshot
-        // For creative_refresh at day_3, use last_3d window to avoid dilution from pre-creative data
-        const useShortWindow = targetPhase === 'day_3' && rec.action_type === 'creative_refresh';
+        // For create_ad/creative_refresh at day_3, use last_3d window to avoid dilution from pre-creative data
+        const useShortWindow = targetPhase === 'day_3' && ['creative_refresh', 'create_ad'].includes(rec.action_type);
         const mWindow = useShortWindow ? (snap.metrics?.last_3d || {}) : (snap.metrics?.last_7d || {});
         const currentMetrics = {
           roas_7d: mWindow.roas || 0,
@@ -2025,9 +2025,9 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
           status: snap.status
         };
 
-        // Capture new ad individual metrics (creative_refresh only)
+        // Capture new ad individual metrics (create_ad/creative_refresh)
         let newAdMetrics = null;
-        if (rec.action_type === 'creative_refresh' && rec.follow_up?.new_ad_id) {
+        if (['creative_refresh', 'create_ad'].includes(rec.action_type) && rec.follow_up?.new_ad_id) {
           const adSnap = adSnapshotMap[rec.follow_up.new_ad_id];
           if (adSnap) {
             const adWindow = useShortWindow ? (adSnap.metrics?.last_3d || {}) : (adSnap.metrics?.last_7d || {});
@@ -2197,19 +2197,40 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
         return estBudgetDown > 0 ? currentBudget < estBudgetDown * 0.85 : false;
       case 'reactivate':
         return snap.status === 'ACTIVE' && prev.status !== 'ACTIVE';
+      case 'create_ad':
       case 'creative_refresh': {
-        // Count active ads — if more than before, fresh creatives were added
+        // Detectar si se agregaron ads nuevos al ad set
         const prevAds = prev.active_ads || 0;
         const currentAds = snap.active_ads || snap.ads_count || 0;
-        // If we have ad counts, compare; also check CTR improvement as secondary signal
         if (prevAds > 0 && currentAds > prevAds) return true;
-        // CTR improvement > 10% as signal of fresh creatives
+        // CTR improvement > 10% as secondary signal of fresh creatives
         if (prev.ctr_7d > 0 && (snap.metrics?.last_3d?.ctr || 0) > prev.ctr_7d * 1.1) return true;
-        // If no prev data at all (legacy), we can't detect — return false instead of wrong positive
         return false;
       }
+      case 'update_ad_status': {
+        // Pausar ad individual: menos ads activos que antes
+        const prevAdsCount = prev.active_ads || 0;
+        const currentAdsCount = snap.active_ads || snap.ads_count || 0;
+        if (prevAdsCount > 0 && currentAdsCount < prevAdsCount) return true;
+        return false;
+      }
+      case 'duplicate_adset':
+        // No detectable desde snapshot del ad set original
+        return false;
+      case 'move_budget': {
+        // Budget cambió más de 5%
+        if (prevBudget > 0) return Math.abs(currentBudget - prevBudget) / prevBudget > 0.05;
+        return false;
+      }
+      case 'update_bid_strategy':
+      case 'bid_change':
+        // No detectable desde snapshot
+        return false;
+      case 'observe':
+        // Observe es solo monitoreo — siempre "detectado"
+        return true;
       default:
-        return true; // For monitor/restructure/bid_change, assume executed
+        return false;
     }
   }
 

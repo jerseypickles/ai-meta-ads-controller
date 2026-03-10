@@ -314,7 +314,7 @@ class UnifiedBrain {
       // 12b. Enriquecer recomendaciones normales con historial de impacto
       const enrichedRecs = this._enrichWithPastImpact(humanRecs, impactContext.processedActions || []);
 
-      // 13. Guardar reporte (solo recomendaciones para aprobacion humana)
+      // 13. Guardar reporte en AgentReport (legacy — mantener para AI Ops dashboard)
       const report = await AgentReport.create({
         agent_type: 'brain',
         cycle_id: cycleId,
@@ -325,6 +325,12 @@ class UnifiedBrain {
         prompt_tokens: response.usage?.input_tokens || 0,
         completion_tokens: response.usage?.output_tokens || 0
       });
+
+      // 13b. Guardar en BrainRecommendation — sistema unificado con follow-up + learning
+      const brainRecsCreated = await this._saveToBrainRecommendations(
+        enrichedRecs, cycleId, sharedData, response.usage
+      );
+      logger.info(`[BRAIN] ${brainRecsCreated} recomendaciones guardadas en BrainRecommendation`);
 
       // 14. Auto-ejecutar segun modo de autonomia
       const autoExecuted = await this._autoExecuteRecommendations(report);
@@ -1005,6 +1011,157 @@ class UnifiedBrain {
     }
 
     return injected;
+  }
+
+  /**
+   * Guarda recomendaciones del UnifiedBrain en BrainRecommendation.
+   * Esto las integra con el follow-up multi-fase (3d/7d/14d),
+   * BrainMemory action_history, y AI impact analysis.
+   */
+  async _saveToBrainRecommendations(recs, cycleId, sharedData, usage) {
+    if (!recs || recs.length === 0) return 0;
+
+    // Expirar recomendaciones pendientes anteriores
+    const expired = await BrainRecommendation.updateMany(
+      { status: 'pending' },
+      { $set: { status: 'expired', updated_at: new Date() } }
+    );
+    if (expired.modifiedCount > 0) {
+      logger.info(`[BRAIN] ${expired.modifiedCount} recomendaciones anteriores expiradas`);
+    }
+
+    // Cargar follow-ups activos para deduplicación
+    const activeFollowUps = await BrainRecommendation.find({
+      status: 'approved',
+      'follow_up.current_phase': { $in: ['awaiting_day_3', 'awaiting_day_7', 'awaiting_day_14'] }
+    }).lean();
+
+    const followUpMap = {};
+    for (const fu of activeFollowUps) {
+      if (fu.entity?.entity_id) {
+        followUpMap[fu.entity.entity_id] = {
+          rec_id: fu._id,
+          title: fu.title,
+          action_type: fu.action_type,
+          current_phase: fu.follow_up?.current_phase || 'awaiting_day_3',
+          day_3_verdict: fu.follow_up?.phases?.day_3?.verdict || null,
+          decided_at: fu.decided_at
+        };
+      }
+    }
+
+    let created = 0;
+    const tokensPerRec = usage ? Math.ceil(((usage.input_tokens || 0) + (usage.output_tokens || 0)) / recs.length) : 0;
+
+    for (const rec of recs) {
+      try {
+        const entityId = rec.entity_id;
+
+        // Deduplicación vs follow-ups activos
+        const existingFU = entityId ? followUpMap[entityId] : null;
+        if (existingFU) {
+          const phase = existingFU.current_phase;
+          const sameAction = existingFU.action_type === rec.action;
+          const day3Measured = phase !== 'awaiting_day_3';
+          const day3Negative = existingFU.day_3_verdict === 'negative';
+
+          if (!day3Measured) {
+            logger.info(`[BRAIN] Skipped BrainRec: ${rec.entity_name} — en seguimiento (${phase})`);
+            continue;
+          }
+          if (sameAction && !day3Negative) {
+            logger.info(`[BRAIN] Skipped BrainRec: ${rec.entity_name} — misma acción en seguimiento`);
+            continue;
+          }
+        }
+
+        // Buscar snapshot para métricas baseline
+        const snap = sharedData.adSetSnapshots?.find(s => s.entity_id === entityId)
+          || sharedData.adSnapshots?.find(s => s.entity_id === entityId);
+        const m7d = snap?.metrics?.last_7d || {};
+
+        // Mapear priority: UnifiedBrain usa critical/high/medium/low → BrainRec usa urgente/evaluar
+        const priorityMap = { critical: 'urgente', high: 'urgente', medium: 'evaluar', low: 'evaluar' };
+
+        // Buscar parent ad set para recs a nivel de ad
+        let parentAdsetId = null;
+        let parentAdsetName = null;
+        if (rec.entity_type === 'ad') {
+          const adSnap = sharedData.adSnapshots?.find(s => s.entity_id === entityId);
+          if (adSnap?.parent_id) {
+            parentAdsetId = adSnap.parent_id;
+            const parentSnap = sharedData.adSetSnapshots?.find(s => s.entity_id === adSnap.parent_id);
+            parentAdsetName = parentSnap?.entity_name || '';
+          }
+        }
+
+        const createData = {
+          priority: priorityMap[rec.priority] || 'evaluar',
+          action_type: rec.action,
+          entity: {
+            entity_type: rec.entity_type || 'adset',
+            entity_id: entityId,
+            entity_name: rec.entity_name || ''
+          },
+          parent_adset_id: parentAdsetId,
+          parent_adset_name: parentAdsetName,
+          title: (rec.reasoning || 'Recomendación').substring(0, 120),
+          diagnosis: rec.hypothesis || '',
+          expected_outcome: rec.expected_impact || '',
+          risk: '',
+          body: rec.evidence ? rec.evidence.join(' | ') : '',
+          action_detail: `${rec.action} en ${rec.entity_name}${rec.recommended_value ? ` → $${rec.recommended_value}` : ''}`,
+          supporting_data: {
+            current_roas_7d: rec.metrics?.roas_7d || m7d.roas || 0,
+            current_cpa_7d: rec.metrics?.cpa_7d || m7d.cpa || 0,
+            current_spend_7d: rec.metrics?.spend_today ? rec.metrics.spend_today * 7 : (m7d.spend || 0),
+            current_frequency_7d: rec.metrics?.frequency || m7d.frequency || 0,
+            current_ctr_7d: rec.metrics?.ctr || m7d.ctr || 0,
+            current_purchases_7d: m7d.purchases || 0,
+            account_avg_roas_7d: sharedData.accountOverview?.roas_7d || 0,
+            trend_direction: 'unknown',
+            days_declining: 0
+          },
+          confidence: rec.confidence || 'medium',
+          confidence_score: Math.round((rec.confidence_score || 0.5) * 100),
+          cycle_id: cycleId,
+          generated_by: 'ai',
+          ai_model: 'claude-sonnet',
+          tokens_used: tokensPerRec,
+          'follow_up.metrics_at_recommendation': {
+            roas_7d: m7d.roas || 0,
+            cpa_7d: m7d.cpa || 0,
+            spend_7d: m7d.spend || 0,
+            frequency_7d: m7d.frequency || 0,
+            ctr_7d: m7d.ctr || 0,
+            purchases_7d: m7d.purchases || 0,
+            purchase_value_7d: m7d.purchase_value || 0,
+            daily_budget: snap?.daily_budget || 0,
+            active_ads: snap?.ads_count || 0,
+            status: snap?.status || 'UNKNOWN'
+          }
+        };
+
+        // Adjuntar referencia al follow-up activo si existe
+        if (existingFU) {
+          createData.related_follow_up = {
+            rec_id: existingFU.rec_id,
+            title: existingFU.title,
+            action_type: existingFU.action_type,
+            current_phase: existingFU.current_phase,
+            day_3_verdict: existingFU.day_3_verdict,
+            decided_at: existingFU.decided_at
+          };
+        }
+
+        await BrainRecommendation.create(createData);
+        created++;
+      } catch (saveErr) {
+        logger.error(`[BRAIN] Error guardando BrainRecommendation: ${saveErr.message}`);
+      }
+    }
+
+    return created;
   }
 
   _applyStrategicDirectives(recs, directives) {
