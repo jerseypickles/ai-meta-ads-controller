@@ -9104,6 +9104,33 @@ a:hover {
   flex-shrink: 0;
 }
 
+/* ── Feedback toast ── */
+.cv3-feedback {
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.cv3-feedback.ok {
+  color: #10b981;
+  background: rgba(16,185,129,0.08);
+  border: 1px solid rgba(16,185,129,0.2);
+}
+
+.cv3-feedback.warn {
+  color: #f59e0b;
+  background: rgba(245,158,11,0.08);
+  border: 1px solid rgba(245,158,11,0.2);
+}
+
+.cv3-feedback.error {
+  color: #ef4444;
+  background: rgba(239,68,68,0.08);
+  border: 1px solid rgba(239,68,68,0.2);
+}
+
 /* ── Explanation line ── */
 .cv3-ad-explain {
   font-size: 11px;

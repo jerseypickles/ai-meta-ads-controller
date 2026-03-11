@@ -1328,17 +1328,18 @@ router.get('/ad-health', async (req, res) => {
     // Consultar recs pendientes para todos los ad sets
     const allAdSetIds = adsetSnapshots.map(s => s.entity_id);
     const pendingRecs = await BrainRecommendation.find({
-      status: 'pending',
+      status: { $in: ['pending', 'approved'] },
       action_type: { $in: ['creative_refresh', 'pause', 'update_ad_status'] },
       'entity.entity_id': { $in: allAdSetIds }
-    }).select('entity.entity_id action_type title _id').lean();
+    }).select('entity.entity_id action_type title status _id').lean();
 
     const pendingMap = {};
     for (const r of pendingRecs) {
       pendingMap[r.entity.entity_id] = {
         pending_rec_id: r._id,
         pending_rec_type: r.action_type,
-        pending_rec_title: r.title
+        pending_rec_title: r.title,
+        pending_rec_status: r.status
       };
     }
 
@@ -1523,15 +1524,15 @@ router.post('/ad-health/suggest', async (req, res) => {
       return res.status(400).json({ error: 'Faltan campos: adset_id, adset_name, suggestion_type' });
     }
 
-    // Evitar duplicados: verificar si ya hay rec pendiente similar
+    // Evitar duplicados: verificar si ya hay rec pendiente o aprobada similar
     const existing = await BrainRecommendation.findOne({
-      status: 'pending',
+      status: { $in: ['pending', 'approved'] },
       action_type: suggestion_type === 'refresh' ? 'creative_refresh' : 'update_ad_status',
       'entity.entity_id': adset_id
     }).lean();
 
     if (existing) {
-      return res.json({ ok: false, duplicate: true, recommendation: existing });
+      return res.json({ ok: false, duplicate: true, existing_status: existing.status, recommendation: existing });
     }
 
     // Obtener snapshot actual para métricas

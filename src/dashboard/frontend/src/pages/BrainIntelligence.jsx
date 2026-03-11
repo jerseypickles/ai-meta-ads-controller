@@ -2170,12 +2170,23 @@ function CreativesPanel({ formatTime }) {
     });
   };
 
+  const [suggestMsg, setSuggestMsg] = useState(null);
+
   const handleSuggest = async (adset, type, zombieIds = []) => {
     setSuggestingFor(`${adset.adset_id}-${type}`);
+    setSuggestMsg(null);
     try {
-      await suggestAdHealthAction(adset.adset_id, adset.adset_name, type, zombieIds);
-      await loadData(); // Refresca para mostrar pending_rec
-    } catch (err) { console.error('Suggest error:', err); }
+      const res = await suggestAdHealthAction(adset.adset_id, adset.adset_name, type, zombieIds);
+      if (res.duplicate) {
+        const statusLabel = res.existing_status === 'approved' ? 'aprobada' : 'pendiente';
+        setSuggestMsg({ type: 'warn', text: `Ya existe una recomendacion ${statusLabel} para ${adset.adset_name}` });
+      } else {
+        setSuggestMsg({ type: 'ok', text: `Recomendacion creada para ${adset.adset_name}` });
+      }
+      await loadData();
+    } catch (err) {
+      setSuggestMsg({ type: 'error', text: `Error: ${err.message}` });
+    }
     finally { setSuggestingFor(null); }
   };
 
@@ -2247,6 +2258,13 @@ function CreativesPanel({ formatTime }) {
         </div>
       </div>
 
+      {/* ═══ FEEDBACK ═══ */}
+      {suggestMsg && (
+        <div className={`cv3-feedback ${suggestMsg.type}`} onClick={() => setSuggestMsg(null)}>
+          {suggestMsg.text}
+        </div>
+      )}
+
       {/* ═══ PROBLEMAS DETECTADOS ═══ */}
       {problems.length > 0 && (
         <div className="cv3-problems">
@@ -2282,7 +2300,7 @@ function CreativesPanel({ formatTime }) {
             <div key={adset.adset_id} className="cv3-pending-item">
               <span className="cv3-pending-dot" />
               <span><strong>{adset.adset_name}</strong> — {adset.pending_rec_title}</span>
-              <span className="cv3-pending-badge">Pendiente de aprobacion</span>
+              <span className="cv3-pending-badge">{adset.pending_rec_status === 'approved' ? 'Aprobada' : 'Pendiente'}</span>
             </div>
           ))}
         </div>
