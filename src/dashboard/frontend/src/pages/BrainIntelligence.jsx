@@ -2126,14 +2126,14 @@ function KnowledgePanel({ formatTime }) {
 // ═══ CREATIVES PANEL ═══
 
 const DIAGNOSIS_CONFIG = {
-  healthy:             { label: 'Saludable',           icon: '\u2705', color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
-  learning:            { label: 'Aprendiendo',         icon: '\uD83E\uDDEA', color: '#3b82f6', bg: 'rgba(59,130,246,0.12)' },
-  new_untested:        { label: 'Sin probar',          icon: '\u2753', color: '#6b7280', bg: 'rgba(107,114,128,0.12)' },
-  starved:             { label: 'Sin oportunidad',     icon: '\uD83D\uDEAB', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' },
-  zombie:              { label: 'Zombie',              icon: '\uD83D\uDC80', color: '#ef4444', bg: 'rgba(239,68,68,0.12)' },
-  dominant_declining:  { label: 'Dominante cayendo',   icon: '\uD83D\uDD25', color: '#f97316', bg: 'rgba(249,115,22,0.12)' },
-  dominant_healthy:    { label: 'Dominante saludable', icon: '\uD83D\uDC51', color: '#22c55e', bg: 'rgba(34,197,94,0.12)' },
-  fatigued:            { label: 'Fatigado',            icon: '\u26A0\uFE0F', color: '#a855f7', bg: 'rgba(168,85,247,0.12)' }
+  healthy:             { label: 'OK',              color: '#10b981', bg: 'rgba(16,185,129,0.10)' },
+  learning:            { label: 'Aprendiendo',     color: '#3b82f6', bg: 'rgba(59,130,246,0.10)' },
+  new_untested:        { label: 'Nuevo',           color: '#6b7280', bg: 'rgba(107,114,128,0.10)' },
+  starved:             { label: 'Sin presupuesto', color: '#f59e0b', bg: 'rgba(245,158,11,0.10)' },
+  zombie:              { label: 'Sin actividad',   color: '#ef4444', bg: 'rgba(239,68,68,0.10)' },
+  dominant_declining:  { label: 'Decayendo',       color: '#f97316', bg: 'rgba(249,115,22,0.10)' },
+  dominant_healthy:    { label: 'Principal',       color: '#22c55e', bg: 'rgba(34,197,94,0.10)' },
+  fatigued:            { label: 'Desgastado',      color: '#a855f7', bg: 'rgba(168,85,247,0.10)' }
 };
 
 const ANOMALY_CONFIG = {
@@ -2185,78 +2185,112 @@ function CreativesPanel({ formatTime }) {
   const { summary, adsets } = adHealthData;
   const dc = summary.diagnosis_counts || {};
 
-  // Acciones sugeridas: ad sets con dominant_declining o zombies
-  const actionSuggestions = [];
+  // Contar ads nuestros (Manual Upload)
+  const totalOurs = adsets.reduce((sum, as) => sum + (as.all_ads || []).filter(a => a.ad_name?.includes('[Manual Upload]')).length, 0);
+
+  // Problemas que necesitan atención
+  const problems = [];
   for (const adset of adsets) {
     const ads = adset.all_ads || [];
-    const dominantDeclining = ads.filter(a => a.diagnosis === 'dominant_declining');
+    const declining = ads.filter(a => a.diagnosis === 'dominant_declining');
     const zombies = ads.filter(a => a.diagnosis === 'zombie');
-    if (dominantDeclining.length > 0 && !adset.pending_rec_id) {
-      actionSuggestions.push({ adset, type: 'refresh', label: `${adset.adset_name}: creativo dominante cayendo`, icon: '\uD83D\uDD25' });
+    const starved = ads.filter(a => a.diagnosis === 'starved');
+    const fatigued = ads.filter(a => a.diagnosis === 'fatigued');
+
+    if (declining.length > 0 && !adset.pending_rec_id) {
+      problems.push({ adset, type: 'refresh', severity: 'high',
+        text: `El creativo principal está perdiendo rendimiento`,
+        detail: declining.map(a => `${a.ad_name.replace(' [Manual Upload]', '')} (ROAS ${a.roas_7d.toFixed(1)}x)`).join(', ')
+      });
     }
     if (zombies.length > 0 && !adset.pending_rec_id) {
-      actionSuggestions.push({ adset, type: 'pause_zombies', label: `${adset.adset_name}: ${zombies.length} ad${zombies.length > 1 ? 's' : ''} zombie`, icon: '\uD83D\uDC80', zombieIds: zombies.map(z => z.ad_name) });
+      problems.push({ adset, type: 'pause_zombies', severity: 'medium',
+        text: `${zombies.length} creativo${zombies.length > 1 ? 's' : ''} sin actividad — se puede${zombies.length > 1 ? 'n' : ''} pausar`,
+        zombieIds: zombies.map(z => z.ad_name)
+      });
+    }
+    if (fatigued.length > 0 && !adset.pending_rec_id) {
+      problems.push({ adset, type: 'refresh', severity: 'medium',
+        text: `Creativo desgastado — la audiencia ya lo vio demasiado`,
+        detail: fatigued.map(a => `${a.ad_name.replace(' [Manual Upload]', '')} (freq ${a.frequency_7d})`).join(', ')
+      });
+    }
+    if (starved.length > 0) {
+      const oursStarved = starved.filter(a => a.ad_name?.includes('[Manual Upload]'));
+      if (oursStarved.length > 0) {
+        problems.push({ adset, type: 'info', severity: 'low',
+          text: `${oursStarved.length} creativo${oursStarved.length > 1 ? 's' : ''} nuestro${oursStarved.length > 1 ? 's' : ''} sin presupuesto — Meta no lo${oursStarved.length > 1 ? 's' : ''} muestra`
+        });
+      }
     }
   }
 
+  // Contadores para resumen rápido
+  const issueCount = (dc.zombie || 0) + (dc.dominant_declining || 0) + (dc.fatigued || 0);
+  const okCount = (dc.healthy || 0) + (dc.dominant_healthy || 0);
+  const pendingCount = adsets.filter(a => a.pending_rec_id).length;
+
   return (
     <div className="cv3-panel">
-      {/* ═══ ZONE 1: Summary Strip ═══ */}
+      {/* ═══ RESUMEN ═══ */}
       <div className="cv3-summary">
-        <span className="cv3-summary-total">{summary.total_ads} ads</span>
-        {Object.entries(dc).filter(([, count]) => count > 0).map(([key, count]) => {
-          const cfg = DIAGNOSIS_CONFIG[key];
-          if (!cfg) return null;
-          return (
-            <span key={key} className="cv3-summary-chip" style={{ color: cfg.color, background: cfg.bg }}>
-              {cfg.icon} {count} {cfg.label.toLowerCase()}
-            </span>
-          );
-        })}
-        {summary.total_waste_7d > 0 && (
-          <span className="cv3-summary-chip cv3-waste">~${Math.round(summary.total_waste_7d)} desperdicio/sem</span>
-        )}
-        <button className="btn-ghost btn-small cv3-refresh-btn" onClick={loadData}>Refrescar</button>
+        <div className="cv3-summary-left">
+          <span className="cv3-summary-total">{summary.total_ads} creativos activos</span>
+          {totalOurs > 0 && <span className="cv3-summary-ours">{totalOurs} nuestros</span>}
+        </div>
+        <div className="cv3-summary-right">
+          {okCount > 0 && <span className="cv3-stat-pill ok">{okCount} bien</span>}
+          {(dc.learning || 0) + (dc.new_untested || 0) > 0 && <span className="cv3-stat-pill neutral">{(dc.learning || 0) + (dc.new_untested || 0)} nuevos</span>}
+          {issueCount > 0 && <span className="cv3-stat-pill bad">{issueCount} con problemas</span>}
+          {(dc.starved || 0) > 0 && <span className="cv3-stat-pill warn">{dc.starved} sin presupuesto</span>}
+          <button className="btn-ghost btn-small" onClick={loadData} style={{ marginLeft: 8 }}>Refrescar</button>
+        </div>
       </div>
 
-      {/* ═══ ZONE 3: Actions (above ad sets for visibility) ═══ */}
-      {actionSuggestions.length > 0 && (
-        <div className="cv3-actions">
-          <h3 className="cv3-actions-title">Acciones sugeridas</h3>
-          {actionSuggestions.map((s, i) => (
-            <div key={i} className="cv3-action-item">
-              <span className="cv3-action-icon">{s.icon}</span>
-              <span className="cv3-action-label">{s.label}</span>
-              <button
-                className="cv3-action-btn"
-                disabled={suggestingFor === `${s.adset.adset_id}-${s.type}`}
-                onClick={() => handleSuggest(s.adset, s.type, s.zombieIds)}
-              >
-                {suggestingFor === `${s.adset.adset_id}-${s.type}` ? 'Generando...' : s.type === 'refresh' ? 'Generar rec refresh' : 'Generar rec pausar'}
-              </button>
+      {/* ═══ PROBLEMAS DETECTADOS ═══ */}
+      {problems.length > 0 && (
+        <div className="cv3-problems">
+          <div className="cv3-problems-header">
+            <span className="cv3-problems-title">Problemas detectados</span>
+            <span className="cv3-problems-count">{problems.length}</span>
+          </div>
+          {problems.map((p, i) => (
+            <div key={i} className={`cv3-problem ${p.severity}`}>
+              <div className="cv3-problem-content">
+                <span className="cv3-problem-adset">{p.adset.adset_name}</span>
+                <span className="cv3-problem-text">{p.text}</span>
+                {p.detail && <span className="cv3-problem-detail">{p.detail}</span>}
+              </div>
+              {p.type !== 'info' && (
+                <button
+                  className="cv3-problem-btn"
+                  disabled={suggestingFor === `${p.adset.adset_id}-${p.type}`}
+                  onClick={() => handleSuggest(p.adset, p.type, p.zombieIds)}
+                >
+                  {suggestingFor === `${p.adset.adset_id}-${p.type}` ? 'Generando...' : 'Generar recomendacion'}
+                </button>
+              )}
             </div>
           ))}
         </div>
       )}
 
-      {/* Pending recs */}
-      {adsets.some(a => a.pending_rec_id) && (
-        <div className="cv3-pending-recs">
+      {/* ═══ RECS PENDIENTES ═══ */}
+      {pendingCount > 0 && (
+        <div className="cv3-pending">
           {adsets.filter(a => a.pending_rec_id).map(adset => (
             <div key={adset.adset_id} className="cv3-pending-item">
-              <span className="cv3-pending-icon">{'\u23F3'}</span>
-              <span className="cv3-pending-text">
-                <strong>{adset.adset_name}</strong>: rec pendiente — {adset.pending_rec_title}
-              </span>
+              <span className="cv3-pending-dot" />
+              <span><strong>{adset.adset_name}</strong> — {adset.pending_rec_title}</span>
+              <span className="cv3-pending-badge">Pendiente de aprobacion</span>
             </div>
           ))}
         </div>
       )}
 
-      {/* ═══ ZONE 2: By Ad Set ═══ */}
+      {/* ═══ AD SETS ═══ */}
       {adsets.length === 0 ? (
         <div className="feed-empty">
-          <div className="feed-empty-icon">{'\uD83C\uDFA8'}</div>
           <p>No hay ad sets activos.</p>
         </div>
       ) : (
@@ -2264,94 +2298,84 @@ function CreativesPanel({ formatTime }) {
           {adsets.map(adset => {
             const isOpen = expandedAdSets.has(adset.adset_id);
             const ads = adset.all_ads || [];
-            const hasIssues = adset.ad_health?.anomalies?.length > 0;
-            const topDiagnosis = ads.find(a => ['dominant_declining', 'zombie', 'fatigued', 'starved'].includes(a.diagnosis));
+            const problemAds = ads.filter(a => ['dominant_declining', 'zombie', 'fatigued'].includes(a.diagnosis));
+            const ourAds = ads.filter(a => a.ad_name?.includes('[Manual Upload]'));
 
             return (
-              <div key={adset.adset_id} className={`cv3-adset ${hasIssues ? 'has-issues' : ''} ${isOpen ? 'open' : ''}`}>
-                {/* Header */}
+              <div key={adset.adset_id} className={`cv3-adset ${problemAds.length > 0 ? 'has-issues' : ''} ${isOpen ? 'open' : ''}`}>
                 <div className="cv3-adset-header" onClick={() => toggleAdSet(adset.adset_id)}>
-                  <div className="cv3-adset-info">
+                  <div className="cv3-adset-left">
                     <span className="cv3-adset-name">{adset.adset_name}</span>
-                    <div className="cv3-adset-meta">
-                      <span className="cv3-meta-chip">${adset.daily_budget}/dia</span>
-                      <span className="cv3-meta-chip">${adset.total_spend_7d}/7d</span>
-                      <span className="cv3-meta-chip">{adset.active_ads} ads</span>
-                      {topDiagnosis && (
-                        <span className="cv3-meta-chip" style={{ color: DIAGNOSIS_CONFIG[topDiagnosis.diagnosis]?.color, background: DIAGNOSIS_CONFIG[topDiagnosis.diagnosis]?.bg }}>
-                          {DIAGNOSIS_CONFIG[topDiagnosis.diagnosis]?.icon} {DIAGNOSIS_CONFIG[topDiagnosis.diagnosis]?.label}
-                        </span>
-                      )}
-                    </div>
+                    <span className="cv3-adset-stats">
+                      {ads.length} ads &middot; ${Math.round(adset.daily_budget)}/dia &middot; ${Math.round(adset.total_spend_7d)}/7d
+                    </span>
                   </div>
-                  <span className={`fu-activo-chevron ${isOpen ? 'open' : ''}`}>{'\u25B8'}</span>
+                  <div className="cv3-adset-right">
+                    {ourAds.length > 0 && <span className="cv3-badge-ours">{ourAds.length} nuestro{ourAds.length > 1 ? 's' : ''}</span>}
+                    {problemAds.length > 0 && <span className="cv3-badge-issues">{problemAds.length} problema{problemAds.length > 1 ? 's' : ''}</span>}
+                    {adset.pending_rec_id && <span className="cv3-badge-pending">Rec pendiente</span>}
+                    <span className={`cv3-chevron ${isOpen ? 'open' : ''}`}>{'\u25B8'}</span>
+                  </div>
                 </div>
 
-                {/* Expanded: all ads */}
                 {isOpen && (
                   <div className="cv3-adset-body">
-                    {adset.ad_health?.summary && (
-                      <div className="cv3-adset-alert">{'\uD83C\uDFAF'} {adset.ad_health.summary}</div>
-                    )}
-                    <div className="cv3-ads-table">
-                      {/* Header row */}
-                      <div className="cv3-ad-row cv3-ad-header-row">
-                        <span className="cv3-ad-col name">Creativo</span>
-                        <span className="cv3-ad-col share">Spend %</span>
-                        <span className="cv3-ad-col diagnosis">Estado</span>
-                        <span className="cv3-ad-col roas">ROAS</span>
-                        <span className="cv3-ad-col ctr">CTR</span>
-                        <span className="cv3-ad-col spend">Gasto 7d</span>
-                        <span className="cv3-ad-col age">Edad</span>
-                      </div>
-                      {ads.map(ad => {
-                        const diagCfg = DIAGNOSIS_CONFIG[ad.diagnosis] || DIAGNOSIS_CONFIG.healthy;
-                        const roasColor = ad.roas_7d >= 3 ? '#10b981' : ad.roas_7d >= 1.5 ? '#3b82f6' : ad.roas_7d > 0 ? '#ef4444' : 'var(--text-muted)';
-                        return (
-                          <div key={ad.ad_id} className={`cv3-ad-row ${ad.has_anomaly ? 'anomaly' : ''}`}>
-                            <div className="cv3-ad-col name">
-                              <span className="cv3-ad-name" title={ad.ad_name}>{ad.ad_name.replace(' [Manual Upload]', '')}</span>
+                    {ads.map(ad => {
+                      const diagCfg = DIAGNOSIS_CONFIG[ad.diagnosis] || DIAGNOSIS_CONFIG.healthy;
+                      const isOurs = ad.ad_name?.includes('[Manual Upload]');
+                      const displayName = ad.ad_name.replace(' [Manual Upload]', '');
+                      const roasColor = ad.roas_7d >= 3 ? '#10b981' : ad.roas_7d >= 1.5 ? '#3b82f6' : ad.roas_7d > 0 ? '#ef4444' : 'var(--text-muted)';
+                      const hasProblem = !['healthy', 'dominant_healthy', 'learning', 'new_untested'].includes(ad.diagnosis);
+
+                      return (
+                        <div key={ad.ad_id} className={`cv3-ad ${hasProblem ? 'problem' : ''}`}>
+                          {/* Fila principal */}
+                          <div className="cv3-ad-main">
+                            <div className="cv3-ad-name-wrap">
+                              <span className="cv3-ad-name" title={ad.ad_name}>{displayName}</span>
+                              {isOurs && <span className="cv3-tag-ours">Nuestro</span>}
+                              {ad.age_days <= 3 && <span className="cv3-tag-new">Nuevo</span>}
                             </div>
-                            <div className="cv3-ad-col share">
-                              <div className="cv3-spend-bar">
-                                <div className="cv3-spend-bar-fill" style={{ width: `${Math.min(ad.spend_share_pct, 100)}%`, background: diagCfg.color }} />
+                            <div className="cv3-ad-metrics">
+                              <span className="cv3-ad-metric">
+                                <span className="cv3-ad-metric-label">ROAS</span>
+                                <span className="cv3-ad-metric-val" style={{ color: roasColor }}>{ad.roas_7d > 0 ? `${ad.roas_7d.toFixed(1)}x` : '--'}</span>
+                              </span>
+                              <span className="cv3-ad-metric">
+                                <span className="cv3-ad-metric-label">Gasto</span>
+                                <span className="cv3-ad-metric-val">${ad.spend_7d.toFixed(0)}</span>
+                              </span>
+                              <span className="cv3-ad-metric">
+                                <span className="cv3-ad-metric-label">CTR</span>
+                                <span className="cv3-ad-metric-val">{ad.ctr_7d > 0 ? `${ad.ctr_7d.toFixed(1)}%` : '--'}</span>
+                              </span>
+                              <span className="cv3-ad-metric">
+                                <span className="cv3-ad-metric-label">Edad</span>
+                                <span className="cv3-ad-metric-val">{ad.age_days}d</span>
+                              </span>
+                            </div>
+                          </div>
+                          {/* Barra de presupuesto + estado */}
+                          <div className="cv3-ad-bottom">
+                            <div className="cv3-ad-share">
+                              <div className="cv3-share-bar">
+                                <div className="cv3-share-fill" style={{ width: `${Math.min(ad.spend_share_pct, 100)}%`, background: diagCfg.color }} />
                               </div>
-                              <span className="cv3-spend-pct">{ad.spend_share_pct}%</span>
+                              <span className="cv3-share-label">{ad.spend_share_pct}% del presupuesto</span>
                             </div>
-                            <div className="cv3-ad-col diagnosis">
-                              <span className="cv3-diagnosis-chip" style={{ color: diagCfg.color, background: diagCfg.bg }}>
-                                {diagCfg.icon} {diagCfg.label}
-                              </span>
-                            </div>
-                            <div className="cv3-ad-col roas">
-                              <span style={{ color: roasColor, fontWeight: 700 }}>
-                                {ad.roas_7d > 0 ? `${ad.roas_7d.toFixed(2)}x` : '--'}
-                              </span>
-                            </div>
-                            <div className="cv3-ad-col ctr">
-                              {ad.ctr_7d > 0 ? `${ad.ctr_7d.toFixed(2)}%` : '--'}
-                            </div>
-                            <div className="cv3-ad-col spend">
-                              ${ad.spend_7d.toFixed(0)}
-                            </div>
-                            <div className="cv3-ad-col age">
-                              {ad.age_days}d
-                            </div>
+                            <span className="cv3-status-chip" style={{ color: diagCfg.color, background: diagCfg.bg }}>
+                              {diagCfg.label}
+                            </span>
                           </div>
-                        );
-                      })}
-                    </div>
-                    {/* Diagnosis explanations for problem ads */}
-                    {ads.filter(a => !['healthy', 'dominant_healthy', 'learning'].includes(a.diagnosis)).length > 0 && (
-                      <div className="cv3-diagnostics">
-                        {ads.filter(a => !['healthy', 'dominant_healthy', 'learning'].includes(a.diagnosis)).map(ad => (
-                          <div key={ad.ad_id} className="cv3-diagnostic-row">
-                            <span className="cv3-diagnostic-name">{ad.ad_name.replace(' [Manual Upload]', '').slice(0, 30)}</span>
-                            <span className="cv3-diagnostic-text">{ad.diagnosis_text}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                          {/* Explicación si hay problema */}
+                          {hasProblem && ad.diagnosis_text && (
+                            <div className="cv3-ad-explain" style={{ borderLeftColor: diagCfg.color }}>
+                              {ad.diagnosis_text}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>

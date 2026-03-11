@@ -1411,14 +1411,14 @@ router.get('/ad-health', async (req, res) => {
         totalAds++;
 
         const DIAG_TEXT = {
-          learning: 'En fase de aprendizaje — sin evaluar aún',
-          new_untested: 'Nuevo sin oportunidad — Meta no lo está probando',
-          zombie: 'Zombie — activo pero sin actividad real hace días',
-          starved: 'Sin oportunidad — Meta le asigna <5% del budget',
-          dominant_declining: 'Dominante pero cayendo — acapara budget y empeora',
-          dominant_healthy: 'Dominante y saludable — principal motor del ad set',
-          fatigued: 'Fatigado — frequency alta o señales de desgaste',
-          healthy: 'Saludable — rendimiento estable'
+          learning: 'Tiene menos de 72h — Meta aún lo está evaluando',
+          new_untested: 'Es nuevo pero Meta no le está dando presupuesto para probarlo',
+          zombie: 'Lleva días activo pero sin clics ni gasto real — Meta lo descartó',
+          starved: 'Meta solo le asigna <5% del presupuesto del ad set',
+          dominant_declining: 'Es el que más gasta pero su rendimiento está empeorando',
+          dominant_healthy: 'Es el creativo principal del ad set y rinde bien',
+          fatigued: 'La audiencia ya lo vio demasiadas veces — frequency alta',
+          healthy: 'Rendimiento estable'
         };
 
         return {

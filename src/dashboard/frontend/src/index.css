@@ -8654,7 +8654,7 @@ a:hover {
 }
 
 /* ═══════════════════════════════════════════
-   CREATIVES PANEL v3 — Ad Set-centric view
+   CREATIVES PANEL v3 — Clean creative health
    ═══════════════════════════════════════════ */
 
 .cv3-panel {
@@ -8663,85 +8663,137 @@ a:hover {
   gap: var(--spacing-md);
 }
 
-/* ── Summary Strip ── */
+/* ── Summary ── */
 .cv3-summary {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 12px 16px;
+  justify-content: space-between;
+  padding: 10px 16px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cv3-summary-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .cv3-summary-total {
   font-size: 14px;
   font-weight: 700;
   color: var(--text-primary);
-  margin-right: 4px;
 }
 
-.cv3-summary-chip {
+.cv3-summary-ours {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--blue-light);
+  background: rgba(59,130,246,0.12);
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+
+.cv3-summary-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cv3-stat-pill {
   font-size: 11px;
   font-weight: 600;
   padding: 2px 8px;
   border-radius: 10px;
-  white-space: nowrap;
 }
 
-.cv3-summary-chip.cv3-waste {
-  color: #f97316;
-  background: rgba(249,115,22,0.12);
-}
+.cv3-stat-pill.ok { color: #10b981; background: rgba(16,185,129,0.10); }
+.cv3-stat-pill.neutral { color: #6b7280; background: rgba(107,114,128,0.10); }
+.cv3-stat-pill.bad { color: #ef4444; background: rgba(239,68,68,0.10); }
+.cv3-stat-pill.warn { color: #f59e0b; background: rgba(245,158,11,0.10); }
 
-.cv3-refresh-btn {
-  margin-left: auto;
-}
-
-/* ── Actions Zone ── */
-.cv3-actions {
-  background: rgba(249,115,22,0.05);
-  border: 1px solid rgba(249,115,22,0.2);
+/* ── Problems ── */
+.cv3-problems {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  padding: var(--spacing-md);
+  overflow: hidden;
 }
 
-.cv3-actions-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: #f97316;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 8px;
-}
-
-.cv3-action-item {
+.cv3-problems-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 0;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-color);
 }
 
-.cv3-action-item + .cv3-action-item {
+.cv3-problems-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.cv3-problems-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: #ef4444;
+  background: rgba(239,68,68,0.12);
+  padding: 1px 8px;
+  border-radius: 8px;
+}
+
+.cv3-problem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  gap: 12px;
+  border-left: 3px solid transparent;
+}
+
+.cv3-problem + .cv3-problem {
   border-top: 1px solid rgba(255,255,255,0.04);
 }
 
-.cv3-action-icon {
-  font-size: 16px;
-  flex-shrink: 0;
+.cv3-problem.high { border-left-color: #ef4444; }
+.cv3-problem.medium { border-left-color: #f59e0b; }
+.cv3-problem.low { border-left-color: #6b7280; }
+
+.cv3-problem-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
-.cv3-action-label {
-  flex: 1;
+.cv3-problem-adset {
   font-size: 13px;
+  font-weight: 600;
   color: var(--text-primary);
 }
 
-.cv3-action-btn {
+.cv3-problem-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.cv3-problem-detail {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.cv3-problem-btn {
   font-size: 11px;
   font-weight: 600;
-  padding: 4px 12px;
+  padding: 5px 14px;
   border-radius: 8px;
   border: 1px solid rgba(59,130,246,0.3);
   background: rgba(59,130,246,0.08);
@@ -8749,20 +8801,21 @@ a:hover {
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.15s ease;
+  flex-shrink: 0;
 }
 
-.cv3-action-btn:hover:not(:disabled) {
-  background: rgba(59,130,246,0.15);
+.cv3-problem-btn:hover:not(:disabled) {
+  background: rgba(59,130,246,0.18);
   border-color: rgba(59,130,246,0.5);
 }
 
-.cv3-action-btn:disabled {
+.cv3-problem-btn:disabled {
   opacity: 0.5;
   cursor: wait;
 }
 
 /* ── Pending Recs ── */
-.cv3-pending-recs {
+.cv3-pending {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -8773,19 +8826,34 @@ a:hover {
   align-items: center;
   gap: 8px;
   padding: 8px 14px;
-  background: rgba(59,130,246,0.05);
-  border: 1px solid rgba(59,130,246,0.15);
+  background: rgba(59,130,246,0.04);
+  border: 1px solid rgba(59,130,246,0.12);
   border-radius: var(--radius-sm);
   font-size: 12px;
   color: var(--text-secondary);
 }
 
-.cv3-pending-icon {
-  font-size: 14px;
+.cv3-pending-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--blue-light);
+  flex-shrink: 0;
 }
 
-.cv3-pending-text strong {
+.cv3-pending-item strong {
   color: var(--text-primary);
+}
+
+.cv3-pending-badge {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--blue-light);
+  background: rgba(59,130,246,0.10);
+  padding: 2px 8px;
+  border-radius: 8px;
+  flex-shrink: 0;
 }
 
 /* ── Ad Sets List ── */
@@ -8818,13 +8886,14 @@ a:hover {
   padding: 12px 16px;
   cursor: pointer;
   transition: background 0.15s ease;
+  gap: 12px;
 }
 
 .cv3-adset-header:hover {
   background: rgba(255,255,255,0.02);
 }
 
-.cv3-adset-info {
+.cv3-adset-left {
   flex: 1;
   min-width: 0;
 }
@@ -8834,151 +8903,213 @@ a:hover {
   font-weight: 600;
   color: var(--text-primary);
   display: block;
-  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.cv3-adset-meta {
+.cv3-adset-stats {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  display: block;
+}
+
+.cv3-adset-right {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
-.cv3-meta-chip {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-muted);
-  background: var(--bg-tertiary);
-  padding: 1px 7px;
+.cv3-badge-ours {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--blue-light);
+  background: rgba(59,130,246,0.10);
+  padding: 2px 8px;
   border-radius: 8px;
-  white-space: nowrap;
+}
+
+.cv3-badge-issues {
+  font-size: 10px;
+  font-weight: 600;
+  color: #f59e0b;
+  background: rgba(245,158,11,0.10);
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+
+.cv3-badge-pending {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--blue-light);
+  background: rgba(59,130,246,0.10);
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+
+.cv3-chevron {
+  font-size: 12px;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+}
+
+.cv3-chevron.open {
+  transform: rotate(90deg);
 }
 
 /* ── Ad Set Body (expanded) ── */
 .cv3-adset-body {
   border-top: 1px solid var(--border-color);
-  padding: 12px 0;
+  padding: 8px 0;
 }
 
-.cv3-adset-alert {
-  font-size: 12px;
-  color: #f59e0b;
-  padding: 6px 16px;
-  margin-bottom: 8px;
-  background: rgba(245,158,11,0.06);
-  border-left: 3px solid #f59e0b;
-}
-
-/* ── Ads Table ── */
-.cv3-ads-table {
-  width: 100%;
-}
-
-.cv3-ad-row {
-  display: flex;
-  align-items: center;
-  padding: 6px 16px;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-secondary);
+/* ── Individual Ad Card ── */
+.cv3-ad {
+  padding: 10px 16px;
   transition: background 0.1s ease;
 }
 
-.cv3-ad-row:hover:not(.cv3-ad-header-row) {
+.cv3-ad + .cv3-ad {
+  border-top: 1px solid rgba(255,255,255,0.04);
+}
+
+.cv3-ad:hover {
   background: rgba(255,255,255,0.02);
 }
 
-.cv3-ad-row.anomaly {
-  background: rgba(239,68,68,0.03);
+.cv3-ad.problem {
+  background: rgba(239,68,68,0.02);
 }
 
-.cv3-ad-header-row {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  border-bottom: 1px solid var(--border-color);
-  padding-bottom: 6px;
-  margin-bottom: 2px;
+.cv3-ad-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
 }
 
-.cv3-ad-col.name { flex: 2; min-width: 0; }
-.cv3-ad-col.share { flex: 1.2; display: flex; align-items: center; gap: 6px; }
-.cv3-ad-col.diagnosis { flex: 1.5; }
-.cv3-ad-col.roas { flex: 0.7; text-align: right; }
-.cv3-ad-col.ctr { flex: 0.6; text-align: right; }
-.cv3-ad-col.spend { flex: 0.7; text-align: right; }
-.cv3-ad-col.age { flex: 0.4; text-align: right; color: var(--text-muted); }
+.cv3-ad-name-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 
 .cv3-ad-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.cv3-tag-ours {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--blue-light);
+  background: rgba(59,130,246,0.15);
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+}
+
+.cv3-tag-new {
+  font-size: 9px;
+  font-weight: 700;
+  color: #3b82f6;
+  background: rgba(59,130,246,0.10);
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.cv3-ad-metrics {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+.cv3-ad-metric {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0;
+}
+
+.cv3-ad-metric-label {
+  font-size: 9px;
   font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.cv3-ad-metric-val {
+  font-size: 13px;
+  font-weight: 700;
   color: var(--text-primary);
 }
 
-/* ── Spend Share Bar ── */
-.cv3-spend-bar {
-  flex: 1;
-  height: 6px;
-  background: rgba(255,255,255,0.06);
-  border-radius: 3px;
-  overflow: hidden;
+/* ── Bottom row: share bar + status ── */
+.cv3-ad-bottom {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
-.cv3-spend-bar-fill {
+.cv3-ad-share {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cv3-share-bar {
+  flex: 1;
+  height: 4px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 2px;
+  overflow: hidden;
+  max-width: 200px;
+}
+
+.cv3-share-fill {
   height: 100%;
-  border-radius: 3px;
+  border-radius: 2px;
   transition: width 0.3s ease;
   min-width: 2px;
 }
 
-.cv3-spend-pct {
+.cv3-share-label {
   font-size: 11px;
-  font-weight: 600;
-  min-width: 32px;
-  text-align: right;
-  flex-shrink: 0;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
-/* ── Diagnosis Chip ── */
-.cv3-diagnosis-chip {
+.cv3-status-chip {
   font-size: 10px;
   font-weight: 600;
   padding: 2px 8px;
   border-radius: 8px;
   white-space: nowrap;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-
-/* ── Diagnostics Footer ── */
-.cv3-diagnostics {
-  padding: 8px 16px 4px;
-  border-top: 1px solid rgba(255,255,255,0.04);
-  margin-top: 4px;
-}
-
-.cv3-diagnostic-row {
-  display: flex;
-  gap: 8px;
-  padding: 3px 0;
-  font-size: 11px;
-}
-
-.cv3-diagnostic-name {
-  color: var(--text-muted);
-  min-width: 100px;
   flex-shrink: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.cv3-diagnostic-text {
-  color: var(--text-tertiary);
+/* ── Explanation line ── */
+.cv3-ad-explain {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 2px solid;
   font-style: italic;
 }
