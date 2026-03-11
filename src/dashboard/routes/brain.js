@@ -435,6 +435,7 @@ router.post('/recommendations/:id/mark-executed', async (req, res) => {
     await BrainRecommendation.updateOne({ _id: rec._id }, { $set: {
       'follow_up.action_executed': true,
       'follow_up.execution_detected_at': new Date(),
+      'follow_up.execution_source': 'user_manual',
       updated_at: new Date()
     }});
 
@@ -591,7 +592,13 @@ router.get('/recommendations/follow-up-stats', async (req, res) => {
       const before = r.follow_up?.metrics_at_recommendation || {};
       const after = r.follow_up?.metrics_after || {};
       const phases = r.follow_up?.phases || {};
-      const roasDelta = before.roas_7d > 0 ? ((after.roas_7d || 0) - before.roas_7d) / before.roas_7d * 100 : 0;
+      // Prefer phase deltas over legacy metrics_after
+      const bestPhaseData = phases.day_14?.measured ? phases.day_14
+        : phases.day_7?.measured ? phases.day_7
+        : phases.day_3?.measured ? phases.day_3 : null;
+      const roasDelta = bestPhaseData?.deltas?.roas_pct != null
+        ? bestPhaseData.deltas.roas_pct
+        : (before.roas_7d > 0 ? ((after.roas_7d || 0) - before.roas_7d) / before.roas_7d * 100 : 0);
 
       return {
         _id: r._id,
@@ -604,6 +611,7 @@ router.get('/recommendations/follow-up-stats', async (req, res) => {
         decided_at: r.decided_at,
         checked_at: r.follow_up?.checked_at,
         action_executed: r.follow_up?.action_executed,
+        execution_source: r.follow_up?.execution_source || null,
         impact_verdict: r.follow_up?.impact_verdict,
         impact_summary: r.follow_up?.impact_summary,
         impact_trend: r.follow_up?.impact_trend,
@@ -705,6 +713,7 @@ router.get('/recommendations/follow-up-stats', async (req, res) => {
         hours_since_approved: hoursAgo,
         current_phase: currentPhase,
         action_executed: r.follow_up?.action_executed || false,
+        execution_source: r.follow_up?.execution_source || null,
         // Metrics at approval snapshot
         roas_at_approval: before.roas_7d || 0,
         cpa_at_approval: before.cpa_7d || 0,

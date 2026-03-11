@@ -1399,20 +1399,64 @@ function RecDetail({ rec, onApprove, onReject, onDiscuss, onGoToFollowUp, format
 // ═══ FOLLOW-UP PANEL ═══
 
 const VERDICT_CONFIG = {
-  positive: { icon: '\u2705', label: 'Positivo', color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
-  negative: { icon: '\u274C', label: 'Negativo', color: '#ef4444', bg: 'rgba(239,68,68,0.12)' },
-  neutral:  { icon: '\u2796', label: 'Neutral', color: '#6b7280', bg: 'rgba(107,114,128,0.12)' }
+  positive: { label: 'Positivo', color: '#10b981', bg: 'rgba(16,185,129,0.12)' },
+  negative: { label: 'Negativo', color: '#ef4444', bg: 'rgba(239,68,68,0.12)' },
+  neutral:  { label: 'Neutral', color: '#6b7280', bg: 'rgba(107,114,128,0.12)' }
 };
+
+// SVG icon components for follow-up panel (replacing emojis)
+const FuIcons = {
+  upload: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
+  arrowUp: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>,
+  arrowDown: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>,
+  clock: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+  skull: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="11" r="8"/><path d="M8 15v5"/><path d="M16 15v5"/><circle cx="9" cy="10" r="1.5" fill="currentColor"/><circle cx="15" cy="10" r="1.5" fill="currentColor"/></svg>,
+  check: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
+  x: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+  minus: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+  chat: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>,
+  zap: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
+  eye: <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
+};
+
+const FOLLOWUP_FILTERS = [
+  { key: 'all', label: 'Todos' },
+  { key: 'creative', label: 'Creativos' },
+  { key: 'manual_upload', label: 'Manual Upload' },
+  { key: 'declining', label: 'Decayendo' },
+  { key: 'not_executed', label: 'Sin ejecutar' },
+  { key: 'scaling', label: 'Scaling' },
+  { key: 'pause', label: 'Pausa' },
+];
+
+function classifyFollowUp(item, isCompleted = false) {
+  if (isCompleted) return 'completed';
+  if (!item.action_executed) return 'attention';
+  if (item.day_3?.verdict === 'negative') return 'attention';
+  if (item.day_3?.roas_pct != null && item.day_3.roas_pct < -20) return 'attention';
+  return 'progress';
+}
+
+function matchesFilter(item, filter) {
+  if (filter === 'all') return true;
+  if (filter === 'creative') return ['create_ad', 'creative_refresh', 'update_ad_creative'].includes(item.action_type);
+  if (filter === 'manual_upload') return item.execution_source === 'manual_upload';
+  if (filter === 'declining') return item.impact_trend === 'declining' || item.day_3?.verdict === 'negative';
+  if (filter === 'not_executed') return !item.action_executed;
+  if (filter === 'scaling') return ['scale_up', 'scale_down', 'move_budget'].includes(item.action_type);
+  if (filter === 'pause') return ['pause', 'update_ad_status'].includes(item.action_type);
+  return true;
+}
 
 function FollowUpPanel({ formatTime, onApprovalAction, onDiscuss }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [expandedItem, setExpandedItem] = useState(null);
-  const [expandedCard, setExpandedCard] = useState(null);      // accordion: only 1 card expanded
-  const [expandedInlineRec, setExpandedInlineRec] = useState(null); // collapsed inline recs
+  const [activeFilter, setActiveFilter] = useState('all');
+  const [expandedCard, setExpandedCard] = useState(null);
+  const [expandedResult, setExpandedResult] = useState(null);
+  const refreshTimer = useRef(null);
 
   const loadFollowUpStats = useCallback(async () => {
-    setLoading(true);
     try {
       const result = await getFollowUpStats();
       setData(result);
@@ -1423,346 +1467,357 @@ function FollowUpPanel({ formatTime, onApprovalAction, onDiscuss }) {
     }
   }, []);
 
-  useEffect(() => { loadFollowUpStats(); }, [loadFollowUpStats]);
+  useEffect(() => {
+    loadFollowUpStats();
+    refreshTimer.current = setInterval(loadFollowUpStats, 60000);
+    return () => clearInterval(refreshTimer.current);
+  }, [loadFollowUpStats]);
 
   if (loading) return <div className="feed-empty">Cargando seguimiento...</div>;
   if (!data) return <div className="feed-empty">Error al cargar datos de seguimiento.</div>;
 
   const { summary, by_action_type, timeline, pending, lessons_learned } = data;
 
-  // Compute which phases have data across all timeline items
-  const latestPhases = {
-    day_3: timeline.some(t => t.phases?.day_3),
-    day_7: timeline.some(t => t.phases?.day_7),
-    day_14: timeline.some(t => t.phases?.day_14)
-  };
+  // Classify pending items into columns
+  const attentionItems = pending.filter(p => classifyFollowUp(p) === 'attention' && matchesFilter(p, activeFilter));
+  const progressItems = pending.filter(p => classifyFollowUp(p) === 'progress' && matchesFilter(p, activeFilter));
+  const completedItems = timeline.filter(t => matchesFilter(t, activeFilter));
+
+  const totalVisible = attentionItems.length + progressItems.length + completedItems.length;
 
   return (
     <div className="followup-panel">
 
-      {/* ═══ ZONE 1: Score Strip — orb + headline + chips ═══ */}
-      <div className="fu-score-strip">
-        <div className="fu-score-orb">
-          <Suspense fallback={<div className="fu-score-orb-fallback"><span>{summary.win_rate}%</span></div>}>
-            <ImpactOrb winRate={summary.win_rate} summary={summary} latestPhases={latestPhases} />
+      {/* ═══ ZONE 1: Health Bar ═══ */}
+      <div className="fu-health-bar">
+        <div className="fu-health-orb">
+          <Suspense fallback={<div className="fu-health-orb-fallback"><span>{summary.win_rate}%</span></div>}>
+            <ImpactOrb winRate={summary.win_rate} summary={summary} latestPhases={{
+              day_3: timeline.some(t => t.phases?.day_3),
+              day_7: timeline.some(t => t.phases?.day_7),
+              day_14: timeline.some(t => t.phases?.day_14)
+            }} />
           </Suspense>
         </div>
-        <div className="fu-score-body">
-          <div className="fu-score-headline">
-            <span className="fu-score-pct">{summary.win_rate}%</span> efectividad
-            <span className="fu-score-sep">&middot;</span>{summary.total_measured} medidas
-            <span className="fu-score-sep">&middot;</span>
-            <span className="fu-score-pos">{summary.positive}</span> positivas
-            {summary.negative > 0 && <><span className="fu-score-sep">&middot;</span><span className="fu-score-neg">{summary.negative}</span> negativas</>}
-            {summary.pending_follow_up > 0 && <><span className="fu-score-sep">&middot;</span><span className="fu-score-pending">{summary.pending_follow_up} en espera</span></>}
+        <div className="fu-health-body">
+          <div className="fu-health-headline">
+            <span className="fu-health-pct">{summary.win_rate}%</span>
+            <span className="fu-health-label">efectividad</span>
+            <span className="fu-health-stat">{summary.total_measured} medidas</span>
+            <span className="fu-health-stat positive">{summary.positive} positivas</span>
+            {summary.negative > 0 && <span className="fu-health-stat negative">{summary.negative} negativas</span>}
+            {summary.pending_follow_up > 0 && <span className="fu-health-stat pending">{summary.pending_follow_up} activas</span>}
           </div>
-          <div className="fu-score-chips">
+          <div className="fu-health-deltas">
             {summary.avg_roas_delta_pct != null && (
-              <span className={`fu-chip ${summary.avg_roas_delta_pct >= 0 ? 'positive' : 'negative'}`}>
+              <span className={`fu-delta-chip ${summary.avg_roas_delta_pct >= 0 ? 'positive' : 'negative'}`}>
                 ROAS {summary.avg_roas_delta_pct > 0 ? '+' : ''}{summary.avg_roas_delta_pct}%
               </span>
             )}
             {summary.avg_cpa_delta_pct != null && (
-              <span className={`fu-chip ${(summary.avg_cpa_delta_pct || 0) <= 0 ? 'positive' : 'negative'}`}>
+              <span className={`fu-delta-chip ${(summary.avg_cpa_delta_pct || 0) <= 0 ? 'positive' : 'negative'}`}>
                 CPA {(summary.avg_cpa_delta_pct || 0) > 0 ? '+' : ''}{summary.avg_cpa_delta_pct || 0}%
               </span>
             )}
-            {summary.avg_ctr_delta_pct != null && summary.avg_ctr_delta_pct !== 0 && (
-              <span className={`fu-chip ${(summary.avg_ctr_delta_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
-                CTR {(summary.avg_ctr_delta_pct || 0) > 0 ? '+' : ''}{summary.avg_ctr_delta_pct || 0}%
-              </span>
-            )}
-            <span className="fu-chip-divider" />
-            {Object.entries(by_action_type).slice(0, 4).map(([action, stats]) => {
+            {Object.entries(by_action_type).slice(0, 3).map(([action, stats]) => {
               const cfg = ACTION_TYPE_CONFIG[action] || ACTION_TYPE_CONFIG.other;
               const wr = stats.total > 0 ? Math.round((stats.positive / stats.total) * 100) : 0;
-              return (
-                <span key={action} className="fu-chip type">{cfg.icon} {cfg.label} {wr}%</span>
-              );
+              return <span key={action} className="fu-delta-chip type">{cfg.label} {wr}%</span>;
             })}
+          </div>
+          {/* Lessons carousel */}
+          {lessons_learned && lessons_learned.length > 0 && (
+            <div className="fu-lessons">
+              <span className="fu-lessons-icon">{FuIcons.eye}</span>
+              <div className="fu-lessons-text">{lessons_learned[0].lesson}</div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ═══ ZONE 2: Filter Chips ═══ */}
+      <div className="fu-filters">
+        {FOLLOWUP_FILTERS.map(f => (
+          <button
+            key={f.key}
+            className={`fu-filter-chip ${activeFilter === f.key ? 'active' : ''}`}
+            onClick={() => setActiveFilter(f.key)}
+          >
+            {f.label}
+            {f.key === 'manual_upload' && <span className="fu-filter-icon">{FuIcons.upload}</span>}
+            {f.key === 'declining' && <span className="fu-filter-icon decline">{FuIcons.arrowDown}</span>}
+          </button>
+        ))}
+        {activeFilter !== 'all' && (
+          <span className="fu-filter-count">{totalVisible} resultado{totalVisible !== 1 ? 's' : ''}</span>
+        )}
+      </div>
+
+      {/* ═══ ZONE 3: Kanban Board ═══ */}
+      <div className="fu-kanban">
+        {/* Column: Needs Attention */}
+        <div className="fu-kanban-col attention">
+          <div className="fu-kanban-header">
+            <span className="fu-kanban-dot attention" />
+            <span className="fu-kanban-title">Atencion</span>
+            <span className="fu-kanban-count">{attentionItems.length}</span>
+          </div>
+          <div className="fu-kanban-cards">
+            {attentionItems.map(p => (
+              <FollowUpCard
+                key={p._id}
+                item={p}
+                column="attention"
+                isExpanded={expandedCard === p._id}
+                onToggle={() => setExpandedCard(expandedCard === p._id ? null : p._id)}
+                onMarkExecuted={async () => { try { await markRecommendationExecuted(p._id); loadFollowUpStats(); } catch (err) { console.error(err); } }}
+                onApprovalAction={onApprovalAction}
+                onDiscuss={onDiscuss}
+                formatTime={formatTime}
+              />
+            ))}
+            {attentionItems.length === 0 && <div className="fu-kanban-empty">Sin alertas</div>}
+          </div>
+        </div>
+
+        {/* Column: In Progress */}
+        <div className="fu-kanban-col progress">
+          <div className="fu-kanban-header">
+            <span className="fu-kanban-dot progress" />
+            <span className="fu-kanban-title">En Progreso</span>
+            <span className="fu-kanban-count">{progressItems.length}</span>
+          </div>
+          <div className="fu-kanban-cards">
+            {progressItems.map(p => (
+              <FollowUpCard
+                key={p._id}
+                item={p}
+                column="progress"
+                isExpanded={expandedCard === p._id}
+                onToggle={() => setExpandedCard(expandedCard === p._id ? null : p._id)}
+                onMarkExecuted={async () => { try { await markRecommendationExecuted(p._id); loadFollowUpStats(); } catch (err) { console.error(err); } }}
+                onApprovalAction={onApprovalAction}
+                onDiscuss={onDiscuss}
+                formatTime={formatTime}
+              />
+            ))}
+            {progressItems.length === 0 && <div className="fu-kanban-empty">Sin items activos</div>}
+          </div>
+        </div>
+
+        {/* Column: Completed */}
+        <div className="fu-kanban-col completed">
+          <div className="fu-kanban-header">
+            <span className="fu-kanban-dot completed" />
+            <span className="fu-kanban-title">Completado</span>
+            <span className="fu-kanban-count">{completedItems.length}</span>
+          </div>
+          <div className="fu-kanban-cards">
+            {completedItems.slice(0, 15).map(item => (
+              <CompletedCard
+                key={item._id}
+                item={item}
+                isExpanded={expandedResult === item._id}
+                onToggle={() => setExpandedResult(expandedResult === item._id ? null : item._id)}
+                onDiscuss={onDiscuss}
+                formatTime={formatTime}
+              />
+            ))}
+            {completedItems.length === 0 && <div className="fu-kanban-empty">Sin resultados</div>}
           </div>
         </div>
       </div>
 
-      {/* ═══ ZONE 2: Activos — clean monitoring cards ═══ */}
-      {pending.length > 0 && (() => {
-        const groupedByEntity = {};
-        for (const p of pending) {
-          const key = p.entity_name || p._id;
-          if (!groupedByEntity[key]) groupedByEntity[key] = [];
-          groupedByEntity[key].push(p);
-        }
-        const entityGroups = Object.entries(groupedByEntity);
+      {/* Empty state */}
+      {timeline.length === 0 && pending.length === 0 && (
+        <div className="feed-empty">
+          <p>Sin datos de seguimiento aun.</p>
+          <p className="feed-empty-hint">Aprueba recomendaciones y el Brain medira su impacto en 3 fases: dia 3, dia 7, y dia 14.</p>
+        </div>
+      )}
+    </div>
+  );
+}
 
-        return (
-          <div className="fu-section">
-            <h3 className="fu-section-title">
-              <span className="fu-pulse" />
-              Activos ({pending.length})
-            </h3>
-            <div className="fu-activos-list">
-              {entityGroups.map(([entityName, items]) => (
-                <div key={entityName} className="fu-entity-group">
-                  {items.length > 1 && (
-                    <div className="fu-group-header">
-                      <span className="fu-group-name">{entityName}</span>
-                      <span className="fu-group-count">{items.length}</span>
-                    </div>
-                  )}
-                  {items.map(p => {
-                    const actionCfg = ACTION_TYPE_CONFIG[p.action_type] || ACTION_TYPE_CONFIG.other;
-                    const daysAgo = p.hours_since_approved >= 24
-                      ? `${Math.floor(p.hours_since_approved / 24)}d`
-                      : `${p.hours_since_approved}h`;
-                    const phaseIdx = p.current_phase === 'awaiting_day_3' ? 0
-                      : p.current_phase === 'awaiting_day_7' ? 1
-                      : p.current_phase === 'awaiting_day_14' ? 2 : 3;
-                    const phasePct = phaseIdx === 0 ? 15 : phaseIdx === 1 ? 40 : phaseIdx === 2 ? 70 : 100;
-                    const phaseLabel = ['3d', '7d', '14d', 'done'][Math.min(phaseIdx, 3)];
-                    const d3Verdict = p.day_3?.verdict;
-                    const isOpen = expandedCard === p._id;
-                    const phases = [
-                      { key: 'day_3', label: '3d', done: phaseIdx > 0, active: phaseIdx === 0, data: p.day_3 },
-                      { key: 'day_7', label: '7d', done: phaseIdx > 1, active: phaseIdx === 1, data: null },
-                      { key: 'day_14', label: '14d', done: phaseIdx > 2, active: phaseIdx === 2, data: null },
-                    ];
+function FollowUpCard({ item: p, column, isExpanded, onToggle, onMarkExecuted, onApprovalAction, onDiscuss, formatTime }) {
+  const actionCfg = ACTION_TYPE_CONFIG[p.action_type] || ACTION_TYPE_CONFIG.other;
+  const daysAgo = p.hours_since_approved >= 24
+    ? `${Math.floor(p.hours_since_approved / 24)}d`
+    : `${p.hours_since_approved}h`;
+  const phaseIdx = p.current_phase === 'awaiting_day_3' ? 0
+    : p.current_phase === 'awaiting_day_7' ? 1
+    : p.current_phase === 'awaiting_day_14' ? 2 : 3;
+  const phasePct = phaseIdx === 0 ? 15 : phaseIdx === 1 ? 40 : phaseIdx === 2 ? 70 : 100;
+  const phaseLabel = ['3d', '7d', '14d', 'done'][Math.min(phaseIdx, 3)];
+  const isManualUpload = p.execution_source === 'manual_upload';
+  const isCreative = ['create_ad', 'creative_refresh', 'update_ad_creative'].includes(p.action_type);
+  const isDying = p.day_3?.verdict === 'negative' && (p.day_3?.roas_pct || 0) < -20;
 
-                    return (
-                      <div key={p._id} className={`fu-activo ${d3Verdict ? `verdict-${d3Verdict}` : ''} ${isOpen ? 'open' : ''}`}>
-                        {/* Compact row */}
-                        <div className="fu-activo-row" onClick={() => setExpandedCard(isOpen ? null : p._id)}>
-                          <span className="fu-activo-icon" style={{ color: actionCfg.color }}>{actionCfg.icon}</span>
-                          <div className="fu-activo-info">
-                            <span className="fu-activo-name">{items.length === 1 ? p.entity_name : actionCfg.label}</span>
-                            {items.length === 1 && <span className="fu-activo-action">{actionCfg.label}</span>}
-                          </div>
-                          <div className="fu-activo-progress" title={`Fase: ${phaseLabel}`}>
-                            <div className="fu-activo-progress-fill" style={{ width: `${phasePct}%` }} />
-                            <span className="fu-activo-progress-label">{phaseLabel}</span>
-                          </div>
-                          {p.day_3?.roas_pct != null ? (
-                            <span className={`fu-activo-delta ${(p.day_3.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
-                              {p.day_3.roas_pct > 0 ? '+' : ''}{p.day_3.roas_pct}%
-                            </span>
-                          ) : (
-                            <span className="fu-activo-delta waiting">{daysAgo}</span>
-                          )}
-                          {d3Verdict && (
-                            <span className={`fu-activo-verdict ${d3Verdict}`}>
-                              {d3Verdict === 'positive' ? '\u2705' : d3Verdict === 'negative' ? '\u274C' : '\u2796'}
-                            </span>
-                          )}
-                          <span className={`fu-activo-chevron ${isOpen ? 'open' : ''}`}>{'\u25B8'}</span>
-                        </div>
+  const borderColor = column === 'attention' ? (isDying ? '#991b1b' : '#ef4444') : '#3b82f6';
 
-                        {/* Expanded detail */}
-                        {isOpen && (
-                          <div className="fu-activo-detail">
-                            <div className="fu-activo-title">{p.title}</div>
+  return (
+    <div className={`fu-card ${column} ${isExpanded ? 'expanded' : ''}`} style={{ borderLeftColor: borderColor }}>
+      <div className="fu-card-top" onClick={onToggle}>
+        {/* Badges row */}
+        <div className="fu-card-badges">
+          <span className="fu-card-action" style={{ color: actionCfg.color }}>{actionCfg.label}</span>
+          {isManualUpload && <span className="fu-badge upload">{FuIcons.upload} Manual</span>}
+          {isCreative && !isManualUpload && <span className="fu-badge creative">Creativo</span>}
+          {!p.action_executed && <span className="fu-badge not-exec">{FuIcons.clock} Sin ejecutar</span>}
+          {isDying && <span className="fu-badge dying">{FuIcons.skull} Critico</span>}
+          {p.day_3?.verdict === 'negative' && !isDying && <span className="fu-badge declining">{FuIcons.arrowDown} Decayendo</span>}
+          {p.day_3?.verdict === 'positive' && <span className="fu-badge improving">{FuIcons.arrowUp} Mejorando</span>}
+        </div>
 
-                            {/* Phase timeline */}
-                            <div className="followup-phase-track">
-                              {phases.map((ph, i) => (
-                                <React.Fragment key={ph.key}>
-                                  {i > 0 && <div className={`followup-phase-connector ${ph.done ? 'done' : ''}`} />}
-                                  <div className={`followup-phase-node-v2 ${ph.done ? 'done' : ph.active ? 'active' : ''}`}>
-                                    <span className="followup-phase-circle">
-                                      {ph.done ? '\u2713' : ph.active ? '\u25CF' : '\u25CB'}
-                                    </span>
-                                    <span className="followup-phase-label-v2">{ph.label}</span>
-                                    {ph.data && (
-                                      <span className={`followup-phase-delta ${(ph.data.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
-                                        {(ph.data.roas_pct || 0) > 0 ? '+' : ''}{ph.data.roas_pct}%
-                                      </span>
-                                    )}
-                                  </div>
-                                </React.Fragment>
-                              ))}
-                            </div>
+        {/* Entity name */}
+        <div className="fu-card-entity">{p.entity_name}</div>
 
-                            {/* Before → After (day_3 available) */}
-                            {p.day_3 && p.day_3.current_roas > 0 && (
-                              <div className="followup-comparison">
-                                <div className="followup-compare-col before">
-                                  <span className="followup-compare-header">Al aprobar</span>
-                                  <div className="followup-compare-grid">
-                                    <div className="followup-compare-item"><span className="followup-compare-label">ROAS</span><span className="followup-compare-val">{p.roas_at_approval.toFixed(2)}x</span></div>
-                                    <div className="followup-compare-item"><span className="followup-compare-label">CPA</span><span className="followup-compare-val">${p.cpa_at_approval.toFixed(2)}</span></div>
-                                  </div>
-                                </div>
-                                <div className="followup-compare-arrow"><span className={`followup-arrow-icon ${(p.day_3.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>{'\u2192'}</span></div>
-                                <div className="followup-compare-col after">
-                                  <span className="followup-compare-header">Dia 3</span>
-                                  <div className="followup-compare-grid">
-                                    <div className="followup-compare-item"><span className="followup-compare-label">ROAS</span><span className={`followup-compare-val highlight ${p.day_3.current_roas >= 3 ? 'good' : p.day_3.current_roas >= 1.5 ? 'ok' : 'bad'}`}>{p.day_3.current_roas.toFixed(2)}x</span></div>
-                                    <div className="followup-compare-item"><span className="followup-compare-label">CPA</span><span className="followup-compare-val highlight">${p.day_3.current_cpa?.toFixed(2) || '\u2014'}</span></div>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Snapshot (no day_3 yet) */}
-                            {!p.day_3 && (
-                              <div className="followup-pending-snapshot">
-                                {p.roas_at_approval > 0 && <div className="followup-snap-metric"><span className="followup-snap-label">ROAS</span><span className="followup-snap-value">{p.roas_at_approval.toFixed(2)}x</span></div>}
-                                {p.cpa_at_approval > 0 && <div className="followup-snap-metric"><span className="followup-snap-label">CPA</span><span className="followup-snap-value">${p.cpa_at_approval.toFixed(2)}</span></div>}
-                                {p.spend_at_approval > 0 && <div className="followup-snap-metric"><span className="followup-snap-label">Spend</span><span className="followup-snap-value">${p.spend_at_approval.toFixed(0)}</span></div>}
-                              </div>
-                            )}
-
-                            {/* Execution + action */}
-                            {!p.action_executed && (
-                              <div className="followup-exec-row">
-                                <span className="followup-exec-badge not-executed">{'\u23F3'} Pendiente ejecucion</span>
-                                <button className="rec-btn-mark-executed" onClick={async () => { try { await markRecommendationExecuted(p._id); loadFollowUpStats(); } catch (err) { console.error(err); } }}>Marcar ejecutada</button>
-                              </div>
-                            )}
-                            {p.action_detail && <div className="followup-pending-detail">{p.action_detail}</div>}
-
-                            {/* New creative metrics */}
-                            {p.new_ad_name && (
-                              <div className="followup-new-ad-section">
-                                <div className="followup-new-ad-header"><span>{'\uD83C\uDFA8'}</span><span>Creativo: {p.new_ad_name}</span></div>
-                                {p.day_3?.new_ad_metrics ? (
-                                  <div className="followup-new-ad-metrics">
-                                    <div className="followup-new-ad-metric"><span className="followup-new-ad-label">ROAS</span><span className={`followup-new-ad-value ${p.day_3.new_ad_metrics.roas >= 3 ? 'good' : p.day_3.new_ad_metrics.roas >= 1.5 ? 'ok' : 'bad'}`}>{(p.day_3.new_ad_metrics.roas || 0).toFixed(2)}x</span></div>
-                                    <div className="followup-new-ad-metric"><span className="followup-new-ad-label">CTR</span><span className={`followup-new-ad-value ${p.day_3.new_ad_metrics.ctr >= 1.5 ? 'good' : 'ok'}`}>{(p.day_3.new_ad_metrics.ctr || 0).toFixed(2)}%</span></div>
-                                    <div className="followup-new-ad-metric"><span className="followup-new-ad-label">CPA</span><span className="followup-new-ad-value">${(p.day_3.new_ad_metrics.cpa || 0).toFixed(2)}</span></div>
-                                  </div>
-                                ) : (
-                                  <div className="followup-new-ad-waiting">Metricas en dia 3</div>
-                                )}
-                              </div>
-                            )}
-
-                            {/* Inline new recommendation */}
-                            {p.new_recommendation && (
-                              <div className={`followup-inline-rec ${expandedInlineRec === p._id ? 'open' : ''}`}>
-                                <div className="followup-inline-rec-header" onClick={(e) => { e.stopPropagation(); setExpandedInlineRec(expandedInlineRec === p._id ? null : p._id); }} style={{ cursor: 'pointer' }}>
-                                  <span className="followup-inline-rec-badge">{'\u26A1'} Nueva sugerencia</span>
-                                  <span className={`followup-inline-rec-chevron ${expandedInlineRec === p._id ? 'open' : ''}`}>{'\u25B8'}</span>
-                                </div>
-                                {expandedInlineRec === p._id && (
-                                  <>
-                                    <div className="followup-inline-rec-title">{(ACTION_TYPE_CONFIG[p.new_recommendation.action_type] || ACTION_TYPE_CONFIG.other).icon} {p.new_recommendation.title}</div>
-                                    {p.new_recommendation.action_detail && <div className="followup-inline-rec-detail"><span className="followup-inline-rec-detail-label">Accion:</span> {p.new_recommendation.action_detail}</div>}
-                                    <div className="followup-inline-rec-actions">
-                                      <button className="rec-btn approve" onClick={() => onApprovalAction && onApprovalAction(p.new_recommendation._id, 'approve', p.new_recommendation)}>Aprobar</button>
-                                      <button className="rec-btn reject" onClick={() => onApprovalAction && onApprovalAction(p.new_recommendation._id, 'reject', p.new_recommendation)}>Rechazar</button>
-                                    </div>
-                                  </>
-                                )}
-                              </div>
-                            )}
-
-                            {onDiscuss && (
-                              <button className="btn-discuss-followup" onClick={() => onDiscuss(p)}>
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
-                                Discutir
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
+        {/* Progress + delta — always visible */}
+        <div className="fu-card-metrics">
+          <div className="fu-card-progress" title={`Fase: ${phaseLabel}`}>
+            <div className="fu-card-progress-bar">
+              <div className="fu-card-progress-fill" style={{ width: `${phasePct}%`, backgroundColor: borderColor }} />
             </div>
+            <span className="fu-card-phase">{phaseLabel}</span>
           </div>
-        );
-      })()}
+          {p.day_3?.roas_pct != null ? (
+            <span className={`fu-card-delta ${(p.day_3.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
+              ROAS {p.day_3.roas_pct > 0 ? '+' : ''}{p.day_3.roas_pct}%
+            </span>
+          ) : (
+            <span className="fu-card-delta waiting">{daysAgo} ago</span>
+          )}
+        </div>
 
-      {/* ═══ ZONE 3: Resultados — chronological feed with inline lessons ═══ */}
-      {timeline.length > 0 && (
-        <div className="fu-section">
-          <h3 className="fu-section-title">Resultados ({timeline.length})</h3>
-          <div className="fu-resultados-list">
-            {timeline.map(item => {
-              const vCfg = VERDICT_CONFIG[item.impact_verdict] || VERDICT_CONFIG.neutral;
-              const actionCfg = ACTION_TYPE_CONFIG[item.action_type] || ACTION_TYPE_CONFIG.other;
-              const lesson = item.ai_analysis?.lesson_learned;
-              const isOpen = expandedItem === item._id;
-              return (
-                <div key={item._id} className={`fu-resultado ${isOpen ? 'open' : ''}`} onClick={() => setExpandedItem(isOpen ? null : item._id)}>
-                  {/* Compact: verdict + action + entity + delta + lesson */}
-                  <div className="fu-resultado-row">
-                    <span className="fu-resultado-verdict" style={{ color: vCfg.color }}>{vCfg.icon}</span>
-                    <div className="fu-resultado-body">
-                      <div className="fu-resultado-line">
-                        <span className="fu-resultado-action">{actionCfg.icon} {actionCfg.label}</span>
-                        <span className="fu-resultado-entity">{item.entity_name}</span>
-                        <span className={`fu-resultado-delta ${item.roas_delta_pct >= 0 ? 'positive' : 'negative'}`}>
-                          ROAS {item.roas_delta_pct > 0 ? '+' : ''}{item.roas_delta_pct}%
-                        </span>
-                      </div>
-                      {lesson && <div className="fu-resultado-lesson">{lesson}</div>}
-                    </div>
-                    <div className="fu-resultado-meta">
-                      {item.impact_trend && (
-                        <span className={`fu-resultado-trend ${item.impact_trend}`}>
-                          {item.impact_trend === 'improving' ? '\u2191' : item.impact_trend === 'declining' ? '\u2193' : '\u2194'}
-                        </span>
-                      )}
-                      <span className="fu-resultado-time">{formatTime(item.checked_at)}</span>
-                      <span className={`fu-activo-chevron ${isOpen ? 'open' : ''}`}>{'\u25B8'}</span>
-                    </div>
-                  </div>
+        {/* Before → After inline */}
+        {p.roas_at_approval > 0 && (
+          <div className="fu-card-compare">
+            <span className="fu-card-compare-metric">ROAS {p.roas_at_approval.toFixed(2)}x{p.day_3?.current_roas > 0 ? ` → ${p.day_3.current_roas.toFixed(2)}x` : ''}</span>
+            {p.cpa_at_approval > 0 && <span className="fu-card-compare-metric">CPA ${p.cpa_at_approval.toFixed(0)}{p.day_3?.current_cpa > 0 ? ` → $${p.day_3.current_cpa.toFixed(0)}` : ''}</span>}
+          </div>
+        )}
+      </div>
 
-                  {/* Expanded: full analysis */}
-                  {isOpen && (
-                    <div className="fu-resultado-detail">
-                      {/* Metrics */}
-                      <div className="fu-resultado-metrics">
-                        <span className="fu-resultado-metric">ROAS: {item.roas_before.toFixed(2)}x {'\u2192'} {item.roas_after.toFixed(2)}x</span>
-                        {item.cpa_before > 0 && <span className="fu-resultado-metric">CPA: ${item.cpa_before.toFixed(2)} {'\u2192'} ${item.cpa_after.toFixed(2)}</span>}
-                        {item.ctr_before > 0 && <span className="fu-resultado-metric">CTR: {item.ctr_before.toFixed(2)}% {'\u2192'} {item.ctr_after.toFixed(2)}%</span>}
-                      </div>
+      {/* Expanded section */}
+      {isExpanded && (
+        <div className="fu-card-expanded">
+          <div className="fu-card-title">{p.title}</div>
 
-                      {/* Phase progression */}
-                      {(item.phases?.day_3 || item.phases?.day_7 || item.phases?.day_14) && (
-                        <div className="fu-resultado-phases">
-                          {['day_3', 'day_7', 'day_14'].map(phase => {
-                            const ph = item.phases?.[phase];
-                            if (!ph) return <span key={phase} className="fu-resultado-phase empty">{phase.replace('day_', '')}d</span>;
-                            return (
-                              <span key={phase} className={`fu-resultado-phase ${(ph.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
-                                {phase.replace('day_', '')}d: {(ph.roas_pct || 0) > 0 ? '+' : ''}{ph.roas_pct || 0}%
-                              </span>
-                            );
-                          })}
-                        </div>
-                      )}
+          {/* Execution action */}
+          {!p.action_executed && (
+            <div className="fu-card-exec-row">
+              <button className="fu-btn-execute" onClick={(e) => { e.stopPropagation(); onMarkExecuted(); }}>Marcar ejecutada</button>
+            </div>
+          )}
 
-                      {/* AI Analysis */}
-                      {item.ai_analysis && (
-                        <div className="fu-resultado-ai">
-                          {item.ai_analysis.root_cause && <div className="fu-resultado-ai-row"><span className="fu-resultado-ai-label">Causa raiz</span><span>{item.ai_analysis.root_cause}</span></div>}
-                          {item.ai_analysis.what_worked && item.ai_analysis.what_worked !== 'N/A' && <div className="fu-resultado-ai-row positive"><span className="fu-resultado-ai-label">Funciono</span><span>{item.ai_analysis.what_worked}</span></div>}
-                          {item.ai_analysis.what_didnt && item.ai_analysis.what_didnt !== 'N/A' && <div className="fu-resultado-ai-row negative"><span className="fu-resultado-ai-label">No funciono</span><span>{item.ai_analysis.what_didnt}</span></div>}
-                        </div>
-                      )}
+          {p.action_detail && <div className="fu-card-detail">{p.action_detail}</div>}
 
-                      {onDiscuss && (
-                        <button className="btn-discuss-followup" onClick={(e) => { e.stopPropagation(); onDiscuss(item); }}>
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
-                          Discutir
-                        </button>
-                      )}
-                    </div>
-                  )}
+          {/* New creative section */}
+          {p.new_ad_name && (
+            <div className="fu-card-creative">
+              <span className="fu-card-creative-name">Creativo: {p.new_ad_name}</span>
+              {p.day_3?.new_ad_metrics && (
+                <div className="fu-card-creative-metrics">
+                  <span>ROAS {(p.day_3.new_ad_metrics.roas || 0).toFixed(2)}x</span>
+                  <span>CTR {(p.day_3.new_ad_metrics.ctr || 0).toFixed(2)}%</span>
+                  <span>CPA ${(p.day_3.new_ad_metrics.cpa || 0).toFixed(0)}</span>
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* Inline new recommendation */}
+          {p.new_recommendation && (
+            <div className="fu-card-new-rec">
+              <div className="fu-card-new-rec-header">{FuIcons.zap} <span>Nueva sugerencia: {p.new_recommendation.title}</span></div>
+              {p.new_recommendation.action_detail && <div className="fu-card-new-rec-detail">{p.new_recommendation.action_detail}</div>}
+              <div className="fu-card-new-rec-actions">
+                <button className="fu-btn-approve" onClick={(e) => { e.stopPropagation(); onApprovalAction && onApprovalAction(p.new_recommendation._id, 'approve', p.new_recommendation); }}>Aprobar</button>
+                <button className="fu-btn-reject" onClick={(e) => { e.stopPropagation(); onApprovalAction && onApprovalAction(p.new_recommendation._id, 'reject', p.new_recommendation); }}>Rechazar</button>
+              </div>
+            </div>
+          )}
+
+          {onDiscuss && (
+            <button className="fu-btn-discuss" onClick={(e) => { e.stopPropagation(); onDiscuss(p); }}>
+              {FuIcons.chat} Discutir
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CompletedCard({ item, isExpanded, onToggle, onDiscuss, formatTime }) {
+  const vCfg = VERDICT_CONFIG[item.impact_verdict] || VERDICT_CONFIG.neutral;
+  const actionCfg = ACTION_TYPE_CONFIG[item.action_type] || ACTION_TYPE_CONFIG.other;
+  const isManualUpload = item.execution_source === 'manual_upload';
+  const verdictIcon = item.impact_verdict === 'positive' ? FuIcons.check
+    : item.impact_verdict === 'negative' ? FuIcons.x : FuIcons.minus;
+
+  return (
+    <div className={`fu-card completed ${item.impact_verdict} ${isExpanded ? 'expanded' : ''}`} style={{ borderLeftColor: vCfg.color }} onClick={onToggle}>
+      <div className="fu-card-top">
+        <div className="fu-card-badges">
+          <span className="fu-card-verdict-icon" style={{ color: vCfg.color }}>{verdictIcon}</span>
+          <span className="fu-card-action" style={{ color: actionCfg.color }}>{actionCfg.label}</span>
+          {isManualUpload && <span className="fu-badge upload">{FuIcons.upload} Manual</span>}
+          {item.impact_trend === 'improving' && <span className="fu-badge improving">{FuIcons.arrowUp}</span>}
+          {item.impact_trend === 'declining' && <span className="fu-badge declining">{FuIcons.arrowDown}</span>}
+        </div>
+        <div className="fu-card-entity">{item.entity_name}</div>
+        <div className="fu-card-metrics">
+          <span className={`fu-card-delta ${(item.roas_delta_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
+            ROAS {(item.roas_delta_pct || 0) > 0 ? '+' : ''}{item.roas_delta_pct || 0}%
+          </span>
+          <span className="fu-card-time">{formatTime(item.checked_at)}</span>
+        </div>
+
+        {/* Phase chips */}
+        {(item.phases?.day_3 || item.phases?.day_7 || item.phases?.day_14) && (
+          <div className="fu-card-phases">
+            {['day_3', 'day_7', 'day_14'].map(phase => {
+              const ph = item.phases?.[phase];
+              if (!ph) return <span key={phase} className="fu-phase-chip empty">{phase.replace('day_', '')}d</span>;
+              return (
+                <span key={phase} className={`fu-phase-chip ${(ph.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
+                  {phase.replace('day_', '')}d: {(ph.roas_pct || 0) > 0 ? '+' : ''}{ph.roas_pct || 0}%
+                </span>
               );
             })}
           </div>
-        </div>
-      )}
+        )}
 
-      {timeline.length === 0 && pending.length === 0 && (
-        <div className="feed-empty">
-          <div className="feed-empty-icon">{'\uD83D\uDCCA'}</div>
-          <p>Sin datos de seguimiento aun.</p>
-          <p className="feed-empty-hint">Aprueba recomendaciones y el Brain medira su impacto en 3 fases: dia 3, dia 7, y dia 14.</p>
+        {/* Lesson inline */}
+        {item.ai_analysis?.lesson_learned && (
+          <div className="fu-card-lesson">{item.ai_analysis.lesson_learned}</div>
+        )}
+      </div>
+
+      {isExpanded && (
+        <div className="fu-card-expanded">
+          {/* Metrics before → after */}
+          <div className="fu-card-metrics-detail">
+            <span>ROAS: {(item.roas_before || 0).toFixed(2)}x → {(item.roas_after || 0).toFixed(2)}x</span>
+            {(item.cpa_before || 0) > 0 && <span>CPA: ${(item.cpa_before || 0).toFixed(2)} → ${(item.cpa_after || 0).toFixed(2)}</span>}
+            {(item.ctr_before || 0) > 0 && <span>CTR: {(item.ctr_before || 0).toFixed(2)}% → {(item.ctr_after || 0).toFixed(2)}%</span>}
+          </div>
+
+          {/* AI Analysis */}
+          {item.ai_analysis && (
+            <div className="fu-card-ai">
+              {item.ai_analysis.root_cause && <div className="fu-card-ai-row"><span className="fu-card-ai-label">Causa raiz</span><span>{item.ai_analysis.root_cause}</span></div>}
+              {item.ai_analysis.what_worked && item.ai_analysis.what_worked !== 'N/A' && <div className="fu-card-ai-row positive"><span className="fu-card-ai-label">Funciono</span><span>{item.ai_analysis.what_worked}</span></div>}
+              {item.ai_analysis.what_didnt && item.ai_analysis.what_didnt !== 'N/A' && <div className="fu-card-ai-row negative"><span className="fu-card-ai-label">No funciono</span><span>{item.ai_analysis.what_didnt}</span></div>}
+            </div>
+          )}
+
+          {onDiscuss && (
+            <button className="fu-btn-discuss" onClick={(e) => { e.stopPropagation(); onDiscuss(item); }}>
+              {FuIcons.chat} Discutir
+            </button>
+          )}
         </div>
       )}
     </div>

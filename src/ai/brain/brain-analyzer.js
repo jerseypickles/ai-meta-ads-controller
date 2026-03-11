@@ -1926,6 +1926,7 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
             await BrainRecommendation.updateOne({ _id: rec._id }, { $set: {
               'follow_up.action_executed': true,
               'follow_up.execution_detected_at': new Date(),
+              'follow_up.execution_source': 'auto_detected',
               updated_at: new Date()
             }});
             logger.info(`[FOLLOW-UP] Early execution detected for "${rec.title}" (${rec.action_type}) — ${Math.round(hoursSinceApproval)}h after approval`);
@@ -2011,6 +2012,7 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
           'follow_up.current_phase': nextPhase,
           'follow_up.action_executed': actionExecuted,
           'follow_up.execution_detected_at': actionExecuted && !rec.follow_up?.execution_detected_at ? new Date() : (rec.follow_up?.execution_detected_at || null),
+          'follow_up.execution_source': actionExecuted && !rec.follow_up?.execution_source ? 'auto_detected' : (rec.follow_up?.execution_source || null),
           'follow_up.metrics_after': { ...currentMetrics, measured_at: new Date() },
           updated_at: new Date()
         };

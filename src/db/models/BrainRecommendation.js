@@ -106,6 +106,7 @@ const brainRecommendationSchema = new mongoose.Schema({
     checked_at: { type: Date, default: null },
     action_executed: { type: Boolean, default: false },   // ¿La acción realmente ocurrió en Meta?
     execution_detected_at: { type: Date, default: null },
+    execution_source: { type: String, enum: ['auto_detected', 'user_manual', 'manual_upload'], default: null },
 
     // Métricas al momento de la recomendación (snapshot)
     metrics_at_recommendation: {
