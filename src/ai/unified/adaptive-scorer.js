@@ -83,8 +83,13 @@ class AdaptiveScorer {
     }
     policyScore = clamp(policyScore, 0, 1);
 
+    // FIX 1: Confidence aditiva ponderada en vez de triple castigo multiplicativo.
+    // Antes: policyScore * (1 - risk*0.55) * (1 - uncertainty*0.65) — aplastaba todo a <10%.
+    // Ahora: mezcla ponderada donde cada señal contribuye independientemente.
     const confidenceScore = clamp(
-      policyScore * (1 - (riskScore * 0.55)) * (1 - (uncertaintyScore * 0.65)),
+      (policyScore * 0.45) +
+      ((1 - riskScore) * 0.30) +
+      ((1 - uncertaintyScore) * 0.25),
       0,
       1
     );
@@ -198,14 +203,15 @@ class AdaptiveScorer {
     let risk = staticRisk * (1 - lConf * 0.5) + learnedFailureRate * (lConf * 0.5);
 
     risk += toNumber(entityModifiers.risk_offset, 0);
-    risk += roasVolatility * 0.30;
-    risk += (1 - dataQuality) * 0.28;
+    // FIX 2: Reducir coeficientes de penalización aditiva para evitar inflación de risk.
+    // Antes: volatility 0.30, dataQuality 0.28, creative_share 0.25 — sumaban >0.80 fácilmente.
+    risk += roasVolatility * 0.20;
+    risk += (1 - dataQuality) * 0.18;
     risk += toNumber(accountContext.accountStress) * 0.22;
-    risk += toNumber(accountContext.fatiguePressure) * 0.10;
-    risk += clamp(toNumber(derived.top_creative_share_7d) - 0.7, 0, 0.5) * 0.25;
+    risk += toNumber(accountContext.fatiguePressure) * 0.08;
 
     if (candidate.action === 'scale_up') {
-      risk += 0.12;
+      risk += 0.08;
       risk += freqGap * 0.06;
     } else if (candidate.action === 'reactivate') {
       risk += 0.08;
@@ -218,7 +224,22 @@ class AdaptiveScorer {
     if (toNumber(metrics.roas_7d) < toNumber(kpiTargets.roas_minimum, 1.5) && candidate.action === 'scale_up') {
       risk += 0.08;
     }
-    return clamp(risk, 0.05, 0.95);
+
+    // FIX 2: Performance discount — entidades con métricas probadas merecen menor riesgo.
+    // Un ad set con ROAS >target y >15 compras es un performer confirmado.
+    const roas7d = toNumber(metrics.roas_7d);
+    const purchases7d = toNumber(metrics.purchases_7d);
+    const roasTarget = toNumber(kpiTargets.roas_target, 3);
+
+    if (roas7d >= roasTarget && purchases7d >= 15) {
+      risk *= 0.65; // 35% descuento para performers confirmados
+    } else if (roas7d >= roasTarget * 0.7 && purchases7d >= 10) {
+      risk *= 0.85; // 15% descuento para performers decentes
+    }
+
+    // FIX 2: Cap en 0.75 — ninguna entidad con datos reales debería tener risk >75%.
+    // Antes: cap era 0.95, haciendo que el risk se comiera toda la confidence.
+    return clamp(risk, 0.05, 0.75);
   }
 
   _estimateUncertainty({ feature, learningSignal, dataQuality, roasVolatility }) {
@@ -274,9 +295,9 @@ class AdaptiveScorer {
   }
 
   _priorityFromScore(policyScore, expectedImpactPct, riskScore) {
-    if (policyScore >= 0.84 && expectedImpactPct >= 10 && riskScore <= 0.45) return 'critical';
-    if (policyScore >= 0.72 && expectedImpactPct >= 6) return 'high';
-    if (policyScore >= 0.60 && expectedImpactPct >= 3) return 'medium';
+    if (policyScore >= 0.70 && expectedImpactPct >= 10 && riskScore <= 0.45) return 'critical';
+    if (policyScore >= 0.55 && expectedImpactPct >= 6) return 'high';
+    if (policyScore >= 0.40 && expectedImpactPct >= 3) return 'medium';
     return 'low';
   }
 

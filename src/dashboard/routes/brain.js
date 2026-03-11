@@ -447,17 +447,22 @@ router.post('/recommendations/:id/mark-executed', async (req, res) => {
 
 /**
  * GET /api/brain/recommendations/pending-creative/:adsetId
- * Check if there's an approved create_ad/creative_refresh recommendation pending for an ad set.
+ * Check if there's a pending or approved create_ad/creative_refresh recommendation for an ad set.
  * Used by AddCreativePanel to show a banner when uploading a creative that fulfills a Brain rec.
+ * Busca por entity_id directo O por parent_adset_id (recs a nivel de ad que referencian este ad set).
  */
 router.get('/recommendations/pending-creative/:adsetId', async (req, res) => {
   try {
+    const adsetId = req.params.adsetId;
     const rec = await BrainRecommendation.findOne({
-      status: 'approved',
+      status: { $in: ['pending', 'approved'] },
       action_type: { $in: ['create_ad', 'creative_refresh'] },
-      'entity.entity_id': req.params.adsetId,
+      $or: [
+        { 'entity.entity_id': adsetId },
+        { parent_adset_id: adsetId }
+      ],
       'follow_up.action_executed': { $ne: true }
-    }).select('title action_detail entity priority created_at action_type').lean();
+    }).sort({ status: 1 }).select('title action_detail entity priority created_at action_type status').lean();
 
     res.json({ has_pending: !!rec, recommendation: rec || null });
   } catch (error) {

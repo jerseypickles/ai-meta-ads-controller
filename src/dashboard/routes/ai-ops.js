@@ -1438,13 +1438,18 @@ router.post('/upload-and-create-ad', manualUpload.single('image'), async (req, r
         success: true
       });
 
-      // Step 6: Auto-link to approved creative_refresh recommendation (if any)
+      // Step 6: Auto-link to approved create_ad or creative_refresh recommendation (if any).
+      // Busca AMBOS tipos — el Brain genera 'create_ad' y la rotación forzada usa 'creative_refresh'.
+      // También busca por parent_adset_id para recs a nivel de ad que referencian este ad set.
       let linkedRec = null;
       try {
         const pendingRec = await BrainRecommendation.findOne({
           status: 'approved',
-          action_type: 'creative_refresh',
-          'entity.entity_id': adset_id,
+          action_type: { $in: ['create_ad', 'creative_refresh'] },
+          $or: [
+            { 'entity.entity_id': adset_id },
+            { parent_adset_id: adset_id }
+          ],
           'follow_up.action_executed': { $ne: true }
         });
         if (pendingRec) {

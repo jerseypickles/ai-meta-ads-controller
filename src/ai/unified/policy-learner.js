@@ -146,25 +146,17 @@ class PolicyLearner {
     const spend7d = toNumber(metrics.spend_7d);
     const purchases7d = toNumber(metrics.purchases_7d);
 
-    // Dimensiones originales
+    // FIX 3: Reducir de 8 a 5 dimensiones para concentrar muestras.
+    // Antes: 12,960 buckets posibles con 4,803 muestras = 0.4 muestras/bucket.
+    // Ahora: 405 buckets posibles = ~12 muestras/bucket → aprendizaje real.
+    // Se eliminan hour, seasonal, account_stress — baja señal, alta fragmentación.
     const roasBand = roas >= 4 ? 'roas_high' : roas >= 2 ? 'roas_mid' : 'roas_low';
     const cpaBand = cpa > 0 && cpa <= 25 ? 'cpa_good' : cpa > 50 ? 'cpa_bad' : 'cpa_mid';
     const frequencyBand = frequency >= 4 ? 'freq_critical' : frequency >= 2.5 ? 'freq_warning' : 'freq_ok';
     const spendBand = spend7d >= 300 ? 'spend_high' : spend7d >= 80 ? 'spend_mid' : 'spend_low';
     const conversionBand = purchases7d >= 15 ? 'conv_high' : purchases7d >= 5 ? 'conv_mid' : 'conv_low';
 
-    // Nuevas dimensiones contextuales
-    const hour = toNumber(context.hour, -1);
-    const hourBand = hour >= 0 ? (hour >= 18 ? 'eve' : hour >= 12 ? 'aft' : hour >= 6 ? 'mor' : 'nig') : 'unk';
-
-    const seasonal = context.seasonal_event ? 'season' : 'normal';
-
-    const accountRoas = toNumber(context.account_roas_7d);
-    const stressBand = accountRoas > 0
-      ? (accountRoas >= 3 ? 'acct_ok' : accountRoas >= 1.5 ? 'acct_mid' : 'acct_stress')
-      : 'acct_unk';
-
-    return `${roasBand}|${cpaBand}|${frequencyBand}|${spendBand}|${conversionBand}|${hourBand}|${seasonal}|${stressBand}`;
+    return `${roasBand}|${cpaBand}|${frequencyBand}|${spendBand}|${conversionBand}`;
   }
 
   getActionBias(state, bucket, action) {

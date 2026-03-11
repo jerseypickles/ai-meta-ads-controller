@@ -227,7 +227,7 @@ class UnifiedBrain {
           feature,
           candidate: {
             action: rec.action,
-            baseScore: this._baseScoreFromConfidence(rec.confidence),
+            baseScore: this._baseScoreFromConfidence(rec.confidence, feature.metrics || {}),
             baseRisk: deepResearchPriors.action_priors?.[rec.action]?.baseline_risk || 0.35,
             baseImpactPct: deepResearchPriors.action_priors?.[rec.action]?.baseline_impact_pct || 5,
             hypothesis: rec.reasoning
@@ -259,6 +259,15 @@ class UnifiedBrain {
         logger.info(`[BRAIN] Rotación creativa forzada: ${rotationRecs.length} recomendaciones inyectadas`);
       }
       const allScoredRecs = [...scoredRecs, ...rotationRecs];
+
+      // 9c. Auto-inyectar create_ad compañero cuando una pausa dejaría 0 ads activos.
+      // Claude a veces recomienda pausar el único ad de un ad set sin generar reemplazo,
+      // lo cual mata el ad set. Este paso detecta ese caso y fuerza el create_ad.
+      const companionCreateRecs = this._injectCompanionCreateAds(allScoredRecs, sharedData);
+      if (companionCreateRecs.length > 0) {
+        logger.info(`[BRAIN] Companion create_ad: ${companionCreateRecs.length} reemplazos auto-inyectados para ad sets que quedarían sin ads`);
+        allScoredRecs.push(...companionCreateRecs);
+      }
 
       // 10. Aplicar directivas estrategicas
       const withDirectives = this._applyStrategicDirectives(allScoredRecs, sharedData.strategicDirectives);
@@ -848,10 +857,29 @@ class UnifiedBrain {
     };
   }
 
-  _baseScoreFromConfidence(confidence) {
-    if (confidence === 'high') return 0.78;
-    if (confidence === 'medium') return 0.62;
-    return 0.48;
+  // FIX 4: baseScore calculado desde métricas reales + señal de Claude.
+  // Antes: solo usaba el string de Claude ('low'→0.48), ignorando que un
+  // ad set con ROAS 5.47x y 69 compras merece score alto.
+  // Ahora: métricas aportan 60% y Claude 40%, reflejando datos + juicio AI.
+  _baseScoreFromConfidence(confidence, metrics = {}) {
+    // Señal de Claude (40% del peso)
+    const claudeSignal = confidence === 'high' ? 0.85 : confidence === 'medium' ? 0.65 : 0.45;
+
+    // Señal de métricas (60% del peso)
+    const roasTarget = kpiTargets.roas_target || 3;
+    const cpaTarget = kpiTargets.cpa_target || 25;
+    const roas7d = metrics.roas_7d || 0;
+    const cpa7d = metrics.cpa_7d || 0;
+    const purchases7d = metrics.purchases_7d || 0;
+
+    const roasRatio = Math.min(roas7d / Math.max(roasTarget, 0.1), 2); // cap en 2x target
+    const cpaRatio = cpa7d > 0 ? Math.min(cpaTarget / cpa7d, 2) : 0.5; // bueno si CPA < target
+    const volumeSignal = Math.min(purchases7d / 30, 1); // 30 compras = señal completa
+
+    const metricsSignal = (roasRatio * 0.45 + cpaRatio * 0.30 + volumeSignal * 0.25) / 2;
+    const metricsClamped = Math.max(0.20, Math.min(0.85, metricsSignal));
+
+    return Math.max(0.20, Math.min(0.85, metricsClamped * 0.60 + claudeSignal * 0.40));
   }
 
   /**
@@ -1008,6 +1036,118 @@ class UnifiedBrain {
       }
 
       logger.info(`[BRAIN][ROTACIÓN] Ad set ${adset.entity_name} (fatiga=${fatigueScore.toFixed(2)}, freq=${frequency.toFixed(1)}) — create_ad + ${pauseCandidates.length} pausas (${learningAds.length} learning protegidos)`);
+    }
+
+    return injected;
+  }
+
+  /**
+   * Detecta recomendaciones de pausa (update_ad_status) que dejarían un ad set con 0 ads activos.
+   * Para cada caso, auto-inyecta un create_ad compañero para que el ad set no muera.
+   * Solo inyecta si NO existe ya un create_ad para ese ad set en las recs del ciclo.
+   */
+  _injectCompanionCreateAds(currentRecs, sharedData) {
+    const injected = [];
+    const adSnapshots = sharedData.adSnapshots || [];
+    const creativeAssets = sharedData.creativeAssets || [];
+
+    // Encontrar todas las pausas de ads en este ciclo
+    const pauseRecs = currentRecs.filter(r =>
+      r.action === 'update_ad_status' &&
+      r.entity_type === 'ad' &&
+      (r.recommended_value === 0 || r.recommended_value === '0' || r.recommended_value === 'PAUSED')
+    );
+
+    if (pauseRecs.length === 0) return [];
+
+    // Agrupar pausas por ad set padre
+    const pausesByAdSet = {};
+    for (const rec of pauseRecs) {
+      const adSnap = adSnapshots.find(s => s.entity_id === rec.entity_id);
+      const parentId = adSnap?.parent_id;
+      if (!parentId) continue;
+      if (!pausesByAdSet[parentId]) pausesByAdSet[parentId] = [];
+      pausesByAdSet[parentId].push(rec);
+    }
+
+    // Ad sets que ya tienen create_ad en este ciclo
+    const adSetsWithCreateAd = new Set(
+      currentRecs
+        .filter(r => r.action === 'create_ad')
+        .map(r => r.entity_id)
+    );
+
+    for (const [adSetId, pauses] of Object.entries(pausesByAdSet)) {
+      // Si ya hay create_ad para este ad set, skip
+      if (adSetsWithCreateAd.has(adSetId)) continue;
+
+      // Contar ads activos en este ad set
+      const activeAds = adSnapshots.filter(ad =>
+        ad.parent_id === adSetId && ad.status === 'ACTIVE'
+      );
+
+      // IDs que se van a pausar
+      const pauseIds = new Set(pauses.map(p => p.entity_id));
+
+      // Ads que quedarían activos después de las pausas
+      const remainingActive = activeAds.filter(ad => !pauseIds.has(ad.entity_id));
+
+      if (remainingActive.length > 0) continue; // Quedan ads activos, no hay problema
+
+      // El ad set quedaría vacío — inyectar create_ad compañero
+      const adSetSnap = sharedData.adSetSnapshots?.find(s => s.entity_id === adSetId);
+      const adSetName = adSetSnap?.entity_name || `Ad Set ${adSetId}`;
+      const adSetRoas = adSetSnap?.metrics?.last_7d?.roas || 0;
+      const adSetSpend = adSetSnap?.metrics?.last_7d?.spend || 0;
+
+      // Buscar mejor creativo disponible para sugerir
+      const readyCreatives = creativeAssets.filter(c =>
+        c.status === 'approved' || c.status === 'ready'
+      );
+      const bestCreative = readyCreatives.length > 0
+        ? readyCreatives.sort((a, b) => (b.judge_score || 0) - (a.judge_score || 0))[0]
+        : null;
+
+      const creativeSuggestion = bestCreative
+        ? ` Sugerido: '${bestCreative.style || bestCreative.name}' (score ${bestCreative.judge_score || 'N/A'}, ID ${bestCreative._id}).`
+        : ' No hay creativos aprobados — generar uno nuevo es prioritario.';
+
+      // Heredar score de la pausa más alta del grupo (son acciones vinculadas)
+      const highestPause = pauses.sort((a, b) => (b.policy_score || 0) - (a.policy_score || 0))[0];
+
+      injected.push({
+        action: 'create_ad',
+        entity_type: 'adset',
+        entity_id: adSetId,
+        entity_name: adSetName,
+        current_value: 0,
+        recommended_value: 0,
+        change_percent: 0,
+        reasoning: `[REEMPLAZO OBLIGATORIO] ${adSetName} quedaría con 0 ads activos tras pausar ${pauses.length} ad(s). Se necesita creativo de reemplazo urgente para mantener el ad set vivo.${creativeSuggestion}`,
+        expected_impact: `Mantener ${adSetName} activo con creativo fresco. Sin reemplazo, se pierde ~$${Math.round(adSetSpend / 7)}/día de inversión.`,
+        confidence: highestPause.confidence || 'medium',
+        priority: 'urgente',
+        policy_score: Math.max((highestPause.policy_score || 0.5) + 0.05, 0.55),
+        confidence_score: Math.max((highestPause.confidence_score || 0.4) + 0.05, 0.45),
+        risk_score: 0.20,
+        uncertainty_score: 0.25,
+        expected_impact_pct: 7,
+        measurement_window_hours: 72,
+        hypothesis: `${adSetName} perderá TODO su tráfico si se pausan los ${pauses.length} ad(s) sin reemplazo. El create_ad es condición necesaria para que la pausa tenga sentido.`,
+        evidence: [
+          `Ads activos actuales: ${activeAds.length}`,
+          `Ads a pausar: ${pauses.length} (${pauses.map(p => p.entity_name).join(', ')})`,
+          `Ads restantes tras pausa: 0 — ad set MUERTO sin reemplazo`,
+          `ROAS 7d del ad set: ${adSetRoas.toFixed ? adSetRoas.toFixed(2) : adSetRoas}x | Spend 7d: $${adSetSpend.toFixed ? adSetSpend.toFixed(0) : adSetSpend}`
+        ],
+        metrics: adSetSnap?.metrics || {},
+        creative_asset_id: bestCreative?._id?.toString() || null,
+        status: 'pending',
+        _injected_by: 'companion_create_ad',
+        _companion_of: pauses.map(p => p.entity_id)
+      });
+
+      logger.info(`[BRAIN][COMPANION] ${adSetName} — inyectando create_ad obligatorio (${pauses.length} pausas dejarían 0 ads activos)`);
     }
 
     return injected;
