@@ -8526,9 +8526,49 @@ a:hover {
 .cr-filters {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
   flex-wrap: wrap;
   padding: 0 2px;
+}
+
+.cr-filters-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cr-time-window {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 2px;
+}
+
+.cr-tw-chip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.cr-tw-chip:hover {
+  color: var(--text-primary);
+}
+
+.cr-tw-chip.active {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--blue-light);
 }
 
 .cr-filter-chip {

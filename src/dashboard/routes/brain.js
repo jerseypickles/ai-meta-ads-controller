@@ -1397,6 +1397,7 @@ router.get('/ad-health', async (req, res) => {
       const allAds = activeAds.map(ad => {
         const m7d = ad.metrics?.last_7d || {};
         const m3d = ad.metrics?.last_3d || {};
+        const mToday = ad.metrics?.today || {};
         const spend7d = m7d.spend || 0;
         const spendShare = totalSpend7d > 0 ? Math.round((spend7d / totalSpend7d) * 1000) / 10 : 0;
         const ageHours = ad.meta_created_time ? Math.round((Date.now() - new Date(ad.meta_created_time).getTime()) / 3600000) : 0;
@@ -1442,14 +1443,33 @@ router.get('/ad-health', async (req, res) => {
           status: ad.status,
           age_hours: ageHours,
           age_days: ageDays,
+          // 7d metrics
           spend_7d: Math.round(spend7d * 100) / 100,
           roas_7d: Math.round(roas7d * 100) / 100,
           roas_3d: Math.round(roas3d * 100) / 100,
           ctr_7d: Math.round((m7d.ctr || 0) * 100) / 100,
+          cpa_7d: Math.round((m7d.cpa || 0) * 100) / 100,
           frequency_7d: Math.round(freq7d * 10) / 10,
           purchases_7d: m7d.purchases || 0,
           clicks_7d: clicks7d,
           impressions_7d: m7d.impressions || 0,
+          // 3d metrics
+          spend_3d: Math.round((m3d.spend || 0) * 100) / 100,
+          ctr_3d: Math.round((m3d.ctr || 0) * 100) / 100,
+          cpa_3d: Math.round((m3d.cpa || 0) * 100) / 100,
+          frequency_3d: Math.round((m3d.frequency || 0) * 10) / 10,
+          purchases_3d: m3d.purchases || 0,
+          clicks_3d: m3d.clicks || 0,
+          impressions_3d: m3d.impressions || 0,
+          // today metrics
+          spend_today: Math.round((mToday.spend || 0) * 100) / 100,
+          roas_today: Math.round((mToday.roas || 0) * 100) / 100,
+          ctr_today: Math.round((mToday.ctr || 0) * 100) / 100,
+          cpa_today: Math.round((mToday.cpa || 0) * 100) / 100,
+          frequency_today: Math.round((mToday.frequency || 0) * 10) / 10,
+          purchases_today: mToday.purchases || 0,
+          clicks_today: mToday.clicks || 0,
+          impressions_today: mToday.impressions || 0,
           spend_share_pct: spendShare,
           diagnosis,
           diagnosis_text: DIAG_TEXT[diagnosis] || 'Saludable',

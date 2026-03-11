@@ -2209,6 +2209,22 @@ const CR_FILTERS = [
   { key: 'starved', label: 'Sin presupuesto' },
 ];
 
+const TIME_WINDOWS = [
+  { key: 'today', label: 'Hoy' },
+  { key: '3d', label: '3 dias' },
+  { key: '7d', label: '7 dias' },
+];
+
+function getAdMetrics(ad, window) {
+  if (window === 'today') {
+    return { roas: ad.roas_today, cpa: ad.cpa_today, ctr: ad.ctr_today, spend: ad.spend_today, purchases: ad.purchases_today };
+  }
+  if (window === '3d') {
+    return { roas: ad.roas_3d, cpa: ad.cpa_3d, ctr: ad.ctr_3d, spend: ad.spend_3d, purchases: ad.purchases_3d };
+  }
+  return { roas: ad.roas_7d, cpa: ad.cpa_7d, ctr: ad.ctr_7d, spend: ad.spend_7d, purchases: ad.purchases_7d };
+}
+
 function adMatchesCrFilter(ad, filter) {
   if (filter === 'all') return true;
   if (filter === 'ours') return ad.ad_name?.includes('[Manual Upload]');
@@ -2223,6 +2239,7 @@ function CreativesPanel({ formatTime }) {
   const [adHealthData, setAdHealthData] = useState(null);
   const [adHealthLoading, setAdHealthLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState('all');
+  const [timeWindow, setTimeWindow] = useState('7d');
   const [suggestingFor, setSuggestingFor] = useState(null);
   const [suggestMsg, setSuggestMsg] = useState(null);
 
@@ -2304,20 +2321,33 @@ function CreativesPanel({ formatTime }) {
         </div>
       )}
 
-      {/* ═══ FILTER CHIPS ═══ */}
+      {/* ═══ FILTER CHIPS + TIME WINDOW ═══ */}
       <div className="cr-filters">
-        {CR_FILTERS.map(f => (
-          <button
-            key={f.key}
-            className={`cr-filter-chip ${activeFilter === f.key ? 'active' : ''}`}
-            onClick={() => setActiveFilter(f.key)}
-          >
-            {f.label}
-          </button>
-        ))}
-        {activeFilter !== 'all' && (
-          <span className="cr-filter-count">{totalVisible} ad{totalVisible !== 1 ? 's' : ''}</span>
-        )}
+        <div className="cr-filters-left">
+          {CR_FILTERS.map(f => (
+            <button
+              key={f.key}
+              className={`cr-filter-chip ${activeFilter === f.key ? 'active' : ''}`}
+              onClick={() => setActiveFilter(f.key)}
+            >
+              {f.label}
+            </button>
+          ))}
+          {activeFilter !== 'all' && (
+            <span className="cr-filter-count">{totalVisible} ad{totalVisible !== 1 ? 's' : ''}</span>
+          )}
+        </div>
+        <div className="cr-time-window">
+          {TIME_WINDOWS.map(tw => (
+            <button
+              key={tw.key}
+              className={`cr-tw-chip ${timeWindow === tw.key ? 'active' : ''}`}
+              onClick={() => setTimeWindow(tw.key)}
+            >
+              {tw.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* ═══ AD SETS + ADS (always open) ═══ */}
@@ -2351,9 +2381,11 @@ function CreativesPanel({ formatTime }) {
                     const diagCfg = DIAGNOSIS_CONFIG[ad.diagnosis] || DIAGNOSIS_CONFIG.healthy;
                     const isOurs = ad.ad_name?.includes('[Manual Upload]');
                     const displayName = ad.ad_name.replace(' [Manual Upload]', '');
-                    const roasColor = ad.roas_7d >= 3 ? '#10b981' : ad.roas_7d >= 1.5 ? '#3b82f6' : ad.roas_7d > 0 ? '#ef4444' : 'var(--text-muted)';
+                    const m = getAdMetrics(ad, timeWindow);
+                    const roasColor = m.roas >= 3 ? '#10b981' : m.roas >= 1.5 ? '#3b82f6' : m.roas > 0 ? '#ef4444' : 'var(--text-muted)';
                     const hasProblem = ['dominant_declining', 'zombie', 'fatigued'].includes(ad.diagnosis);
                     const zombieIds = hasProblem && ad.diagnosis === 'zombie' ? [ad.ad_name] : [];
+                    const twLabel = timeWindow === 'today' ? 'hoy' : timeWindow;
 
                     return (
                       <div key={ad.ad_id} className={`cr-ad ${hasProblem ? 'problem' : ''}`} style={{ borderLeftColor: diagCfg.color }}>
@@ -2373,19 +2405,19 @@ function CreativesPanel({ formatTime }) {
                         <div className="cr-ad-metrics">
                           <span className="cr-ad-metric">
                             <span className="cr-ad-metric-label">ROAS</span>
-                            <span className="cr-ad-metric-val" style={{ color: roasColor }}>{ad.roas_7d > 0 ? `${ad.roas_7d.toFixed(1)}x` : '--'}</span>
+                            <span className="cr-ad-metric-val" style={{ color: roasColor }}>{m.roas > 0 ? `${m.roas.toFixed(1)}x` : '--'}</span>
                           </span>
                           <span className="cr-ad-metric">
                             <span className="cr-ad-metric-label">CPA</span>
-                            <span className="cr-ad-metric-val">{ad.cpa_7d > 0 ? `$${ad.cpa_7d.toFixed(0)}` : '--'}</span>
+                            <span className="cr-ad-metric-val">{m.cpa > 0 ? `$${m.cpa.toFixed(0)}` : '--'}</span>
                           </span>
                           <span className="cr-ad-metric">
                             <span className="cr-ad-metric-label">CTR</span>
-                            <span className="cr-ad-metric-val">{ad.ctr_7d > 0 ? `${ad.ctr_7d.toFixed(1)}%` : '--'}</span>
+                            <span className="cr-ad-metric-val">{m.ctr > 0 ? `${m.ctr.toFixed(1)}%` : '--'}</span>
                           </span>
                           <span className="cr-ad-metric">
                             <span className="cr-ad-metric-label">Gasto</span>
-                            <span className="cr-ad-metric-val">${ad.spend_7d.toFixed(0)}</span>
+                            <span className="cr-ad-metric-val">${m.spend.toFixed(0)}</span>
                           </span>
                           <span className="cr-ad-metric">
                             <span className="cr-ad-metric-label">Edad</span>
