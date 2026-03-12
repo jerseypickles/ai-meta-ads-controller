@@ -1077,15 +1077,53 @@ class DiagnosticEngine {
     const roasMinimum = this.kpi.roas_minimum || 1.5;
     const ctrMinimum = this.kpi.ctr_minimum || 1.0;
 
+    const adTrends = []; // Tendencia por ad para todos los ads activos
+
     for (const ad of activeAds) {
       const adM7 = ad.metrics?.last_7d || {};
       const adM3 = ad.metrics?.last_3d || {};
+      const adMT = ad.metrics?.today || {};
       const createdTime = ad.meta_created_time || ad.created_time || ad.created_at;
       const ageHours = createdTime ? (now - new Date(createdTime)) / (1000 * 60 * 60) : Infinity;
       const ageDays = Math.floor(ageHours / 24);
       const adSpend = adM7.spend || 0;
       const adRoas = adM7.roas || 0;
       const adRoas3d = adM3.roas || 0;
+      const adRoasToday = adMT.roas || 0;
+
+      // --- TREND DETECTION: comparar ventanas para detectar tendencia ---
+      const adId0 = ad.entity_id || ad.id;
+      const adName0 = ad.entity_name || ad.name || 'Unknown';
+      let trend = 'stable';
+      let trendPct = 0;
+      let trendDetail = null;
+      if (adRoas > 0 && ageHours >= 72) {
+        // Preferir today vs 7d, fallback a 3d vs 7d
+        const recentRoas = adRoasToday > 0 ? adRoasToday : adRoas3d;
+        const recentLabel = adRoasToday > 0 ? 'hoy' : '3d';
+        if (recentRoas > 0) {
+          trendPct = Math.round(((recentRoas - adRoas) / adRoas) * 100);
+          if (trendPct <= -30) {
+            trend = 'declining';
+            trendDetail = `ROAS cayo ${Math.abs(trendPct)}% (${adRoas.toFixed(1)}x 7d → ${recentRoas.toFixed(1)}x ${recentLabel})`;
+          } else if (trendPct >= 30) {
+            trend = 'improving';
+            trendDetail = `ROAS subio ${trendPct}% (${adRoas.toFixed(1)}x 7d → ${recentRoas.toFixed(1)}x ${recentLabel})`;
+          }
+        }
+      }
+
+      adTrends.push({
+        ad_id: adId0,
+        ad_name: adName0,
+        trend,
+        trend_pct: trendPct,
+        trend_detail: trendDetail,
+        roas_7d: adRoas,
+        roas_3d: adRoas3d,
+        roas_today: adRoasToday,
+        age_hours: ageHours
+      });
       const adCtr = adM7.ctr || 0;
       const adFreq = adM7.frequency || 0;
       const adPurchases = adM7.purchases || 0;
@@ -1227,6 +1265,9 @@ class DiagnosticEngine {
       summary = parts.join('. ') + '.';
     }
 
+    const decliningCount = adTrends.filter(t => t.trend === 'declining').length;
+    const improvingCount = adTrends.filter(t => t.trend === 'improving').length;
+
     return {
       anomalies,
       summary,
@@ -1235,7 +1276,11 @@ class DiagnosticEngine {
       pause_count: pauseCandidates.length,
       healthy_count: healthyNonLearning,
       total_waste_7d: totalWaste,
-      remaining_after_pause: activeAds.length - pauseCandidates.length
+      remaining_after_pause: activeAds.length - pauseCandidates.length,
+      // Tendencias por ad (para Brain y frontend)
+      ad_trends: adTrends,
+      declining_count: decliningCount,
+      improving_count: improvingCount
     };
   }
 
@@ -1332,6 +1377,18 @@ class DiagnosticEngine {
       if (d.ad_health && d.ad_health.has_issues) {
         const ah = d.ad_health;
         text += `  ═ SALUD DE ADS INDIVIDUALES ═\n`;
+        // Mostrar tendencias de ads (declining/improving)
+        if (ah.declining_count > 0 || ah.improving_count > 0) {
+          text += `  Tendencias: ${ah.declining_count || 0} decayendo, ${ah.improving_count || 0} mejorando\n`;
+          const decliningAds = (ah.ad_trends || []).filter(t => t.trend === 'declining');
+          for (const t of decliningAds) {
+            text += `    ↓ "${t.ad_name}" (ID: ${t.ad_id}) — ${t.trend_detail}\n`;
+          }
+          const improvingAds = (ah.ad_trends || []).filter(t => t.trend === 'improving');
+          for (const t of improvingAds) {
+            text += `    ↑ "${t.ad_name}" (ID: ${t.ad_id}) — ${t.trend_detail}\n`;
+          }
+        }
         for (const a of ah.anomalies) {
           const icon = a.recommended_action === 'pause' ? '⚠' : '⟳';
           const anomalyTypes = a.all_anomalies.map(an => an.type).join(' + ');

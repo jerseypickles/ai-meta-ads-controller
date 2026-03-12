@@ -8,7 +8,7 @@ import {
   approveRecommendation, rejectRecommendation, markRecommendationExecuted,
   triggerBrainRecommendations, getFollowUpStats,
   getPolicyState, getKnowledgeHistory, getDeepKnowledge, getCreativePerformance,
-  getAdHealth, suggestAdHealthAction, logout
+  getAdHealth, suggestAdHealthAction, quickPauseAd, logout
 } from '../api';
 
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
@@ -2229,21 +2229,13 @@ function getAdMetrics(ad, tw) {
   return { roas: ad.roas_7d, cpa: ad.cpa_7d, ctr: ad.ctr_7d, spend: ad.spend_7d, purchases: ad.purchases_7d };
 }
 
-// Trend detection: compare short vs long window
+// Trend from backend DiagnosticEngine (single source of truth)
 function getAdTrend(ad) {
-  const r7 = ad.roas_7d || 0;
-  const r3 = ad.roas_3d || 0;
-  const rT = ad.roas_today || 0;
-  // Need at least 7d data to compare
-  if (r7 <= 0) return { trend: 'neutral', label: null, color: null };
-  // Compare today vs 7d — if today dropped >30%, declining
-  if (rT > 0 && rT < r7 * 0.7) return { trend: 'declining', label: `${Math.round((1 - rT / r7) * 100)}% vs 7d`, color: '#ef4444' };
-  // Compare 3d vs 7d
-  if (r3 > 0 && r3 < r7 * 0.7) return { trend: 'declining', label: `${Math.round((1 - r3 / r7) * 100)}% vs 7d`, color: '#f97316' };
-  // Improving: today > 7d by 30%+
-  if (rT > 0 && rT > r7 * 1.3) return { trend: 'improving', label: `+${Math.round((rT / r7 - 1) * 100)}% vs 7d`, color: '#10b981' };
-  if (r3 > 0 && r3 > r7 * 1.3) return { trend: 'improving', label: `+${Math.round((r3 / r7 - 1) * 100)}% vs 7d`, color: '#10b981' };
-  return { trend: 'stable', label: null, color: null };
+  const t = ad.trend || 'stable';
+  const pct = ad.trend_pct || 0;
+  if (t === 'declining') return { trend: 'declining', label: `${Math.abs(pct)}% vs 7d`, detail: ad.trend_detail };
+  if (t === 'improving') return { trend: 'improving', label: `+${pct}% vs 7d`, detail: ad.trend_detail };
+  return { trend: 'stable', label: null, detail: null };
 }
 
 function adMatchesCrFilter(ad, filter) {
@@ -2265,6 +2257,8 @@ function CreativesPanel({ formatTime }) {
   const [expandedSets, setExpandedSets] = useState({});
   const [suggestingFor, setSuggestingFor] = useState(null);
   const [suggestMsg, setSuggestMsg] = useState(null);
+  const [pauseConfirm, setPauseConfirm] = useState(null); // { ad, adset, okCount }
+  const [pausing, setPausing] = useState(false);
 
   const toggleExpand = (id) => setExpandedSets(prev => ({ ...prev, [id]: !prev[id] }));
 
@@ -2297,6 +2291,24 @@ function CreativesPanel({ formatTime }) {
     finally { setSuggestingFor(null); }
   };
 
+  const handleQuickPause = async () => {
+    if (!pauseConfirm) return;
+    setPausing(true);
+    try {
+      const { ad, adset } = pauseConfirm;
+      const reason = ad.trend_detail || ad.diagnosis_text || 'Creativo en declive';
+      const res = await quickPauseAd(ad.ad_id, ad.ad_name, adset.adset_id, adset.adset_name, reason);
+      if (res.ok) {
+        setSuggestMsg({ type: 'ok', text: `Pausado: ${ad.ad_name?.replace(' [Manual Upload]', '')} — ${res.siblings_remaining} ads activos restantes` });
+      }
+      setPauseConfirm(null);
+      await loadData();
+    } catch (err) {
+      setSuggestMsg({ type: 'error', text: `Error al pausar: ${err.message}` });
+    }
+    finally { setPausing(false); }
+  };
+
   if (adHealthLoading) return <div className="feed-empty">Cargando creativos...</div>;
   if (!adHealthData) return <div className="feed-empty"><p>Error al cargar datos.</p></div>;
 
@@ -2306,10 +2318,9 @@ function CreativesPanel({ formatTime }) {
   const issueCount = (dc.zombie || 0) + (dc.dominant_declining || 0) + (dc.fatigued || 0);
   const okCount = (dc.healthy || 0) + (dc.dominant_healthy || 0);
 
-  // Count declining across all ads
-  const allAdsFlat = adsets.flatMap(as => as.all_ads || []);
-  const decliningCount = allAdsFlat.filter(ad => getAdTrend(ad).trend === 'declining').length;
-  const improvingCount = allAdsFlat.filter(ad => getAdTrend(ad).trend === 'improving').length;
+  // Trend counts from backend DiagnosticEngine
+  const decliningCount = summary.declining_count || 0;
+  const improvingCount = summary.improving_count || 0;
 
   // Filter adsets
   const filteredAdSets = adsets.map(adset => {
@@ -2454,21 +2465,19 @@ function CreativesPanel({ formatTime }) {
                           {/* Context-aware alert */}
                           {trend.trend === 'declining' && hasAlternatives && (
                             <div className="cr-row-alert pause">
-                              {CrIcons.alert} ROAS cayo de {ad.roas_7d?.toFixed(1)}x a {recentRoas?.toFixed(1)}x — hay {okAds.length} ad{okAds.length > 1 ? 's' : ''} sano{okAds.length > 1 ? 's' : ''} que pueden absorber su presupuesto{bestOk ? ` (mejor: ${bestOk.roas_7d?.toFixed(1)}x)` : ''}
-                              {!adset.pending_rec_id && (
-                                <button
-                                  className="cr-btn-action pause"
-                                  disabled={!!suggestingFor}
-                                  onClick={() => handleSuggest(adset, 'pause_ad', [ad.ad_name])}
-                                >
-                                  {suggestingFor === `${adset.adset_id}-pause_ad` ? 'Generando...' : 'Pausar'}
-                                </button>
-                              )}
+                              {CrIcons.alert} {trend.detail || `ROAS decayendo`} — hay {okAds.length} ad{okAds.length > 1 ? 's' : ''} sano{okAds.length > 1 ? 's' : ''} que pueden absorber su presupuesto{bestOk ? ` (mejor: ${bestOk.roas_7d?.toFixed(1)}x)` : ''}
+                              <button
+                                className="cr-btn-action pause"
+                                disabled={pausing}
+                                onClick={() => setPauseConfirm({ ad, adset, okCount: okAds.length, bestRoas: bestOk?.roas_7d })}
+                              >
+                                Pausar
+                              </button>
                             </div>
                           )}
                           {trend.trend === 'declining' && !hasAlternatives && (
                             <div className="cr-row-alert refresh">
-                              {CrIcons.alert} ROAS cayo de {ad.roas_7d?.toFixed(1)}x a {recentRoas?.toFixed(1)}x — es el unico ad activo, no hay alternativa
+                              {CrIcons.alert} {trend.detail || `ROAS decayendo`} — es el unico ad activo, no hay alternativa
                               {!adset.pending_rec_id && (
                                 <button
                                   className="cr-btn-action refresh"
@@ -2486,11 +2495,19 @@ function CreativesPanel({ formatTime }) {
                               {hasAlternatives
                                 ? ` — ${okAds.length} ad${okAds.length > 1 ? 's' : ''} pueden absorber el presupuesto`
                                 : ' — unico ad activo, necesita reemplazo'}
-                              {!adset.pending_rec_id && (
+                              {hasAlternatives ? (
                                 <button
-                                  className={`cr-btn-action ${hasAlternatives ? 'pause' : 'refresh'}`}
+                                  className="cr-btn-action pause"
+                                  disabled={pausing}
+                                  onClick={() => setPauseConfirm({ ad, adset, okCount: okAds.length, bestRoas: bestOk?.roas_7d })}
+                                >
+                                  Pausar
+                                </button>
+                              ) : !adset.pending_rec_id && (
+                                <button
+                                  className="cr-btn-action refresh"
                                   disabled={!!suggestingFor}
-                                  onClick={() => handleSuggest(adset, hasAlternatives && ad.diagnosis === 'zombie' ? 'pause_zombies' : 'refresh', ad.diagnosis === 'zombie' ? [ad.ad_name] : [])}
+                                  onClick={() => handleSuggest(adset, 'refresh')}
                                 >
                                   {suggestingFor ? 'Generando...' : actionLabel}
                                 </button>
@@ -2552,6 +2569,31 @@ function CreativesPanel({ formatTime }) {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ═══ PAUSE CONFIRMATION MODAL ═══ */}
+      {pauseConfirm && (
+        <div className="cr-modal-overlay" onClick={() => !pausing && setPauseConfirm(null)}>
+          <div className="cr-modal" onClick={e => e.stopPropagation()}>
+            <div className="cr-modal-title">Pausar creativo en Meta?</div>
+            <div className="cr-modal-body">
+              <div className="cr-modal-ad">{pauseConfirm.ad.ad_name?.replace(' [Manual Upload]', '')}</div>
+              <div className="cr-modal-detail">
+                {pauseConfirm.ad.trend_detail || pauseConfirm.ad.diagnosis_text || 'Creativo con bajo rendimiento'}
+              </div>
+              <div className="cr-modal-impact">
+                El presupuesto se redistribuira a {pauseConfirm.okCount} ad{pauseConfirm.okCount > 1 ? 's' : ''} sano{pauseConfirm.okCount > 1 ? 's' : ''}
+                {pauseConfirm.bestRoas ? ` (mejor: ${pauseConfirm.bestRoas.toFixed(1)}x ROAS)` : ''}
+              </div>
+            </div>
+            <div className="cr-modal-actions">
+              <button className="cr-modal-btn cancel" onClick={() => setPauseConfirm(null)} disabled={pausing}>Cancelar</button>
+              <button className="cr-modal-btn confirm" onClick={handleQuickPause} disabled={pausing}>
+                {pausing ? 'Pausando...' : 'Pausar en Meta'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

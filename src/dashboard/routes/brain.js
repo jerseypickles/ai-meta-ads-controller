@@ -1365,6 +1365,8 @@ router.get('/ad-health', async (req, res) => {
     let adSetsHealthy = 0;
     let adSetsTotal = 0;
     let totalAds = 0;
+    let totalDeclining = 0;
+    let totalImproving = 0;
     const diagnosisCounts = {
       healthy: 0, learning: 0, new_untested: 0, starved: 0,
       zombie: 0, dominant_declining: 0, dominant_healthy: 0, fatigued: 0
@@ -1392,6 +1394,12 @@ router.get('/ad-health', async (req, res) => {
       const anomalyMap = {};
       for (const anom of (ah.anomalies || [])) {
         anomalyMap[anom.ad_id] = anom;
+      }
+
+      // Mapa de tendencias por ad_id (del DiagnosticEngine)
+      const trendMap = {};
+      for (const t of (ah.ad_trends || [])) {
+        trendMap[t.ad_id] = t;
       }
 
       const allAds = activeAds.map(ad => {
@@ -1425,6 +1433,8 @@ router.get('/ad-health', async (req, res) => {
 
         diagnosisCounts[diagnosis] = (diagnosisCounts[diagnosis] || 0) + 1;
         totalAds++;
+        if (trendMap[ad.entity_id]?.trend === 'declining') totalDeclining++;
+        if (trendMap[ad.entity_id]?.trend === 'improving') totalImproving++;
 
         const DIAG_TEXT = {
           learning: 'Tiene menos de 72h — Meta aún lo está evaluando',
@@ -1473,6 +1483,10 @@ router.get('/ad-health', async (req, res) => {
           spend_share_pct: spendShare,
           diagnosis,
           diagnosis_text: DIAG_TEXT[diagnosis] || 'Saludable',
+          // Tendencia del DiagnosticEngine
+          trend: trendMap[ad.entity_id]?.trend || 'stable',
+          trend_pct: trendMap[ad.entity_id]?.trend_pct || 0,
+          trend_detail: trendMap[ad.entity_id]?.trend_detail || null,
           has_anomaly: !!anomalyMap[ad.entity_id],
           anomaly: anomalyMap[ad.entity_id] ? {
             type: anomalyMap[ad.entity_id].primary_anomaly?.type,
@@ -1538,6 +1552,8 @@ router.get('/ad-health', async (req, res) => {
         total_pause_candidates: totalPauseCandidates,
         total_waste_7d: Math.round(totalWaste * 100) / 100,
         total_ads: totalAds,
+        declining_count: totalDeclining,
+        improving_count: totalImproving,
         diagnosis_counts: diagnosisCounts,
         computed_at: new Date().toISOString()
       },
@@ -1649,6 +1665,103 @@ router.post('/ad-health/suggest', async (req, res) => {
     res.json({ ok: true, recommendation: created });
   } catch (error) {
     logger.error(`[BRAIN-API] Error en ad-health/suggest: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ═══ QUICK-PAUSE — Pausar ad individual directo en Meta API ═══
+
+router.post('/ad-health/quick-pause', async (req, res) => {
+  try {
+    const { ad_id, ad_name, adset_id, adset_name, reason } = req.body;
+    if (!ad_id || !adset_id) {
+      return res.status(400).json({ error: 'Faltan campos: ad_id, adset_id' });
+    }
+
+    // Verificar que hay al menos 1 ad más activo en el ad set
+    const { getLatestSnapshots } = require('../../db/queries');
+    const adSnaps = await getLatestSnapshots('ad');
+    const siblingsActive = adSnaps.filter(a => a.parent_id === adset_id && a.status === 'ACTIVE' && a.entity_id !== ad_id);
+    if (siblingsActive.length === 0) {
+      return res.status(400).json({ error: 'No se puede pausar — es el unico ad activo en este ad set' });
+    }
+
+    // Ejecutar pausa directo en Meta API
+    const MetaClient = require('../../meta/client');
+    const meta = new MetaClient();
+    await meta.updateAdStatus(ad_id, 'PAUSED');
+
+    // Obtener métricas actuales del ad para registrar
+    const adSnap = adSnaps.find(s => s.entity_id === ad_id);
+    const m7d = adSnap?.metrics?.last_7d || {};
+    const adsetSnaps = await getLatestSnapshots('adset');
+    const adsetSnap = adsetSnaps.find(s => s.entity_id === adset_id);
+    const adsetM7d = adsetSnap?.metrics?.last_7d || {};
+
+    // Crear ActionLog para que Impact Measurement lo mida
+    await ActionLog.create({
+      entity_id: ad_id,
+      entity_name: ad_name || 'Unknown',
+      entity_type: 'ad',
+      action_type: 'update_ad_status',
+      old_value: 'ACTIVE',
+      new_value: 'PAUSED',
+      reasoning: reason || 'Pausa manual desde panel de creativos — creativo perdiendo efectividad',
+      source: 'dashboard_quick_pause',
+      metrics_before: {
+        roas_7d: m7d.roas || 0,
+        cpa_7d: m7d.cpa || 0,
+        spend_7d: m7d.spend || 0,
+        ctr_7d: m7d.ctr || 0,
+        frequency_7d: m7d.frequency || 0,
+        purchases_7d: m7d.purchases || 0
+      },
+      success: true
+    });
+
+    // Crear BrainRecommendation en estado executed para que aparezca en Seguimiento
+    await BrainRecommendation.create({
+      priority: 'alta',
+      action_type: 'update_ad_status',
+      entity: { entity_type: 'ad', entity_id: ad_id, entity_name: ad_name || 'Unknown' },
+      parent_adset_id: adset_id,
+      parent_adset_name: adset_name || 'Unknown',
+      title: `Pausar ad: ${ad_name || ad_id}`,
+      diagnosis: reason || 'Creativo perdiendo efectividad — pausado desde panel de creativos',
+      expected_outcome: `Presupuesto se redistribuye a ${siblingsActive.length} ad${siblingsActive.length > 1 ? 's' : ''} activo${siblingsActive.length > 1 ? 's' : ''}`,
+      risk: 'Bajo — hay alternativas activas en el ad set',
+      action_detail: `Pausar ad ${ad_name || ad_id} en ad set ${adset_name || adset_id}`,
+      recommended_value: 0,
+      confidence: 'high',
+      generated_by: 'hybrid',
+      status: 'executed',
+      approved_at: new Date(),
+      executed_at: new Date(),
+      supporting_data: {
+        current_roas_7d: m7d.roas || 0,
+        current_cpa_7d: m7d.cpa || 0,
+        current_spend_7d: m7d.spend || 0,
+        siblings_active: siblingsActive.length,
+        execution_method: 'quick_pause'
+      },
+      follow_up: {
+        execution_source: 'user_manual',
+        metrics_at_recommendation: {
+          roas_7d: adsetM7d.roas || 0,
+          cpa_7d: adsetM7d.cpa || 0,
+          spend_7d: adsetM7d.spend || 0,
+          frequency_7d: adsetM7d.frequency || 0,
+          ctr_7d: adsetM7d.ctr || 0,
+          purchases_7d: adsetM7d.purchases || 0,
+          daily_budget: adsetSnap?.daily_budget || 0
+        }
+      }
+    });
+
+    logger.info(`[QUICK-PAUSE] Ad ${ad_id} (${ad_name}) pausado directo — ${siblingsActive.length} ads activos restantes`);
+    res.json({ ok: true, ad_id, paused: true, siblings_remaining: siblingsActive.length });
+  } catch (error) {
+    logger.error(`[QUICK-PAUSE] Error: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
 });

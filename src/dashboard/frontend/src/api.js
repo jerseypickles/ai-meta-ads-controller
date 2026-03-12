@@ -433,4 +433,15 @@ export const suggestAdHealthAction = async (adsetId, adsetName, suggestionType, 
   return response.data;
 };
 
+export const quickPauseAd = async (adId, adName, adsetId, adsetName, reason) => {
+  const response = await api.post('/api/brain/ad-health/quick-pause', {
+    ad_id: adId,
+    ad_name: adName,
+    adset_id: adsetId,
+    adset_name: adsetName,
+    reason
+  });
+  return response.data;
+};
+
 export default api;
