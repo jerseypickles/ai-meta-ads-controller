@@ -2424,6 +2424,15 @@ function CreativesPanel({ formatTime }) {
                       const isOurs = ad.ad_name?.includes('[Manual Upload]');
                       const roasColor = m.roas >= 3 ? '#10b981' : m.roas >= 1.5 ? '#3b82f6' : m.roas > 0 ? '#ef4444' : 'var(--text-muted)';
 
+                      // Context-aware recommendation
+                      const hasAlternatives = okAds.length > 0;
+                      const bestOk = hasAlternatives ? okAds.reduce((best, a) => (a.roas_7d || 0) > (best.roas_7d || 0) ? a : best, okAds[0]) : null;
+                      const recentRoas = ad.roas_today > 0 ? ad.roas_today : ad.roas_3d;
+
+                      // Determine action type: pause if alternatives exist, refresh if alone
+                      const actionType = hasAlternatives ? 'pause_ad' : 'refresh';
+                      const actionLabel = hasAlternatives ? 'Pausar' : 'Crear nuevo';
+
                       return (
                         <div key={ad.ad_id} className="cr-row problem" style={{ borderLeftColor: diagCfg.color }}>
                           <div className="cr-row-main">
@@ -2442,31 +2451,48 @@ function CreativesPanel({ formatTime }) {
                               )}
                             </div>
                           </div>
-                          {/* Trend explanation */}
-                          {trend.trend === 'declining' && (
-                            <div className="cr-row-alert">
-                              {CrIcons.alert} ROAS cayo de {ad.roas_7d?.toFixed(1)}x (7d) a {(ad.roas_today > 0 ? ad.roas_today : ad.roas_3d)?.toFixed(1)}x — perdiendo efectividad
+                          {/* Context-aware alert */}
+                          {trend.trend === 'declining' && hasAlternatives && (
+                            <div className="cr-row-alert pause">
+                              {CrIcons.alert} ROAS cayo de {ad.roas_7d?.toFixed(1)}x a {recentRoas?.toFixed(1)}x — hay {okAds.length} ad{okAds.length > 1 ? 's' : ''} sano{okAds.length > 1 ? 's' : ''} que pueden absorber su presupuesto{bestOk ? ` (mejor: ${bestOk.roas_7d?.toFixed(1)}x)` : ''}
                               {!adset.pending_rec_id && (
                                 <button
-                                  className="cr-btn-suggest"
+                                  className="cr-btn-action pause"
                                   disabled={!!suggestingFor}
-                                  onClick={() => handleSuggest(adset, 'refresh')}
+                                  onClick={() => handleSuggest(adset, 'pause_ad', [ad.ad_name])}
                                 >
-                                  {suggestingFor === `${adset.adset_id}-refresh` ? 'Generando...' : 'Generar rec'}
+                                  {suggestingFor === `${adset.adset_id}-pause_ad` ? 'Generando...' : 'Pausar'}
                                 </button>
                               )}
                             </div>
                           )}
-                          {!trend.label && ad.diagnosis_text && (
-                            <div className="cr-row-alert">
-                              {CrIcons.alert} {ad.diagnosis_text}
+                          {trend.trend === 'declining' && !hasAlternatives && (
+                            <div className="cr-row-alert refresh">
+                              {CrIcons.alert} ROAS cayo de {ad.roas_7d?.toFixed(1)}x a {recentRoas?.toFixed(1)}x — es el unico ad activo, no hay alternativa
                               {!adset.pending_rec_id && (
                                 <button
-                                  className="cr-btn-suggest"
+                                  className="cr-btn-action refresh"
                                   disabled={!!suggestingFor}
-                                  onClick={() => handleSuggest(adset, ad.diagnosis === 'zombie' ? 'pause_zombies' : 'refresh', ad.diagnosis === 'zombie' ? [ad.ad_name] : [])}
+                                  onClick={() => handleSuggest(adset, 'refresh')}
                                 >
-                                  {suggestingFor ? 'Generando...' : 'Generar rec'}
+                                  {suggestingFor === `${adset.adset_id}-refresh` ? 'Generando...' : 'Crear nuevo'}
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          {trend.trend !== 'declining' && ad.diagnosis_text && (
+                            <div className={`cr-row-alert ${hasAlternatives ? 'pause' : 'refresh'}`}>
+                              {CrIcons.alert} {ad.diagnosis_text}
+                              {hasAlternatives
+                                ? ` — ${okAds.length} ad${okAds.length > 1 ? 's' : ''} pueden absorber el presupuesto`
+                                : ' — unico ad activo, necesita reemplazo'}
+                              {!adset.pending_rec_id && (
+                                <button
+                                  className={`cr-btn-action ${hasAlternatives ? 'pause' : 'refresh'}`}
+                                  disabled={!!suggestingFor}
+                                  onClick={() => handleSuggest(adset, hasAlternatives && ad.diagnosis === 'zombie' ? 'pause_zombies' : 'refresh', ad.diagnosis === 'zombie' ? [ad.ad_name] : [])}
+                                >
+                                  {suggestingFor ? 'Generando...' : actionLabel}
                                 </button>
                               )}
                             </div>
