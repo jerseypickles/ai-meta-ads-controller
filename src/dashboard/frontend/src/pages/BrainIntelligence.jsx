@@ -2758,13 +2758,11 @@ function LaunchPanel() {
   }, [files, productName]);
 
   // Step 2: Edit proposal fields
-  const updateCreativeCopy = useCallback((index, field, variantIndex, value) => {
+  const updateCreativeField = useCallback((index, field, value) => {
     setProposal(prev => {
       const updated = { ...prev };
       updated.selected_creatives = [...updated.selected_creatives];
-      updated.selected_creatives[index] = { ...updated.selected_creatives[index] };
-      updated.selected_creatives[index][field] = [...updated.selected_creatives[index][field]];
-      updated.selected_creatives[index][field][variantIndex] = value;
+      updated.selected_creatives[index] = { ...updated.selected_creatives[index], [field]: value };
       return updated;
     });
   }, []);
@@ -2783,12 +2781,16 @@ function LaunchPanel() {
     setStep('launching');
     setError('');
     try {
-      // Inject link_url and CTA into proposal
+      // Inject link_url, CTA, and normalize headline/body fields
       const finalProposal = {
         ...proposal,
         link_url: linkUrl || proposal.link_url,
         selected_creatives: (proposal.selected_creatives || []).map(c => ({
           ...c,
+          headline: c.headline || (c.headlines || [])[0] || '',
+          body: c.body || (c.bodies || [])[0] || '',
+          headlines: [c.headline || (c.headlines || [])[0] || ''],
+          bodies: [c.body || (c.bodies || [])[0] || ''],
           cta: globalCta || c.cta || 'SHOP_NOW'
         }))
       };
@@ -2958,40 +2960,37 @@ function LaunchPanel() {
           )}
         </div>
 
-        {/* Creatives with copy */}
+        {/* Creatives with copy — 1 ad per image */}
         <div className="launch-creatives-section">
-          <label className="launch-label">Creativos y Copy ({proposal.selected_creatives?.length || 0})</label>
+          <label className="launch-label">{proposal.selected_creatives?.length || 0} Ads (1 por imagen)</label>
           {(proposal.selected_creatives || []).map((creative, ci) => {
             const uploaded = uploadedAssets.find(a => a.id === creative.asset_id);
             const preview = previews.find(p => p.name === uploaded?.original_name);
+            const headline = creative.headline || (creative.headlines || [])[0] || '';
+            const body = creative.body || (creative.bodies || [])[0] || '';
             return (
               <div key={ci} className="launch-creative-card">
                 <div className="launch-creative-header">
                   {preview && <img src={preview.url} alt="" className="launch-creative-thumb" />}
-                  <span className="launch-creative-name">{uploaded?.original_name || creative.asset_filename || `Creativo ${ci + 1}`}</span>
+                  <span className="launch-creative-name">{uploaded?.original_name || creative.asset_filename || `Ad ${ci + 1}`}</span>
                 </div>
-                {(creative.headlines || []).map((headline, hi) => (
-                  <div key={hi} className="launch-variant">
-                    <span className="launch-variant-label">v{hi + 1}</span>
-                    <div className="launch-variant-fields">
-                      <input
-                        type="text"
-                        className="launch-input launch-input-sm"
-                        value={headline}
-                        onChange={(e) => updateCreativeCopy(ci, 'headlines', hi, e.target.value)}
-                        placeholder="Headline"
-                        maxLength={40}
-                      />
-                      <textarea
-                        className="launch-textarea"
-                        value={(creative.bodies || [])[hi] || ''}
-                        onChange={(e) => updateCreativeCopy(ci, 'bodies', hi, e.target.value)}
-                        placeholder="Primary text"
-                        rows={2}
-                      />
-                    </div>
-                  </div>
-                ))}
+                <div className="launch-variant-fields">
+                  <input
+                    type="text"
+                    className="launch-input launch-input-sm"
+                    value={headline}
+                    onChange={(e) => updateCreativeField(ci, 'headline', e.target.value)}
+                    placeholder="Headline"
+                    maxLength={40}
+                  />
+                  <textarea
+                    className="launch-textarea"
+                    value={body}
+                    onChange={(e) => updateCreativeField(ci, 'body', e.target.value)}
+                    placeholder="Primary text"
+                    rows={2}
+                  />
+                </div>
               </div>
             );
           })}
