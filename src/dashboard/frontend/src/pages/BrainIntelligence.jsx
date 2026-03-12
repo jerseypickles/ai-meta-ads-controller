@@ -2400,11 +2400,33 @@ function CreativesPanel({ formatTime }) {
         <div className="cr-grid">
           {sortedAdSets.map(adset => {
             const ads = adset.filteredAds;
-            const problemAds = ads.filter(a => ['dominant_declining', 'zombie', 'fatigued', 'starved'].includes(a.diagnosis) || getAdTrend(a).trend === 'declining');
-            const okAds = ads.filter(a => !problemAds.includes(a));
             const isExpanded = expandedSets[adset.adset_id];
-            // Ad set level ROAS from best performing window
+            const totalSpend = ads.reduce((s, a) => s + (a.spend_7d || 0), 0);
             const adsetRoas7d = ads.length > 0 ? ads.reduce((s, a) => s + (a.roas_7d || 0), 0) / ads.length : 0;
+
+            // === AD SET LEVEL ANALYSIS ===
+            // Find the dominant ad (highest spend share)
+            const dominant = ads.length > 0 ? ads.reduce((d, a) => (a.spend_share_pct || 0) > (d.spend_share_pct || 0) ? a : d, ads[0]) : null;
+            const isDominantHogging = dominant && (dominant.spend_share_pct || 0) >= 60;
+            const dominantTrend = dominant ? getAdTrend(dominant) : { trend: 'stable' };
+            const isDominantDeclining = isDominantHogging && dominantTrend.trend === 'declining';
+            const starvedAds = ads.filter(a => a.ad_id !== dominant?.ad_id && (a.spend_share_pct || 0) < 10);
+
+            // Classify each ad by its role in the ad set
+            const getAdRole = (ad) => {
+              if (ad.diagnosis === 'zombie') return 'zombie';
+              if (isDominantHogging && ad.ad_id === dominant.ad_id) {
+                return dominantTrend.trend === 'declining' ? 'dominant_declining' : 'dominant_ok';
+              }
+              if ((ad.spend_share_pct || 0) < 10 && isDominantHogging) return 'starved_by_dominant';
+              if (getAdTrend(ad).trend === 'declining' && (ad.spend_7d || 0) > 5) return 'declining';
+              if (['fatigued'].includes(ad.diagnosis)) return 'fatigued';
+              return 'ok';
+            };
+
+            // Split ads by visibility: issues always visible, ok behind toggle
+            const issueAds = ads.filter(a => ['dominant_declining', 'declining', 'zombie', 'fatigued'].includes(getAdRole(a)));
+            const restAds = ads.filter(a => !issueAds.includes(a));
 
             return (
               <div key={adset.adset_id} className="cr-card">
@@ -2424,146 +2446,138 @@ function CreativesPanel({ formatTime }) {
                   </div>
                 </div>
 
-                {/* Problem ads — always visible as compact rows */}
-                {problemAds.length > 0 && (
-                  <div className="cr-card-problems">
-                    {problemAds.map(ad => {
-                      const diagCfg = DIAGNOSIS_CONFIG[ad.diagnosis] || DIAGNOSIS_CONFIG.healthy;
-                      const m = getAdMetrics(ad, timeWindow);
-                      const trend = getAdTrend(ad);
-                      const displayName = ad.ad_name.replace(' [Manual Upload]', '');
-                      const isOurs = ad.ad_name?.includes('[Manual Upload]');
-                      const roasColor = m.roas >= 3 ? '#10b981' : m.roas >= 1.5 ? '#3b82f6' : m.roas > 0 ? '#ef4444' : 'var(--text-muted)';
+                {/* Ad set level insight — concentration warning */}
+                {isDominantDeclining && starvedAds.length > 0 && (
+                  <div className="cr-adset-insight">
+                    {CrIcons.alert} <strong>{dominant.ad_name?.replace(' [Manual Upload]', '')}</strong> acapara {dominant.spend_share_pct}% del presupuesto y esta cayendo.
+                    {starvedAds.length > 0 && ` ${starvedAds.length} ad${starvedAds.length > 1 ? 's' : ''} no han tenido oportunidad de competir.`}
+                    <button
+                      className="cr-btn-action pause"
+                      disabled={pausing}
+                      onClick={() => setPauseConfirm({ ad: dominant, adset, okCount: ads.length - 1, bestRoas: null })}
+                    >
+                      Pausar dominante
+                    </button>
+                  </div>
+                )}
 
-                      // Context-aware: are there other ads that can absorb budget?
-                      // "Alternatives" = any OTHER ad in this ad set that isn't zombie/dead
-                      const siblings = ads.filter(a => a.ad_id !== ad.ad_id && !['zombie'].includes(a.diagnosis));
-                      const hasAlternatives = siblings.length > 0;
-                      const bestSibling = hasAlternatives ? siblings.reduce((best, a) => (a.roas_7d || 0) > (best.roas_7d || 0) ? a : best, siblings[0]) : null;
+                {/* All ads as compact rows */}
+                <div className="cr-card-ads">
+                  {ads.map(ad => {
+                    const role = getAdRole(ad);
+                    const diagCfg = DIAGNOSIS_CONFIG[ad.diagnosis] || DIAGNOSIS_CONFIG.healthy;
+                    const m = getAdMetrics(ad, timeWindow);
+                    const trend = getAdTrend(ad);
+                    const displayName = ad.ad_name.replace(' [Manual Upload]', '');
+                    const isOurs = ad.ad_name?.includes('[Manual Upload]');
+                    const roasColor = m.roas >= 3 ? '#10b981' : m.roas >= 1.5 ? '#3b82f6' : m.roas > 0 ? '#ef4444' : 'var(--text-muted)';
+                    const isIssue = issueAds.includes(ad);
+                    const isHidden = !isIssue && !isExpanded;
 
-                      // Determine action type: pause if alternatives exist, refresh if alone
-                      const actionLabel = hasAlternatives ? 'Pausar' : 'Crear nuevo';
+                    if (isHidden) return null;
 
-                      return (
-                        <div key={ad.ad_id} className="cr-row problem" style={{ borderLeftColor: diagCfg.color }}>
-                          <div className="cr-row-main">
-                            <span className="cr-row-name" title={ad.ad_name}>
-                              {isOurs && <span className="cr-row-badge ours">{CrIcons.upload}</span>}
-                              {displayName}
-                            </span>
-                            <div className="cr-row-right">
-                              <span className="cr-row-diag" style={{ color: diagCfg.color }}>{diagCfg.label}</span>
-                              <span className="cr-row-roas" style={{ color: roasColor }}>{m.roas > 0 ? `${m.roas.toFixed(1)}x` : '--'}</span>
-                              {trend.trend === 'declining' && (
-                                <span className="cr-row-trend declining">{CrIcons.trendDown} {trend.label}</span>
-                              )}
-                              {trend.trend === 'improving' && (
-                                <span className="cr-row-trend improving">{CrIcons.trendUp} {trend.label}</span>
-                              )}
-                            </div>
+                    // Role-specific label
+                    const roleLabel = {
+                      dominant_declining: 'DOMINANTE',
+                      dominant_ok: 'DOMINANTE',
+                      starved_by_dominant: 'SIN CHANCE',
+                      declining: diagCfg.label,
+                      zombie: diagCfg.label,
+                      fatigued: diagCfg.label,
+                      ok: diagCfg.label
+                    }[role] || diagCfg.label;
+
+                    const roleColor = {
+                      dominant_declining: '#ef4444',
+                      dominant_ok: '#22c55e',
+                      starved_by_dominant: '#f59e0b'
+                    }[role] || diagCfg.color;
+
+                    return (
+                      <div key={ad.ad_id} className={`cr-row ${isIssue ? 'problem' : 'ok'}`} style={{ borderLeftColor: roleColor }}>
+                        <div className="cr-row-main">
+                          <span className="cr-row-name" title={ad.ad_name}>
+                            {isOurs && <span className="cr-row-badge ours">{CrIcons.upload}</span>}
+                            {displayName}
+                          </span>
+                          <div className="cr-row-right">
+                            <span className="cr-row-diag" style={{ color: roleColor }}>{roleLabel}</span>
+                            <span className="cr-row-roas" style={{ color: roasColor }}>{m.roas > 0 ? `${m.roas.toFixed(1)}x` : '--'}</span>
+                            <span className="cr-row-spend">${m.spend?.toFixed(0)} <span className="cr-row-pct">({ad.spend_share_pct || 0}%)</span></span>
+                            {trend.trend === 'declining' && (
+                              <span className="cr-row-trend declining">{CrIcons.trendDown} {trend.label}</span>
+                            )}
+                            {trend.trend === 'improving' && (
+                              <span className="cr-row-trend improving">{CrIcons.trendUp} {trend.label}</span>
+                            )}
                           </div>
-                          {/* Context-aware alert */}
-                          {trend.trend === 'declining' && hasAlternatives && (
-                            <div className="cr-row-alert pause">
-                              {CrIcons.alert} {trend.detail || `ROAS decayendo`} — hay {siblings.length} ad{siblings.length > 1 ? 's' : ''} que pueden absorber su presupuesto{bestSibling ? ` (mejor: ${bestSibling.roas_7d?.toFixed(1)}x)` : ''}
+                        </div>
+                        {/* Role-specific alert */}
+                        {role === 'starved_by_dominant' && (
+                          <div className="cr-row-alert info">
+                            Sin oportunidad — el dominante acapara {dominant?.spend_share_pct}% del budget
+                          </div>
+                        )}
+                        {role === 'dominant_declining' && !isDominantDeclining && (
+                          <div className="cr-row-alert pause">
+                            {CrIcons.alert} {trend.detail || ad.diagnosis_text}
+                            <button
+                              className="cr-btn-action pause"
+                              disabled={pausing}
+                              onClick={() => setPauseConfirm({ ad, adset, okCount: ads.filter(a => a.ad_id !== ad.ad_id && a.diagnosis !== 'zombie').length, bestRoas: null })}
+                            >
+                              Pausar
+                            </button>
+                          </div>
+                        )}
+                        {role === 'declining' && (
+                          <div className="cr-row-alert pause">
+                            {CrIcons.alert} {trend.detail || ad.diagnosis_text}
+                            {ads.filter(a => a.ad_id !== ad.ad_id && a.diagnosis !== 'zombie').length > 0 ? (
                               <button
                                 className="cr-btn-action pause"
                                 disabled={pausing}
-                                onClick={() => setPauseConfirm({ ad, adset, okCount: siblings.length, bestRoas: bestSibling?.roas_7d })}
+                                onClick={() => setPauseConfirm({ ad, adset, okCount: ads.filter(a => a.ad_id !== ad.ad_id && a.diagnosis !== 'zombie').length, bestRoas: null })}
                               >
                                 Pausar
                               </button>
-                            </div>
-                          )}
-                          {trend.trend === 'declining' && !hasAlternatives && (
-                            <div className="cr-row-alert refresh">
-                              {CrIcons.alert} {trend.detail || `ROAS decayendo`} — es el unico ad activo, no hay alternativa
-                              {!adset.pending_rec_id && (
-                                <button
-                                  className="cr-btn-action refresh"
-                                  disabled={!!suggestingFor}
-                                  onClick={() => handleSuggest(adset, 'refresh')}
-                                >
-                                  {suggestingFor === `${adset.adset_id}-refresh` ? 'Generando...' : 'Crear nuevo'}
-                                </button>
-                              )}
-                            </div>
-                          )}
-                          {trend.trend !== 'declining' && ad.diagnosis_text && (
-                            <div className={`cr-row-alert ${hasAlternatives ? 'pause' : 'refresh'}`}>
-                              {CrIcons.alert} {ad.diagnosis_text}
-                              {hasAlternatives
-                                ? ` — ${siblings.length} ad${siblings.length > 1 ? 's' : ''} pueden absorber el presupuesto`
-                                : ' — unico ad activo, necesita reemplazo'}
-                              {hasAlternatives ? (
-                                <button
-                                  className="cr-btn-action pause"
-                                  disabled={pausing}
-                                  onClick={() => setPauseConfirm({ ad, adset, okCount: siblings.length, bestRoas: bestSibling?.roas_7d })}
-                                >
-                                  Pausar
-                                </button>
-                              ) : !adset.pending_rec_id && (
-                                <button
-                                  className="cr-btn-action refresh"
-                                  disabled={!!suggestingFor}
-                                  onClick={() => handleSuggest(adset, 'refresh')}
-                                >
-                                  {suggestingFor ? 'Generando...' : actionLabel}
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                            ) : !adset.pending_rec_id && (
+                              <button className="cr-btn-action refresh" disabled={!!suggestingFor} onClick={() => handleSuggest(adset, 'refresh')}>
+                                {suggestingFor ? 'Generando...' : 'Crear nuevo'}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {role === 'zombie' && (
+                          <div className="cr-row-alert info">
+                            {ad.diagnosis_text} — sin impacto en presupuesto
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
 
-                {/* OK ads — collapsed behind toggle */}
-                {okAds.length > 0 && (
+                {/* Toggle for non-issue ads */}
+                {restAds.length > 0 && !isExpanded && (
                   <div className="cr-card-ok">
                     <button className="cr-ok-toggle" onClick={() => toggleExpand(adset.adset_id)}>
-                      <span className="cr-ok-toggle-icon">{isExpanded ? CrIcons.chevDown : CrIcons.chevRight}</span>
-                      +{okAds.length} ad{okAds.length > 1 ? 's' : ''} OK
+                      <span className="cr-ok-toggle-icon">{CrIcons.chevRight}</span>
+                      +{restAds.length} ad{restAds.length > 1 ? 's' : ''} sin problemas
                     </button>
-                    {isExpanded && (
-                      <div className="cr-ok-list">
-                        {okAds.map(ad => {
-                          const diagCfg = DIAGNOSIS_CONFIG[ad.diagnosis] || DIAGNOSIS_CONFIG.healthy;
-                          const m = getAdMetrics(ad, timeWindow);
-                          const trend = getAdTrend(ad);
-                          const displayName = ad.ad_name.replace(' [Manual Upload]', '');
-                          const isOurs = ad.ad_name?.includes('[Manual Upload]');
-                          const roasColor = m.roas >= 3 ? '#10b981' : m.roas >= 1.5 ? '#3b82f6' : m.roas > 0 ? '#ef4444' : 'var(--text-muted)';
-
-                          return (
-                            <div key={ad.ad_id} className="cr-row ok" style={{ borderLeftColor: diagCfg.color }}>
-                              <div className="cr-row-main">
-                                <span className="cr-row-name" title={ad.ad_name}>
-                                  {isOurs && <span className="cr-row-badge ours">{CrIcons.upload}</span>}
-                                  {displayName}
-                                </span>
-                                <div className="cr-row-right">
-                                  <span className="cr-row-diag" style={{ color: diagCfg.color }}>{diagCfg.label}</span>
-                                  <span className="cr-row-roas" style={{ color: roasColor }}>{m.roas > 0 ? `${m.roas.toFixed(1)}x` : '--'}</span>
-                                  <span className="cr-row-spend">${m.spend?.toFixed(0)}</span>
-                                  <span className="cr-row-ctr">{m.ctr > 0 ? `${m.ctr.toFixed(1)}%` : '--'}</span>
-                                  {trend.trend === 'improving' && (
-                                    <span className="cr-row-trend improving">{CrIcons.trendUp} {trend.label}</span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                  </div>
+                )}
+                {restAds.length > 0 && isExpanded && (
+                  <div className="cr-card-ok">
+                    <button className="cr-ok-toggle" onClick={() => toggleExpand(adset.adset_id)}>
+                      <span className="cr-ok-toggle-icon">{CrIcons.chevDown}</span>
+                      Ocultar {restAds.length} ad{restAds.length > 1 ? 's' : ''}
+                    </button>
                   </div>
                 )}
 
-                {/* Empty state: all OK, no problems */}
-                {problemAds.length === 0 && okAds.length === 0 && (
+                {/* Empty state */}
+                {ads.length === 0 && (
                   <div className="cr-card-empty">Sin ads visibles</div>
                 )}
               </div>
