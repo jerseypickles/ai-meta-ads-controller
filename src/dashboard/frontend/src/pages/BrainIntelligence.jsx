@@ -2424,9 +2424,13 @@ function CreativesPanel({ formatTime }) {
             const shouldPause = isDominantUnprofitable && !hadRecentPause && starvedAds.length > 0;
             const shouldWatch = isDominantDeclining && (dominantRoas >= ROAS_TARGET || hadRecentPause);
 
+            // Ad set health: is the dominant performing well?
+            const adsetHealthy = dominant && dominantRoas >= ROAS_TARGET && dominantTrend.trend !== 'declining';
+
             // Classify each ad by its role in the ad set
             const getAdRole = (ad) => {
-              if (ad.diagnosis === 'zombie') return 'zombie';
+              // Zombies only matter if the ad set is struggling — otherwise Meta just picked the winner
+              if (ad.diagnosis === 'zombie') return adsetHealthy ? 'ok' : 'zombie';
               if (isDominantHogging && ad.ad_id === dominant.ad_id) {
                 if (dominantTrend.trend === 'declining') {
                   return dominantRoas >= ROAS_TARGET ? 'dominant_watch' : 'dominant_declining';
