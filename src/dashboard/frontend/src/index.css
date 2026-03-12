@@ -9529,3 +9529,75 @@ a:hover {
   width: auto;
   min-width: 180px;
 }
+
+/* Budget row with +/- buttons */
+
+.launch-row-3 {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 4px;
+}
+
+.launch-row-3 .launch-field {
+  flex: 1;
+  margin-bottom: 12px;
+}
+
+.launch-budget-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.launch-budget-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: var(--card-bg);
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.launch-budget-btn:hover {
+  background: var(--hover-bg);
+  border-color: var(--accent);
+}
+
+.launch-budget-display {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  min-width: 80px;
+  text-align: center;
+}
+
+/* Select dropdown */
+
+.launch-select {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M3 5l3 3 3-3'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+
+.launch-select:focus {
+  border-color: var(--accent);
+}

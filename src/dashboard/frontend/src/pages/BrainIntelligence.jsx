@@ -2691,6 +2691,8 @@ function LaunchPanel() {
   const [launchResult, setLaunchResult] = useState(null);
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [linkUrl, setLinkUrl] = useState('');
+  const [globalCta, setGlobalCta] = useState('SHOP_NOW');
   const fileInputRef = useRef(null);
   const dropRef = useRef(null);
 
@@ -2744,6 +2746,8 @@ function LaunchPanel() {
         productName
       );
       setProposal(stratResult.proposal);
+      if (stratResult.proposal.link_url) setLinkUrl(stratResult.proposal.link_url);
+      if (stratResult.proposal.selected_creatives?.[0]?.cta) setGlobalCta(stratResult.proposal.selected_creatives[0].cta);
       setStep('review');
     } catch (err) {
       setError(err.response?.data?.error || err.message);
@@ -2779,7 +2783,16 @@ function LaunchPanel() {
     setStep('launching');
     setError('');
     try {
-      const result = await launchApprove(proposal);
+      // Inject link_url and CTA into proposal
+      const finalProposal = {
+        ...proposal,
+        link_url: linkUrl || proposal.link_url,
+        selected_creatives: (proposal.selected_creatives || []).map(c => ({
+          ...c,
+          cta: globalCta || c.cta || 'SHOP_NOW'
+        }))
+      };
+      const result = await launchApprove(finalProposal);
       setLaunchResult(result);
       setStep('done');
     } catch (err) {
@@ -2798,6 +2811,8 @@ function LaunchPanel() {
     setProposal(null);
     setLaunchResult(null);
     setError('');
+    setLinkUrl('');
+    setGlobalCta('SHOP_NOW');
   }, []);
 
   // ─── UPLOAD STEP ───
@@ -2892,47 +2907,60 @@ function LaunchPanel() {
               onChange={(e) => updateAdsetName(e.target.value)}
             />
           </div>
-          <div className="launch-row">
-            <div className="launch-field" style={{ flex: 1 }}>
+
+          <div className="launch-row-3">
+            <div className="launch-field">
               <label className="launch-label">Budget diario</label>
-              <div className="launch-budget-input">
-                <span className="launch-budget-prefix">$</span>
-                <input
-                  type="number"
-                  className="launch-input"
-                  value={proposal.daily_budget}
-                  onChange={(e) => updateBudget(e.target.value)}
-                  min="5"
-                  max="500"
-                  step="5"
-                />
-                <span className="launch-budget-suffix">/día</span>
+              <div className="launch-budget-row">
+                <button className="launch-budget-btn" onClick={() => updateBudget(Math.max(5, (proposal.daily_budget || 25) - 5))}>−</button>
+                <span className="launch-budget-display">${proposal.daily_budget}/día</span>
+                <button className="launch-budget-btn" onClick={() => updateBudget((proposal.daily_budget || 25) + 5)}>+</button>
               </div>
             </div>
-            <div className="launch-field" style={{ flex: 1 }}>
+            <div className="launch-field">
+              <label className="launch-label">CTA</label>
+              <select
+                className="launch-select"
+                value={globalCta}
+                onChange={(e) => setGlobalCta(e.target.value)}
+              >
+                <option value="SHOP_NOW">Shop Now</option>
+                <option value="BUY_NOW">Buy Now</option>
+                <option value="ORDER_NOW">Order Now</option>
+                <option value="GET_OFFER">Get Offer</option>
+                <option value="LEARN_MORE">Learn More</option>
+              </select>
+            </div>
+            <div className="launch-field">
               <label className="launch-label">Riesgo</label>
               <span className={`launch-risk launch-risk-${proposal.risk_assessment}`}>
                 {proposal.risk_assessment === 'low' ? 'Bajo' : proposal.risk_assessment === 'high' ? 'Alto' : 'Medio'}
               </span>
             </div>
           </div>
+
+          <div className="launch-field">
+            <label className="launch-label">Link URL</label>
+            <input
+              type="url"
+              className="launch-input"
+              placeholder="https://jerseypickles.com/..."
+              value={linkUrl}
+              onChange={(e) => setLinkUrl(e.target.value)}
+            />
+          </div>
+
           {proposal.strategy_summary && (
             <div className="launch-strategy">
               <label className="launch-label">Estrategia</label>
               <p className="launch-strategy-text">{proposal.strategy_summary}</p>
             </div>
           )}
-          {proposal.budget_rationale && (
-            <div className="launch-strategy">
-              <label className="launch-label">Razón del budget</label>
-              <p className="launch-strategy-text">{proposal.budget_rationale}</p>
-            </div>
-          )}
         </div>
 
         {/* Creatives with copy */}
         <div className="launch-creatives-section">
-          <label className="launch-label">Creativos y Copy ({proposal.selected_creatives?.length || 0} ads)</label>
+          <label className="launch-label">Creativos y Copy ({proposal.selected_creatives?.length || 0})</label>
           {(proposal.selected_creatives || []).map((creative, ci) => {
             const uploaded = uploadedAssets.find(a => a.id === creative.asset_id);
             const preview = previews.find(p => p.name === uploaded?.original_name);
@@ -2974,7 +3002,7 @@ function LaunchPanel() {
         <div className="launch-actions">
           <button className="launch-btn-secondary" onClick={handleReset}>Cancelar</button>
           <button className="launch-btn-primary" onClick={handleLaunch}>
-            Lanzar Ad Set
+            Lanzar Ad Set — ${proposal.daily_budget}/día
           </button>
         </div>
       </div>

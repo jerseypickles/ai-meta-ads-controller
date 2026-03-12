@@ -1961,22 +1961,24 @@ The user has uploaded ${assets.length} creative images and wants to launch a NEW
 You MUST use ALL the uploaded creatives — the user chose these specifically.
 
 For EACH creative, write ad copy:
-- **headlines**: Array of 2 different headlines. Short, punchy, max 40 chars. English for US audience.
-- **bodies**: Array of 2 different primary texts. 2-3 sentences (hook + benefit + CTA). English.
+- **headlines**: Array of 2 different headlines. Short, punchy, max 40 chars. English for US audience. USE EMOJIS liberally (🥒🔥💥🤤👀✨🎉💚). Make them scroll-stopping.
+- **bodies**: Array of 2 different primary texts. Keep them SHORT: 1-2 sentences max. Use emojis. Hook + benefit. English. Examples of good length: "🥒 These aren't your grandma's pickles. Bold, crunchy & addictive — try them before they sell out!" or "🔥 Spicy pickle lovers, this is YOUR moment. Order now & taste the heat 💥"
 - **cta**: SHOP_NOW | LEARN_MORE | BUY_NOW | GET_OFFER | ORDER_NOW
+- **link_url**: The destination URL for the ad (use the website URL from account context)
 
 Output STRICT JSON:
 {
   "adset_name": "AI - [Product] - [Angle] - [Date]",
   "daily_budget": 25.00,
+  "link_url": "https://...",
   "budget_rationale": "In Spanish — why this budget",
   "strategy_summary": "In Spanish — overall strategy for this ad set",
   "risk_assessment": "low|medium|high",
   "selected_creatives": [
     {
       "asset_id": "mongo_id_from_the_uploaded_list",
-      "headlines": ["Headline 1", "Headline 2"],
-      "bodies": ["Body text 1", "Body text 2"],
+      "headlines": ["🥒 Headline 1", "🔥 Headline 2"],
+      "bodies": ["Short body with emojis 1", "Short body with emojis 2"],
       "cta": "SHOP_NOW"
     }
   ]
@@ -1987,7 +1989,9 @@ RULES:
 - Budget: $15-50/day, conservative for new tests
 - Use data from account performance to inform budget/strategy
 - Ad copy in English, strategy/rationale in Spanish
-- Be creative with headlines — different angles (benefit, urgency, curiosity)
+- Headlines and bodies MUST include relevant emojis
+- Bodies must be SHORT — 1-2 sentences max, no long paragraphs
+- Be creative with headlines — different angles (benefit, urgency, curiosity, social proof)
 - The AI Manager will auto-scale if ROAS is good`,
       messages: [{
         role: 'user',
@@ -2008,6 +2012,9 @@ ${JSON.stringify(aiHistoryContext, null, 2)}
 
 ## CAMPAIGN
 Campaign: "${campaigns[0].name}" (${campaigns[0].id})
+
+## WEBSITE URL
+${await meta.getWebsiteUrl().catch(() => 'Not available — use a generic ecommerce URL')}
 
 Today: ${new Date().toISOString().split('T')[0]}`
       }]
@@ -2158,7 +2165,7 @@ router.post('/launch/approve', async (req, res) => {
               body,
               description: '',
               cta: creative_config.cta || 'SHOP_NOW',
-              link_url: asset.link_url || websiteUrl
+              link_url: proposal.link_url || asset.link_url || websiteUrl
             });
 
             const adName = `${headline} - ${asset.style || 'mix'}${variantLabel}`;
