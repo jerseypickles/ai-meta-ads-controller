@@ -970,6 +970,7 @@ const AdSetRow = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights, trac
   const hasCriticalInsight = brainInsights?.some(i => i.severity === 'critical' || i.severity === 'warning');
   const hasExecution = trackingRecs?.some(r => r.follow_up?.action_executed);
   const pendingCreativeRefresh = trackingRecs?.find(r => ['creative_refresh', 'create_ad'].includes(r.action_type) && !r.follow_up?.action_executed);
+  const adsetFatigue = useMemo(() => computeFatigue(adset), [adset]);
 
   return (
     <>
@@ -983,8 +984,11 @@ const AdSetRow = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights, trac
         <td className="primary">
           <div className="adset-name-wrap">
             <div className="adset-name-cell">{adset.entity_name || adset.entity_id}</div>
-            {(recCount > 0 || insightCount > 0 || trackingCount > 0 || pendingCreativeRefresh) && (
+            {(recCount > 0 || insightCount > 0 || trackingCount > 0 || pendingCreativeRefresh || adsetFatigue.level !== 'none') && (
               <span className="brain-badges">
+                {adsetFatigue.level !== 'none' && (
+                  <FatigueBadge fatigue={adsetFatigue} />
+                )}
                 {pendingCreativeRefresh && (
                   <span className="brain-badge brain-badge-needs-creative" title="Falta creativo — rec aprobada pendiente de ejecucion">
                     <Upload size={9} />
