@@ -20,6 +20,7 @@ async function getLatestSnapshots(entityType = null) {
       }
     },
     { $replaceRoot: { newRoot: '$doc' } },
+    { $match: { status: { $nin: ['DELETED', 'ARCHIVED'] } } },
     { $sort: { entity_type: 1, entity_name: 1 } }
   ]);
 }
@@ -83,6 +84,7 @@ async function getAdsForAdSet(adSetId) {
       }
     },
     { $replaceRoot: { newRoot: '$doc' } },
+    { $match: { status: { $nin: ['DELETED', 'ARCHIVED'] } } },
     { $sort: { entity_name: 1 } }
   ]);
 }
