@@ -2198,12 +2198,16 @@ const CrIcons = {
   trendDown: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg>,
   skull: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="11" r="8"/><path d="M8 15v5"/><path d="M16 15v5"/><circle cx="9" cy="10" r="1.5" fill="currentColor"/><circle cx="15" cy="10" r="1.5" fill="currentColor"/></svg>,
   eye: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
+  trendUp: <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>,
+  chevRight: <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>,
+  chevDown: <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>,
 };
 
 const CR_FILTERS = [
   { key: 'all', label: 'Todos' },
   { key: 'ours', label: 'Nuestros' },
   { key: 'problems', label: 'Problemas' },
+  { key: 'declining', label: 'Perdiendo fuerza' },
   { key: 'ok', label: 'OK' },
   { key: 'learning', label: 'Aprendiendo' },
   { key: 'starved', label: 'Sin presupuesto' },
@@ -2215,20 +2219,38 @@ const TIME_WINDOWS = [
   { key: '7d', label: '7 dias' },
 ];
 
-function getAdMetrics(ad, window) {
-  if (window === 'today') {
+function getAdMetrics(ad, tw) {
+  if (tw === 'today') {
     return { roas: ad.roas_today, cpa: ad.cpa_today, ctr: ad.ctr_today, spend: ad.spend_today, purchases: ad.purchases_today };
   }
-  if (window === '3d') {
+  if (tw === '3d') {
     return { roas: ad.roas_3d, cpa: ad.cpa_3d, ctr: ad.ctr_3d, spend: ad.spend_3d, purchases: ad.purchases_3d };
   }
   return { roas: ad.roas_7d, cpa: ad.cpa_7d, ctr: ad.ctr_7d, spend: ad.spend_7d, purchases: ad.purchases_7d };
+}
+
+// Trend detection: compare short vs long window
+function getAdTrend(ad) {
+  const r7 = ad.roas_7d || 0;
+  const r3 = ad.roas_3d || 0;
+  const rT = ad.roas_today || 0;
+  // Need at least 7d data to compare
+  if (r7 <= 0) return { trend: 'neutral', label: null, color: null };
+  // Compare today vs 7d — if today dropped >30%, declining
+  if (rT > 0 && rT < r7 * 0.7) return { trend: 'declining', label: `${Math.round((1 - rT / r7) * 100)}% vs 7d`, color: '#ef4444' };
+  // Compare 3d vs 7d
+  if (r3 > 0 && r3 < r7 * 0.7) return { trend: 'declining', label: `${Math.round((1 - r3 / r7) * 100)}% vs 7d`, color: '#f97316' };
+  // Improving: today > 7d by 30%+
+  if (rT > 0 && rT > r7 * 1.3) return { trend: 'improving', label: `+${Math.round((rT / r7 - 1) * 100)}% vs 7d`, color: '#10b981' };
+  if (r3 > 0 && r3 > r7 * 1.3) return { trend: 'improving', label: `+${Math.round((r3 / r7 - 1) * 100)}% vs 7d`, color: '#10b981' };
+  return { trend: 'stable', label: null, color: null };
 }
 
 function adMatchesCrFilter(ad, filter) {
   if (filter === 'all') return true;
   if (filter === 'ours') return ad.ad_name?.includes('[Manual Upload]');
   if (filter === 'problems') return ['zombie', 'dominant_declining', 'fatigued'].includes(ad.diagnosis);
+  if (filter === 'declining') return getAdTrend(ad).trend === 'declining';
   if (filter === 'ok') return ['healthy', 'dominant_healthy'].includes(ad.diagnosis);
   if (filter === 'learning') return ['learning', 'new_untested'].includes(ad.diagnosis);
   if (filter === 'starved') return ad.diagnosis === 'starved';
@@ -2240,8 +2262,11 @@ function CreativesPanel({ formatTime }) {
   const [adHealthLoading, setAdHealthLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState('all');
   const [timeWindow, setTimeWindow] = useState('7d');
+  const [expandedSets, setExpandedSets] = useState({});
   const [suggestingFor, setSuggestingFor] = useState(null);
   const [suggestMsg, setSuggestMsg] = useState(null);
+
+  const toggleExpand = (id) => setExpandedSets(prev => ({ ...prev, [id]: !prev[id] }));
 
   const loadData = useCallback(async () => {
     setAdHealthLoading(true);
@@ -2261,9 +2286,9 @@ function CreativesPanel({ formatTime }) {
       const res = await suggestAdHealthAction(adset.adset_id, adset.adset_name, type, zombieIds);
       if (res.duplicate) {
         const statusLabel = res.existing_status === 'approved' ? 'aprobada' : 'pendiente';
-        setSuggestMsg({ type: 'warn', text: `Ya existe una recomendacion ${statusLabel} para ${adset.adset_name}` });
+        setSuggestMsg({ type: 'warn', text: `Ya existe una rec ${statusLabel} para ${adset.adset_name}` });
       } else {
-        setSuggestMsg({ type: 'ok', text: `Recomendacion creada para ${adset.adset_name}` });
+        setSuggestMsg({ type: 'ok', text: `Rec creada para ${adset.adset_name}` });
       }
       await loadData();
     } catch (err) {
@@ -2281,20 +2306,26 @@ function CreativesPanel({ formatTime }) {
   const issueCount = (dc.zombie || 0) + (dc.dominant_declining || 0) + (dc.fatigued || 0);
   const okCount = (dc.healthy || 0) + (dc.dominant_healthy || 0);
 
-  // Filter adsets: only show adsets that have at least one ad matching the filter
+  // Count declining across all ads
+  const allAdsFlat = adsets.flatMap(as => as.all_ads || []);
+  const decliningCount = allAdsFlat.filter(ad => getAdTrend(ad).trend === 'declining').length;
+  const improvingCount = allAdsFlat.filter(ad => getAdTrend(ad).trend === 'improving').length;
+
+  // Filter adsets
   const filteredAdSets = adsets.map(adset => {
     const filteredAds = (adset.all_ads || []).filter(ad => adMatchesCrFilter(ad, activeFilter));
     return { ...adset, filteredAds };
   }).filter(adset => adset.filteredAds.length > 0);
 
-  // Sort: ad sets with problems or our ads first
+  // Sort: problems first, then ours, then by spend
   const sortedAdSets = [...filteredAdSets].sort((a, b) => {
     const aProblems = a.filteredAds.filter(ad => ['zombie', 'dominant_declining', 'fatigued'].includes(ad.diagnosis)).length;
     const bProblems = b.filteredAds.filter(ad => ['zombie', 'dominant_declining', 'fatigued'].includes(ad.diagnosis)).length;
-    const aOurs = a.filteredAds.filter(ad => ad.ad_name?.includes('[Manual Upload]')).length;
-    const bOurs = b.filteredAds.filter(ad => ad.ad_name?.includes('[Manual Upload]')).length;
+    const aDecl = a.filteredAds.filter(ad => getAdTrend(ad).trend === 'declining').length;
+    const bDecl = b.filteredAds.filter(ad => getAdTrend(ad).trend === 'declining').length;
     if (aProblems !== bProblems) return bProblems - aProblems;
-    return bOurs - aOurs;
+    if (aDecl !== bDecl) return bDecl - aDecl;
+    return (b.total_spend_7d || 0) - (a.total_spend_7d || 0);
   });
 
   const totalVisible = filteredAdSets.reduce((sum, as) => sum + as.filteredAds.length, 0);
@@ -2308,7 +2339,8 @@ function CreativesPanel({ formatTime }) {
           {totalOurs > 0 && <span className="cr-stat-pill ours">{CrIcons.upload} {totalOurs} nuestros</span>}
           {okCount > 0 && <span className="cr-stat-pill ok">{okCount} OK</span>}
           {issueCount > 0 && <span className="cr-stat-pill bad">{issueCount} problemas</span>}
-          {(dc.starved || 0) > 0 && <span className="cr-stat-pill warn">{dc.starved} sin budget</span>}
+          {decliningCount > 0 && <span className="cr-stat-pill declining">{CrIcons.trendDown} {decliningCount} perdiendo fuerza</span>}
+          {improvingCount > 0 && <span className="cr-stat-pill improving">{CrIcons.trendUp} {improvingCount} mejorando</span>}
           {(dc.learning || 0) + (dc.new_untested || 0) > 0 && <span className="cr-stat-pill neutral">{(dc.learning || 0) + (dc.new_untested || 0)} aprendiendo</span>}
         </div>
         <button className="cr-btn-refresh" onClick={loadData}>{CrIcons.refresh} Refrescar</button>
@@ -2350,114 +2382,147 @@ function CreativesPanel({ formatTime }) {
         </div>
       </div>
 
-      {/* ═══ AD SETS + ADS (always open) ═══ */}
+      {/* ═══ AD SETS GRID (2 columns) ═══ */}
       {sortedAdSets.length === 0 ? (
         <div className="feed-empty"><p>{activeFilter !== 'all' ? 'Ningun ad coincide con el filtro.' : 'No hay ad sets activos.'}</p></div>
       ) : (
-        <div className="cr-adsets">
+        <div className="cr-grid">
           {sortedAdSets.map(adset => {
             const ads = adset.filteredAds;
-            const ourAds = ads.filter(a => a.ad_name?.includes('[Manual Upload]'));
-            const problemAds = ads.filter(a => ['dominant_declining', 'zombie', 'fatigued'].includes(a.diagnosis));
+            const problemAds = ads.filter(a => ['dominant_declining', 'zombie', 'fatigued', 'starved'].includes(a.diagnosis) || getAdTrend(a).trend === 'declining');
+            const okAds = ads.filter(a => !problemAds.includes(a));
+            const isExpanded = expandedSets[adset.adset_id];
+            // Ad set level ROAS from best performing window
+            const adsetRoas7d = ads.length > 0 ? ads.reduce((s, a) => s + (a.roas_7d || 0), 0) / ads.length : 0;
 
             return (
-              <div key={adset.adset_id} className="cr-adset">
-                {/* Ad set header */}
-                <div className="cr-adset-header">
-                  <span className="cr-adset-name">{adset.adset_name}</span>
-                  <div className="cr-adset-meta">
-                    <span className="cr-adset-stat">{ads.length} ads</span>
-                    <span className="cr-adset-stat">${Math.round(adset.daily_budget)}/dia</span>
-                    <span className="cr-adset-stat">${Math.round(adset.total_spend_7d)}/7d</span>
+              <div key={adset.adset_id} className="cr-card">
+                {/* Card header */}
+                <div className="cr-card-head">
+                  <div className="cr-card-title">
+                    <span className="cr-card-name">{adset.adset_name}</span>
                     {adset.pending_rec_id && (
-                      <span className="cr-badge-rec">{adset.pending_rec_status === 'approved' ? 'Rec aprobada' : 'Rec pendiente'}</span>
+                      <span className="cr-badge-rec">{adset.pending_rec_status === 'approved' ? 'Aprobada' : 'Pendiente'}</span>
                     )}
+                  </div>
+                  <div className="cr-card-stats">
+                    <span className="cr-card-stat">{ads.length} ads</span>
+                    <span className="cr-card-stat">${Math.round(adset.daily_budget)}/dia</span>
+                    <span className="cr-card-stat">ROAS {adsetRoas7d > 0 ? `${adsetRoas7d.toFixed(1)}x` : '--'} <span className="cr-card-stat-label">7d</span></span>
+                    <span className="cr-card-stat">${Math.round(adset.total_spend_7d)} <span className="cr-card-stat-label">7d</span></span>
                   </div>
                 </div>
 
-                {/* Ads — always visible */}
-                <div className="cr-ads">
-                  {ads.map(ad => {
-                    const diagCfg = DIAGNOSIS_CONFIG[ad.diagnosis] || DIAGNOSIS_CONFIG.healthy;
-                    const isOurs = ad.ad_name?.includes('[Manual Upload]');
-                    const displayName = ad.ad_name.replace(' [Manual Upload]', '');
-                    const m = getAdMetrics(ad, timeWindow);
-                    const roasColor = m.roas >= 3 ? '#10b981' : m.roas >= 1.5 ? '#3b82f6' : m.roas > 0 ? '#ef4444' : 'var(--text-muted)';
-                    const hasProblem = ['dominant_declining', 'zombie', 'fatigued'].includes(ad.diagnosis);
-                    const zombieIds = hasProblem && ad.diagnosis === 'zombie' ? [ad.ad_name] : [];
-                    const twLabel = timeWindow === 'today' ? 'hoy' : timeWindow;
+                {/* Problem ads — always visible as compact rows */}
+                {problemAds.length > 0 && (
+                  <div className="cr-card-problems">
+                    {problemAds.map(ad => {
+                      const diagCfg = DIAGNOSIS_CONFIG[ad.diagnosis] || DIAGNOSIS_CONFIG.healthy;
+                      const m = getAdMetrics(ad, timeWindow);
+                      const trend = getAdTrend(ad);
+                      const displayName = ad.ad_name.replace(' [Manual Upload]', '');
+                      const isOurs = ad.ad_name?.includes('[Manual Upload]');
+                      const roasColor = m.roas >= 3 ? '#10b981' : m.roas >= 1.5 ? '#3b82f6' : m.roas > 0 ? '#ef4444' : 'var(--text-muted)';
 
-                    return (
-                      <div key={ad.ad_id} className={`cr-ad ${hasProblem ? 'problem' : ''}`} style={{ borderLeftColor: diagCfg.color }}>
-                        {/* Row 1: Name + badges */}
-                        <div className="cr-ad-row1">
-                          <span className="cr-ad-name" title={ad.ad_name}>{displayName}</span>
-                          <div className="cr-ad-badges">
-                            {isOurs && <span className="cr-badge ours">{CrIcons.upload} Nuestro</span>}
-                            {ad.age_days <= 3 && <span className="cr-badge new">Nuevo</span>}
-                            <span className="cr-badge-status" style={{ color: diagCfg.color, background: diagCfg.bg }}>
-                              {diagCfg.label}
+                      return (
+                        <div key={ad.ad_id} className="cr-row problem" style={{ borderLeftColor: diagCfg.color }}>
+                          <div className="cr-row-main">
+                            <span className="cr-row-name" title={ad.ad_name}>
+                              {isOurs && <span className="cr-row-badge ours">{CrIcons.upload}</span>}
+                              {displayName}
                             </span>
-                          </div>
-                        </div>
-
-                        {/* Row 2: Metrics inline */}
-                        <div className="cr-ad-metrics">
-                          <span className="cr-ad-metric">
-                            <span className="cr-ad-metric-label">ROAS</span>
-                            <span className="cr-ad-metric-val" style={{ color: roasColor }}>{m.roas > 0 ? `${m.roas.toFixed(1)}x` : '--'}</span>
-                          </span>
-                          <span className="cr-ad-metric">
-                            <span className="cr-ad-metric-label">CPA</span>
-                            <span className="cr-ad-metric-val">{m.cpa > 0 ? `$${m.cpa.toFixed(0)}` : '--'}</span>
-                          </span>
-                          <span className="cr-ad-metric">
-                            <span className="cr-ad-metric-label">CTR</span>
-                            <span className="cr-ad-metric-val">{m.ctr > 0 ? `${m.ctr.toFixed(1)}%` : '--'}</span>
-                          </span>
-                          <span className="cr-ad-metric">
-                            <span className="cr-ad-metric-label">Gasto</span>
-                            <span className="cr-ad-metric-val">${m.spend.toFixed(0)}</span>
-                          </span>
-                          <span className="cr-ad-metric">
-                            <span className="cr-ad-metric-label">Edad</span>
-                            <span className="cr-ad-metric-val">{ad.age_days}d</span>
-                          </span>
-                        </div>
-
-                        {/* Row 3: Spend share bar */}
-                        <div className="cr-ad-share">
-                          <div className="cr-share-bar">
-                            <div className="cr-share-fill" style={{ width: `${Math.min(ad.spend_share_pct, 100)}%`, background: diagCfg.color }} />
-                          </div>
-                          <span className="cr-share-label">{ad.spend_share_pct}% del presupuesto</span>
-                        </div>
-
-                        {/* Row 4: Problem explanation + action inline */}
-                        {hasProblem && (
-                          <div className="cr-ad-problem" style={{ borderLeftColor: diagCfg.color }}>
-                            <div className="cr-ad-problem-text">
-                              <span className="cr-ad-problem-icon" style={{ color: diagCfg.color }}>{CrIcons.alert}</span>
-                              {ad.diagnosis_text || diagCfg.label}
+                            <div className="cr-row-right">
+                              <span className="cr-row-diag" style={{ color: diagCfg.color }}>{diagCfg.label}</span>
+                              <span className="cr-row-roas" style={{ color: roasColor }}>{m.roas > 0 ? `${m.roas.toFixed(1)}x` : '--'}</span>
+                              {trend.trend === 'declining' && (
+                                <span className="cr-row-trend declining">{CrIcons.trendDown} {trend.label}</span>
+                              )}
+                              {trend.trend === 'improving' && (
+                                <span className="cr-row-trend improving">{CrIcons.trendUp} {trend.label}</span>
+                              )}
                             </div>
-                            {!adset.pending_rec_id && (
-                              <button
-                                className="cr-btn-suggest"
-                                disabled={suggestingFor === `${adset.adset_id}-${ad.diagnosis === 'zombie' ? 'pause_zombies' : 'refresh'}`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleSuggest(adset, ad.diagnosis === 'zombie' ? 'pause_zombies' : 'refresh', zombieIds);
-                                }}
-                              >
-                                {suggestingFor === `${adset.adset_id}-${ad.diagnosis === 'zombie' ? 'pause_zombies' : 'refresh'}` ? 'Generando...' : 'Generar rec'}
-                              </button>
-                            )}
                           </div>
-                        )}
+                          {/* Trend explanation */}
+                          {trend.trend === 'declining' && (
+                            <div className="cr-row-alert">
+                              {CrIcons.alert} ROAS cayo de {ad.roas_7d?.toFixed(1)}x (7d) a {(ad.roas_today > 0 ? ad.roas_today : ad.roas_3d)?.toFixed(1)}x — perdiendo efectividad
+                              {!adset.pending_rec_id && (
+                                <button
+                                  className="cr-btn-suggest"
+                                  disabled={!!suggestingFor}
+                                  onClick={() => handleSuggest(adset, 'refresh')}
+                                >
+                                  {suggestingFor === `${adset.adset_id}-refresh` ? 'Generando...' : 'Generar rec'}
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          {!trend.label && ad.diagnosis_text && (
+                            <div className="cr-row-alert">
+                              {CrIcons.alert} {ad.diagnosis_text}
+                              {!adset.pending_rec_id && (
+                                <button
+                                  className="cr-btn-suggest"
+                                  disabled={!!suggestingFor}
+                                  onClick={() => handleSuggest(adset, ad.diagnosis === 'zombie' ? 'pause_zombies' : 'refresh', ad.diagnosis === 'zombie' ? [ad.ad_name] : [])}
+                                >
+                                  {suggestingFor ? 'Generando...' : 'Generar rec'}
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* OK ads — collapsed behind toggle */}
+                {okAds.length > 0 && (
+                  <div className="cr-card-ok">
+                    <button className="cr-ok-toggle" onClick={() => toggleExpand(adset.adset_id)}>
+                      <span className="cr-ok-toggle-icon">{isExpanded ? CrIcons.chevDown : CrIcons.chevRight}</span>
+                      +{okAds.length} ad{okAds.length > 1 ? 's' : ''} OK
+                    </button>
+                    {isExpanded && (
+                      <div className="cr-ok-list">
+                        {okAds.map(ad => {
+                          const diagCfg = DIAGNOSIS_CONFIG[ad.diagnosis] || DIAGNOSIS_CONFIG.healthy;
+                          const m = getAdMetrics(ad, timeWindow);
+                          const trend = getAdTrend(ad);
+                          const displayName = ad.ad_name.replace(' [Manual Upload]', '');
+                          const isOurs = ad.ad_name?.includes('[Manual Upload]');
+                          const roasColor = m.roas >= 3 ? '#10b981' : m.roas >= 1.5 ? '#3b82f6' : m.roas > 0 ? '#ef4444' : 'var(--text-muted)';
+
+                          return (
+                            <div key={ad.ad_id} className="cr-row ok" style={{ borderLeftColor: diagCfg.color }}>
+                              <div className="cr-row-main">
+                                <span className="cr-row-name" title={ad.ad_name}>
+                                  {isOurs && <span className="cr-row-badge ours">{CrIcons.upload}</span>}
+                                  {displayName}
+                                </span>
+                                <div className="cr-row-right">
+                                  <span className="cr-row-diag" style={{ color: diagCfg.color }}>{diagCfg.label}</span>
+                                  <span className="cr-row-roas" style={{ color: roasColor }}>{m.roas > 0 ? `${m.roas.toFixed(1)}x` : '--'}</span>
+                                  <span className="cr-row-spend">${m.spend?.toFixed(0)}</span>
+                                  <span className="cr-row-ctr">{m.ctr > 0 ? `${m.ctr.toFixed(1)}%` : '--'}</span>
+                                  {trend.trend === 'improving' && (
+                                    <span className="cr-row-trend improving">{CrIcons.trendUp} {trend.label}</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
-                </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Empty state: all OK, no problems */}
+                {problemAds.length === 0 && okAds.length === 0 && (
+                  <div className="cr-card-empty">Sin ads visibles</div>
+                )}
               </div>
             );
           })}
