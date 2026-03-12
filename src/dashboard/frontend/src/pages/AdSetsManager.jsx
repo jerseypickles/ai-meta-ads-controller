@@ -142,10 +142,78 @@ const getMetrics = (adset, window) => adset.metrics?.[window] || {};
    AD ROW (inside expanded ad set)
    ══════════════════════════════════════════ */
 
+const computeFatigue = (ad) => {
+  const m7 = ad.metrics?.last_7d || {};
+  const m3 = ad.metrics?.last_3d || {};
+  const mT = ad.metrics?.today || {};
+  const signals = [];
+  let level = 'none'; // none | warning | critical
+
+  // High frequency = audience saturation
+  const freq = m7.frequency || 0;
+  if (freq >= KPI.frequency_critical) {
+    signals.push('Freq ' + freq.toFixed(1) + ' (critical)');
+    level = 'critical';
+  } else if (freq >= KPI.frequency_warning) {
+    signals.push('Freq ' + freq.toFixed(1) + ' (high)');
+    if (level !== 'critical') level = 'warning';
+  }
+
+  // CTR declining: 3d CTR significantly lower than 7d average
+  if (m7.ctr > 0 && m3.ctr > 0) {
+    const ctrDrop = ((m3.ctr - m7.ctr) / m7.ctr) * 100;
+    if (ctrDrop <= -30) {
+      signals.push('CTR -' + Math.abs(ctrDrop).toFixed(0) + '%');
+      level = 'critical';
+    } else if (ctrDrop <= -15) {
+      signals.push('CTR -' + Math.abs(ctrDrop).toFixed(0) + '%');
+      if (level !== 'critical') level = 'warning';
+    }
+  }
+
+  // ROAS declining: 3d ROAS significantly lower than 7d
+  if (m7.roas > 0 && m3.roas > 0) {
+    const roasDrop = ((m3.roas - m7.roas) / m7.roas) * 100;
+    if (roasDrop <= -30) {
+      signals.push('ROAS -' + Math.abs(roasDrop).toFixed(0) + '%');
+      level = 'critical';
+    } else if (roasDrop <= -15) {
+      signals.push('ROAS -' + Math.abs(roasDrop).toFixed(0) + '%');
+      if (level !== 'critical') level = 'warning';
+    }
+  }
+
+  // CPA rising: 3d CPA much higher than 7d
+  if (m7.cpa > 0 && m3.cpa > 0) {
+    const cpaRise = ((m3.cpa - m7.cpa) / m7.cpa) * 100;
+    if (cpaRise >= 40) {
+      signals.push('CPA +' + cpaRise.toFixed(0) + '%');
+      if (level !== 'critical') level = 'warning';
+    }
+  }
+
+  return { level, signals };
+};
+
+const FatigueBadge = ({ fatigue }) => {
+  if (fatigue.level === 'none') return null;
+  const isCritical = fatigue.level === 'critical';
+  return (
+    <span
+      className={`fatigue-badge ${isCritical ? 'fatigue-critical' : 'fatigue-warning'}`}
+      title={fatigue.signals.join(' · ')}
+    >
+      <AlertTriangle size={10} />
+      {isCritical ? 'Fatigado' : 'Desgaste'}
+    </span>
+  );
+};
+
 const AdRow = ({ ad, timeWindow, onAction }) => {
   const [busy, setBusy] = useState(null);
   const [removed, setRemoved] = useState(false);
   const m = ad.metrics?.[timeWindow] || ad.metrics?.last_7d || {};
+  const fatigue = useMemo(() => computeFatigue(ad), [ad]);
 
   const handlePause = async (e) => {
     e.stopPropagation();
@@ -175,13 +243,14 @@ const AdRow = ({ ad, timeWindow, onAction }) => {
   const isActive = ad.status === 'ACTIVE';
 
   return (
-    <tr className={!isActive ? 'opacity-50' : ''}>
+    <tr className={`${!isActive ? 'opacity-50' : ''} ${fatigue.level === 'critical' ? 'ad-row-fatigued' : ''}`}>
       <td className="primary">
         <span className="d-inline-flex align-center gap-2">
           {isActive
             ? <Play size={10} style={{ color: 'var(--green)', fill: 'var(--green)' }} />
             : <Pause size={10} style={{ color: 'var(--red)' }} />}
           <span className="ad-name-cell">{ad.entity_name || ad.entity_id}</span>
+          {isActive && <FatigueBadge fatigue={fatigue} />}
         </span>
       </td>
       <td className="numeric">{fmtMoney(m.spend)}</td>
@@ -194,7 +263,8 @@ const AdRow = ({ ad, timeWindow, onAction }) => {
         <span className="d-inline-flex gap-1">
           {isActive && (
             <button onClick={handlePause} disabled={busy} className="btn btn-ghost btn-icon btn-sm"
-              title="Pause" style={{ color: 'var(--yellow)' }}>
+              title={fatigue.level !== 'none' ? `Pausar — ${fatigue.signals.join(', ')}` : 'Pause'}
+              style={{ color: fatigue.level === 'critical' ? 'var(--red)' : 'var(--yellow)' }}>
               {busy === 'pause' ? <RefreshCw size={12} className="loading-spin" /> : <Pause size={12} />}
             </button>
           )}
@@ -594,6 +664,17 @@ const AdSetDetail = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights, t
 
   const activeAds = (ads || []).filter(a => isActiveStatus(a.status)).length;
   const totalAds = (ads || []).length;
+  const fatigueCounts = useMemo(() => {
+    if (!ads) return { warning: 0, critical: 0 };
+    let warning = 0, critical = 0;
+    for (const a of ads) {
+      if (!isActiveStatus(a.status)) continue;
+      const f = computeFatigue(a);
+      if (f.level === 'critical') critical++;
+      else if (f.level === 'warning') warning++;
+    }
+    return { warning, critical };
+  }, [ads]);
 
   const windows = [
     { key: 'today', label: 'Today', m: mT },
@@ -701,6 +782,20 @@ const AdSetDetail = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights, t
               <h6 className="text-tertiary text-xs font-bold mb-0" style={{ letterSpacing: '0.05em', textTransform: 'uppercase' }}>
                 Ads {ads !== null && <span className="text-muted">({activeAds} active / {totalAds})</span>}
               </h6>
+              {(fatigueCounts.critical > 0 || fatigueCounts.warning > 0) && (
+                <div className="d-inline-flex gap-2">
+                  {fatigueCounts.critical > 0 && (
+                    <span className="fatigue-badge fatigue-critical">
+                      <AlertTriangle size={10} /> {fatigueCounts.critical} fatigado{fatigueCounts.critical > 1 ? 's' : ''}
+                    </span>
+                  )}
+                  {fatigueCounts.warning > 0 && (
+                    <span className="fatigue-badge fatigue-warning">
+                      <AlertTriangle size={10} /> {fatigueCounts.warning} desgaste
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
 
             {loadingAds && (
@@ -776,8 +871,6 @@ const AdSetDetail = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights, t
                       <span className={`detail-tracking-ph ${phases.day_3?.measured ? 'done' : phase === 'awaiting_day_3' ? 'active' : ''}`}>3d</span>
                       <span className="detail-tracking-ph-line" />
                       <span className={`detail-tracking-ph ${phases.day_7?.measured ? 'done' : phase === 'awaiting_day_7' ? 'active' : ''}`}>7d</span>
-                      <span className="detail-tracking-ph-line" />
-                      <span className={`detail-tracking-ph ${phases.day_14?.measured ? 'done' : phase === 'awaiting_day_14' ? 'active' : ''}`}>14d</span>
                     </div>
                     <span className="detail-tracking-time">{timeLabel}</span>
                   </div>
@@ -1774,13 +1867,50 @@ export default function AdSetsManager() {
           margin-top: 1px;
         }
         .ad-name-cell {
-          max-width: 220px;
+          max-width: 180px;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
           display: inline-block;
           vertical-align: middle;
         }
+
+        /* ═══ FATIGUE BADGES ═══ */
+        .fatigue-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 3px;
+          font-size: 0.6rem;
+          font-weight: 700;
+          letter-spacing: 0.03em;
+          text-transform: uppercase;
+          padding: 1px 6px;
+          border-radius: 8px;
+          white-space: nowrap;
+          line-height: 1.4;
+        }
+        .fatigue-warning {
+          background: rgba(251, 191, 36, 0.15);
+          color: var(--yellow);
+          border: 1px solid rgba(251, 191, 36, 0.3);
+        }
+        .fatigue-critical {
+          background: rgba(239, 68, 68, 0.15);
+          color: var(--red);
+          border: 1px solid rgba(239, 68, 68, 0.3);
+          animation: fatigue-pulse 2s ease-in-out infinite;
+        }
+        @keyframes fatigue-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.7; }
+        }
+        .ad-row-fatigued {
+          background: rgba(239, 68, 68, 0.04) !important;
+        }
+        .ad-row-fatigued td {
+          border-bottom-color: rgba(239, 68, 68, 0.15) !important;
+        }
+
         .adset-detail-row td {
           background-color: var(--bg-primary) !important;
         }
