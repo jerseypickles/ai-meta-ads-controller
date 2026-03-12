@@ -1339,8 +1339,33 @@ router.get('/ad-health', async (req, res) => {
 
     const diagnostics = diagnosticEngine.diagnoseAll(adsetSnapshots, adSnapshots, memoryMap, accountOverview);
 
-    // Consultar recs pendientes para todos los ad sets
+    // Consultar pausas recientes por ad set (últimos 7 días)
     const allAdSetIds = adsetSnapshots.map(s => s.entity_id);
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600000);
+    // Buscar en BrainRecommendation ejecutadas (tienen parent_adset_id) + ActionLog
+    const recentPauseRecs = await BrainRecommendation.find({
+      action_type: 'update_ad_status',
+      status: 'executed',
+      'entity.entity_type': 'ad',
+      executed_at: { $gte: sevenDaysAgo }
+    }).select('entity parent_adset_id parent_adset_name executed_at').lean();
+
+    // Construir mapa: adset_id → { last_pause_at, last_pause_ad, days_ago }
+    const recentPauseMap = {};
+    for (const p of recentPauseRecs) {
+      const parentId = p.parent_adset_id || adSnapshots.find(a => a.entity_id === p.entity?.entity_id)?.parent_id;
+      if (!parentId) continue;
+      const daysAgo = Math.round((Date.now() - new Date(p.executed_at).getTime()) / 86400000);
+      if (!recentPauseMap[parentId] || new Date(p.executed_at) > new Date(recentPauseMap[parentId].last_pause_at)) {
+        recentPauseMap[parentId] = {
+          last_pause_at: p.executed_at,
+          last_pause_ad: p.entity?.entity_name || p.entity?.entity_id || 'unknown',
+          days_ago: daysAgo,
+        };
+      }
+    }
+
+    // Consultar recs pendientes para todos los ad sets
     const pendingRecs = await BrainRecommendation.find({
       status: { $in: ['pending', 'approved'] },
       action_type: { $in: ['creative_refresh', 'pause', 'update_ad_status'] },
@@ -1502,6 +1527,7 @@ router.get('/ad-health', async (req, res) => {
       allAds.sort((a, b) => b.spend_share_pct - a.spend_share_pct);
 
       const pending = pendingMap[entityId] || null;
+      const recentPause = recentPauseMap[entityId] || null;
 
       adSetResults.push({
         adset_id: entityId,
@@ -1517,6 +1543,8 @@ router.get('/ad-health', async (req, res) => {
         pending_rec_id: pending?.pending_rec_id || null,
         pending_rec_type: pending?.pending_rec_type || null,
         pending_rec_title: pending?.pending_rec_title || null,
+        pending_rec_status: pending?.pending_rec_status || null,
+        recent_pause: recentPause,
         ad_health: {
           anomalies: (ah.anomalies || []).map(a => ({
             ad_id: a.ad_id, ad_name: a.ad_name, age_days: a.age_days,

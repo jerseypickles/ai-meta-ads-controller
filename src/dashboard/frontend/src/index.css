@@ -8814,6 +8814,12 @@ a:hover {
   font-style: italic;
 }
 
+.cr-row-alert.watch {
+  background: rgba(245, 158, 11, 0.06);
+  border-left: 2px solid #f59e0b;
+  color: #fbbf24;
+}
+
 /* Ad set level insight bar */
 .cr-adset-insight {
   display: flex;
@@ -8822,10 +8828,41 @@ a:hover {
   padding: 8px 12px;
   font-size: 11px;
   font-weight: 600;
-  color: #fbbf24;
-  background: rgba(245, 158, 11, 0.06);
   border-bottom: 1px solid var(--border-color);
   line-height: 1.4;
+  flex-wrap: wrap;
+}
+
+.cr-adset-insight.danger {
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.cr-adset-insight.watch {
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.06);
+}
+
+/* Ad age label */
+.cr-row-age {
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--text-muted);
+  opacity: 0.6;
+  margin-left: 2px;
+  flex-shrink: 0;
+}
+
+/* Cooldown tag */
+.cr-cooldown-tag {
+  font-size: 9px;
+  font-weight: 600;
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.10);
+  padding: 2px 8px;
+  border-radius: 6px;
+  margin-left: auto;
+  white-space: nowrap;
 }
 
 .cr-row-pct {

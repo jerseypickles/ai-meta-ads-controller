@@ -2401,31 +2401,48 @@ function CreativesPanel({ formatTime }) {
           {sortedAdSets.map(adset => {
             const ads = adset.filteredAds;
             const isExpanded = expandedSets[adset.adset_id];
-            const totalSpend = ads.reduce((s, a) => s + (a.spend_7d || 0), 0);
             const adsetRoas7d = ads.length > 0 ? ads.reduce((s, a) => s + (a.roas_7d || 0), 0) / ads.length : 0;
+            const ROAS_TARGET = 3.0;
 
-            // === AD SET LEVEL ANALYSIS ===
+            // === AD SET CONTEXT ===
+            const recentPause = adset.recent_pause;
+            const hadRecentPause = recentPause && recentPause.days_ago <= 7;
+
             // Find the dominant ad (highest spend share)
             const dominant = ads.length > 0 ? ads.reduce((d, a) => (a.spend_share_pct || 0) > (d.spend_share_pct || 0) ? a : d, ads[0]) : null;
             const isDominantHogging = dominant && (dominant.spend_share_pct || 0) >= 60;
             const dominantTrend = dominant ? getAdTrend(dominant) : { trend: 'stable' };
-            const isDominantDeclining = isDominantHogging && dominantTrend.trend === 'declining';
+            const dominantRoas = dominant ? (dominant.roas_7d || 0) : 0;
             const starvedAds = ads.filter(a => a.ad_id !== dominant?.ad_id && (a.spend_share_pct || 0) < 10);
+
+            // === SMART ALERT LEVELS ===
+            // RED: dominant declining + ROAS below target + no recent pause
+            // YELLOW: dominant declining but ROAS still above target, OR recent pause (cooldown)
+            // GREEN: dominant healthy or not hogging
+            const isDominantDeclining = isDominantHogging && dominantTrend.trend === 'declining';
+            const isDominantUnprofitable = isDominantDeclining && dominantRoas < ROAS_TARGET;
+            const shouldPause = isDominantUnprofitable && !hadRecentPause && starvedAds.length > 0;
+            const shouldWatch = isDominantDeclining && (dominantRoas >= ROAS_TARGET || hadRecentPause);
 
             // Classify each ad by its role in the ad set
             const getAdRole = (ad) => {
               if (ad.diagnosis === 'zombie') return 'zombie';
               if (isDominantHogging && ad.ad_id === dominant.ad_id) {
-                return dominantTrend.trend === 'declining' ? 'dominant_declining' : 'dominant_ok';
+                if (dominantTrend.trend === 'declining') {
+                  return dominantRoas >= ROAS_TARGET ? 'dominant_watch' : 'dominant_declining';
+                }
+                return 'dominant_ok';
               }
               if ((ad.spend_share_pct || 0) < 10 && isDominantHogging) return 'starved_by_dominant';
-              if (getAdTrend(ad).trend === 'declining' && (ad.spend_7d || 0) > 5) return 'declining';
+              if (getAdTrend(ad).trend === 'declining' && (ad.spend_7d || 0) > 5) {
+                return (ad.roas_7d || 0) >= ROAS_TARGET ? 'declining_profitable' : 'declining';
+              }
               if (['fatigued'].includes(ad.diagnosis)) return 'fatigued';
               return 'ok';
             };
 
-            // Split ads by visibility: issues always visible, ok behind toggle
-            const issueAds = ads.filter(a => ['dominant_declining', 'declining', 'zombie', 'fatigued'].includes(getAdRole(a)));
+            // Split ads by visibility
+            const issueAds = ads.filter(a => ['dominant_declining', 'dominant_watch', 'declining', 'declining_profitable', 'zombie', 'fatigued'].includes(getAdRole(a)));
             const restAds = ads.filter(a => !issueAds.includes(a));
 
             return (
@@ -2446,11 +2463,11 @@ function CreativesPanel({ formatTime }) {
                   </div>
                 </div>
 
-                {/* Ad set level insight — concentration warning */}
-                {isDominantDeclining && starvedAds.length > 0 && (
-                  <div className="cr-adset-insight">
-                    {CrIcons.alert} <strong>{dominant.ad_name?.replace(' [Manual Upload]', '')}</strong> acapara {dominant.spend_share_pct}% del presupuesto y esta cayendo.
-                    {starvedAds.length > 0 && ` ${starvedAds.length} ad${starvedAds.length > 1 ? 's' : ''} no han tenido oportunidad de competir.`}
+                {/* Ad set level insight — RED: pause recommended */}
+                {shouldPause && (
+                  <div className="cr-adset-insight danger">
+                    {CrIcons.alert} <strong>{dominant.ad_name?.replace(' [Manual Upload]', '')}</strong> acapara {dominant.spend_share_pct}% y no es rentable ({dominantRoas.toFixed(1)}x {'<'} {ROAS_TARGET}x target).
+                    {` ${starvedAds.length} ad${starvedAds.length > 1 ? 's' : ''} sin oportunidad de competir.`}
                     <button
                       className="cr-btn-action pause"
                       disabled={pausing}
@@ -2461,6 +2478,15 @@ function CreativesPanel({ formatTime }) {
                   </div>
                 )}
 
+                {/* Ad set level insight — YELLOW: watch / cooldown */}
+                {shouldWatch && (
+                  <div className="cr-adset-insight watch">
+                    {CrIcons.eye} <strong>{dominant.ad_name?.replace(' [Manual Upload]', '')}</strong> acapara {dominant.spend_share_pct}% y esta bajando, pero aun rinde {dominantRoas.toFixed(1)}x ROAS.
+                    {hadRecentPause && ` Pausa reciente hace ${recentPause.days_ago}d — periodo de observacion.`}
+                    {!hadRecentPause && ' Vigilar — aun por encima del target.'}
+                  </div>
+                )}
+
                 {/* All ads as compact rows */}
                 <div className="cr-card-ads">
                   {ads.map(ad => {
@@ -2468,7 +2494,7 @@ function CreativesPanel({ formatTime }) {
                     const diagCfg = DIAGNOSIS_CONFIG[ad.diagnosis] || DIAGNOSIS_CONFIG.healthy;
                     const m = getAdMetrics(ad, timeWindow);
                     const trend = getAdTrend(ad);
-                    const displayName = ad.ad_name.replace(' [Manual Upload]', '');
+                    const displayName = (ad.ad_name || '').replace(' [Manual Upload]', '');
                     const isOurs = ad.ad_name?.includes('[Manual Upload]');
                     const roasColor = m.roas >= 3 ? '#10b981' : m.roas >= 1.5 ? '#3b82f6' : m.roas > 0 ? '#ef4444' : 'var(--text-muted)';
                     const isIssue = issueAds.includes(ad);
@@ -2476,11 +2502,13 @@ function CreativesPanel({ formatTime }) {
 
                     if (isHidden) return null;
 
-                    // Role-specific label
+                    // Role-specific label + color
                     const roleLabel = {
                       dominant_declining: 'DOMINANTE',
+                      dominant_watch: 'DOMINANTE',
                       dominant_ok: 'DOMINANTE',
                       starved_by_dominant: 'SIN CHANCE',
+                      declining_profitable: diagCfg.label,
                       declining: diagCfg.label,
                       zombie: diagCfg.label,
                       fatigued: diagCfg.label,
@@ -2489,9 +2517,15 @@ function CreativesPanel({ formatTime }) {
 
                     const roleColor = {
                       dominant_declining: '#ef4444',
+                      dominant_watch: '#f59e0b',
                       dominant_ok: '#22c55e',
-                      starved_by_dominant: '#f59e0b'
+                      starved_by_dominant: '#f59e0b',
+                      declining_profitable: '#f59e0b'
                     }[role] || diagCfg.color;
+
+                    // Age label
+                    const ageDays = ad.age_days || 0;
+                    const ageLabel = ageDays > 0 ? `${ageDays}d activo` : null;
 
                     return (
                       <div key={ad.ad_id} className={`cr-row ${isIssue ? 'problem' : 'ok'}`} style={{ borderLeftColor: roleColor }}>
@@ -2499,6 +2533,7 @@ function CreativesPanel({ formatTime }) {
                           <span className="cr-row-name" title={ad.ad_name}>
                             {isOurs && <span className="cr-row-badge ours">{CrIcons.upload}</span>}
                             {displayName}
+                            {ageLabel && <span className="cr-row-age">{ageLabel}</span>}
                           </span>
                           <div className="cr-row-right">
                             <span className="cr-row-diag" style={{ color: roleColor }}>{roleLabel}</span>
@@ -2512,28 +2547,21 @@ function CreativesPanel({ formatTime }) {
                             )}
                           </div>
                         </div>
-                        {/* Role-specific alert */}
+                        {/* Role-specific alerts */}
                         {role === 'starved_by_dominant' && (
                           <div className="cr-row-alert info">
-                            Sin oportunidad — el dominante acapara {dominant?.spend_share_pct}% del budget
+                            Sin oportunidad — el dominante acapara {dominant?.spend_share_pct}% del budget en este adset
                           </div>
                         )}
-                        {role === 'dominant_declining' && !isDominantDeclining && (
-                          <div className="cr-row-alert pause">
-                            {CrIcons.alert} {trend.detail || ad.diagnosis_text}
-                            <button
-                              className="cr-btn-action pause"
-                              disabled={pausing}
-                              onClick={() => setPauseConfirm({ ad, adset, okCount: ads.filter(a => a.ad_id !== ad.ad_id && a.diagnosis !== 'zombie').length, bestRoas: null })}
-                            >
-                              Pausar
-                            </button>
+                        {role === 'dominant_watch' && (
+                          <div className="cr-row-alert watch">
+                            {CrIcons.eye} Bajando pero rentable ({(ad.roas_7d || 0).toFixed(1)}x {'>'} {ROAS_TARGET}x target) — vigilar
                           </div>
                         )}
-                        {role === 'declining' && (
+                        {role === 'dominant_declining' && (
                           <div className="cr-row-alert pause">
                             {CrIcons.alert} {trend.detail || ad.diagnosis_text}
-                            {ads.filter(a => a.ad_id !== ad.ad_id && a.diagnosis !== 'zombie').length > 0 ? (
+                            {!hadRecentPause && ads.filter(a => a.ad_id !== ad.ad_id && a.diagnosis !== 'zombie').length > 0 && (
                               <button
                                 className="cr-btn-action pause"
                                 disabled={pausing}
@@ -2541,11 +2569,35 @@ function CreativesPanel({ formatTime }) {
                               >
                                 Pausar
                               </button>
-                            ) : !adset.pending_rec_id && (
+                            )}
+                            {hadRecentPause && (
+                              <span className="cr-cooldown-tag">Pausa reciente hace {recentPause.days_ago}d — esperar</span>
+                            )}
+                          </div>
+                        )}
+                        {role === 'declining_profitable' && (
+                          <div className="cr-row-alert watch">
+                            {CrIcons.eye} Bajando pero rentable ({(ad.roas_7d || 0).toFixed(1)}x) — vigilar
+                          </div>
+                        )}
+                        {role === 'declining' && (
+                          <div className="cr-row-alert pause">
+                            {CrIcons.alert} {trend.detail || ad.diagnosis_text}
+                            {!hadRecentPause && ads.filter(a => a.ad_id !== ad.ad_id && a.diagnosis !== 'zombie').length > 0 ? (
+                              <button
+                                className="cr-btn-action pause"
+                                disabled={pausing}
+                                onClick={() => setPauseConfirm({ ad, adset, okCount: ads.filter(a => a.ad_id !== ad.ad_id && a.diagnosis !== 'zombie').length, bestRoas: null })}
+                              >
+                                Pausar
+                              </button>
+                            ) : !adset.pending_rec_id && !hadRecentPause ? (
                               <button className="cr-btn-action refresh" disabled={!!suggestingFor} onClick={() => handleSuggest(adset, 'refresh')}>
                                 {suggestingFor ? 'Generando...' : 'Crear nuevo'}
                               </button>
-                            )}
+                            ) : hadRecentPause ? (
+                              <span className="cr-cooldown-tag">Pausa reciente — esperar</span>
+                            ) : null}
                           </div>
                         )}
                         {role === 'zombie' && (
