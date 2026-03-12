@@ -1423,7 +1423,7 @@ router.get('/ad-health', async (req, res) => {
           diagnosis = 'zombie';
         } else if (spendShare < 5 && ageHours > 48 && (m7d.impressions || 0) > 0) {
           diagnosis = 'starved';
-        } else if (spendShare > 35 && roas7d > 0 && roas3d > 0 && ((roas7d - roas3d) / roas7d) > 0.20) {
+        } else if (spendShare > 35 && roas7d > 0 && roas3d > 0 && ((roas7d - roas3d) / roas7d) > 0.20 && trendMap[ad.entity_id]?.trend !== 'improving') {
           diagnosis = 'dominant_declining';
         } else if (spendShare > 35) {
           diagnosis = 'dominant_healthy';

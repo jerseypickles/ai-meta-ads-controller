@@ -2435,13 +2435,13 @@ function CreativesPanel({ formatTime }) {
                       const isOurs = ad.ad_name?.includes('[Manual Upload]');
                       const roasColor = m.roas >= 3 ? '#10b981' : m.roas >= 1.5 ? '#3b82f6' : m.roas > 0 ? '#ef4444' : 'var(--text-muted)';
 
-                      // Context-aware recommendation
-                      const hasAlternatives = okAds.length > 0;
-                      const bestOk = hasAlternatives ? okAds.reduce((best, a) => (a.roas_7d || 0) > (best.roas_7d || 0) ? a : best, okAds[0]) : null;
-                      const recentRoas = ad.roas_today > 0 ? ad.roas_today : ad.roas_3d;
+                      // Context-aware: are there other ads that can absorb budget?
+                      // "Alternatives" = any OTHER ad in this ad set that isn't zombie/dead
+                      const siblings = ads.filter(a => a.ad_id !== ad.ad_id && !['zombie'].includes(a.diagnosis));
+                      const hasAlternatives = siblings.length > 0;
+                      const bestSibling = hasAlternatives ? siblings.reduce((best, a) => (a.roas_7d || 0) > (best.roas_7d || 0) ? a : best, siblings[0]) : null;
 
                       // Determine action type: pause if alternatives exist, refresh if alone
-                      const actionType = hasAlternatives ? 'pause_ad' : 'refresh';
                       const actionLabel = hasAlternatives ? 'Pausar' : 'Crear nuevo';
 
                       return (
@@ -2465,11 +2465,11 @@ function CreativesPanel({ formatTime }) {
                           {/* Context-aware alert */}
                           {trend.trend === 'declining' && hasAlternatives && (
                             <div className="cr-row-alert pause">
-                              {CrIcons.alert} {trend.detail || `ROAS decayendo`} — hay {okAds.length} ad{okAds.length > 1 ? 's' : ''} sano{okAds.length > 1 ? 's' : ''} que pueden absorber su presupuesto{bestOk ? ` (mejor: ${bestOk.roas_7d?.toFixed(1)}x)` : ''}
+                              {CrIcons.alert} {trend.detail || `ROAS decayendo`} — hay {siblings.length} ad{siblings.length > 1 ? 's' : ''} que pueden absorber su presupuesto{bestSibling ? ` (mejor: ${bestSibling.roas_7d?.toFixed(1)}x)` : ''}
                               <button
                                 className="cr-btn-action pause"
                                 disabled={pausing}
-                                onClick={() => setPauseConfirm({ ad, adset, okCount: okAds.length, bestRoas: bestOk?.roas_7d })}
+                                onClick={() => setPauseConfirm({ ad, adset, okCount: siblings.length, bestRoas: bestSibling?.roas_7d })}
                               >
                                 Pausar
                               </button>
@@ -2493,13 +2493,13 @@ function CreativesPanel({ formatTime }) {
                             <div className={`cr-row-alert ${hasAlternatives ? 'pause' : 'refresh'}`}>
                               {CrIcons.alert} {ad.diagnosis_text}
                               {hasAlternatives
-                                ? ` — ${okAds.length} ad${okAds.length > 1 ? 's' : ''} pueden absorber el presupuesto`
+                                ? ` — ${siblings.length} ad${siblings.length > 1 ? 's' : ''} pueden absorber el presupuesto`
                                 : ' — unico ad activo, necesita reemplazo'}
                               {hasAlternatives ? (
                                 <button
                                   className="cr-btn-action pause"
                                   disabled={pausing}
-                                  onClick={() => setPauseConfirm({ ad, adset, okCount: okAds.length, bestRoas: bestOk?.roas_7d })}
+                                  onClick={() => setPauseConfirm({ ad, adset, okCount: siblings.length, bestRoas: bestSibling?.roas_7d })}
                                 >
                                   Pausar
                                 </button>
