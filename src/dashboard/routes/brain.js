@@ -1847,8 +1847,8 @@ router.post('/ad-health/quick-pause', async (req, res) => {
 router.post('/launch/upload', launchUpload.array('images', 10), async (req, res) => {
   try {
     const files = req.files;
-    if (!files || files.length < 2) {
-      return res.status(400).json({ error: 'Se necesitan al menos 2 imágenes' });
+    if (!files || files.length === 0) {
+      return res.status(400).json({ error: 'Se necesita al menos 1 imagen' });
     }
 
     const productName = req.body.product_name || '';
@@ -1894,14 +1894,14 @@ router.post('/launch/upload', launchUpload.array('images', 10), async (req, res)
 router.post('/launch/strategize', async (req, res) => {
   try {
     const { asset_ids, product_name } = req.body;
-    if (!asset_ids || asset_ids.length < 2) {
-      return res.status(400).json({ error: 'Se necesitan al menos 2 asset_ids' });
+    if (!asset_ids || asset_ids.length === 0) {
+      return res.status(400).json({ error: 'Se necesita al menos 1 asset_id' });
     }
 
     // Load the uploaded assets
     const assets = await CreativeAsset.find({ _id: { $in: asset_ids }, status: 'active' }).lean();
-    if (assets.length < 2) {
-      return res.status(400).json({ error: `Solo se encontraron ${assets.length} assets válidos` });
+    if (assets.length === 0) {
+      return res.status(400).json({ error: 'No se encontraron assets válidos' });
     }
 
     // Load account performance
@@ -2082,8 +2082,8 @@ Today: ${new Date().toISOString().split('T')[0]}`
 router.post('/launch/approve', async (req, res) => {
   try {
     const { proposal } = req.body;
-    if (!proposal || !proposal.selected_creatives || proposal.selected_creatives.length < 2) {
-      return res.status(400).json({ error: 'Propuesta inválida — se necesitan al menos 2 creativos' });
+    if (!proposal || !proposal.selected_creatives || proposal.selected_creatives.length === 0) {
+      return res.status(400).json({ error: 'Propuesta inválida — se necesita al menos 1 creativo' });
     }
     if (!proposal.campaign_id) {
       return res.status(400).json({ error: 'Falta campaign_id en la propuesta' });
@@ -2124,7 +2124,7 @@ router.post('/launch/approve', async (req, res) => {
         uploadedAssets.push({ asset, creative_config: sel });
       }
 
-      if (uploadedAssets.length < 2) throw new Error('No se pudieron subir suficientes imágenes a Meta');
+      if (uploadedAssets.length === 0) throw new Error('No se pudo subir ninguna imagen a Meta');
 
       // Step 3: Create ad set (PAUSED)
       const adSetResult = await meta.createAdSet({

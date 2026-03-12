@@ -2726,8 +2726,8 @@ function LaunchPanel() {
 
   // Step 1: Upload + Strategize
   const handlePropose = useCallback(async () => {
-    if (files.length < 2) {
-      setError('Se necesitan al menos 2 imágenes');
+    if (files.length === 0) {
+      setError('Se necesita al menos 1 imagen');
       return;
     }
     setUploading(true);
@@ -2830,7 +2830,7 @@ function LaunchPanel() {
               <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
             </svg>
             <span className="launch-dropzone-text">Arrastra imágenes aquí o haz click para seleccionar</span>
-            <span className="launch-dropzone-hint">Mínimo 2 imágenes, máximo 10 · JPG, PNG, WebP</span>
+            <span className="launch-dropzone-hint">1-10 imágenes · JPG, PNG, WebP</span>
           </div>
         </div>
 
@@ -2864,7 +2864,7 @@ function LaunchPanel() {
         <button
           className="launch-btn-primary"
           onClick={handlePropose}
-          disabled={files.length < 2 || uploading || step === 'proposing'}
+          disabled={files.length === 0 || uploading || step === 'proposing'}
         >
           {uploading ? 'Subiendo imágenes...' : step === 'proposing' ? 'Brain analizando cuenta...' : `Brain: Armar Ad Set (${files.length} creativos)`}
         </button>
