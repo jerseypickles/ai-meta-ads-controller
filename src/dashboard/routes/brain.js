@@ -1687,8 +1687,8 @@ router.post('/ad-health/quick-pause', async (req, res) => {
     }
 
     // Ejecutar pausa directo en Meta API
-    const MetaClient = require('../../meta/client');
-    const meta = new MetaClient();
+    const { getMetaClient } = require('../../meta/client');
+    const meta = getMetaClient();
     await meta.updateAdStatus(ad_id, 'PAUSED');
 
     // Obtener métricas actuales del ad para registrar
