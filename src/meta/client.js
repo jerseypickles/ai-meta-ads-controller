@@ -1272,6 +1272,49 @@ class MetaClient {
   }
 
   /**
+   * Crear un ad creative con múltiples textos (asset_feed_spec).
+   * Meta rota headlines/bodies automáticamente — 1 ad, múltiples copy variants.
+   * Max: 5 bodies, 5 titles, 5 descriptions.
+   */
+  async createAdCreativeMultiText(params) {
+    const { page_id, image_hash, video_id, headlines, bodies, descriptions, cta, link_url } = params;
+
+    if (!page_id) throw new Error('page_id es requerido');
+    if (!image_hash && !video_id) throw new Error('Se requiere image_hash o video_id');
+    if (!link_url) throw new Error('link_url es requerido');
+
+    const assetFeedSpec = {
+      images: image_hash ? [{ hash: image_hash }] : [],
+      videos: video_id ? [{ video_id }] : [],
+      bodies: (bodies || ['']).slice(0, 5).map(t => ({ text: t || '' })),
+      titles: (headlines || ['']).slice(0, 5).map(t => ({ text: t || '' })),
+      descriptions: (descriptions || ['']).slice(0, 5).map(t => ({ text: t || '' })),
+      ad_formats: [image_hash ? 'SINGLE_IMAGE' : 'SINGLE_VIDEO'],
+      link_urls: [{ website_url: link_url }],
+      call_to_action_types: [cta || 'SHOP_NOW']
+    };
+
+    // Remove empty arrays
+    if (assetFeedSpec.images.length === 0) delete assetFeedSpec.images;
+    if (assetFeedSpec.videos.length === 0) delete assetFeedSpec.videos;
+
+    const creativeParams = {
+      name: `Creative - ${(headlines || [''])[0] || 'Multi-text'} - ${new Date().toISOString().split('T')[0]}`,
+      object_story_spec: JSON.stringify({ page_id }),
+      asset_feed_spec: JSON.stringify(assetFeedSpec)
+    };
+
+    const titlePreview = (headlines || []).slice(0, 2).join(' / ');
+    logger.info(`Creando ad creative multi-text: "${titlePreview}" (${(headlines || []).length}h × ${(bodies || []).length}b)`);
+    const result = await this.post(`/${this.adAccountId}/adcreatives`, creativeParams);
+
+    return {
+      creative_id: result.id,
+      name: creativeParams.name
+    };
+  }
+
+  /**
    * Crear un nuevo ad dentro de un ad set existente.
    * Meta API: POST /act_{ad_account_id}/ads
    * El ad se crea PAUSADO por seguridad.

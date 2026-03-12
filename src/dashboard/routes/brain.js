@@ -1960,11 +1960,13 @@ The user has uploaded ${assets.length} creative images and wants to launch a NEW
 
 You MUST use ALL the uploaded creatives — the user chose these specifically.
 
-For EACH creative, write ad copy:
-- **headlines**: Array of 2 different headlines. Short, punchy, max 40 chars. English for US audience. USE EMOJIS liberally (🥒🔥💥🤤👀✨🎉💚). Make them scroll-stopping.
-- **bodies**: Array of 2 different primary texts. Keep them SHORT: 1-2 sentences max. Use emojis. Hook + benefit. English. Examples of good length: "🥒 These aren't your grandma's pickles. Bold, crunchy & addictive — try them before they sell out!" or "🔥 Spicy pickle lovers, this is YOUR moment. Order now & taste the heat 💥"
+For EACH creative image, write MULTIPLE ad copy options — Meta will rotate them automatically via asset_feed_spec (1 ad per image, multiple text variants):
+- **headlines**: Array of 3-5 different headlines. Short, punchy, max 40 chars. English for US audience. USE EMOJIS liberally (🥒🔥💥🤤👀✨🎉💚). Make them scroll-stopping. Each headline = different angle.
+- **bodies**: Array of 3-5 different primary texts. Keep them SHORT: 1-2 sentences max. Use emojis. Hook + benefit. English. Examples: "🥒 These aren't your grandma's pickles. Bold, crunchy & addictive!" or "🔥 Spicy pickle lovers, this is YOUR moment 💥"
 - **cta**: SHOP_NOW | LEARN_MORE | BUY_NOW | GET_OFFER | ORDER_NOW
 - **link_url**: The destination URL for the ad (use the website URL from account context)
+
+IMPORTANT: Each image = 1 ad with multiple text options. NOT separate ads per headline. Meta rotates the best combo automatically.
 
 Output STRICT JSON:
 {
@@ -1977,8 +1979,8 @@ Output STRICT JSON:
   "selected_creatives": [
     {
       "asset_id": "mongo_id_from_the_uploaded_list",
-      "headlines": ["🥒 Headline 1", "🔥 Headline 2"],
-      "bodies": ["Short body with emojis 1", "Short body with emojis 2"],
+      "headlines": ["🥒 Headline 1", "🔥 Headline 2", "💥 Headline 3", "🤤 Headline 4", "✨ Headline 5"],
+      "bodies": ["Short body 1 🥒", "Short body 2 🔥", "Short body 3 💥", "Short body 4 🤤", "Short body 5 ✨"],
       "cta": "SHOP_NOW"
     }
   ]
@@ -2145,36 +2147,31 @@ router.post('/launch/approve', async (req, res) => {
         status: 'PAUSED'
       });
 
-      // Step 4: Create ads
+      // Step 4: Create ads — 1 ad per image with multiple text options (asset_feed_spec)
+      // Meta rotates headlines/bodies automatically — no need for separate ads per copy variant
       const createdAds = [];
+      const linkUrl = proposal.link_url || websiteUrl;
       for (const { asset, creative_config } of uploadedAssets) {
         const headlines = Array.isArray(creative_config.headlines) ? creative_config.headlines : [creative_config.headline || asset.headline];
         const bodies = Array.isArray(creative_config.bodies) ? creative_config.bodies : [creative_config.body || ''];
-        const variantCount = Math.max(headlines.length, 1);
 
-        for (let v = 0; v < variantCount; v++) {
-          const headline = headlines[v] || headlines[0] || asset.headline;
-          const body = bodies[v] || bodies[0] || '';
-          const variantLabel = variantCount > 1 ? ` v${v + 1}` : '';
+        try {
+          const creative = await meta.createAdCreativeMultiText({
+            page_id: pageId,
+            image_hash: asset.meta_image_hash,
+            headlines,
+            bodies,
+            descriptions: [''],
+            cta: creative_config.cta || 'SHOP_NOW',
+            link_url: linkUrl
+          });
 
-          try {
-            const creative = await meta.createAdCreative({
-              page_id: pageId,
-              image_hash: asset.meta_image_hash,
-              headline,
-              body,
-              description: '',
-              cta: creative_config.cta || 'SHOP_NOW',
-              link_url: proposal.link_url || asset.link_url || websiteUrl
-            });
+          const adName = `${headlines[0] || 'Ad'} - ${asset.style || 'mix'} [${headlines.length}h×${bodies.length}b]`;
+          const ad = await meta.createAd(adSetResult.adset_id, creative.creative_id, adName, 'PAUSED');
 
-            const adName = `${headline} - ${asset.style || 'mix'}${variantLabel}`;
-            const ad = await meta.createAd(adSetResult.adset_id, creative.creative_id, adName, 'PAUSED');
-
-            createdAds.push({ ad_id: ad.ad_id, creative_id: creative.creative_id, asset_id: asset._id.toString(), name: adName });
-          } catch (adErr) {
-            logger.warn(`[BRAIN-LAUNCH] Error creando ad variant: ${adErr.message}`);
-          }
+          createdAds.push({ ad_id: ad.ad_id, creative_id: creative.creative_id, asset_id: asset._id.toString(), name: adName, headlines_count: headlines.length, bodies_count: bodies.length });
+        } catch (adErr) {
+          logger.warn(`[BRAIN-LAUNCH] Error creando ad: ${adErr.message}`);
         }
 
         // Update asset tracking
