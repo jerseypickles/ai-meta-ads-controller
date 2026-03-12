@@ -2218,6 +2218,34 @@ router.post('/launch/approve', async (req, res) => {
         }]
       });
 
+      // Step 7: Notify Brain — create insight so it appears in Feed immediately
+      try {
+        const learningEnds = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+        await BrainInsight.create({
+          type: 'status_change',
+          severity: 'high',
+          title: `Nuevo ad set lanzado: ${proposal.adset_name}`,
+          summary: `Se lanzó un nuevo ad set con ${createdAds.length} ads y budget de $${proposal.daily_budget}/día. ` +
+            `Fase de aprendizaje activa hasta ${learningEnds.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' })}. ` +
+            `No se deben hacer cambios durante los primeros 3 días.` +
+            (proposal.strategy_summary ? `\n\nEstrategia: ${proposal.strategy_summary}` : ''),
+          entity_id: adSetResult.adset_id,
+          entity_name: proposal.adset_name,
+          entity_type: 'adset',
+          data: {
+            action: 'brain_launch',
+            ads_created: createdAds.length,
+            daily_budget: proposal.daily_budget,
+            ad_ids: createdAds.map(a => a.ad_id),
+            learning_ends_at: learningEnds.toISOString(),
+            product_name: proposal.product_name || '',
+            link_url: proposal.link_url || ''
+          }
+        });
+      } catch (insightErr) {
+        logger.warn(`[BRAIN-LAUNCH] Error creando insight (non-fatal): ${insightErr.message}`);
+      }
+
       const result = {
         success: true,
         adset_id: adSetResult.adset_id,
