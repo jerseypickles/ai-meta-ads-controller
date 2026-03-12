@@ -1689,7 +1689,13 @@ router.post('/ad-health/quick-pause', async (req, res) => {
     // Ejecutar pausa directo en Meta API
     const { getMetaClient } = require('../../meta/client');
     const meta = getMetaClient();
-    await meta.updateAdStatus(ad_id, 'PAUSED');
+    try {
+      await meta.updateAdStatus(ad_id, 'PAUSED');
+    } catch (metaErr) {
+      const metaError = metaErr.response?.data?.error || metaErr.message;
+      logger.error(`[QUICK-PAUSE] Meta API error: ${JSON.stringify(metaError)}`);
+      return res.status(502).json({ error: `Meta API error: ${typeof metaError === 'object' ? metaError.message || JSON.stringify(metaError) : metaError}` });
+    }
 
     // Obtener métricas actuales del ad para registrar
     const adSnap = adSnaps.find(s => s.entity_id === ad_id);
@@ -1761,8 +1767,9 @@ router.post('/ad-health/quick-pause', async (req, res) => {
     logger.info(`[QUICK-PAUSE] Ad ${ad_id} (${ad_name}) pausado directo — ${siblingsActive.length} ads activos restantes`);
     res.json({ ok: true, ad_id, paused: true, siblings_remaining: siblingsActive.length });
   } catch (error) {
-    logger.error(`[QUICK-PAUSE] Error: ${error.message}`);
-    res.status(500).json({ error: error.message });
+    const detail = error.response?.data?.error?.message || error.message;
+    logger.error(`[QUICK-PAUSE] Error: ${detail}`, { stack: error.stack });
+    res.status(500).json({ error: detail });
   }
 });
 
