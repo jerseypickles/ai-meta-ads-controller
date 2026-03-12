@@ -15,6 +15,42 @@ const logger = require('../../utils/logger');
 
 const analyzer = new BrainAnalyzer();
 
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const config = require('../../../config');
+const Anthropic = require('@anthropic-ai/sdk');
+const CreativeAsset = require('../../db/models/CreativeAsset');
+const AICreation = require('../../db/models/AICreation');
+const { getMetaClient } = require('../../meta/client');
+const { getLatestSnapshots } = require('../../db/queries');
+
+// Multer for launch uploads
+const LAUNCH_UPLOAD_DIR = path.join(config.system.uploadsDir, 'creatives');
+const launchUploadStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    if (!fs.existsSync(LAUNCH_UPLOAD_DIR)) fs.mkdirSync(LAUNCH_UPLOAD_DIR, { recursive: true });
+    cb(null, LAUNCH_UPLOAD_DIR);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E6)}`;
+    const ext = path.extname(file.originalname);
+    cb(null, `launch-${uniqueSuffix}${ext}`);
+  }
+});
+const launchUpload = multer({
+  storage: launchUploadStorage,
+  fileFilter: (req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    cb(null, allowed.includes(file.mimetype));
+  },
+  limits: { fileSize: 30 * 1024 * 1024 }
+});
+
+// In-memory store for launch jobs
+const launchJobs = new Map();
+const LAUNCH_JOB_TTL = 10 * 60 * 1000;
+
 // ═══ INSIGHTS ═══
 
 /**
@@ -1799,6 +1835,417 @@ router.post('/ad-health/quick-pause', async (req, res) => {
     logger.error(`[QUICK-PAUSE] Error: ${detail}`, { stack: error.stack });
     res.status(500).json({ error: detail });
   }
+});
+
+// ═══ LAUNCH AD SET — Upload creatives + Brain proposes + approve ═══
+
+/**
+ * POST /api/brain/launch/upload
+ * Upload 2-10 images. Saves to disk + creates CreativeAsset records.
+ * Body (multipart): images[] + product_name (optional)
+ */
+router.post('/launch/upload', launchUpload.array('images', 10), async (req, res) => {
+  try {
+    const files = req.files;
+    if (!files || files.length < 2) {
+      return res.status(400).json({ error: 'Se necesitan al menos 2 imágenes' });
+    }
+
+    const productName = req.body.product_name || '';
+    const assets = [];
+
+    for (const file of files) {
+      const asset = await CreativeAsset.create({
+        filename: file.filename,
+        original_name: file.originalname,
+        file_path: file.path,
+        file_type: file.mimetype,
+        media_type: 'image',
+        purpose: 'ad-ready',
+        style: 'other',
+        generated_by: 'manual',
+        ad_format: 'feed',
+        product_name: productName,
+        product_detected_by: productName ? 'manual' : '',
+        tags: ['launch-upload'],
+        status: 'active'
+      });
+      assets.push({
+        id: asset._id.toString(),
+        filename: asset.filename,
+        original_name: asset.original_name,
+        product_name: productName
+      });
+    }
+
+    logger.info(`[BRAIN-LAUNCH] ${assets.length} imágenes subidas para lanzamiento (producto: ${productName || 'no especificado'})`);
+    res.json({ success: true, assets, count: assets.length });
+  } catch (error) {
+    logger.error(`[BRAIN-LAUNCH] Error en upload: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/brain/launch/strategize
+ * Brain analyzes account + the uploaded assets and proposes 1 ad set.
+ * Body: { asset_ids: string[], product_name?: string }
+ */
+router.post('/launch/strategize', async (req, res) => {
+  try {
+    const { asset_ids, product_name } = req.body;
+    if (!asset_ids || asset_ids.length < 2) {
+      return res.status(400).json({ error: 'Se necesitan al menos 2 asset_ids' });
+    }
+
+    // Load the uploaded assets
+    const assets = await CreativeAsset.find({ _id: { $in: asset_ids }, status: 'active' }).lean();
+    if (assets.length < 2) {
+      return res.status(400).json({ error: `Solo se encontraron ${assets.length} assets válidos` });
+    }
+
+    // Load account performance
+    const adsetSnapshots = await getLatestSnapshots('adset').catch(() => []);
+    const activeSnapshots = adsetSnapshots.filter(s => s.status === 'ACTIVE');
+    const totalSpend7d = activeSnapshots.reduce((sum, s) => sum + (s.metrics?.last_7d?.spend || 0), 0);
+    const totalPurchaseValue7d = activeSnapshots.reduce((sum, s) => sum + (s.metrics?.last_7d?.purchase_value || 0), 0);
+    const accountRoas = totalSpend7d > 0 ? totalPurchaseValue7d / totalSpend7d : 0;
+    const totalBudget = activeSnapshots.reduce((sum, s) => sum + (s.daily_budget || 0), 0);
+
+    // Get campaign
+    const meta = getMetaClient();
+    const campaigns = await meta.getCampaigns().catch(() => []);
+    if (campaigns.length === 0) {
+      return res.status(400).json({ error: 'No hay campañas disponibles en la cuenta' });
+    }
+
+    // AI creation history
+    const aiHistory = await AICreation.find({ creation_type: 'create_adset' })
+      .sort({ created_at: -1 }).limit(10).lean();
+
+    // Build context for Claude
+    const assetsContext = assets.map(a => ({
+      id: a._id.toString(),
+      original_name: a.original_name,
+      product_name: a.product_name || product_name || '',
+      style: a.style || 'other'
+    }));
+
+    const performanceContext = activeSnapshots.slice(0, 20).map(s => ({
+      name: s.entity_name || s.name,
+      status: s.status,
+      daily_budget: s.daily_budget || 0,
+      roas_7d: s.metrics?.last_7d?.roas || 0,
+      cpa_7d: s.metrics?.last_7d?.cpa || 0,
+      spend_7d: s.metrics?.last_7d?.spend || 0,
+      purchases_7d: s.metrics?.last_7d?.purchases || 0,
+      frequency_7d: s.metrics?.last_7d?.frequency || 0
+    }));
+
+    const aiHistoryContext = aiHistory.map(h => ({
+      name: h.meta_entity_name,
+      verdict: h.verdict,
+      initial_budget: h.initial_budget,
+      lifecycle_phase: h.lifecycle_phase,
+      roas_7d: h.metrics_7d?.roas_7d || 0
+    }));
+
+    const claudeClient = new Anthropic({ apiKey: config.claude.apiKey });
+    const response = await claudeClient.messages.create({
+      model: config.claude.model,
+      max_tokens: 4000,
+      system: `You are Claude, senior media buyer for a DTC ecommerce brand (Jersey Pickles) running Meta Ads in the USA.
+
+The user has uploaded ${assets.length} creative images and wants to launch a NEW ad set. Your job: propose ONE complete ad set ready to launch.
+
+You MUST use ALL the uploaded creatives — the user chose these specifically.
+
+For EACH creative, write ad copy:
+- **headlines**: Array of 2 different headlines. Short, punchy, max 40 chars. English for US audience.
+- **bodies**: Array of 2 different primary texts. 2-3 sentences (hook + benefit + CTA). English.
+- **cta**: SHOP_NOW | LEARN_MORE | BUY_NOW | GET_OFFER | ORDER_NOW
+
+Output STRICT JSON:
+{
+  "adset_name": "AI - [Product] - [Angle] - [Date]",
+  "daily_budget": 25.00,
+  "budget_rationale": "In Spanish — why this budget",
+  "strategy_summary": "In Spanish — overall strategy for this ad set",
+  "risk_assessment": "low|medium|high",
+  "selected_creatives": [
+    {
+      "asset_id": "mongo_id_from_the_uploaded_list",
+      "headlines": ["Headline 1", "Headline 2"],
+      "bodies": ["Body text 1", "Body text 2"],
+      "cta": "SHOP_NOW"
+    }
+  ]
+}
+
+RULES:
+- Return ONLY valid JSON, no markdown
+- Budget: $15-50/day, conservative for new tests
+- Use data from account performance to inform budget/strategy
+- Ad copy in English, strategy/rationale in Spanish
+- Be creative with headlines — different angles (benefit, urgency, curiosity)
+- The AI Manager will auto-scale if ROAS is good`,
+      messages: [{
+        role: 'user',
+        content: `Launch a new ad set with these ${assets.length} creatives.
+
+## UPLOADED CREATIVES (use ALL of them)
+${JSON.stringify(assetsContext, null, 2)}
+
+## PRODUCT
+${product_name || assets[0]?.product_name || 'Not specified — infer from image names'}
+
+## ACCOUNT PERFORMANCE (${activeSnapshots.length} active ad sets)
+Account ROAS 7d: ${accountRoas.toFixed(2)}x | Total budget: $${totalBudget.toFixed(0)}/day | Spend 7d: $${totalSpend7d.toFixed(0)}
+${JSON.stringify(performanceContext, null, 2)}
+
+## AI HISTORY (last ${aiHistory.length} launches)
+${JSON.stringify(aiHistoryContext, null, 2)}
+
+## CAMPAIGN
+Campaign: "${campaigns[0].name}" (${campaigns[0].id})
+
+Today: ${new Date().toISOString().split('T')[0]}`
+      }]
+    });
+
+    const text = response.content.filter(b => b.type === 'text').map(b => b.text).join('');
+    let proposal;
+    try {
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error('No JSON found');
+      proposal = JSON.parse(jsonMatch[0]);
+    } catch (parseErr) {
+      logger.error('[BRAIN-LAUNCH] Error parsing Claude response:', text.substring(0, 500));
+      return res.status(500).json({ error: 'Claude no devolvió JSON válido' });
+    }
+
+    // Validate and enrich creatives
+    const validCreatives = [];
+    for (const sel of (proposal.selected_creatives || [])) {
+      const asset = assets.find(a => a._id.toString() === sel.asset_id);
+      if (asset) {
+        const headlines = Array.isArray(sel.headlines) ? sel.headlines : [sel.headline || asset.original_name];
+        const bodies = Array.isArray(sel.bodies) ? sel.bodies : [sel.body || ''];
+        validCreatives.push({
+          ...sel,
+          headlines,
+          bodies,
+          asset_filename: asset.filename,
+          asset_style: asset.style || 'other',
+          asset_headline: asset.headline || asset.original_name
+        });
+      }
+    }
+
+    // If Claude missed some assets, add them with default copy
+    for (const asset of assets) {
+      if (!validCreatives.find(c => c.asset_id === asset._id.toString())) {
+        validCreatives.push({
+          asset_id: asset._id.toString(),
+          headlines: [asset.original_name.replace(/\.[^.]+$/, '').substring(0, 40)],
+          bodies: [''],
+          cta: 'SHOP_NOW',
+          asset_filename: asset.filename,
+          asset_style: asset.style || 'other',
+          asset_headline: asset.headline || asset.original_name
+        });
+      }
+    }
+
+    const result = {
+      ...proposal,
+      selected_creatives: validCreatives,
+      campaign_id: campaigns[0].id,
+      campaign_name: campaigns[0].name,
+      product_name: product_name || assets[0]?.product_name || ''
+    };
+
+    logger.info(`[BRAIN-LAUNCH] Propuesta generada: "${result.adset_name}" — $${result.daily_budget}/day — ${validCreatives.length} creativos`);
+    res.json({ success: true, proposal: result });
+  } catch (error) {
+    logger.error(`[BRAIN-LAUNCH] Error en strategize: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/brain/launch/approve
+ * Approve and execute the launch proposal.
+ * Body: { proposal } — the proposal object from strategize (optionally edited by user)
+ * Returns job_id for polling.
+ */
+router.post('/launch/approve', async (req, res) => {
+  try {
+    const { proposal } = req.body;
+    if (!proposal || !proposal.selected_creatives || proposal.selected_creatives.length < 2) {
+      return res.status(400).json({ error: 'Propuesta inválida — se necesitan al menos 2 creativos' });
+    }
+    if (!proposal.campaign_id) {
+      return res.status(400).json({ error: 'Falta campaign_id en la propuesta' });
+    }
+
+    const jobId = `brain_launch_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    launchJobs.set(jobId, { status: 'running', startedAt: Date.now(), result: null, error: null });
+
+    res.json({ success: true, async: true, job_id: jobId, message: 'Lanzamiento iniciado' });
+
+    // Reuse the same execution logic as adset-creator
+    // Import executeAdSetApproval-like logic inline
+    (async () => {
+      const meta = getMetaClient();
+
+      // Step 1: Account info
+      const [pixelInfo, pageId, websiteUrl] = await Promise.all([
+        meta.getPixelId(),
+        meta.getPageId(),
+        meta.getWebsiteUrl()
+      ]);
+      if (!pixelInfo) throw new Error('No se encontró pixel_id');
+      if (!pageId) throw new Error('No se encontró page_id');
+      if (!websiteUrl) throw new Error('No se encontró link_url');
+
+      // Step 2: Upload images to Meta
+      const uploadedAssets = [];
+      for (const sel of proposal.selected_creatives) {
+        const asset = await CreativeAsset.findById(sel.asset_id);
+        if (!asset) continue;
+        if (!asset.uploaded_to_meta) {
+          const upload = await meta.uploadImage(asset.file_path);
+          asset.meta_image_hash = upload.image_hash;
+          asset.uploaded_to_meta = true;
+          asset.uploaded_at = new Date();
+          await asset.save();
+        }
+        uploadedAssets.push({ asset, creative_config: sel });
+      }
+
+      if (uploadedAssets.length < 2) throw new Error('No se pudieron subir suficientes imágenes a Meta');
+
+      // Step 3: Create ad set (PAUSED)
+      const adSetResult = await meta.createAdSet({
+        campaign_id: proposal.campaign_id,
+        name: proposal.adset_name,
+        daily_budget: proposal.daily_budget,
+        optimization_goal: pixelInfo.optimization_goal,
+        billing_event: pixelInfo.billing_event,
+        bid_strategy: pixelInfo.bid_strategy,
+        promoted_object: pixelInfo.promoted_object,
+        status: 'PAUSED'
+      });
+
+      // Step 4: Create ads
+      const createdAds = [];
+      for (const { asset, creative_config } of uploadedAssets) {
+        const headlines = Array.isArray(creative_config.headlines) ? creative_config.headlines : [creative_config.headline || asset.headline];
+        const bodies = Array.isArray(creative_config.bodies) ? creative_config.bodies : [creative_config.body || ''];
+        const variantCount = Math.max(headlines.length, 1);
+
+        for (let v = 0; v < variantCount; v++) {
+          const headline = headlines[v] || headlines[0] || asset.headline;
+          const body = bodies[v] || bodies[0] || '';
+          const variantLabel = variantCount > 1 ? ` v${v + 1}` : '';
+
+          try {
+            const creative = await meta.createAdCreative({
+              page_id: pageId,
+              image_hash: asset.meta_image_hash,
+              headline,
+              body,
+              description: '',
+              cta: creative_config.cta || 'SHOP_NOW',
+              link_url: asset.link_url || websiteUrl
+            });
+
+            const adName = `${headline} - ${asset.style || 'mix'}${variantLabel}`;
+            const ad = await meta.createAd(adSetResult.adset_id, creative.creative_id, adName, 'PAUSED');
+
+            createdAds.push({ ad_id: ad.ad_id, creative_id: creative.creative_id, asset_id: asset._id.toString(), name: adName });
+          } catch (adErr) {
+            logger.warn(`[BRAIN-LAUNCH] Error creando ad variant: ${adErr.message}`);
+          }
+        }
+
+        // Update asset tracking
+        asset.times_used = (asset.times_used || 0) + 1;
+        if (!asset.used_in_adsets) asset.used_in_adsets = [];
+        if (!asset.used_in_adsets.includes(adSetResult.adset_id)) asset.used_in_adsets.push(adSetResult.adset_id);
+        await asset.save();
+      }
+
+      if (createdAds.length === 0) throw new Error('No se pudo crear ningún ad');
+
+      // Step 5: Activate
+      await Promise.allSettled(createdAds.map(a => meta.updateAdStatus(a.ad_id, 'ACTIVE')));
+      await meta.updateStatus(adSetResult.adset_id, 'ACTIVE');
+
+      // Step 6: Register AICreation
+      await AICreation.create({
+        creation_type: 'create_adset',
+        meta_entity_id: adSetResult.adset_id,
+        meta_entity_type: 'adset',
+        meta_entity_name: proposal.adset_name,
+        parent_entity_id: proposal.campaign_id,
+        parent_entity_name: proposal.campaign_name || '',
+        agent_type: 'creative',
+        reasoning: proposal.strategy_summary || '',
+        confidence: proposal.risk_assessment === 'low' ? 'high' : proposal.risk_assessment === 'high' ? 'low' : 'medium',
+        initial_budget: proposal.daily_budget,
+        managed_by_ai: true,
+        child_ad_ids: createdAds.map(a => a.ad_id),
+        selected_creative_ids: uploadedAssets.map(u => u.asset._id.toString()),
+        current_status: 'ACTIVE',
+        current_budget: proposal.daily_budget,
+        lifecycle_phase: 'learning',
+        activated_at: new Date(),
+        learning_ends_at: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
+        lifecycle_actions: [{
+          action: 'create_and_activate',
+          value: { budget: proposal.daily_budget, ads: createdAds.length },
+          reason: proposal.strategy_summary || 'Brain launch',
+          executed_at: new Date()
+        }]
+      });
+
+      const result = {
+        success: true,
+        adset_id: adSetResult.adset_id,
+        adset_name: proposal.adset_name,
+        ads_created: createdAds.length,
+        daily_budget: proposal.daily_budget,
+        created_ads: createdAds
+      };
+
+      launchJobs.set(jobId, { status: 'completed', startedAt: launchJobs.get(jobId)?.startedAt, result, error: null });
+      logger.info(`[BRAIN-LAUNCH] Ad set lanzado: ${adSetResult.adset_id} — ${createdAds.length} ads — $${proposal.daily_budget}/day`);
+    })().catch(error => {
+      launchJobs.set(jobId, { status: 'failed', startedAt: launchJobs.get(jobId)?.startedAt, result: null, error: error.message });
+      logger.error(`[BRAIN-LAUNCH] Error en ejecución: ${error.message}`);
+    }).finally(() => {
+      setTimeout(() => launchJobs.delete(jobId), LAUNCH_JOB_TTL);
+    });
+  } catch (error) {
+    logger.error(`[BRAIN-LAUNCH] Error en approve: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/brain/launch/status/:jobId
+ * Poll launch job status.
+ */
+router.get('/launch/status/:jobId', async (req, res) => {
+  const job = launchJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job no encontrado' });
+
+  const elapsed = Math.round((Date.now() - job.startedAt) / 1000);
+  if (job.status === 'running') return res.json({ status: 'running', elapsed_seconds: elapsed });
+  if (job.status === 'completed') return res.json({ status: 'completed', elapsed_seconds: elapsed, ...job.result });
+  return res.json({ status: 'failed', elapsed_seconds: elapsed, error: job.error });
 });
 
 module.exports = router;

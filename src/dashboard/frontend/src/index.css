@@ -9065,3 +9065,467 @@ a:hover {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ═══ LAUNCH PANEL — Lanzar Ad Set ═══ */
+
+.launch-panel {
+  padding: 0;
+}
+
+.launch-header {
+  margin-bottom: 24px;
+}
+
+.launch-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 4px 0;
+}
+
+.launch-subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.launch-dropzone {
+  border: 2px dashed var(--border-color);
+  border-radius: 12px;
+  padding: 40px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  margin-bottom: 20px;
+}
+
+.launch-dropzone:hover {
+  border-color: var(--accent);
+  background: rgba(59, 130, 246, 0.05);
+}
+
+.launch-dropzone-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+}
+
+.launch-dropzone-content svg {
+  opacity: 0.5;
+}
+
+.launch-dropzone-text {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.launch-dropzone-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.launch-previews {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.launch-preview-card {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  background: var(--card-bg);
+}
+
+.launch-preview-img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+}
+
+.launch-preview-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.7);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.launch-preview-remove:hover {
+  background: var(--danger);
+}
+
+.launch-preview-name {
+  display: block;
+  padding: 4px 6px;
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.launch-field {
+  margin-bottom: 16px;
+}
+
+.launch-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.launch-input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.launch-input:focus {
+  border-color: var(--accent);
+}
+
+.launch-input-sm {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.launch-textarea {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  resize: vertical;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.launch-textarea:focus {
+  border-color: var(--accent);
+}
+
+.launch-error {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: #ef4444;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.launch-btn-primary {
+  width: 100%;
+  padding: 12px 20px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.1s;
+}
+
+.launch-btn-primary:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.launch-btn-primary:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.launch-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.launch-btn-secondary {
+  padding: 10px 20px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.launch-btn-secondary:hover {
+  background: var(--hover-bg);
+}
+
+/* Proposal review */
+
+.launch-proposal-section {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.launch-row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.launch-budget-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.launch-budget-prefix,
+.launch-budget-suffix {
+  font-size: 14px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.launch-budget-input .launch-input {
+  width: 100px;
+  text-align: center;
+}
+
+.launch-risk {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.launch-risk-low {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+
+.launch-risk-medium {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+.launch-risk-high {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.launch-strategy {
+  margin-top: 12px;
+}
+
+.launch-strategy-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Creatives section */
+
+.launch-creatives-section {
+  margin-bottom: 20px;
+}
+
+.launch-creative-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
+.launch-creative-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.launch-creative-thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.launch-creative-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.launch-variant {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.launch-variant-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  background: rgba(59, 130, 246, 0.1);
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-top: 8px;
+  flex-shrink: 0;
+}
+
+.launch-variant-fields {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Actions bar */
+
+.launch-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.launch-actions .launch-btn-primary {
+  width: auto;
+  min-width: 180px;
+}
+
+/* Loading state */
+
+.launch-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  text-align: center;
+}
+
+.launch-loading h3 {
+  color: var(--text-primary);
+  margin: 16px 0 8px;
+}
+
+.launch-loading-detail {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.launch-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Done state */
+
+.launch-done {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 20px;
+  text-align: center;
+}
+
+.launch-done-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  font-size: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.launch-done h3 {
+  color: var(--text-primary);
+  margin: 0 0 20px;
+}
+
+.launch-done-details {
+  width: 100%;
+  max-width: 400px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.launch-done-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+}
+
+.launch-done-row + .launch-done-row {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.launch-done-label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.launch-done-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.launch-done-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 20px;
+}
+
+.launch-done .launch-btn-primary {
+  width: auto;
+  min-width: 180px;
+}

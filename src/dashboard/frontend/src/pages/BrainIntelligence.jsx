@@ -8,7 +8,8 @@ import {
   approveRecommendation, rejectRecommendation, markRecommendationExecuted,
   triggerBrainRecommendations, getFollowUpStats,
   getPolicyState, getKnowledgeHistory, getDeepKnowledge, getCreativePerformance,
-  getAdHealth, suggestAdHealthAction, quickPauseAd, logout
+  getAdHealth, suggestAdHealthAction, quickPauseAd, logout,
+  uploadLaunchCreatives, launchStrategize, launchApprove, getCreativeThumbnailUrl
 } from '../api';
 
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
@@ -42,7 +43,7 @@ const SEVERITY_CONFIG = {
 
 export default function BrainIntelligence() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('feed'); // 'feed' | 'recs' | 'followup' | 'knowledge' | 'creatives' | 'chat'
+  const [activeTab, setActiveTab] = useState('feed'); // 'feed' | 'recs' | 'followup' | 'knowledge' | 'creatives' | 'launch' | 'chat'
   const [insights, setInsights] = useState([]);
   const [insightsTotal, setInsightsTotal] = useState(0);
   const [insightsPage, setInsightsPage] = useState(1);
@@ -462,6 +463,12 @@ export default function BrainIntelligence() {
           Creativos
         </button>
         <button
+          className={`brain-tab ${activeTab === 'launch' ? 'active' : ''}`}
+          onClick={() => setActiveTab('launch')}
+        >
+          Lanzar Ad Set
+        </button>
+        <button
           className={`brain-tab ${activeTab === 'chat' ? 'active' : ''}`}
           onClick={() => setActiveTab('chat')}
         >
@@ -518,6 +525,8 @@ export default function BrainIntelligence() {
           <KnowledgePanel formatTime={formatTime} />
         ) : activeTab === 'creatives' ? (
           <CreativesPanel formatTime={formatTime} />
+        ) : activeTab === 'launch' ? (
+          <LaunchPanel />
         ) : (
           <ChatPanel
             messages={chatMessages}
@@ -2668,6 +2677,356 @@ function CreativesPanel({ formatTime }) {
       )}
     </div>
   );
+}
+
+// ═══ LAUNCH PANEL — Upload creatives + Brain proposes ad set ═══
+
+function LaunchPanel() {
+  const [step, setStep] = useState('upload'); // upload | proposing | review | launching | done
+  const [files, setFiles] = useState([]);
+  const [previews, setPreviews] = useState([]);
+  const [productName, setProductName] = useState('');
+  const [uploadedAssets, setUploadedAssets] = useState([]);
+  const [proposal, setProposal] = useState(null);
+  const [launchResult, setLaunchResult] = useState(null);
+  const [error, setError] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef(null);
+  const dropRef = useRef(null);
+
+  // File selection
+  const handleFiles = useCallback((newFiles) => {
+    const imageFiles = Array.from(newFiles).filter(f => f.type.startsWith('image/'));
+    if (imageFiles.length === 0) return;
+    setFiles(prev => [...prev, ...imageFiles]);
+    // Generate previews
+    for (const f of imageFiles) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setPreviews(prev => [...prev, { name: f.name, url: e.target.result }]);
+      };
+      reader.readAsDataURL(f);
+    }
+    setError('');
+  }, []);
+
+  // Drag & drop
+  const handleDragOver = useCallback((e) => { e.preventDefault(); e.stopPropagation(); }, []);
+  const handleDrop = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    handleFiles(e.dataTransfer.files);
+  }, [handleFiles]);
+
+  // Remove file
+  const removeFile = useCallback((index) => {
+    setFiles(prev => prev.filter((_, i) => i !== index));
+    setPreviews(prev => prev.filter((_, i) => i !== index));
+  }, []);
+
+  // Step 1: Upload + Strategize
+  const handlePropose = useCallback(async () => {
+    if (files.length < 2) {
+      setError('Se necesitan al menos 2 imágenes');
+      return;
+    }
+    setUploading(true);
+    setError('');
+    try {
+      // Upload files
+      const uploadResult = await uploadLaunchCreatives(files, productName);
+      setUploadedAssets(uploadResult.assets);
+
+      // Strategize
+      setStep('proposing');
+      const stratResult = await launchStrategize(
+        uploadResult.assets.map(a => a.id),
+        productName
+      );
+      setProposal(stratResult.proposal);
+      setStep('review');
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+      setStep('upload');
+    } finally {
+      setUploading(false);
+    }
+  }, [files, productName]);
+
+  // Step 2: Edit proposal fields
+  const updateCreativeCopy = useCallback((index, field, variantIndex, value) => {
+    setProposal(prev => {
+      const updated = { ...prev };
+      updated.selected_creatives = [...updated.selected_creatives];
+      updated.selected_creatives[index] = { ...updated.selected_creatives[index] };
+      updated.selected_creatives[index][field] = [...updated.selected_creatives[index][field]];
+      updated.selected_creatives[index][field][variantIndex] = value;
+      return updated;
+    });
+  }, []);
+
+  const updateBudget = useCallback((value) => {
+    const num = parseFloat(value);
+    if (!isNaN(num) && num >= 5) setProposal(prev => ({ ...prev, daily_budget: num }));
+  }, []);
+
+  const updateAdsetName = useCallback((value) => {
+    setProposal(prev => ({ ...prev, adset_name: value }));
+  }, []);
+
+  // Step 3: Launch
+  const handleLaunch = useCallback(async () => {
+    setStep('launching');
+    setError('');
+    try {
+      const result = await launchApprove(proposal);
+      setLaunchResult(result);
+      setStep('done');
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+      setStep('review');
+    }
+  }, [proposal]);
+
+  // Reset
+  const handleReset = useCallback(() => {
+    setStep('upload');
+    setFiles([]);
+    setPreviews([]);
+    setProductName('');
+    setUploadedAssets([]);
+    setProposal(null);
+    setLaunchResult(null);
+    setError('');
+  }, []);
+
+  // ─── UPLOAD STEP ───
+  if (step === 'upload' || step === 'proposing') {
+    return (
+      <div className="launch-panel">
+        <div className="launch-header">
+          <h3 className="launch-title">Lanzar Ad Set con el Brain</h3>
+          <p className="launch-subtitle">Sube tus creativos y el Brain arma todo: copy, budget, estructura</p>
+        </div>
+
+        {/* Drop zone */}
+        <div
+          ref={dropRef}
+          className="launch-dropzone"
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={(e) => handleFiles(e.target.files)}
+          />
+          <div className="launch-dropzone-content">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+            </svg>
+            <span className="launch-dropzone-text">Arrastra imágenes aquí o haz click para seleccionar</span>
+            <span className="launch-dropzone-hint">Mínimo 2 imágenes, máximo 10 · JPG, PNG, WebP</span>
+          </div>
+        </div>
+
+        {/* Previews */}
+        {previews.length > 0 && (
+          <div className="launch-previews">
+            {previews.map((p, i) => (
+              <div key={i} className="launch-preview-card">
+                <img src={p.url} alt={p.name} className="launch-preview-img" />
+                <button className="launch-preview-remove" onClick={(e) => { e.stopPropagation(); removeFile(i); }}>×</button>
+                <span className="launch-preview-name">{p.name}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Product name */}
+        <div className="launch-field">
+          <label className="launch-label">Producto (opcional)</label>
+          <input
+            type="text"
+            className="launch-input"
+            placeholder="Ej: Spicy Pickles, Gift Box, Pickle Salsa..."
+            value={productName}
+            onChange={(e) => setProductName(e.target.value)}
+          />
+        </div>
+
+        {error && <div className="launch-error">{error}</div>}
+
+        <button
+          className="launch-btn-primary"
+          onClick={handlePropose}
+          disabled={files.length < 2 || uploading || step === 'proposing'}
+        >
+          {uploading ? 'Subiendo imágenes...' : step === 'proposing' ? 'Brain analizando cuenta...' : `Brain: Armar Ad Set (${files.length} creativos)`}
+        </button>
+      </div>
+    );
+  }
+
+  // ─── REVIEW STEP ───
+  if (step === 'review') {
+    return (
+      <div className="launch-panel">
+        <div className="launch-header">
+          <h3 className="launch-title">Propuesta del Brain</h3>
+          <p className="launch-subtitle">Revisa y edita antes de lanzar</p>
+        </div>
+
+        {/* Ad set info */}
+        <div className="launch-proposal-section">
+          <div className="launch-field">
+            <label className="launch-label">Nombre del Ad Set</label>
+            <input
+              type="text"
+              className="launch-input"
+              value={proposal.adset_name}
+              onChange={(e) => updateAdsetName(e.target.value)}
+            />
+          </div>
+          <div className="launch-row">
+            <div className="launch-field" style={{ flex: 1 }}>
+              <label className="launch-label">Budget diario</label>
+              <div className="launch-budget-input">
+                <span className="launch-budget-prefix">$</span>
+                <input
+                  type="number"
+                  className="launch-input"
+                  value={proposal.daily_budget}
+                  onChange={(e) => updateBudget(e.target.value)}
+                  min="5"
+                  max="500"
+                  step="5"
+                />
+                <span className="launch-budget-suffix">/día</span>
+              </div>
+            </div>
+            <div className="launch-field" style={{ flex: 1 }}>
+              <label className="launch-label">Riesgo</label>
+              <span className={`launch-risk launch-risk-${proposal.risk_assessment}`}>
+                {proposal.risk_assessment === 'low' ? 'Bajo' : proposal.risk_assessment === 'high' ? 'Alto' : 'Medio'}
+              </span>
+            </div>
+          </div>
+          {proposal.strategy_summary && (
+            <div className="launch-strategy">
+              <label className="launch-label">Estrategia</label>
+              <p className="launch-strategy-text">{proposal.strategy_summary}</p>
+            </div>
+          )}
+          {proposal.budget_rationale && (
+            <div className="launch-strategy">
+              <label className="launch-label">Razón del budget</label>
+              <p className="launch-strategy-text">{proposal.budget_rationale}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Creatives with copy */}
+        <div className="launch-creatives-section">
+          <label className="launch-label">Creativos y Copy ({proposal.selected_creatives?.length || 0} ads)</label>
+          {(proposal.selected_creatives || []).map((creative, ci) => {
+            const uploaded = uploadedAssets.find(a => a.id === creative.asset_id);
+            const preview = previews.find(p => p.name === uploaded?.original_name);
+            return (
+              <div key={ci} className="launch-creative-card">
+                <div className="launch-creative-header">
+                  {preview && <img src={preview.url} alt="" className="launch-creative-thumb" />}
+                  <span className="launch-creative-name">{uploaded?.original_name || creative.asset_filename || `Creativo ${ci + 1}`}</span>
+                </div>
+                {(creative.headlines || []).map((headline, hi) => (
+                  <div key={hi} className="launch-variant">
+                    <span className="launch-variant-label">v{hi + 1}</span>
+                    <div className="launch-variant-fields">
+                      <input
+                        type="text"
+                        className="launch-input launch-input-sm"
+                        value={headline}
+                        onChange={(e) => updateCreativeCopy(ci, 'headlines', hi, e.target.value)}
+                        placeholder="Headline"
+                        maxLength={40}
+                      />
+                      <textarea
+                        className="launch-textarea"
+                        value={(creative.bodies || [])[hi] || ''}
+                        onChange={(e) => updateCreativeCopy(ci, 'bodies', hi, e.target.value)}
+                        placeholder="Primary text"
+                        rows={2}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+
+        {error && <div className="launch-error">{error}</div>}
+
+        <div className="launch-actions">
+          <button className="launch-btn-secondary" onClick={handleReset}>Cancelar</button>
+          <button className="launch-btn-primary" onClick={handleLaunch}>
+            Lanzar Ad Set
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── LAUNCHING STEP ───
+  if (step === 'launching') {
+    return (
+      <div className="launch-panel">
+        <div className="launch-loading">
+          <div className="launch-spinner" />
+          <h3>Lanzando ad set en Meta...</h3>
+          <p className="launch-loading-detail">Subiendo a Meta → Creando ad set → Creando ads → Activando</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── DONE STEP ───
+  if (step === 'done' && launchResult) {
+    return (
+      <div className="launch-panel">
+        <div className="launch-done">
+          <div className="launch-done-icon">✓</div>
+          <h3>Ad Set Lanzado</h3>
+          <div className="launch-done-details">
+            <div className="launch-done-row">
+              <span className="launch-done-label">Ad Set</span>
+              <span className="launch-done-value">{launchResult.adset_name}</span>
+            </div>
+            <div className="launch-done-row">
+              <span className="launch-done-label">ID</span>
+              <span className="launch-done-value">{launchResult.adset_id}</span>
+            </div>
+            <div className="launch-done-row">
+              <span className="launch-done-label">Ads creados</span>
+              <span className="launch-done-value">{launchResult.ads_created}</span>
+            </div>
+            <div className="launch-done-row">
+              <span className="launch-done-label">Budget</span>
+              <span className="launch-done-value">${launchResult.daily_budget}/día</span>
+            </div>
+          </div>
+          <p className="launch-done-note">El AI Manager se encargará de optimizar este ad set automáticamente.</p>
+          <button className="launch-btn-primary" onClick={handleReset}>Lanzar otro</button>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 // ═══ CHAT PANEL ═══

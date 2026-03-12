@@ -444,4 +444,49 @@ export const quickPauseAd = async (adId, adName, adsetId, adsetName, reason) => 
   return response.data;
 };
 
+// ═══ BRAIN — Launch Ad Set ═══
+
+export const uploadLaunchCreatives = async (imageFiles, productName = '') => {
+  const formData = new FormData();
+  for (const file of imageFiles) {
+    formData.append('images', file);
+  }
+  if (productName) formData.append('product_name', productName);
+  const response = await api.post('/api/brain/launch/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000
+  });
+  return response.data;
+};
+
+export const launchStrategize = async (assetIds, productName = '') => {
+  const response = await api.post('/api/brain/launch/strategize', {
+    asset_ids: assetIds,
+    product_name: productName
+  }, { timeout: 120000 });
+  return response.data;
+};
+
+export const launchApprove = async (proposal) => {
+  const response = await api.post('/api/brain/launch/approve', { proposal }, { timeout: 15000 });
+  const data = response.data;
+  if (data.async && data.job_id) {
+    // Poll for completion
+    const start = Date.now();
+    while (Date.now() - start < 300000) {
+      const status = await api.get(`/api/brain/launch/status/${data.job_id}`);
+      if (status.data.status === 'completed') return { success: true, ...status.data };
+      if (status.data.status === 'failed') throw new Error(status.data.error || 'Launch failed');
+      await new Promise(r => setTimeout(r, 3000));
+    }
+    throw new Error('Timeout');
+  }
+  return data;
+};
+
+export const getCreativeThumbnailUrl = (filename) => {
+  const BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
+  return `${BASE}/uploads/creatives/${filename}`;
+};
+
 export default api;
