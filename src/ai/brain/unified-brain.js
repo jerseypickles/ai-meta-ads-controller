@@ -1155,15 +1155,16 @@ class UnifiedBrain {
 
   /**
    * Guarda recomendaciones del UnifiedBrain en BrainRecommendation.
-   * Esto las integra con el follow-up multi-fase (3d/7d/14d),
+   * Esto las integra con el follow-up multi-fase (3d/7d),
    * BrainMemory action_history, y AI impact analysis.
    */
   async _saveToBrainRecommendations(recs, cycleId, sharedData, usage) {
     if (!recs || recs.length === 0) return 0;
 
-    // Expirar recomendaciones pendientes anteriores
+    // Expirar recomendaciones pendientes >24h (dar tiempo al usuario para actuar)
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 3600000);
     const expired = await BrainRecommendation.updateMany(
-      { status: 'pending' },
+      { status: 'pending', created_at: { $lt: twentyFourHoursAgo } },
       { $set: { status: 'expired', updated_at: new Date() } }
     );
     if (expired.modifiedCount > 0) {
@@ -1173,7 +1174,7 @@ class UnifiedBrain {
     // Cargar follow-ups activos para deduplicación
     const activeFollowUps = await BrainRecommendation.find({
       status: 'approved',
-      'follow_up.current_phase': { $in: ['awaiting_day_3', 'awaiting_day_7', 'awaiting_day_14'] }
+      'follow_up.current_phase': { $in: ['awaiting_day_3', 'awaiting_day_7'] }
     }).lean();
 
     const followUpMap = {};
@@ -1205,8 +1206,8 @@ class UnifiedBrain {
           const day3Measured = phase !== 'awaiting_day_3';
           const day3Negative = existingFU.day_3_verdict === 'negative';
 
-          if (!day3Measured) {
-            logger.info(`[BRAIN] Skipped BrainRec: ${rec.entity_name} — en seguimiento (${phase})`);
+          if (!day3Measured && sameAction) {
+            logger.info(`[BRAIN] Skipped BrainRec: ${rec.entity_name} — misma acción en seguimiento temprano (${phase})`);
             continue;
           }
           if (sameAction && !day3Negative) {

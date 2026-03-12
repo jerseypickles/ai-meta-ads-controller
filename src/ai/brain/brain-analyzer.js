@@ -1403,7 +1403,7 @@ Responde en español, con datos concretos (nombres, números). Causa raíz > sí
       // 2.7. Cargar follow-ups activos (para prompt context + deduplicación posterior)
       const activeFollowUps = await BrainRecommendation.find({
         status: 'approved',
-        'follow_up.current_phase': { $in: ['awaiting_day_3', 'awaiting_day_7', 'awaiting_day_14'] }
+        'follow_up.current_phase': { $in: ['awaiting_day_3', 'awaiting_day_7'] }
       }).lean();
 
       // 2.8. Cargar lecciones aprendidas de seguimientos completados (Fix 1 — Learning Loop)
@@ -1876,7 +1876,7 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
    * Phase timeline (from decided_at):
    *   3d → day_3 measurement (early signal)
    *   7d → day_7 measurement (stabilized)
-   *  14d → day_14 measurement (full impact) + AI analysis
+   *  7d → day_7 measurement (stabilized) + impact summary → complete
    */
   async followUpApprovedRecommendations() {
     try {
@@ -1886,7 +1886,7 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
         decided_at: { $ne: null },
         $or: [
           { 'follow_up.current_phase': { $exists: false } },
-          { 'follow_up.current_phase': { $in: ['awaiting_day_3', 'awaiting_day_7', 'awaiting_day_14'] } },
+          { 'follow_up.current_phase': { $in: ['awaiting_day_3', 'awaiting_day_7'] } },
           // Legacy: recs without current_phase field (pre-upgrade)
           { 'follow_up.checked': false, 'follow_up.current_phase': { $exists: false } }
         ]
@@ -1939,8 +1939,6 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
           targetPhase = 'day_3';
         } else if (phase === 'awaiting_day_7' && hoursSinceApproval >= 168) {
           targetPhase = 'day_7';
-        } else if (phase === 'awaiting_day_14' && hoursSinceApproval >= 336) {
-          targetPhase = 'day_14';
         }
 
         if (!targetPhase) continue;
@@ -1997,10 +1995,8 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
         // Determine verdict for this phase
         const verdict = this._computePhaseVerdict(rec, targetPhase, deltas, actionExecuted);
 
-        // Build update object
-        const nextPhase = targetPhase === 'day_3' ? 'awaiting_day_7'
-          : targetPhase === 'day_7' ? 'awaiting_day_14'
-          : 'complete';
+        // Follow-up completes at day_7
+        const nextPhase = targetPhase === 'day_3' ? 'awaiting_day_7' : 'complete';
 
         const updateObj = {
           [`follow_up.phases.${targetPhase}.measured`]: true,
@@ -2017,8 +2013,8 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
           updated_at: new Date()
         };
 
-        // On final phase or day_7+, set the overall verdict + summary
-        if (targetPhase === 'day_14' || targetPhase === 'day_7') {
+        // On day_7 (final phase), set the overall verdict + summary
+        if (targetPhase === 'day_7') {
           const impactSummary = this._buildImpactSummary(rec, targetPhase, deltas, currentMetrics, prev, actionExecuted);
           updateObj['follow_up.impact_summary'] = impactSummary;
           updateObj['follow_up.impact_verdict'] = verdict;
@@ -2030,12 +2026,6 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
         if (targetPhase !== 'day_3') {
           const trend = this._computeImpactTrend(rec, targetPhase, deltas);
           updateObj['follow_up.impact_trend'] = trend;
-        }
-
-        // Mark complete on day_14
-        if (targetPhase === 'day_14') {
-          updateObj['follow_up.checked'] = true;
-          updateObj['follow_up.checked_at'] = new Date();
         }
 
         await BrainRecommendation.updateOne({ _id: rec._id }, { $set: updateObj });
@@ -2085,14 +2075,11 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
           }
         }
 
-        // Create follow-up insight on day_7 and day_14
-        if (targetPhase === 'day_7' || targetPhase === 'day_14') {
+        // Create follow-up insight on day_7 (final phase)
+        if (targetPhase === 'day_7') {
           await this._createFollowUpInsight(rec, targetPhase, verdict, deltas, currentMetrics, prev, actionExecuted);
-        }
 
-        // Run AI analysis on day_14 (final phase)
-        if (targetPhase === 'day_14') {
-          // Fix 2 — Learning Loop: find concurrent actions on the same entity
+          // Run AI analysis on day_7 (final phase)
           const concurrentRecs = approvedRecs.filter(other =>
             other._id.toString() !== rec._id.toString() &&
             other.entity?.entity_id === rec.entity?.entity_id &&
@@ -2207,7 +2194,7 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
       return 'neutral';
     }
 
-    // Multi-signal verdict for day_7 and day_14
+    // Multi-signal verdict for day_7
     let score = 0;
     // ROAS is king
     if (deltas.roas_pct > 15) score += 3;
@@ -2344,7 +2331,7 @@ IMPORTANTE: Revisa el "Historial" de cada ad set. Si una acción falló antes en
   }
 
   /**
-   * AI-powered impact analysis (runs on day_14 — the final phase).
+   * AI-powered impact analysis (runs on day_7 — the final phase).
    * Claude analyzes the before/after data and explains WHY the action
    * worked or didn't, what lesson to learn, and confidence adjustment.
    */

@@ -202,10 +202,11 @@ class ImpactContextBuilder {
    */
   async _loadTrackingRecommendations() {
     try {
+      const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 3600000);
       return await BrainRecommendation.find({
         status: 'approved',
-        decided_at: { $ne: null },
-        'follow_up.current_phase': { $in: ['awaiting_day_3', 'awaiting_day_7', 'awaiting_day_14'] }
+        decided_at: { $gte: fourteenDaysAgo },
+        'follow_up.current_phase': { $in: ['awaiting_day_3', 'awaiting_day_7'] }
       }).lean();
     } catch (e) {
       logger.warn(`[IMPACT] Error loading tracking recommendations: ${e.message}`);
