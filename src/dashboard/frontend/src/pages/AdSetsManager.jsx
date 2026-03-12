@@ -212,6 +212,7 @@ const FatigueBadge = ({ fatigue }) => {
 const AdRow = ({ ad, timeWindow, onAction }) => {
   const [busy, setBusy] = useState(null);
   const [removed, setRemoved] = useState(false);
+  const [localStatus, setLocalStatus] = useState(null);
   const m = ad.metrics?.[timeWindow] || ad.metrics?.last_7d || {};
   const fatigue = useMemo(() => computeFatigue(ad), [ad]);
 
@@ -221,8 +222,8 @@ const AdRow = ({ ad, timeWindow, onAction }) => {
     setBusy('pause');
     try {
       await pauseEntity(ad.entity_id, { entity_type: 'ad', entity_name: ad.entity_name, reason: 'Manual pause' });
-      setRemoved(true);
-      onAction?.();
+      setLocalStatus('PAUSED');
+      onAction?.('pause', ad.entity_id);
     } catch (err) { alert(err.response?.data?.error || err.message); }
     finally { setBusy(null); }
   };
@@ -234,16 +235,18 @@ const AdRow = ({ ad, timeWindow, onAction }) => {
     try {
       await deleteEntity(ad.entity_id, { entity_type: 'ad', entity_name: ad.entity_name, reason: 'Manual delete' });
       setRemoved(true);
-      onAction?.();
+      onAction?.('delete', ad.entity_id);
     } catch (err) { alert(err.response?.data?.error || err.message); }
     finally { setBusy(null); }
   };
 
+  const effectiveStatus = localStatus || ad.status;
+
   if (removed) return null;
-  const isActive = ad.status === 'ACTIVE';
+  const isActive = effectiveStatus === 'ACTIVE';
 
   return (
-    <tr className={`${!isActive ? 'opacity-50' : ''} ${fatigue.level === 'critical' ? 'ad-row-fatigued' : ''}`}>
+    <tr className={`${!isActive ? 'opacity-50' : ''} ${fatigue.level === 'critical' && isActive ? 'ad-row-fatigued' : ''}`}>
       <td className="primary">
         <span className="d-inline-flex align-center gap-2">
           {isActive
@@ -251,6 +254,7 @@ const AdRow = ({ ad, timeWindow, onAction }) => {
             : <Pause size={10} style={{ color: 'var(--red)' }} />}
           <span className="ad-name-cell">{ad.entity_name || ad.entity_id}</span>
           {isActive && <FatigueBadge fatigue={fatigue} />}
+          {localStatus === 'PAUSED' && <span className="fatigue-badge fatigue-warning" style={{ fontSize: '0.55rem' }}>Pausado</span>}
         </span>
       </td>
       <td className="numeric">{fmtMoney(m.spend)}</td>
@@ -662,6 +666,16 @@ const AdSetDetail = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights, t
     onRefresh?.();
   };
 
+  const handleAdAction = (action, adId) => {
+    if (action === 'delete') {
+      setAds(prev => (prev || []).filter(a => a.entity_id !== adId));
+    } else if (action === 'pause') {
+      setAds(prev => (prev || []).map(a => a.entity_id === adId ? { ...a, status: 'PAUSED' } : a));
+    }
+    // Background refresh sin bloquear UI
+    setTimeout(() => onRefresh?.(), 2000);
+  };
+
   const activeAds = (ads || []).filter(a => isActiveStatus(a.status)).length;
   const totalAds = (ads || []).length;
   const fatigueCounts = useMemo(() => {
@@ -821,7 +835,7 @@ const AdSetDetail = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights, t
                       </tr>
                     </thead>
                     <tbody>
-                      {ads.map((ad, i) => <AdRow key={ad.entity_id || i} ad={ad} timeWindow={timeWindow} onAction={reloadAds} />)}
+                      {ads.map((ad, i) => <AdRow key={ad.entity_id || i} ad={ad} timeWindow={timeWindow} onAction={handleAdAction} />)}
                     </tbody>
                   </table>
                 </div>
