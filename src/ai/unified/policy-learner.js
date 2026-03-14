@@ -210,11 +210,29 @@ class PolicyLearner {
   }
 
   _calculateReward(action) {
-    const before = action.metrics_at_execution || {};
-    // Preferir 7d (atribución ~95%) sobre 3d (~85-90%) cuando esté disponible
-    const after = (action.impact_7d_measured && action.metrics_after_7d?.roas_7d > 0)
-      ? action.metrics_after_7d
-      : (action.metrics_after_3d || {});
+    // Select correct before/after based on action type for accurate attribution
+    let before, after;
+
+    if (action.action === 'create_ad') {
+      // create_ad: metrics_at_execution = parent adset BEFORE adding ad
+      // metrics_after_Xd = parent adset AFTER — did diversification help?
+      before = action.metrics_at_execution || {};
+      after = (action.impact_7d_measured && action.metrics_after_7d?.roas_7d > 0)
+        ? action.metrics_after_7d
+        : (action.metrics_after_3d || {});
+    } else if (['pause', 'update_ad_status'].includes(action.action) && action.parent_adset_id) {
+      // Ad-level pause: measure impact on PARENT adset (the ad itself is paused, irrelevant)
+      before = action.parent_metrics_at_execution || {};
+      after = (action.impact_7d_measured && action.parent_metrics_after_7d?.roas_7d > 0)
+        ? action.parent_metrics_after_7d
+        : (action.parent_metrics_after_3d || {});
+    } else {
+      // Default: adset-level actions (scale_up, scale_down, etc.)
+      before = action.metrics_at_execution || {};
+      after = (action.impact_7d_measured && action.metrics_after_7d?.roas_7d > 0)
+        ? action.metrics_after_7d
+        : (action.metrics_after_3d || {});
+    }
 
     const roasBefore = toNumber(before.roas_7d);
     const roasAfter = toNumber(after.roas_7d);
@@ -242,33 +260,37 @@ class PolicyLearner {
     // efficiency actions should reduce waste while preserving ROAS.
     if (['scale_up', 'reactivate', 'duplicate_adset'].includes(action.action)) {
       rawReward += (0.15 * spendDelta) + (0.10 * purchaseDelta);
-    } else if (['scale_down', 'pause'].includes(action.action)) {
+    } else if (['scale_down'].includes(action.action)) {
+      rawReward += (0.15 * (-spendDelta)) + (0.10 * cpaDelta);
+    } else if (['pause', 'update_ad_status'].includes(action.action)) {
+      // Pause actions: reward parent adset improvement (already using parent metrics above)
       rawReward += (0.15 * (-spendDelta)) + (0.10 * cpaDelta);
     } else if (['create_ad', 'update_ad_creative'].includes(action.action)) {
-      // Creative actions: CTR improvement matters most
+      // Creative actions: CTR improvement + parent adset purchase growth
       const ctrBefore = toNumber(before.ctr);
       const ctrAfter = toNumber(after.ctr);
       const ctrDelta = ctrBefore > 0 ? (ctrAfter - ctrBefore) / ctrBefore : 0;
       rawReward += (0.15 * ctrDelta) + (0.10 * purchaseDelta);
     } else if (action.action === 'move_budget') {
-      // Budget redistribution: reward if overall efficiency improved
-      rawReward += (0.10 * roasDelta) + (0.10 * cpaDelta);
+      // Budget redistribution: combine source + target deltas
+      const targetBefore = action.target_metrics_at_execution || {};
+      const targetAfter = (action.impact_7d_measured && action.target_metrics_after_7d?.roas_7d > 0)
+        ? action.target_metrics_after_7d
+        : (action.target_metrics_after_3d || {});
+      const targetRoasBefore = toNumber(targetBefore.roas_7d);
+      const targetRoasAfter = toNumber(targetAfter.roas_7d);
+      const targetRoasDelta = targetRoasBefore > 0 ? (targetRoasAfter - targetRoasBefore) / targetRoasBefore : 0;
+      // Weighted combination: 50% source + 50% target
+      rawReward += (0.10 * roasDelta) + (0.10 * targetRoasDelta);
     } else if (action.action === 'update_bid_strategy') {
       // Bid strategy: reward CPA improvement + spend efficiency
       rawReward += (0.15 * cpaDelta) + (0.10 * (-spendDelta));
-    } else if (action.action === 'update_ad_status') {
-      // Ad status toggle: similar to pause/reactivate at ad level
-      rawReward += (0.10 * roasDelta) + (0.05 * cpaDelta);
     }
 
     // Penalize uncertain decisions so the learner converges to robust policies.
     rawReward -= toNumber(action.uncertainty_score, 0) * 0.08;
 
     // Magnitude-aware reward: scale the signal by how large the change was.
-    // Small changes (≤10%) get a modest multiplier (1.0x).
-    // Medium changes (10-25%) get moderate amplification (up to 1.25x).
-    // Large changes (25-50%) amplify more (up to 1.5x) — riskier bets
-    // carry stronger reward/penalty so the learner differentiates boldness.
     const absMagnitude = Math.abs(toNumber(action.change_percent, 0));
     if (absMagnitude > 0 && ['scale_up', 'scale_down', 'move_budget'].includes(action.action)) {
       const magnitudeMultiplier = 1 + clamp((absMagnitude - 10) / 80, 0, 0.5);

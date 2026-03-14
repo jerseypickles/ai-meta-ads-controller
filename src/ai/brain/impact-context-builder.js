@@ -86,16 +86,40 @@ class ImpactContextBuilder {
 
   _processActions(actions) {
     return actions.map(a => {
-      const before = a.metrics_at_execution || {};
-      // Prefer 7d attribution (~95% accuracy) over 3d (~85-90%) for learning
-      const after = (a.impact_7d_measured && a.metrics_after_7d?.roas_7d > 0)
-        ? a.metrics_after_7d
-        : (a.metrics_after_3d || a.metrics_after_1d || {});
+      // Select correct before/after metrics based on action type
+      let before, after, parentBefore, parentAfter;
 
-      const roasBefore = before.roas_7d || 0;
-      const roasAfter = after.roas_7d || 0;
-      const cpaBefore = before.cpa_7d || 0;
-      const cpaAfter = after.cpa_7d || 0;
+      if (a.action === 'create_ad') {
+        // create_ad: metrics_at_execution = parent adset BEFORE
+        before = a.metrics_at_execution || {};
+        after = (a.impact_7d_measured && a.metrics_after_7d?.roas_7d > 0)
+          ? a.metrics_after_7d
+          : (a.metrics_after_3d || a.metrics_after_1d || {});
+      } else if (['pause', 'update_ad_status'].includes(a.action) && a.parent_adset_id) {
+        // Ad-level pause: use parent adset metrics for result evaluation
+        before = a.metrics_at_execution || {};
+        after = (a.impact_7d_measured && a.metrics_after_7d?.roas_7d > 0)
+          ? a.metrics_after_7d
+          : (a.metrics_after_3d || a.metrics_after_1d || {});
+        parentBefore = a.parent_metrics_at_execution || {};
+        parentAfter = (a.impact_7d_measured && a.parent_metrics_after_7d?.roas_7d > 0)
+          ? a.parent_metrics_after_7d
+          : (a.parent_metrics_after_3d || {});
+      } else {
+        before = a.metrics_at_execution || {};
+        after = (a.impact_7d_measured && a.metrics_after_7d?.roas_7d > 0)
+          ? a.metrics_after_7d
+          : (a.metrics_after_3d || a.metrics_after_1d || {});
+      }
+
+      // For ad-level pause actions, evaluate result based on parent adset improvement
+      const evalBefore = (parentBefore && parentBefore.roas_7d > 0) ? parentBefore : before;
+      const evalAfter = (parentAfter && parentAfter.roas_7d > 0) ? parentAfter : after;
+
+      const roasBefore = evalBefore.roas_7d || 0;
+      const roasAfter = evalAfter.roas_7d || 0;
+      const cpaBefore = evalBefore.cpa_7d || 0;
+      const cpaAfter = evalAfter.cpa_7d || 0;
 
       const delta_roas_pct = roasBefore > 0
         ? Math.round((roasAfter - roasBefore) / roasBefore * 10000) / 100
@@ -118,6 +142,15 @@ class ImpactContextBuilder {
       );
       const weight = concurrent.length > 0 ? 1 / (1 + concurrent.length) : 1.0;
 
+      // Build parent context narrative for ad-level actions
+      let parentContext = null;
+      if (a.action === 'create_ad' && roasBefore > 0 && roasAfter > 0) {
+        parentContext = `ad set ROAS ${roasBefore.toFixed(1)}x → ${roasAfter.toFixed(1)}x (${delta_roas_pct > 0 ? '+' : ''}${delta_roas_pct}%)`;
+      } else if (['pause', 'update_ad_status'].includes(a.action) && parentBefore?.roas_7d > 0 && parentAfter?.roas_7d > 0) {
+        const pDelta = Math.round((parentAfter.roas_7d - parentBefore.roas_7d) / parentBefore.roas_7d * 10000) / 100;
+        parentContext = `ad set ROAS ${parentBefore.roas_7d.toFixed(1)}x → ${parentAfter.roas_7d.toFixed(1)}x (${pDelta > 0 ? '+' : ''}${pDelta}%)`;
+      }
+
       return {
         action: a.action,
         entity_id: a.entity_id,
@@ -136,7 +169,8 @@ class ImpactContextBuilder {
         checkpoint,
         agent_type: a.agent_type,
         creative_asset_id: a.creative_asset_id || null,
-        weight
+        weight,
+        parentContext
       };
     });
   }
@@ -258,7 +292,8 @@ class ImpactContextBuilder {
         ? ` $${a.before_value} -> $${a.after_value}` : '';
       const statusChange = a.action === 'update_ad_status'
         ? ` (${a.after_value === 0 ? 'PAUSADO' : 'ACTIVADO'})` : '';
-      return `- ${a.entity_name}: ${a.action}${budgetStr}${statusChange} (hace ${daysAgo}d, medido a ${a.checkpoint || '3d'}) | resultado: ${a.result} | ROAS: ${a.roas_before.toFixed(2)}x -> ${a.roas_after.toFixed(2)}x (${a.delta_roas_pct > 0 ? '+' : ''}${a.delta_roas_pct}%) | CPA: $${a.cpa_before.toFixed(2)} -> $${a.cpa_after.toFixed(2)} (${a.delta_cpa_pct > 0 ? '+' : ''}${a.delta_cpa_pct}%)`;
+      const parentStr = a.parentContext ? ` | ${a.parentContext}` : '';
+      return `- ${a.entity_name}: ${a.action}${budgetStr}${statusChange} (hace ${daysAgo}d, medido a ${a.checkpoint || '3d'}) | resultado: ${a.result} | ROAS: ${a.roas_before.toFixed(2)}x -> ${a.roas_after.toFixed(2)}x (${a.delta_roas_pct > 0 ? '+' : ''}${a.delta_roas_pct}%) | CPA: $${a.cpa_before.toFixed(2)} -> $${a.cpa_after.toFixed(2)} (${a.delta_cpa_pct > 0 ? '+' : ''}${a.delta_cpa_pct}%)${parentStr}`;
     }).join('\n');
 
     return `\n\nFEEDBACK DE IMPACTO — RESULTADOS DE TUS ACCIONES PASADAS:

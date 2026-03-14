@@ -105,6 +105,107 @@ const actionLogSchema = new mongoose.Schema({
   impact_7d_measured: { type: Boolean, default: false },
   impact_7d_measured_at: { type: Date, default: null },
 
+  // Métricas del ad set padre al momento de ejecución (para acciones a nivel ad)
+  parent_adset_id: { type: String, default: null },
+  parent_metrics_at_execution: {
+    roas_7d: { type: Number, default: 0 },
+    roas_3d: { type: Number, default: 0 },
+    cpa_7d: { type: Number, default: 0 },
+    spend_today: { type: Number, default: 0 },
+    spend_7d: { type: Number, default: 0 },
+    daily_budget: { type: Number, default: 0 },
+    purchases_7d: { type: Number, default: 0 },
+    purchase_value_7d: { type: Number, default: 0 },
+    frequency: { type: Number, default: 0 },
+    ctr: { type: Number, default: 0 }
+  },
+  parent_metrics_after_1d: {
+    roas_7d: { type: Number, default: 0 },
+    roas_3d: { type: Number, default: 0 },
+    cpa_7d: { type: Number, default: 0 },
+    spend_today: { type: Number, default: 0 },
+    spend_7d: { type: Number, default: 0 },
+    daily_budget: { type: Number, default: 0 },
+    purchases_7d: { type: Number, default: 0 },
+    purchase_value_7d: { type: Number, default: 0 },
+    frequency: { type: Number, default: 0 },
+    ctr: { type: Number, default: 0 }
+  },
+  parent_metrics_after_3d: {
+    roas_7d: { type: Number, default: 0 },
+    roas_3d: { type: Number, default: 0 },
+    cpa_7d: { type: Number, default: 0 },
+    spend_today: { type: Number, default: 0 },
+    spend_7d: { type: Number, default: 0 },
+    daily_budget: { type: Number, default: 0 },
+    purchases_7d: { type: Number, default: 0 },
+    purchase_value_7d: { type: Number, default: 0 },
+    frequency: { type: Number, default: 0 },
+    ctr: { type: Number, default: 0 }
+  },
+  parent_metrics_after_7d: {
+    roas_7d: { type: Number, default: 0 },
+    roas_3d: { type: Number, default: 0 },
+    cpa_7d: { type: Number, default: 0 },
+    spend_today: { type: Number, default: 0 },
+    spend_7d: { type: Number, default: 0 },
+    daily_budget: { type: Number, default: 0 },
+    purchases_7d: { type: Number, default: 0 },
+    purchase_value_7d: { type: Number, default: 0 },
+    frequency: { type: Number, default: 0 },
+    ctr: { type: Number, default: 0 }
+  },
+
+  // Métricas de la entidad destino al momento de ejecución (para move_budget)
+  target_metrics_at_execution: {
+    roas_7d: { type: Number, default: 0 },
+    roas_3d: { type: Number, default: 0 },
+    cpa_7d: { type: Number, default: 0 },
+    spend_today: { type: Number, default: 0 },
+    spend_7d: { type: Number, default: 0 },
+    daily_budget: { type: Number, default: 0 },
+    purchases_7d: { type: Number, default: 0 },
+    purchase_value_7d: { type: Number, default: 0 },
+    frequency: { type: Number, default: 0 },
+    ctr: { type: Number, default: 0 }
+  },
+  target_metrics_after_1d: {
+    roas_7d: { type: Number, default: 0 },
+    roas_3d: { type: Number, default: 0 },
+    cpa_7d: { type: Number, default: 0 },
+    spend_today: { type: Number, default: 0 },
+    spend_7d: { type: Number, default: 0 },
+    daily_budget: { type: Number, default: 0 },
+    purchases_7d: { type: Number, default: 0 },
+    purchase_value_7d: { type: Number, default: 0 },
+    frequency: { type: Number, default: 0 },
+    ctr: { type: Number, default: 0 }
+  },
+  target_metrics_after_3d: {
+    roas_7d: { type: Number, default: 0 },
+    roas_3d: { type: Number, default: 0 },
+    cpa_7d: { type: Number, default: 0 },
+    spend_today: { type: Number, default: 0 },
+    spend_7d: { type: Number, default: 0 },
+    daily_budget: { type: Number, default: 0 },
+    purchases_7d: { type: Number, default: 0 },
+    purchase_value_7d: { type: Number, default: 0 },
+    frequency: { type: Number, default: 0 },
+    ctr: { type: Number, default: 0 }
+  },
+  target_metrics_after_7d: {
+    roas_7d: { type: Number, default: 0 },
+    roas_3d: { type: Number, default: 0 },
+    cpa_7d: { type: Number, default: 0 },
+    spend_today: { type: Number, default: 0 },
+    spend_7d: { type: Number, default: 0 },
+    daily_budget: { type: Number, default: 0 },
+    purchases_7d: { type: Number, default: 0 },
+    purchase_value_7d: { type: Number, default: 0 },
+    frequency: { type: Number, default: 0 },
+    ctr: { type: Number, default: 0 }
+  },
+
   // Trazabilidad de aprendizaje de la politica unificada
   learned_at: { type: Date, default: null, index: true },
   learned_reward: { type: Number, default: null },

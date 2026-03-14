@@ -1676,8 +1676,11 @@ function FollowUpCard({ item: p, column, isExpanded, onToggle, onMarkExecuted, o
           {p.day_3?.verdict === 'positive' && <span className="fu-badge improving">{FuIcons.arrowUp} Mejorando</span>}
         </div>
 
-        {/* Entity name */}
-        <div className="fu-card-entity">{p.entity_name}</div>
+        {/* Entity name + parent context */}
+        <div className="fu-card-entity">
+          {p.entity_name}
+          {p.parent_adset_name && <span className="fu-card-parent"> en {p.parent_adset_name}</span>}
+        </div>
 
         {/* Progress + delta — always visible */}
         <div className="fu-card-metrics">
@@ -1696,11 +1699,13 @@ function FollowUpCard({ item: p, column, isExpanded, onToggle, onMarkExecuted, o
           )}
         </div>
 
-        {/* Before → After inline */}
+        {/* Multi-metric comparison: ROAS, CPA, Spend, Purchases */}
         {p.roas_at_approval > 0 && (
           <div className="fu-card-compare">
             <span className="fu-card-compare-metric">ROAS {p.roas_at_approval.toFixed(2)}x{p.day_3?.current_roas > 0 ? ` → ${p.day_3.current_roas.toFixed(2)}x` : ''}</span>
             {p.cpa_at_approval > 0 && <span className="fu-card-compare-metric">CPA ${p.cpa_at_approval.toFixed(0)}{p.day_3?.current_cpa > 0 ? ` → $${p.day_3.current_cpa.toFixed(0)}` : ''}</span>}
+            {p.spend_at_approval > 0 && <span className="fu-card-compare-metric">Spend ${p.spend_at_approval.toFixed(0)}{p.day_3?.current_spend > 0 ? ` → $${p.day_3.current_spend.toFixed(0)}` : ''}</span>}
+            {p.frequency_at_approval > 0 && <span className="fu-card-compare-metric">Freq {p.frequency_at_approval.toFixed(1)}</span>}
           </div>
         )}
       </div>
@@ -1773,23 +1778,32 @@ function CompletedCard({ item, isExpanded, onToggle, onDiscuss, formatTime }) {
           {item.impact_trend === 'improving' && <span className="fu-badge improving">{FuIcons.arrowUp}</span>}
           {item.impact_trend === 'declining' && <span className="fu-badge declining">{FuIcons.arrowDown}</span>}
         </div>
-        <div className="fu-card-entity">{item.entity_name}</div>
+        <div className="fu-card-entity">
+          {item.entity_name}
+          {item.parent_adset_name && <span className="fu-card-parent"> en {item.parent_adset_name}</span>}
+        </div>
         <div className="fu-card-metrics">
           <span className={`fu-card-delta ${(item.roas_delta_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
             ROAS {(item.roas_delta_pct || 0) > 0 ? '+' : ''}{item.roas_delta_pct || 0}%
           </span>
+          {item.cpa_before > 0 && item.cpa_after > 0 && (() => {
+            const cpaDelta = Math.round((item.cpa_after - item.cpa_before) / item.cpa_before * 100);
+            return <span className={`fu-card-delta ${cpaDelta <= 0 ? 'positive' : 'negative'}`}>CPA {cpaDelta > 0 ? '+' : ''}{cpaDelta}%</span>;
+          })()}
           <span className="fu-card-time">{formatTime(item.checked_at)}</span>
         </div>
 
-        {/* Phase chips */}
+        {/* Phase chips with ROAS + CPA trend */}
         {(item.phases?.day_3 || item.phases?.day_7 || item.phases?.day_14) && (
           <div className="fu-card-phases">
             {['day_3', 'day_7', 'day_14'].map(phase => {
               const ph = item.phases?.[phase];
               if (!ph) return <span key={phase} className="fu-phase-chip empty">{phase.replace('day_', '')}d</span>;
+              const roasDir = (ph.roas_pct || 0) >= 0 ? 'positive' : 'negative';
               return (
-                <span key={phase} className={`fu-phase-chip ${(ph.roas_pct || 0) >= 0 ? 'positive' : 'negative'}`}>
+                <span key={phase} className={`fu-phase-chip ${roasDir}`} title={ph.cpa_pct != null ? `CPA ${ph.cpa_pct > 0 ? '+' : ''}${ph.cpa_pct}%` : ''}>
                   {phase.replace('day_', '')}d: {(ph.roas_pct || 0) > 0 ? '+' : ''}{ph.roas_pct || 0}%
+                  {ph.cpa_pct != null && <span className="fu-phase-cpa"> CPA {ph.cpa_pct > 0 ? '+' : ''}{ph.cpa_pct}%</span>}
                 </span>
               );
             })}
@@ -1804,11 +1818,46 @@ function CompletedCard({ item, isExpanded, onToggle, onDiscuss, formatTime }) {
 
       {isExpanded && (
         <div className="fu-card-expanded">
-          {/* Metrics before → after */}
-          <div className="fu-card-metrics-detail">
-            <span>ROAS: {(item.roas_before || 0).toFixed(2)}x → {(item.roas_after || 0).toFixed(2)}x</span>
-            {(item.cpa_before || 0) > 0 && <span>CPA: ${(item.cpa_before || 0).toFixed(2)} → ${(item.cpa_after || 0).toFixed(2)}</span>}
-            {(item.ctr_before || 0) > 0 && <span>CTR: {(item.ctr_before || 0).toFixed(2)}% → {(item.ctr_after || 0).toFixed(2)}%</span>}
+          {/* Metrics before → after grid */}
+          <div className="fu-card-metrics-grid">
+            <div className="fu-metric-row">
+              <span className="fu-metric-label">ROAS</span>
+              <span className="fu-metric-val">{(item.roas_before || 0).toFixed(2)}x</span>
+              <span className="fu-metric-arrow">→</span>
+              <span className={`fu-metric-val ${(item.roas_after || 0) >= (item.roas_before || 0) ? 'positive' : 'negative'}`}>{(item.roas_after || 0).toFixed(2)}x</span>
+            </div>
+            {(item.cpa_before || 0) > 0 && (
+              <div className="fu-metric-row">
+                <span className="fu-metric-label">CPA</span>
+                <span className="fu-metric-val">${(item.cpa_before || 0).toFixed(2)}</span>
+                <span className="fu-metric-arrow">→</span>
+                <span className={`fu-metric-val ${(item.cpa_after || 0) <= (item.cpa_before || 0) ? 'positive' : 'negative'}`}>${(item.cpa_after || 0).toFixed(2)}</span>
+              </div>
+            )}
+            {(item.ctr_before || 0) > 0 && (
+              <div className="fu-metric-row">
+                <span className="fu-metric-label">CTR</span>
+                <span className="fu-metric-val">{(item.ctr_before || 0).toFixed(2)}%</span>
+                <span className="fu-metric-arrow">→</span>
+                <span className={`fu-metric-val ${(item.ctr_after || 0) >= (item.ctr_before || 0) ? 'positive' : 'negative'}`}>{(item.ctr_after || 0).toFixed(2)}%</span>
+              </div>
+            )}
+            {(item.spend_before || 0) > 0 && (
+              <div className="fu-metric-row">
+                <span className="fu-metric-label">Spend 7d</span>
+                <span className="fu-metric-val">${(item.spend_before || 0).toFixed(0)}</span>
+                <span className="fu-metric-arrow">→</span>
+                <span className="fu-metric-val">${(item.spend_after || 0).toFixed(0)}</span>
+              </div>
+            )}
+            {(item.purchases_before || 0) > 0 && (
+              <div className="fu-metric-row">
+                <span className="fu-metric-label">Compras</span>
+                <span className="fu-metric-val">{item.purchases_before || 0}</span>
+                <span className="fu-metric-arrow">→</span>
+                <span className={`fu-metric-val ${(item.purchases_after || 0) >= (item.purchases_before || 0) ? 'positive' : 'negative'}`}>{item.purchases_after || 0}</span>
+              </div>
+            )}
           </div>
 
           {/* AI Analysis */}

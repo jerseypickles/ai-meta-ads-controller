@@ -642,6 +642,9 @@ router.get('/recommendations/follow-up-stats', async (req, res) => {
         action_type: r.action_type,
         entity_name: r.entity?.entity_name,
         entity_id: r.entity?.entity_id,
+        entity_type: r.entity?.entity_type,
+        parent_adset_id: r.parent_adset_id || null,
+        parent_adset_name: r.parent_adset_name || null,
         priority: r.priority,
         confidence_score: r.confidence_score,
         decided_at: r.decided_at,
@@ -772,6 +775,9 @@ router.get('/recommendations/follow-up-stats', async (req, res) => {
           current_budget: phases.day_3.metrics?.daily_budget || 0,
           new_ad_metrics: phases.day_3.new_ad_metrics || null
         } : null,
+        // Parent ad set context (for ad-level actions)
+        parent_adset_id: r.parent_adset_id || null,
+        parent_adset_name: r.parent_adset_name || null,
         // New ad info (for creative_refresh tracking)
         new_ad_id: r.follow_up?.new_ad_id || null,
         new_ad_name: r.follow_up?.new_ad_name || null,
@@ -1773,18 +1779,31 @@ router.post('/ad-health/quick-pause', async (req, res) => {
       entity_id: ad_id,
       entity_name: ad_name || 'Unknown',
       entity_type: 'ad',
-      action_type: 'update_ad_status',
-      old_value: 'ACTIVE',
-      new_value: 'PAUSED',
+      action: 'update_ad_status',
+      before_value: 'ACTIVE',
+      after_value: 'PAUSED',
       reasoning: reason || 'Pausa manual desde panel de creativos — creativo perdiendo efectividad',
-      source: 'dashboard_quick_pause',
-      metrics_before: {
+      agent_type: 'manual',
+      metrics_at_execution: {
         roas_7d: m7d.roas || 0,
         cpa_7d: m7d.cpa || 0,
         spend_7d: m7d.spend || 0,
-        ctr_7d: m7d.ctr || 0,
-        frequency_7d: m7d.frequency || 0,
+        ctr: m7d.ctr || 0,
+        frequency: m7d.frequency || 0,
         purchases_7d: m7d.purchases || 0
+      },
+      parent_adset_id: adset_id,
+      parent_metrics_at_execution: {
+        roas_7d: adsetM7d.roas || 0,
+        roas_3d: adsetSnap?.metrics?.last_3d?.roas || 0,
+        cpa_7d: adsetM7d.cpa || 0,
+        spend_today: adsetSnap?.metrics?.today?.spend || 0,
+        spend_7d: adsetM7d.spend || 0,
+        daily_budget: adsetSnap?.daily_budget || 0,
+        purchases_7d: adsetM7d.purchases || 0,
+        purchase_value_7d: adsetM7d.purchase_value || 0,
+        frequency: adsetM7d.frequency || 0,
+        ctr: adsetM7d.ctr || 0
       },
       success: true
     });

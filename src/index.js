@@ -262,6 +262,26 @@ async function jobMeasureImpact() {
       };
     };
 
+    // Helper: capture parent adset and target entity after-metrics
+    const captureContextMetrics = (action, suffix) => {
+      const extra = {};
+      // Parent adset metrics for ad-level actions
+      if (action.parent_adset_id) {
+        const parentSnap = snapshotMap.get(`adset:${action.parent_adset_id}`);
+        if (parentSnap) {
+          extra[`parent_metrics_after_${suffix}`] = extractMetrics(parentSnap);
+        }
+      }
+      // Target entity metrics for move_budget
+      if (action.target_entity_id) {
+        const targetSnap = snapshotMap.get(`adset:${action.target_entity_id}`);
+        if (targetSnap) {
+          extra[`target_metrics_after_${suffix}`] = extractMetrics(targetSnap);
+        }
+      }
+      return extra;
+    };
+
     // Checkpoint 1: Medición a las 24 horas
     const pending1d = await getPending1dImpactMeasurement();
     let measured1d = 0;
@@ -274,7 +294,8 @@ async function jobMeasureImpact() {
       const updates = {
         metrics_after_1d: extractMetrics(entitySnapshot),
         impact_1d_measured: true,
-        impact_1d_measured_at: new Date()
+        impact_1d_measured_at: new Date(),
+        ...captureContextMetrics(action, '1d')
       };
       // Capture ad-level metrics for create_ad
       const adMetrics = extractAdMetrics(action, snapshotMap);
@@ -296,7 +317,8 @@ async function jobMeasureImpact() {
       const updates = {
         metrics_after_3d: extractMetrics(entitySnapshot),
         impact_measured: true,
-        impact_measured_at: new Date()
+        impact_measured_at: new Date(),
+        ...captureContextMetrics(action, '3d')
       };
       const adMetrics = extractAdMetrics(action, snapshotMap);
       if (adMetrics) updates.ad_metrics_after_3d = adMetrics;
@@ -317,7 +339,8 @@ async function jobMeasureImpact() {
       const updates = {
         metrics_after_7d: extractMetrics(entitySnapshot),
         impact_7d_measured: true,
-        impact_7d_measured_at: new Date()
+        impact_7d_measured_at: new Date(),
+        ...captureContextMetrics(action, '7d')
       };
       const adMetrics = extractAdMetrics(action, snapshotMap);
       if (adMetrics) updates.ad_metrics_after_7d = adMetrics;

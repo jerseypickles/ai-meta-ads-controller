@@ -5430,6 +5430,7 @@ a:hover {
 .fu-phase-chip.positive { color: var(--green); background: rgba(16, 185, 129, 0.08); }
 .fu-phase-chip.negative { color: var(--red); background: rgba(239, 68, 68, 0.08); }
 .fu-phase-chip.empty { opacity: 0.4; }
+.fu-phase-cpa { opacity: 0.7; margin-left: 4px; font-size: 10px; }
 
 /* Lesson inline */
 .fu-card-lesson {
@@ -5612,6 +5613,12 @@ a:hover {
 }
 
 /* Metrics detail (completed expanded) */
+.fu-card-parent {
+  font-weight: 400;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
 .fu-card-metrics-detail {
   display: flex;
   flex-wrap: wrap;
@@ -5619,6 +5626,39 @@ a:hover {
   font-size: 12px;
   color: var(--text-secondary);
   font-weight: 500;
+}
+
+.fu-card-metrics-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  padding: 6px 8px;
+  background: rgba(255,255,255,0.02);
+  border-radius: 6px;
+}
+.fu-metric-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.fu-metric-label {
+  color: var(--text-secondary);
+  font-weight: 500;
+  min-width: 60px;
+  font-size: 11px;
+}
+.fu-metric-val {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.fu-metric-val.positive { color: var(--green); }
+.fu-metric-val.negative { color: var(--red); }
+.fu-metric-arrow {
+  color: var(--text-secondary);
+  opacity: 0.4;
+  font-size: 10px;
 }
 
 /* AI analysis */

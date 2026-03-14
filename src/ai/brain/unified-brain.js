@@ -1950,45 +1950,63 @@ REGLAS:
         rec.executed_at = new Date();
         rec.execution_result = apiResponse;
 
-        // Capturar metricas al momento de ejecucion (FIX: buscar por tipo correcto)
+        // Capturar metricas al momento de ejecucion (action-aware)
         let metricsAtExecution = {};
+        let parentAdsetId = null;
+        let parentMetricsAtExecution = null;
         try {
           const entityType = rec.entity_type || 'adset';
-          const lookupType = entityType === 'ad' ? 'adset' : entityType;
-          const snapshots = await getLatestSnapshots(lookupType);
 
-          // Para ads, buscar metricas del ad set padre
-          let entitySnapshot;
-          if (entityType === 'ad') {
+          const extractSnapshotMetrics = (snap) => ({
+            roas_7d: snap.metrics?.last_7d?.roas || 0,
+            roas_3d: snap.metrics?.last_3d?.roas || 0,
+            cpa_7d: snap.metrics?.last_7d?.cpa || 0,
+            spend_today: snap.metrics?.today?.spend || 0,
+            spend_7d: snap.metrics?.last_7d?.spend || 0,
+            daily_budget: snap.daily_budget || 0,
+            purchases_7d: snap.metrics?.last_7d?.purchases || 0,
+            purchase_value_7d: snap.metrics?.last_7d?.purchase_value || 0,
+            frequency: snap.metrics?.last_7d?.frequency || 0,
+            ctr: snap.metrics?.last_7d?.ctr || 0
+          });
+
+          if (rec.action === 'create_ad') {
+            // create_ad: entity_id is parent adset — capture adset metrics
+            const adsetSnaps = await getLatestSnapshots('adset');
+            const adsetSnap = adsetSnaps.find(s => s.entity_id === rec.entity_id);
+            if (adsetSnap) {
+              metricsAtExecution = extractSnapshotMetrics(adsetSnap);
+              parentAdsetId = rec.entity_id;
+            }
+          } else if (['pause', 'update_ad_status'].includes(rec.action) && entityType === 'ad') {
+            // Ad-level pause: capture ad metrics + parent adset metrics
             const adSnaps = await getLatestSnapshots('ad');
             const adSnap = adSnaps.find(s => s.entity_id === rec.entity_id);
-            const parentId = adSnap?.parent_id;
-            entitySnapshot = parentId
-              ? snapshots.find(s => s.entity_id === parentId)
-              : snapshots.find(s => s.entity_id === rec.entity_id);
+            if (adSnap) {
+              metricsAtExecution = extractSnapshotMetrics(adSnap);
+            }
+            const pId = rec.parent_adset_id || adSnap?.parent_id;
+            if (pId) {
+              const adsetSnaps = await getLatestSnapshots('adset');
+              const parentSnap = adsetSnaps.find(s => s.entity_id === pId);
+              if (parentSnap) {
+                parentAdsetId = pId;
+                parentMetricsAtExecution = extractSnapshotMetrics(parentSnap);
+              }
+            }
           } else {
-            entitySnapshot = snapshots.find(s => s.entity_id === rec.entity_id);
-          }
-
-          if (entitySnapshot) {
-            metricsAtExecution = {
-              roas_7d: entitySnapshot.metrics?.last_7d?.roas || 0,
-              roas_3d: entitySnapshot.metrics?.last_3d?.roas || 0,
-              cpa_7d: entitySnapshot.metrics?.last_7d?.cpa || 0,
-              spend_today: entitySnapshot.metrics?.today?.spend || 0,
-              spend_7d: entitySnapshot.metrics?.last_7d?.spend || 0,
-              daily_budget: entitySnapshot.daily_budget || 0,
-              purchases_7d: entitySnapshot.metrics?.last_7d?.purchases || 0,
-              purchase_value_7d: entitySnapshot.metrics?.last_7d?.purchase_value || 0,
-              frequency: entitySnapshot.metrics?.last_7d?.frequency || 0,
-              ctr: entitySnapshot.metrics?.last_7d?.ctr || 0
-            };
+            // Default: adset-level actions
+            const snapshots = await getLatestSnapshots(entityType === 'ad' ? 'adset' : entityType);
+            const entitySnapshot = snapshots.find(s => s.entity_id === rec.entity_id);
+            if (entitySnapshot) {
+              metricsAtExecution = extractSnapshotMetrics(entitySnapshot);
+            }
           }
         } catch (snapErr) {
           logger.warn(`[BRAIN][AUTO] No se pudieron capturar metricas: ${snapErr.message}`);
         }
 
-        await ActionLog.create({
+        const actionLogData = {
           decision_id: freshReport._id,
           cycle_id: freshReport.cycle_id,
           entity_type: rec.entity_type,
@@ -2004,7 +2022,11 @@ REGLAS:
           success: true,
           meta_api_response: apiResponse,
           metrics_at_execution: metricsAtExecution
-        });
+        };
+        if (parentAdsetId) actionLogData.parent_adset_id = parentAdsetId;
+        if (parentMetricsAtExecution) actionLogData.parent_metrics_at_execution = parentMetricsAtExecution;
+
+        await ActionLog.create(actionLogData);
 
         await cooldownManager.setCooldown(rec.entity_id, rec.entity_type, rec.action);
 
