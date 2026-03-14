@@ -13,6 +13,7 @@ const CreativeAsset = require('../../db/models/CreativeAsset');
 const BrainRecommendation = require('../../db/models/BrainRecommendation');
 const { getMetaClient } = require('../../meta/client');
 const { parseInsightRow, aggregateDailyInsights, parseBudget } = require('../../meta/helpers');
+const { getLatestSnapshots } = require('../../db/queries');
 const logger = require('../../utils/logger');
 const config = require('../../../config');
 
@@ -1132,17 +1133,41 @@ router.post('/add-ad', async (req, res) => {
       creation.updated_at = new Date();
       await creation.save();
 
-      // Log action
+      // Log action — capture parent adset metrics for learning
+      let addAdMetrics = {};
+      try {
+        const adsetSnaps = await getLatestSnapshots('adset');
+        const adsetSnap = adsetSnaps.find(s => s.entity_id === adset_id);
+        if (adsetSnap) {
+          addAdMetrics = {
+            roas_7d: adsetSnap.metrics?.last_7d?.roas || 0,
+            roas_3d: adsetSnap.metrics?.last_3d?.roas || 0,
+            cpa_7d: adsetSnap.metrics?.last_7d?.cpa || 0,
+            spend_today: adsetSnap.metrics?.today?.spend || 0,
+            spend_7d: adsetSnap.metrics?.last_7d?.spend || 0,
+            daily_budget: adsetSnap.daily_budget || 0,
+            purchases_7d: adsetSnap.metrics?.last_7d?.purchases || 0,
+            purchase_value_7d: adsetSnap.metrics?.last_7d?.purchase_value || 0,
+            frequency: adsetSnap.metrics?.last_7d?.frequency || 0,
+            ctr: adsetSnap.metrics?.last_7d?.ctr || 0
+          };
+        }
+      } catch (snapErr) {
+        logger.warn(`[AI-OPS] Could not capture metrics for add_ad: ${snapErr.message}`);
+      }
+
       await ActionLog.create({
         entity_type: 'adset',
         entity_id: adset_id,
-        entity_name: creation.meta_entity_name,
+        entity_name: creation.meta_entity_name || 'Unknown',
         action: 'add_ad',
         after_value: JSON.stringify(createdAds.map(a => a.ad_id)),
+        new_entity_id: createdAds[0]?.ad_id || null,
         reasoning: `Manual: added ${createdAds.length} ad(s) from asset "${asset.original_name}" (${asset.style})`,
         agent_type: 'manual',
         confidence: 'high',
-        success: true
+        success: true,
+        metrics_at_execution: addAdMetrics
       });
 
       addAdJobs.set(jobId, {
@@ -1426,16 +1451,43 @@ router.post('/upload-and-create-ad', manualUpload.single('image'), async (req, r
 
       logger.info(`[AI-OPS] Manual ad created: ${adName} in ${adset_id}`);
 
-      // Step 5: Log action
+      // Step 5: Log action — capture parent adset metrics for learning
+      let uploadAdMetrics = {};
+      let adsetName = 'Unknown';
+      try {
+        const adsetSnaps = await getLatestSnapshots('adset');
+        const adsetSnap = adsetSnaps.find(s => s.entity_id === adset_id);
+        if (adsetSnap) {
+          adsetName = adsetSnap.entity_name || 'Unknown';
+          uploadAdMetrics = {
+            roas_7d: adsetSnap.metrics?.last_7d?.roas || 0,
+            roas_3d: adsetSnap.metrics?.last_3d?.roas || 0,
+            cpa_7d: adsetSnap.metrics?.last_7d?.cpa || 0,
+            spend_today: adsetSnap.metrics?.today?.spend || 0,
+            spend_7d: adsetSnap.metrics?.last_7d?.spend || 0,
+            daily_budget: adsetSnap.daily_budget || 0,
+            purchases_7d: adsetSnap.metrics?.last_7d?.purchases || 0,
+            purchase_value_7d: adsetSnap.metrics?.last_7d?.purchase_value || 0,
+            frequency: adsetSnap.metrics?.last_7d?.frequency || 0,
+            ctr: adsetSnap.metrics?.last_7d?.ctr || 0
+          };
+        }
+      } catch (snapErr) {
+        logger.warn(`[AI-OPS] Could not capture metrics for upload ad: ${snapErr.message}`);
+      }
+
       await ActionLog.create({
         entity_type: 'adset',
         entity_id: adset_id,
+        entity_name: adsetName,
         action: 'add_ad',
         after_value: ad.ad_id,
+        new_entity_id: ad.ad_id,
         reasoning: `Manual upload: created ad "${adName}"`,
         agent_type: 'manual',
         confidence: 'high',
-        success: true
+        success: true,
+        metrics_at_execution: uploadAdMetrics
       });
 
       // Step 6: Auto-link to approved create_ad or creative_refresh recommendation (if any).
