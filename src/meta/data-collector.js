@@ -31,17 +31,23 @@ class DataCollector {
 
     this.meta.setBusy('data-collector');
 
-    // Global timeout: si el collect toma más de 4 min, abortar y limpiar busy flag
+    // AbortController: cuando el timeout dispara, cancela TODAS las requests HTTP
+    // pendientes. Esto evita el problema de "zombie collectors" — sin esto,
+    // _doCollect() seguiría corriendo en background después del timeout,
+    // ocupando slots del Bottleneck limiter y causando que el siguiente ciclo
+    // también falle por limiter congestionado.
+    const controller = new AbortController();
+
     const timeoutPromise = new Promise((_, reject) => {
       this._collectTimeout = setTimeout(() => {
-        reject(new Error('COLLECT_TIMEOUT: Recolección excedió 4 minutos — abortando'));
+        controller.abort();
+        reject(new Error('COLLECT_TIMEOUT: Recolección excedió 4 minutos — abortando (requests canceladas)'));
       }, COLLECT_TIMEOUT_MS);
     });
 
     try {
-      // Race entre la recolección real y el timeout global
       const result = await Promise.race([
-        this._doCollect(),
+        this._doCollect(controller.signal),
         timeoutPromise
       ]);
       clearTimeout(this._collectTimeout);
@@ -49,6 +55,7 @@ class DataCollector {
       return result;
     } catch (error) {
       clearTimeout(this._collectTimeout);
+      controller.abort(); // Asegurar que todo se cancela en cualquier error
       this.meta.clearBusy();
       const errMsg = error.response?.data?.error?.message || error.message || 'Error desconocido';
       logger.error(`Error en ciclo de recolección: ${errMsg}`);
@@ -59,8 +66,9 @@ class DataCollector {
   /**
    * Lógica interna de recolección — separada para poder aplicar timeout global.
    */
-  async _doCollect() {
+  async _doCollect(signal) {
     const startTime = Date.now();
+    const opts = signal ? { signal } : {};
 
     try {
       const WINDOWS = ['today', 'last_3d', 'last_7d', 'last_14d', 'last_30d'];
@@ -136,9 +144,9 @@ class DataCollector {
       logger.info('Recolectando insights diarios (3 calls paralelas: campaign + adset + ad)...');
 
       const [campaignResult, adsetResult, adResult] = await Promise.allSettled([
-        this.meta.getAccountInsightsDaily('campaign'),
-        this.meta.getAccountInsightsDaily('adset'),
-        this.meta.getAccountInsightsDaily('ad')
+        this.meta.getAccountInsightsDaily('campaign', 30, opts),
+        this.meta.getAccountInsightsDaily('adset', 30, opts),
+        this.meta.getAccountInsightsDaily('ad', 30, opts)
       ]);
 
       // Process campaign insights
@@ -227,7 +235,7 @@ class DataCollector {
             { field: 'effective_status', operator: 'IN', value: ['ACTIVE', 'PAUSED', 'CAMPAIGN_PAUSED', 'ADSET_PAUSED', 'PENDING_REVIEW', 'DISAPPROVED', 'WITH_ISSUES'] }
           ]),
           limit: 500
-        });
+        }, opts);
 
         let allAds = allAdsData.data || [];
 
@@ -236,7 +244,7 @@ class DataCollector {
         while (paging?.next) {
           const nextRes = await this.meta.limiter.schedule(() =>
             withRetry(
-              () => require('axios').get(paging.next, { headers: { 'Authorization': `Bearer ${this.meta.accessToken}` } }),
+              () => require('axios').get(paging.next, { headers: { 'Authorization': `Bearer ${this.meta.accessToken}` }, ...(signal ? { signal } : {}) }),
               { maxRetries: 2, baseDelay: 2000, shouldRetry: shouldRetryMetaError, label: 'META PAGINATION ads' }
             )
           );

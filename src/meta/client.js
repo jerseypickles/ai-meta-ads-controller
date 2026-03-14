@@ -245,11 +245,11 @@ class MetaClient {
   /**
    * GET request con rate limiting y retry
    */
-  async get(endpoint, params = {}) {
+  async get(endpoint, params = {}, options = {}) {
     await this._ensureToken();
     return this.limiter.schedule(() =>
       withRetry(
-        () => this.client.get(endpoint, { params }),
+        () => this.client.get(endpoint, { params, ...(options.signal ? { signal: options.signal } : {}) }),
         {
           maxRetries: 3,
           baseDelay: 2000,
@@ -594,7 +594,7 @@ class MetaClient {
    * avoiding duplicate API calls through the shared Bottleneck limiter.
    * A request for 14 days will also match a cached 30-day response (superset).
    */
-  async getAccountInsightsDaily(level, maxDays = 30) {
+  async getAccountInsightsDaily(level, maxDays = 30, options = {}) {
     const moment = require('moment-timezone');
     const TIMEZONE = require('../../config').system.timezone || 'America/New_York';
     const today = moment().tz(TIMEZONE).format('YYYY-MM-DD');
@@ -642,7 +642,7 @@ class MetaClient {
     };
 
     try {
-      const data = await this.get(`/${this.adAccountId}/insights`, params);
+      const data = await this.get(`/${this.adAccountId}/insights`, params, options);
       let results = data.data || [];
 
       // Paginate (daily breakdown × many entities can exceed 500 rows)
@@ -650,7 +650,7 @@ class MetaClient {
       while (paging?.next) {
         const nextData = await this.limiter.schedule(() =>
           withRetry(
-            () => axios.get(paging.next, { headers: { 'Authorization': `Bearer ${this.accessToken}` } }),
+            () => axios.get(paging.next, { headers: { 'Authorization': `Bearer ${this.accessToken}` }, ...(options.signal ? { signal: options.signal } : {}) }),
             { maxRetries: 2, baseDelay: 2000, shouldRetry: shouldRetryMetaError, label: `META PAGINATION daily ${level}` }
           )
         ).then(res => {

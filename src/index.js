@@ -35,18 +35,33 @@ const TIMEZONE = config.system.timezone;
  */
 let _dataCollectionRetryTimer = null;
 let _collectFailCount = 0;
+let _collectSkipsRemaining = 0;
+let _collectorRunning = false;
 const MAX_CONSECUTIVE_FAILS_BEFORE_BACKOFF = 3;
 
 async function jobDataCollection() {
-  // Circuit breaker: si hay muchos fallos consecutivos, saltar ciclos alternos
+  // Overlap prevention: si ya hay un collector corriendo (cron o retry), no lanzar otro.
+  // Sin esto, el retry de 2 min puede solaparse con el siguiente cron de 10 min,
+  // ambos compitiendo por los mismos slots del Bottleneck limiter.
+  if (_collectorRunning) {
+    logger.warn('[CRON] Collector ya en ejecución — saltando para evitar overlap');
+    return;
+  }
+
+  // Circuit breaker con backoff exponencial real.
+  // Antes: solo alternaba skip/retry en ciclos pares/impares (ineficaz a 110+ fallos).
+  // Ahora: después de N fallos, calcula cuántos ciclos saltar con backoff exponencial.
+  if (_collectSkipsRemaining > 0) {
+    _collectSkipsRemaining--;
+    logger.warn(`[CRON] Circuit breaker: ${_collectFailCount} fallos consecutivos — saltando ciclo (${_collectSkipsRemaining} skips restantes)`);
+    return;
+  }
+
   if (_collectFailCount >= MAX_CONSECUTIVE_FAILS_BEFORE_BACKOFF) {
-    if (_collectFailCount % 2 !== 0) {
-      logger.warn(`[CRON] Circuit breaker: ${_collectFailCount} fallos consecutivos — saltando ciclo (backoff)`);
-      return;
-    }
     logger.warn(`[CRON] Circuit breaker: ${_collectFailCount} fallos consecutivos — reintentando este ciclo`);
   }
 
+  _collectorRunning = true;
   try {
     logger.info('[CRON] Iniciando recolección de datos...');
     const collector = new DataCollector();
@@ -58,6 +73,7 @@ async function jobDataCollection() {
       logger.info(`[CRON] Circuit breaker reset (${_collectFailCount} fallos previos resueltos)`);
     }
     _collectFailCount = 0;
+    _collectSkipsRemaining = 0;
 
     // Brain Analyzer: analizar cambios después de cada recolección
     try {
@@ -73,13 +89,26 @@ async function jobDataCollection() {
     }
   } catch (error) {
     _collectFailCount++;
-    logger.error(`[CRON] Error en recolección de datos (fallo #${_collectFailCount}): ${error.message}`);
+
+    // Backoff exponencial: más fallos → más ciclos saltados (cap en 6 = ~60 min)
+    if (_collectFailCount >= MAX_CONSECUTIVE_FAILS_BEFORE_BACKOFF) {
+      _collectSkipsRemaining = Math.min(6, Math.floor(Math.pow(1.5, _collectFailCount - MAX_CONSECUTIVE_FAILS_BEFORE_BACKOFF)));
+      logger.error(`[CRON] Error en recolección (fallo #${_collectFailCount}): ${error.message} — backoff ${_collectSkipsRemaining} ciclos (~${_collectSkipsRemaining * 10} min)`);
+    } else {
+      logger.error(`[CRON] Error en recolección de datos (fallo #${_collectFailCount}): ${error.message}`);
+    }
 
     // Reintentar UNA vez después de 2 minutos si falló (timeout, rate limit, etc.)
     if (!_dataCollectionRetryTimer) {
       logger.warn('[CRON] Programando reintento de recolección en 2 minutos...');
       _dataCollectionRetryTimer = setTimeout(async () => {
         _dataCollectionRetryTimer = null;
+        // Respetar el lock de overlap también en retries
+        if (_collectorRunning) {
+          logger.warn('[CRON] Reintento cancelado — collector ya en ejecución');
+          return;
+        }
+        _collectorRunning = true;
         try {
           logger.info('[CRON] Reintento de recolección de datos...');
           const retryCollector = new DataCollector();
@@ -89,12 +118,20 @@ async function jobDataCollection() {
             logger.info(`[CRON] Circuit breaker reset por reintento exitoso`);
           }
           _collectFailCount = 0;
+          _collectSkipsRemaining = 0;
         } catch (retryErr) {
           _collectFailCount++;
+          if (_collectFailCount >= MAX_CONSECUTIVE_FAILS_BEFORE_BACKOFF) {
+            _collectSkipsRemaining = Math.min(6, Math.floor(Math.pow(1.5, _collectFailCount - MAX_CONSECUTIVE_FAILS_BEFORE_BACKOFF)));
+          }
           logger.error(`[CRON] Reintento también falló (fallo #${_collectFailCount}): ${retryErr.message}`);
+        } finally {
+          _collectorRunning = false;
         }
       }, 2 * 60 * 1000);
     }
+  } finally {
+    _collectorRunning = false;
   }
 }
 
