@@ -399,6 +399,11 @@ export const getPolicyState = async () => {
   return response.data;
 };
 
+export const getPolicyLearning = async () => {
+  const response = await api.get('/api/brain/policy/learning');
+  return response.data;
+};
+
 export const getKnowledgeHistory = async (days = 30) => {
   const response = await api.get('/api/brain/knowledge/history', { params: { days } });
   return response.data;

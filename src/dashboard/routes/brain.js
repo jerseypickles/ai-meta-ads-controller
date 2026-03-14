@@ -906,6 +906,173 @@ router.get('/policy/state', async (req, res) => {
 });
 
 /**
+ * GET /api/brain/policy/learning — Real learning data from the Thompson Sampling bandit.
+ * Returns reward trends over time, per-action performance, strongest signals, and
+ * a clear "is the Brain learning?" verdict.
+ */
+router.get('/policy/learning', async (req, res) => {
+  try {
+    const allLearned = await ActionLog.find({
+      success: true,
+      learned_reward: { $ne: null }
+    }).sort({ executed_at: 1 }).lean();
+
+    if (allLearned.length === 0) {
+      return res.json({
+        total_actions: 0,
+        is_learning: false,
+        verdict: 'Sin datos — el Brain aun no tiene acciones medidas',
+        by_action: [],
+        reward_trend: [],
+        strongest_signals: [],
+        recent_rewards: []
+      });
+    }
+
+    // 1. Per-action stats
+    const actionMap = {};
+    for (const a of allLearned) {
+      if (!actionMap[a.action]) actionMap[a.action] = { rewards: [], dates: [] };
+      actionMap[a.action].rewards.push(a.learned_reward);
+      actionMap[a.action].dates.push(a.executed_at);
+    }
+
+    const byAction = Object.entries(actionMap).map(([action, data]) => {
+      const rewards = data.rewards;
+      const avg = rewards.reduce((s, r) => s + r, 0) / rewards.length;
+      const positive = rewards.filter(r => r > 0.05).length;
+      const negative = rewards.filter(r => r < -0.05).length;
+      const neutral = rewards.length - positive - negative;
+
+      // Trend: compare first half vs second half
+      const mid = Math.floor(rewards.length / 2);
+      const firstAvg = mid > 0 ? rewards.slice(0, mid).reduce((s, r) => s + r, 0) / mid : 0;
+      const secondAvg = mid > 0 ? rewards.slice(mid).reduce((s, r) => s + r, 0) / (rewards.length - mid) : 0;
+      const improving = secondAvg > firstAvg + 0.02;
+      const worsening = secondAvg < firstAvg - 0.02;
+      const trend = improving ? 'improving' : worsening ? 'worsening' : 'stable';
+
+      // Signal strength: how far from 0.5 is the Thompson mean?
+      const signal = Math.abs(avg);
+
+      return {
+        action,
+        count: rewards.length,
+        avg_reward: Math.round(avg * 1000) / 1000,
+        positive,
+        negative,
+        neutral,
+        win_rate: rewards.length > 0 ? Math.round(positive / rewards.length * 100) : 0,
+        first_half_avg: Math.round(firstAvg * 1000) / 1000,
+        second_half_avg: Math.round(secondAvg * 1000) / 1000,
+        trend,
+        signal_strength: signal > 0.08 ? 'strong' : signal > 0.03 ? 'moderate' : 'weak'
+      };
+    }).sort((a, b) => b.count - a.count);
+
+    // 2. Rolling reward trend (weekly windows)
+    const rewardTrend = [];
+    const weekMs = 7 * 86400000;
+    if (allLearned.length > 0) {
+      const firstDate = new Date(allLearned[0].executed_at).getTime();
+      const lastDate = new Date(allLearned[allLearned.length - 1].executed_at).getTime();
+
+      for (let start = firstDate; start <= lastDate; start += weekMs) {
+        const end = start + weekMs;
+        const weekActions = allLearned.filter(a => {
+          const t = new Date(a.executed_at).getTime();
+          return t >= start && t < end;
+        });
+        if (weekActions.length > 0) {
+          const avg = weekActions.reduce((s, a) => s + a.learned_reward, 0) / weekActions.length;
+          const pos = weekActions.filter(a => a.learned_reward > 0.05).length;
+          rewardTrend.push({
+            week_start: new Date(start).toISOString().split('T')[0],
+            count: weekActions.length,
+            avg_reward: Math.round(avg * 1000) / 1000,
+            win_rate: Math.round(pos / weekActions.length * 100)
+          });
+        }
+      }
+    }
+
+    // 3. Strongest signals from bandit
+    const policyRaw = await SystemConfig.get('unified_policy_learning_v1', null);
+    const strongestSignals = [];
+    if (policyRaw?.buckets) {
+      for (const [bucket, actions] of Object.entries(policyRaw.buckets)) {
+        for (const [action, stats] of Object.entries(actions)) {
+          if ((stats.count || 0) < 3) continue;
+          const mean = (stats.alpha || 1) / ((stats.alpha || 1) + (stats.beta || 1));
+          if (mean < 0.44 || mean > 0.56) {
+            const avgReward = stats.count > 0 ? (stats.total_reward || 0) / stats.count : 0;
+            strongestSignals.push({
+              bucket,
+              action,
+              mean: Math.round(mean * 1000) / 1000,
+              count: stats.count,
+              avg_reward: Math.round(avgReward * 1000) / 1000,
+              verdict: mean > 0.5 ? 'funciona' : 'falla'
+            });
+          }
+        }
+      }
+      strongestSignals.sort((a, b) => Math.abs(b.mean - 0.5) - Math.abs(a.mean - 0.5));
+    }
+
+    // 4. Last 10 rewards (recent activity)
+    const recentRewards = allLearned.slice(-10).reverse().map(a => ({
+      action: a.action,
+      entity_name: a.entity_name || 'N/A',
+      reward: Math.round(a.learned_reward * 1000) / 1000,
+      executed_at: a.executed_at,
+      bucket: a.learned_bucket
+    }));
+
+    // 5. Overall verdict
+    const globalAvg = allLearned.reduce((s, a) => s + a.learned_reward, 0) / allLearned.length;
+    const mid = Math.floor(allLearned.length / 2);
+    const firstHalfAvg = allLearned.slice(0, mid).reduce((s, a) => s + a.learned_reward, 0) / mid;
+    const secondHalfAvg = allLearned.slice(mid).reduce((s, a) => s + a.learned_reward, 0) / (allLearned.length - mid);
+    const isImproving = secondHalfAvg > firstHalfAvg + 0.01;
+    const hasStrongSignals = strongestSignals.length >= 2;
+
+    let verdict, verdictType;
+    if (hasStrongSignals && isImproving) {
+      verdict = `Aprendiendo activamente — ${strongestSignals.length} senales claras, rewards mejorando`;
+      verdictType = 'positive';
+    } else if (hasStrongSignals) {
+      verdict = `Tiene senales claras (${strongestSignals.length}) pero los rewards no mejoran aun`;
+      verdictType = 'moderate';
+    } else if (allLearned.length < 50) {
+      verdict = `Acumulando datos (${allLearned.length}/50 minimo) — necesita mas acciones medidas`;
+      verdictType = 'early';
+    } else {
+      verdict = `${allLearned.length} acciones medidas pero senales debiles — rewards demasiado cercanos a cero`;
+      verdictType = 'weak';
+    }
+
+    res.json({
+      total_actions: allLearned.length,
+      global_avg_reward: Math.round(globalAvg * 1000) / 1000,
+      first_half_avg: Math.round(firstHalfAvg * 1000) / 1000,
+      second_half_avg: Math.round(secondHalfAvg * 1000) / 1000,
+      is_learning: hasStrongSignals,
+      is_improving: isImproving,
+      verdict,
+      verdict_type: verdictType,
+      by_action: byAction,
+      reward_trend: rewardTrend,
+      strongest_signals: strongestSignals.slice(0, 10),
+      recent_rewards: recentRewards
+    });
+  } catch (error) {
+    logger.error(`[BRAIN-API] Error en policy/learning: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
  * GET /api/brain/knowledge/history — Evolución diaria del conocimiento del Brain
  * Query: ?days=30
  */

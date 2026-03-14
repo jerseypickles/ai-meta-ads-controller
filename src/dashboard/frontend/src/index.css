@@ -7070,6 +7070,75 @@ a:hover {
   text-shadow: 0 1px 2px rgba(0,0,0,0.4);
 }
 
+/* ── Policy Learning Zone ── */
+.pl-verdict {
+  border-left: 3px solid;
+  padding: 8px 12px;
+  background: rgba(255,255,255,0.02);
+  border-radius: 0 6px 6px 0;
+  margin-bottom: 12px;
+}
+.pl-verdict-text { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.pl-verdict-stats { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: var(--text-secondary); }
+.pl-verdict-stats b { font-weight: 700; }
+
+.pl-actions { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.pl-action-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pl-action-header { display: flex; justify-content: space-between; align-items: center; }
+.pl-action-name { font-size: 12px; font-weight: 600; }
+.pl-action-count { font-size: 10px; color: var(--text-secondary); }
+.pl-action-reward { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pl-action-breakdown { display: flex; gap: 8px; font-size: 10px; }
+.pl-action-breakdown .pl-positive { color: #10b981; }
+.pl-action-breakdown .pl-negative { color: #ef4444; }
+.pl-action-breakdown .pl-neutral { color: #6b7280; }
+.pl-action-footer { display: flex; justify-content: space-between; align-items: center; font-size: 10px; }
+.pl-trend { font-variant-numeric: tabular-nums; }
+.pl-signal { opacity: 0.5; letter-spacing: 1px; }
+
+.pl-section-title { font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+
+.pl-trend-section { margin-bottom: 14px; }
+.pl-trend-chart { display: flex; gap: 2px; align-items: center; height: 100px; }
+.pl-trend-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; }
+.pl-trend-bar-space { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; width: 100%; }
+.pl-trend-bar-space:last-of-type { justify-content: flex-start; }
+.pl-trend-bar { width: 80%; min-width: 4px; border-radius: 2px; transition: height 0.3s ease; }
+.pl-trend-bar.positive { background: #10b981; }
+.pl-trend-bar.negative { background: #ef4444; }
+.pl-trend-zero { width: 100%; height: 1px; background: rgba(255,255,255,0.1); flex-shrink: 0; }
+.pl-trend-label { font-size: 8px; color: var(--text-secondary); margin-top: 2px; white-space: nowrap; }
+
+.pl-signals-section { margin-bottom: 14px; }
+.pl-signals-list { display: flex; flex-direction: column; gap: 4px; }
+.pl-signal-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  background: rgba(255,255,255,0.02);
+  border-left: 3px solid;
+  border-radius: 0 6px 6px 0;
+  font-size: 11px;
+}
+.pl-signal-action { font-weight: 600; }
+.pl-signal-verdict { font-weight: 700; }
+.pl-signal-ctx { color: var(--text-secondary); font-size: 10px; }
+.pl-signal-meta { color: var(--text-secondary); font-size: 10px; font-variant-numeric: tabular-nums; margin-left: auto; }
+
+.pl-recent-section { margin-bottom: 8px; }
+.pl-recent-list { display: flex; flex-direction: column; gap: 2px; }
+.pl-recent-row { display: flex; align-items: center; gap: 8px; font-size: 11px; padding: 3px 0; }
+.pl-recent-action { font-size: 13px; width: 20px; text-align: center; }
+.pl-recent-entity { flex: 1; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-recent-reward { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 50px; text-align: right; }
+
 /* ── Cycle Footer ── */
 /* ── IQ Breakdown Bar ── */
 .kv2-iq-breakdown {

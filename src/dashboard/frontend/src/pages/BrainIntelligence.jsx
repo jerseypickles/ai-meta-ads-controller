@@ -7,7 +7,7 @@ import {
   clearBrainChatHistory, getBrainStats, getBrainRecommendations,
   approveRecommendation, rejectRecommendation, markRecommendationExecuted,
   triggerBrainRecommendations, getFollowUpStats,
-  getPolicyState, getKnowledgeHistory, getDeepKnowledge, getCreativePerformance,
+  getPolicyState, getPolicyLearning, getKnowledgeHistory, getDeepKnowledge, getCreativePerformance,
   getAdHealth, suggestAdHealthAction, quickPauseAd, logout,
   uploadLaunchCreatives, launchStrategize, launchApprove, getCreativeThumbnailUrl
 } from '../api';
@@ -2196,40 +2196,160 @@ function KnowledgePanel({ formatTime }) {
         </div>
       )}
 
-      {activeZone === 'policy' && (
-        <div className="kv2-zone-detail" style={{ '--zone-color': '#10b981' }}>
-          <div className="kv2-zone-header">
-            <h3>Politica de Decisiones</h3>
-            <span className="kv2-zone-desc">Thompson Sampling — {data.policy?.total_samples || 0} muestras en {data.policy?.total_buckets || 0} contextos</span>
-          </div>
-          <div className="kv2-policy-actions">
-            {(data.policy?.top_actions || []).map((a, i) => {
-              const acfg = ACTION_TYPE_CONFIG[a.action] || { icon: '', label: a.action };
-              const barWidth = Math.min(100, a.success_rate);
-              const barColor = a.success_rate >= 60 ? '#10b981' : a.success_rate >= 45 ? '#f59e0b' : '#ef4444';
+      {activeZone === 'policy' && <PolicyLearningZone />}
+    </div>
+  );
+}
+
+// ═══ POLICY LEARNING ZONE ═══
+
+function PolicyLearningZone() {
+  const [learning, setLearning] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await getPolicyLearning();
+        setLearning(data);
+      } catch (err) {
+        console.error('Error loading learning data:', err);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  if (loading) return <div className="feed-empty">Cargando datos de aprendizaje...</div>;
+  if (!learning || learning.total_actions === 0) {
+    return (
+      <div className="kv2-zone-detail" style={{ '--zone-color': '#10b981' }}>
+        <div className="kv2-empty-zone">
+          <div className="kv2-empty-icon">{'\uD83C\uDFAF'}</div>
+          <div className="kv2-empty-msg">Sin datos de aprendizaje aun. Se llena cuando acciones completan medicion.</div>
+        </div>
+      </div>
+    );
+  }
+
+  const verdictColor = learning.verdict_type === 'positive' ? '#10b981'
+    : learning.verdict_type === 'moderate' ? '#f59e0b'
+    : learning.verdict_type === 'weak' ? '#ef4444' : '#6b7280';
+
+  return (
+    <div className="kv2-zone-detail" style={{ '--zone-color': '#10b981' }}>
+      <div className="kv2-zone-header">
+        <h3>Aprendizaje del Brain</h3>
+        <span className="kv2-zone-desc">{learning.total_actions} acciones medidas</span>
+      </div>
+
+      {/* Verdict banner */}
+      <div className="pl-verdict" style={{ borderLeftColor: verdictColor }}>
+        <div className="pl-verdict-text" style={{ color: verdictColor }}>{learning.verdict}</div>
+        <div className="pl-verdict-stats">
+          <span>Reward global: <b style={{ color: learning.global_avg_reward >= 0 ? '#10b981' : '#ef4444' }}>{learning.global_avg_reward > 0 ? '+' : ''}{learning.global_avg_reward}</b></span>
+          <span>1ra mitad: <b>{learning.first_half_avg > 0 ? '+' : ''}{learning.first_half_avg}</b></span>
+          <span>2da mitad: <b style={{ color: learning.second_half_avg > learning.first_half_avg ? '#10b981' : '#ef4444' }}>{learning.second_half_avg > 0 ? '+' : ''}{learning.second_half_avg}</b></span>
+          <span>{learning.is_improving ? '↗ Mejorando' : '→ Estable'}</span>
+        </div>
+      </div>
+
+      {/* Per-action cards */}
+      <div className="pl-actions">
+        {learning.by_action.map(a => {
+          const acfg = ACTION_TYPE_CONFIG[a.action] || { icon: '', label: a.action, color: '#6b7280' };
+          const rewardColor = a.avg_reward > 0.03 ? '#10b981' : a.avg_reward < -0.03 ? '#ef4444' : '#6b7280';
+          const trendIcon = a.trend === 'improving' ? '↗' : a.trend === 'worsening' ? '↘' : '→';
+          const trendColor = a.trend === 'improving' ? '#10b981' : a.trend === 'worsening' ? '#ef4444' : '#6b7280';
+          const signalDots = a.signal_strength === 'strong' ? '●●●' : a.signal_strength === 'moderate' ? '●●○' : '●○○';
+          return (
+            <div key={a.action} className="pl-action-card">
+              <div className="pl-action-header">
+                <span className="pl-action-name" style={{ color: acfg.color }}>{acfg.icon} {acfg.label}</span>
+                <span className="pl-action-count">{a.count}x</span>
+              </div>
+              <div className="pl-action-reward" style={{ color: rewardColor }}>
+                reward: {a.avg_reward > 0 ? '+' : ''}{a.avg_reward}
+              </div>
+              <div className="pl-action-breakdown">
+                <span className="pl-positive">{a.positive} positivas</span>
+                <span className="pl-negative">{a.negative} negativas</span>
+                <span className="pl-neutral">{a.neutral} neutrales</span>
+              </div>
+              <div className="pl-action-footer">
+                <span className="pl-trend" style={{ color: trendColor }}>{trendIcon} {a.first_half_avg > 0 ? '+' : ''}{a.first_half_avg} → {a.second_half_avg > 0 ? '+' : ''}{a.second_half_avg}</span>
+                <span className="pl-signal" title={`Senal: ${a.signal_strength}`}>{signalDots}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Reward trend over time */}
+      {learning.reward_trend.length > 1 && (
+        <div className="pl-trend-section">
+          <div className="pl-section-title">Tendencia semanal</div>
+          <div className="pl-trend-chart">
+            {learning.reward_trend.map((w, i) => {
+              const maxAbs = Math.max(0.1, ...learning.reward_trend.map(t => Math.abs(t.avg_reward)));
+              const height = Math.abs(w.avg_reward) / maxAbs * 40;
+              const isPositive = w.avg_reward >= 0;
               return (
-                <div key={a.action} className="kv2-policy-row" style={{ animationDelay: `${i * 0.04}s` }}>
-                  <div className="kv2-policy-action">
-                    <span className="kv2-policy-icon">{acfg.icon}</span>
-                    <span className="kv2-policy-name">{acfg.label}</span>
-                    <span className="kv2-policy-count">{a.count}x</span>
+                <div key={i} className="pl-trend-bar-wrap" title={`${w.week_start}: ${w.count} acciones, reward ${w.avg_reward > 0 ? '+' : ''}${w.avg_reward}, win ${w.win_rate}%`}>
+                  <div className="pl-trend-bar-space">
+                    {isPositive && <div className="pl-trend-bar positive" style={{ height: `${height}px` }} />}
                   </div>
-                  <div className="kv2-policy-bar-wrap">
-                    <div className="kv2-policy-bar" style={{ width: `${barWidth}%`, background: barColor }} />
-                    <span className="kv2-policy-pct">{a.success_rate}%</span>
+                  <div className="pl-trend-zero" />
+                  <div className="pl-trend-bar-space">
+                    {!isPositive && <div className="pl-trend-bar negative" style={{ height: `${height}px` }} />}
                   </div>
+                  <div className="pl-trend-label">{w.week_start.slice(5)}</div>
                 </div>
               );
             })}
-            {(!data.policy?.top_actions || data.policy.top_actions.length === 0) && (
-              <div className="kv2-empty-zone">
-                <div className="kv2-empty-icon">{'\uD83C\uDFAF'}</div>
-                <div className="kv2-empty-msg">Se llena cuando acciones aprobadas completan su seguimiento de 14 dias.</div>
-              </div>
-            )}
           </div>
         </div>
       )}
+
+      {/* Strongest signals */}
+      {learning.strongest_signals.length > 0 && (
+        <div className="pl-signals-section">
+          <div className="pl-section-title">Senales claras ({learning.strongest_signals.length})</div>
+          <div className="pl-signals-list">
+            {learning.strongest_signals.map((sig, i) => {
+              const acfg = ACTION_TYPE_CONFIG[sig.action] || { icon: '', label: sig.action };
+              const color = sig.verdict === 'funciona' ? '#10b981' : '#ef4444';
+              const bucketParts = sig.bucket.split('|');
+              return (
+                <div key={i} className="pl-signal-row" style={{ borderLeftColor: color }}>
+                  <span className="pl-signal-action">{acfg.icon} {acfg.label}</span>
+                  <span className="pl-signal-verdict" style={{ color }}>{sig.verdict === 'funciona' ? '✓' : '✗'} {sig.verdict}</span>
+                  <span className="pl-signal-ctx">{bucketParts.map(p => p.replace(/_/g, ' ')).join(' · ')}</span>
+                  <span className="pl-signal-meta">n={sig.count} | mean={sig.mean} | reward={sig.avg_reward > 0 ? '+' : ''}{sig.avg_reward}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Recent rewards */}
+      <div className="pl-recent-section">
+        <div className="pl-section-title">Ultimos 10 rewards</div>
+        <div className="pl-recent-list">
+          {learning.recent_rewards.map((r, i) => {
+            const acfg = ACTION_TYPE_CONFIG[r.action] || { icon: '', label: r.action };
+            const color = r.reward > 0.05 ? '#10b981' : r.reward < -0.05 ? '#ef4444' : '#6b7280';
+            return (
+              <div key={i} className="pl-recent-row">
+                <span className="pl-recent-action">{acfg.icon}</span>
+                <span className="pl-recent-entity">{r.entity_name}</span>
+                <span className="pl-recent-reward" style={{ color }}>{r.reward > 0 ? '+' : ''}{r.reward}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
