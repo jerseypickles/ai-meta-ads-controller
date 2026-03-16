@@ -636,11 +636,8 @@ function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onR
     return <div className="brain-loading">Cargando actividad del agente...</div>;
   }
 
-  if (!data) {
-    return <div className="brain-empty">Sin datos del agente</div>;
-  }
-
-  const { adsets, global } = data;
+  const adsets = data?.adsets || [];
+  const global = data?.global || { total_adsets: 0, win_rate: 0, total_measured: 0, last_cycle: null };
 
   return (
     <div className="agent-panel">
@@ -673,6 +670,19 @@ function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onR
           </button>
         </div>
       </div>
+
+      {/* Estado: agente nunca ha corrido */}
+      {adsets.length > 0 && !global.last_cycle && (
+        <div className="agent-first-run-notice">
+          El agente aun no ha corrido. Presiona "Ejecutar Agente" para el primer analisis, o espera al proximo ciclo automatico (9am/5pm/10pm ET).
+        </div>
+      )}
+
+      {adsets.length === 0 && (
+        <div className="agent-first-run-notice">
+          No hay ad sets activos en la cuenta.
+        </div>
+      )}
 
       {/* Feed de actividad por ad set */}
       <div className="agent-adset-list">

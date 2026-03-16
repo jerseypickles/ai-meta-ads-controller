@@ -9860,6 +9860,16 @@ a:hover {
 .btn-agent-refresh:hover { background: var(--bg-hover); }
 .btn-agent-refresh:disabled { opacity: 0.5; }
 
+.agent-first-run-notice {
+  padding: 16px 20px;
+  background: rgba(59,130,246,0.1);
+  border: 1px solid rgba(59,130,246,0.3);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
 .agent-adset-list {
   display: flex;
   flex-direction: column;
