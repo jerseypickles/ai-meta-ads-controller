@@ -414,6 +414,11 @@ export const getDeepKnowledge = async () => {
   return response.data;
 };
 
+export const getLaunchedAdsets = async () => {
+  const response = await api.get('/api/ai-creations/launched-adsets');
+  return response.data;
+};
+
 // ═══ BRAIN — Creative Performance Tracking ═══
 
 export const getCreativePerformance = async () => {

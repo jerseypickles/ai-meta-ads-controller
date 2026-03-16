@@ -9177,6 +9177,74 @@ a:hover {
 
 /* ═══ LAUNCH PANEL — Lanzar Ad Set ═══ */
 
+.launch-panel-wrapper { display: flex; flex-direction: column; gap: 0; }
+.launch-subtabs { display: flex; gap: 0; border-bottom: 1px solid rgba(255,255,255,0.08); margin-bottom: 16px; }
+.launch-subtab {
+  padding: 10px 20px; font-size: 13px; font-weight: 600; color: var(--text-secondary);
+  background: none; border: none; cursor: pointer; border-bottom: 2px solid transparent;
+  transition: all 0.15s ease;
+}
+.launch-subtab:hover { color: var(--text-primary); }
+.launch-subtab.active { color: var(--accent, #6366f1); border-bottom-color: var(--accent, #6366f1); }
+
+/* ── Managed Ad Sets Panel ── */
+.lm-panel { display: flex; flex-direction: column; gap: 12px; }
+.lm-summary { display: flex; flex-wrap: wrap; gap: 12px; padding: 8px 0; }
+.lm-summary-stat { font-size: 12px; color: var(--text-secondary); font-weight: 500; }
+
+.lm-list { display: flex; flex-direction: column; gap: 8px; }
+.lm-card {
+  background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px; padding: 12px; cursor: pointer; transition: all 0.15s ease;
+}
+.lm-card:hover { border-color: rgba(255,255,255,0.12); }
+.lm-card.expanded { border-color: rgba(99,102,241,0.3); }
+
+.lm-card-top { display: flex; flex-direction: column; gap: 6px; }
+.lm-card-header { display: flex; align-items: center; gap: 8px; }
+.lm-card-status { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.lm-card-name { font-size: 13px; font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+.lm-badge { font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 600; flex-shrink: 0; }
+.lm-badge.learning { color: #3b82f6; background: rgba(59,130,246,0.12); }
+.lm-badge.positive { color: #10b981; background: rgba(16,185,129,0.12); }
+.lm-badge.negative { color: #ef4444; background: rgba(239,68,68,0.12); }
+
+.lm-card-metrics { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; }
+.lm-metric { color: var(--text-secondary); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.lm-card-budget { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.lm-budget-label { color: var(--text-secondary); }
+.lm-budget-initial { color: var(--text-secondary); }
+.lm-budget-arrow { color: var(--text-secondary); opacity: 0.4; }
+.lm-budget-current { font-weight: 700; color: var(--text-primary); }
+.lm-budget-current.up { color: #10b981; }
+.lm-budget-current.down { color: #ef4444; }
+.lm-budget-delta { font-size: 11px; font-weight: 600; }
+.lm-budget-delta.up { color: #10b981; }
+.lm-budget-delta.down { color: #ef4444; }
+.lm-scale-counts { display: flex; gap: 6px; margin-left: 4px; font-size: 11px; font-weight: 600; }
+.lm-scale-up { color: #10b981; }
+.lm-scale-down { color: #ef4444; }
+
+/* Expanded detail */
+.lm-card-detail { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 10px; }
+.lm-assessment { font-size: 12px; color: var(--text-secondary); line-height: 1.5; background: rgba(255,255,255,0.02); padding: 8px; border-radius: 6px; }
+.lm-creative-alert { font-size: 11px; color: #f59e0b; font-weight: 600; padding: 4px 8px; background: rgba(245,158,11,0.08); border-radius: 4px; display: inline-block; }
+
+.lm-history { display: flex; flex-direction: column; gap: 3px; }
+.lm-history-title { font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.lm-history-row { display: flex; align-items: center; gap: 8px; font-size: 11px; padding: 3px 0; font-variant-numeric: tabular-nums; }
+.lm-history-row.up .lm-history-icon { color: #10b981; }
+.lm-history-row.down .lm-history-icon { color: #ef4444; }
+.lm-history-icon { font-weight: 700; width: 14px; text-align: center; }
+.lm-history-date { color: var(--text-secondary); min-width: 50px; }
+.lm-history-values { color: var(--text-primary); font-weight: 500; }
+.lm-history-reward { font-size: 10px; margin-left: auto; }
+.lm-history-agent { font-size: 10px; color: var(--text-secondary); opacity: 0.6; }
+
+.lm-meta { display: flex; flex-wrap: wrap; gap: 12px; font-size: 10px; color: var(--text-secondary); padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.04); }
+
 .launch-panel {
   padding: 0;
 }

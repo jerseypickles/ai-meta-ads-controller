@@ -7,7 +7,7 @@ import {
   clearBrainChatHistory, getBrainStats, getBrainRecommendations,
   approveRecommendation, rejectRecommendation, markRecommendationExecuted,
   triggerBrainRecommendations, getFollowUpStats,
-  getPolicyState, getPolicyLearning, getKnowledgeHistory, getDeepKnowledge, getCreativePerformance,
+  getPolicyState, getPolicyLearning, getKnowledgeHistory, getDeepKnowledge, getLaunchedAdsets, getCreativePerformance,
   getAdHealth, suggestAdHealthAction, quickPauseAd, logout,
   uploadLaunchCreatives, launchStrategize, launchApprove, getCreativeThumbnailUrl
 } from '../api';
@@ -2851,6 +2851,133 @@ function CreativesPanel({ formatTime }) {
 // ═══ LAUNCH PANEL — Upload creatives + Brain proposes ad set ═══
 
 function LaunchPanel() {
+  const [launchSubTab, setLaunchSubTab] = useState('create'); // 'create' | 'managed'
+
+  return (
+    <div className="launch-panel-wrapper">
+      <div className="launch-subtabs">
+        <button className={`launch-subtab ${launchSubTab === 'create' ? 'active' : ''}`} onClick={() => setLaunchSubTab('create')}>Crear Ad Set</button>
+        <button className={`launch-subtab ${launchSubTab === 'managed' ? 'active' : ''}`} onClick={() => setLaunchSubTab('managed')}>Mis Ad Sets IA</button>
+      </div>
+      {launchSubTab === 'create' ? <LaunchCreatePanel /> : <LaunchManagedPanel />}
+    </div>
+  );
+}
+
+function LaunchManagedPanel() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const result = await getLaunchedAdsets();
+        setData(result);
+      } catch (err) {
+        console.error('Error loading launched adsets:', err);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  if (loading) return <div className="feed-empty">Cargando ad sets...</div>;
+  if (!data?.adsets?.length) return <div className="feed-empty">No hay ad sets lanzados desde el panel aun.</div>;
+
+  const adsets = data.adsets;
+
+  return (
+    <div className="lm-panel">
+      <div className="lm-summary">
+        <span className="lm-summary-stat">{adsets.length} ad sets</span>
+        <span className="lm-summary-stat">{adsets.filter(a => a.status === 'ACTIVE').length} activos</span>
+        <span className="lm-summary-stat">{adsets.filter(a => a.is_learning).length} en learning</span>
+        <span className="lm-summary-stat">{adsets.reduce((s, a) => s + a.total_scale_ups, 0)} scale ups</span>
+        <span className="lm-summary-stat">{adsets.reduce((s, a) => s + a.total_scale_downs, 0)} scale downs</span>
+      </div>
+
+      <div className="lm-list">
+        {adsets.map(a => {
+          const isExpanded = expanded === a.adset_id;
+          const statusColor = a.status === 'ACTIVE' ? '#10b981' : a.status === 'PAUSED' ? '#f59e0b' : '#6b7280';
+          const roasColor = a.roas_7d >= 3 ? '#10b981' : a.roas_7d >= 1.5 ? '#f59e0b' : '#ef4444';
+          const budgetDelta = a.current_budget - a.initial_budget;
+          const budgetPct = a.initial_budget > 0 ? Math.round((budgetDelta / a.initial_budget) * 100) : 0;
+
+          return (
+            <div key={a.adset_id} className={`lm-card ${isExpanded ? 'expanded' : ''}`} onClick={() => setExpanded(isExpanded ? null : a.adset_id)}>
+              <div className="lm-card-top">
+                <div className="lm-card-header">
+                  <span className="lm-card-status" style={{ background: statusColor }} />
+                  <span className="lm-card-name">{a.name}</span>
+                  {a.is_learning && <span className="lm-badge learning">Learning ({a.days_old}d/7d)</span>}
+                  {a.verdict === 'positive' && <span className="lm-badge positive">Positivo</span>}
+                  {a.verdict === 'negative' && <span className="lm-badge negative">Negativo</span>}
+                </div>
+                <div className="lm-card-metrics">
+                  <span className="lm-metric" style={{ color: roasColor }}>ROAS {a.roas_7d.toFixed(2)}x</span>
+                  <span className="lm-metric">CPA ${a.cpa_7d.toFixed(0)}</span>
+                  <span className="lm-metric">Spend ${a.spend_7d.toFixed(0)}</span>
+                  <span className="lm-metric">{a.purchases_7d} compras</span>
+                  <span className="lm-metric">Freq {a.frequency_7d.toFixed(1)}</span>
+                </div>
+                <div className="lm-card-budget">
+                  <span className="lm-budget-label">Budget:</span>
+                  <span className="lm-budget-initial">${a.initial_budget}</span>
+                  <span className="lm-budget-arrow">→</span>
+                  <span className={`lm-budget-current ${budgetDelta > 0 ? 'up' : budgetDelta < 0 ? 'down' : ''}`}>${a.current_budget}</span>
+                  {budgetDelta !== 0 && <span className={`lm-budget-delta ${budgetDelta > 0 ? 'up' : 'down'}`}>({budgetPct > 0 ? '+' : ''}{budgetPct}%)</span>}
+                  <span className="lm-scale-counts">
+                    {a.total_scale_ups > 0 && <span className="lm-scale-up">↑{a.total_scale_ups}</span>}
+                    {a.total_scale_downs > 0 && <span className="lm-scale-down">↓{a.total_scale_downs}</span>}
+                  </span>
+                </div>
+              </div>
+
+              {isExpanded && (
+                <div className="lm-card-detail">
+                  {a.last_assessment && (
+                    <div className="lm-assessment">{a.last_assessment}</div>
+                  )}
+                  {a.needs_new_creatives && (
+                    <div className="lm-creative-alert">Necesita creativos nuevos</div>
+                  )}
+                  {a.scale_actions.length > 0 && (
+                    <div className="lm-history">
+                      <div className="lm-history-title">Historial de scaling</div>
+                      {a.scale_actions.map((s, i) => {
+                        const date = new Date(s.executed_at).toLocaleDateString('es', { month: 'short', day: 'numeric' });
+                        const isUp = s.action === 'scale_up';
+                        const rewardColor = s.reward == null ? '#6b7280' : s.reward > 0.05 ? '#10b981' : s.reward < -0.05 ? '#ef4444' : '#6b7280';
+                        return (
+                          <div key={i} className={`lm-history-row ${isUp ? 'up' : 'down'}`}>
+                            <span className="lm-history-icon">{isUp ? '↑' : '↓'}</span>
+                            <span className="lm-history-date">{date}</span>
+                            <span className="lm-history-values">${s.before} → ${s.after} ({s.change_pct > 0 ? '+' : ''}{s.change_pct}%)</span>
+                            {s.reward != null && <span className="lm-history-reward" style={{ color: rewardColor }}>reward: {s.reward > 0 ? '+' : ''}{s.reward.toFixed(3)}</span>}
+                            <span className="lm-history-agent">{s.agent_type === 'brain' ? 'Brain' : 'AI Mgr'}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div className="lm-meta">
+                    <span>Creado hace {a.days_old}d</span>
+                    <span>Campaña: {a.campaign_name}</span>
+                    {a.last_check && <span>Ultimo check: {new Date(a.last_check).toLocaleString('es', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function LaunchCreatePanel() {
   const [step, setStep] = useState('upload'); // upload | proposing | review | launching | done
   const [files, setFiles] = useState([]);
   const [previews, setPreviews] = useState([]);
