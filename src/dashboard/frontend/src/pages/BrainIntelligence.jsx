@@ -864,31 +864,56 @@ function AgentThoughtsPanel({ thoughts, loading, formatTime, onRefresh }) {
     );
   }
 
+  // Group by entity for a cleaner view
+  const byEntity = {};
+  for (const item of feed) {
+    const key = item.entity_name || item.entity_id || 'unknown';
+    if (!byEntity[key]) byEntity[key] = { name: key, items: [] };
+    byEntity[key].items.push(item);
+  }
+  const entities = Object.values(byEntity);
+
   return (
     <div className="thoughts-panel">
       <div className="thoughts-header">
-        <span className="thoughts-count">{feed.length} pensamientos</span>
+        <div className="thoughts-header-left">
+          <span className="thoughts-pulse" />
+          <span className="thoughts-title">Stream de Consciencia</span>
+          <span className="thoughts-count">{feed.length} pensamientos &middot; {entities.length} entidades</span>
+        </div>
         <button className="btn-agent-refresh" onClick={onRefresh} disabled={loading}>Refrescar</button>
       </div>
-      <div className="thoughts-feed">
+
+      <div className="thoughts-stream">
         {feed.map((item, idx) => {
           const cfg = THOUGHT_TYPE_CONFIG[item.type] || THOUGHT_TYPE_CONFIG.assessment;
+          const isAction = item.type === 'action';
+          const am = isAction ? (ACTION_LABELS[item.meta?.action] || { icon: '', label: item.meta?.action, color: '#6b7280' }) : null;
           const trendCls = item.meta?.performance_trend ? `thought-trend-${item.meta.performance_trend}` : '';
+
           return (
-            <div key={idx} className="thought-row" style={{ borderLeftColor: cfg.color }}>
-              <span className="thought-icon">{cfg.icon}</span>
-              <span className="thought-entity">{item.entity_name || item.entity_id}</span>
-              {item.meta?.performance_trend && (
-                <span className={`thought-tag-sm ${trendCls}`}>{item.meta.performance_trend}</span>
-              )}
-              {item.type === 'action' && item.meta?.action && (
-                <span className="thought-tag-sm" style={{ color: (ACTION_LABELS[item.meta.action] || {}).color }}>
-                  {(ACTION_LABELS[item.meta.action] || { icon: '' }).icon} {(ACTION_LABELS[item.meta.action] || { label: item.meta.action }).label}
-                  {typeof item.meta.before_value === 'number' ? ` $${item.meta.before_value} → $${item.meta.after_value}` : ''}
-                </span>
-              )}
-              <span className="thought-content">{(item.content || '').substring(0, 200)}</span>
-              <span className="thought-time">{formatTime(item.timestamp)}</span>
+            <div key={idx} className={`thought-bubble ${item.type}`}>
+              <div className="thought-bubble-indicator" style={{ background: cfg.color }} />
+              <div className="thought-bubble-content">
+                <div className="thought-bubble-head">
+                  <span className="thought-bubble-entity">{item.entity_name || item.entity_id}</span>
+                  {item.meta?.performance_trend && (
+                    <span className={`thought-pill ${trendCls}`}>{item.meta.performance_trend}</span>
+                  )}
+                  {isAction && am && (
+                    <span className="thought-pill thought-pill-action" style={{ color: am.color, borderColor: am.color }}>
+                      {am.icon} {am.label}
+                      {typeof item.meta.before_value === 'number' && (
+                        <> ${item.meta.before_value} {'→'} ${item.meta.after_value}</>
+                      )}
+                    </span>
+                  )}
+                  <span className="thought-bubble-time">{formatTime(item.timestamp)}</span>
+                </div>
+                <div className="thought-bubble-text">
+                  {(item.content || '').substring(0, 250)}
+                </div>
+              </div>
             </div>
           );
         })}
