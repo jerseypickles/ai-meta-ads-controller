@@ -684,103 +684,69 @@ function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onR
         </div>
       )}
 
-      {/* Feed de actividad por ad set */}
-      <div className="agent-adset-list">
+      {/* Grid compacto de ad sets */}
+      <div className="agent-grid">
         {adsets.map(adset => {
           const isExpanded = expandedAdSet === adset.adset_id;
           const trend = TREND_BADGE[adset.agent?.performance_trend] || TREND_BADGE.unknown;
           const freq = FREQ_BADGE[adset.agent?.frequency_status] || FREQ_BADGE.unknown;
+          const roasColor = adset.metrics_7d.roas >= 4 ? '#10b981' : adset.metrics_7d.roas >= 2.5 ? '#3b82f6' : adset.metrics_7d.roas >= 1.5 ? '#f59e0b' : '#ef4444';
 
           return (
-            <div key={adset.adset_id} className={`agent-adset-card ${isExpanded ? 'expanded' : ''}`}>
-              {/* Header */}
-              <div className="agent-adset-header" onClick={() => onToggleExpand(adset.adset_id)}>
-                <div className="agent-adset-info">
-                  <span className="agent-adset-name">{adset.adset_name}</span>
-                  <div className="agent-adset-badges">
-                    <span className="agent-badge" style={{ background: trend.bg, color: trend.color }}>{trend.label}</span>
-                    <span className="agent-badge" style={{ color: freq.color }}>Freq: {freq.label}</span>
-                    {adset.agent?.needs_new_creatives && (
-                      <span className="agent-badge" style={{ color: '#f59e0b', background: 'rgba(245,158,11,0.15)' }}>Necesita creativos</span>
-                    )}
-                  </div>
-                </div>
-                <div className="agent-adset-metrics">
-                  <span className="agent-metric">
-                    <strong>ROAS</strong> {adset.metrics_7d.roas.toFixed(2)}x
-                  </span>
-                  <span className="agent-metric">
-                    <strong>Spend</strong> ${adset.metrics_7d.spend.toFixed(0)}
-                  </span>
-                  <span className="agent-metric">
-                    <strong>Freq</strong> {adset.metrics_7d.frequency.toFixed(1)}
-                  </span>
-                  <span className="agent-metric">
-                    <strong>Budget</strong> ${adset.daily_budget}/d
-                  </span>
-                  <span className="agent-expand-icon">{isExpanded ? '\u25B2' : '\u25BC'}</span>
-                </div>
+            <div key={adset.adset_id} className={`agent-card ${isExpanded ? 'expanded' : ''}`} onClick={() => onToggleExpand(adset.adset_id)}>
+              {/* Row 1: name + trend badge */}
+              <div className="agent-card-top">
+                <span className="agent-card-name" title={adset.adset_name}>{adset.adset_name}</span>
+                <span className="agent-badge-sm" style={{ background: trend.bg, color: trend.color }}>{trend.label}</span>
+                {adset.agent?.needs_new_creatives && <span className="agent-badge-sm" style={{ color: '#f59e0b', background: 'rgba(245,158,11,0.15)' }}>Creativos</span>}
               </div>
 
-              {/* Assessment */}
+              {/* Row 2: key metrics inline */}
+              <div className="agent-card-metrics">
+                <span style={{ color: roasColor, fontWeight: 700 }}>{adset.metrics_7d.roas.toFixed(2)}x</span>
+                <span>${adset.metrics_7d.spend.toFixed(0)}/7d</span>
+                <span style={{ color: freq.color }}>f:{adset.metrics_7d.frequency.toFixed(1)}</span>
+                <span>${adset.daily_budget}/d</span>
+              </div>
+
+              {/* Row 3: assessment (truncated) */}
               {adset.agent?.assessment && (
-                <div className="agent-adset-assessment">
-                  <p>{adset.agent.assessment}</p>
-                  {adset.agent.last_check && (
-                    <span className="agent-assessment-time">{formatTime(adset.agent.last_check)}</span>
-                  )}
+                <div className="agent-card-assessment">
+                  {isExpanded ? adset.agent.assessment : (adset.agent.assessment || '').substring(0, 150) + ((adset.agent.assessment || '').length > 150 ? '...' : '')}
                 </div>
               )}
 
-              {/* Recent actions */}
+              {/* Row 4: recent actions (only if has actions) */}
               {adset.recent_actions.length > 0 && (
-                <div className="agent-adset-actions">
-                  {adset.recent_actions.slice(0, isExpanded ? 10 : 3).map(action => {
-                    const actionMeta = ACTION_LABELS[action.action] || { icon: '\u2022', label: action.action, color: '#6b7280' };
+                <div className="agent-card-actions">
+                  {adset.recent_actions.slice(0, isExpanded ? 5 : 1).map(action => {
+                    const am = ACTION_LABELS[action.action] || { icon: '\u2022', label: action.action, color: '#6b7280' };
                     return (
-                      <div key={action._id} className="agent-action-row">
-                        <span className="agent-action-icon" style={{ color: actionMeta.color }}>{actionMeta.icon}</span>
-                        <span className="agent-action-label">{actionMeta.label}</span>
-                        {action.before_value != null && action.after_value != null && typeof action.before_value === 'number' && (
-                          <span className="agent-action-value">
-                            ${action.before_value} → ${action.after_value}
-                            {action.change_percent ? ` (${action.change_percent > 0 ? '+' : ''}${action.change_percent}%)` : ''}
-                          </span>
-                        )}
-                        {action.target_entity_name && (
-                          <span className="agent-action-target">ad: {action.target_entity_name}</span>
-                        )}
-                        <span className="agent-action-reason">{(action.reasoning || '').substring(0, 120)}</span>
+                      <div key={action._id} className="agent-action-compact">
+                        <span style={{ color: am.color }}>{am.icon} {am.label}</span>
+                        {typeof action.before_value === 'number' && <span className="agent-action-value">${action.before_value}\u2192${action.after_value}</span>}
                         <span className="agent-action-time">{formatTime(action.executed_at)}</span>
-                        {action.follow_up_verdict && action.follow_up_verdict !== 'pending' && (
-                          <span className={`agent-verdict agent-verdict-${action.follow_up_verdict}`}>
-                            {action.follow_up_verdict === 'positive' ? '+' : action.follow_up_verdict === 'negative' ? '-' : '~'}
-                          </span>
-                        )}
-                        {action.impact_3d && action.impact_3d.delta_roas != null && (
-                          <span className={`agent-impact ${action.impact_3d.delta_roas >= 0 ? 'positive' : 'negative'}`}>
-                            ROAS {action.impact_3d.delta_roas > 0 ? '+' : ''}{action.impact_3d.delta_roas.toFixed(1)}%
-                          </span>
-                        )}
                       </div>
                     );
                   })}
                 </div>
               )}
 
-              {/* Expanded: creative health, more details */}
-              {isExpanded && adset.agent?.creative_health && (
-                <div className="agent-adset-creative-health">
-                  <strong>Salud Creativa:</strong> {adset.agent.creative_health}
-                </div>
-              )}
-
+              {/* Expanded: extra details */}
               {isExpanded && (
-                <div className="agent-adset-extra-metrics">
-                  <span>CPA: ${adset.metrics_7d.cpa.toFixed(2)}</span>
-                  <span>CTR: {adset.metrics_7d.ctr.toFixed(2)}%</span>
-                  <span>Compras 7d: {adset.metrics_7d.purchases}</span>
-                  <span>3d ROAS: {adset.metrics_3d.roas.toFixed(2)}x</span>
+                <div className="agent-card-expanded">
+                  <div className="agent-card-extra">
+                    <span>CPA ${adset.metrics_7d.cpa.toFixed(2)}</span>
+                    <span>CTR {adset.metrics_7d.ctr.toFixed(2)}%</span>
+                    <span>{adset.metrics_7d.purchases} compras</span>
+                    <span>3d: {adset.metrics_3d.roas.toFixed(2)}x</span>
+                  </div>
+                  {adset.agent?.creative_health && (
+                    <div className="agent-card-creative">{adset.agent.creative_health}</div>
+                  )}
+                  {adset.agent?.last_check && (
+                    <span className="agent-card-time">Revisado {formatTime(adset.agent.last_check)}</span>
+                  )}
                 </div>
               )}
             </div>
@@ -896,76 +862,22 @@ function AgentThoughtsPanel({ thoughts, loading, formatTime, onRefresh }) {
       <div className="thoughts-feed">
         {feed.map((item, idx) => {
           const cfg = THOUGHT_TYPE_CONFIG[item.type] || THOUGHT_TYPE_CONFIG.assessment;
+          const trendCls = item.meta?.performance_trend ? `thought-trend-${item.meta.performance_trend}` : '';
           return (
-            <div key={idx} className="thought-card" style={{ borderLeftColor: cfg.color }}>
-              <div className="thought-header">
-                <span className="thought-icon">{cfg.icon}</span>
-                <span className="thought-type" style={{ color: cfg.color }}>{cfg.label}</span>
-                <span className="thought-entity">{item.entity_name || item.entity_id}</span>
-                <span className="thought-time">{formatTime(item.timestamp)}</span>
-              </div>
-
-              {/* Assessment: mostrar el texto completo + meta */}
-              {item.type === 'assessment' && (
-                <div className="thought-body">
-                  <p className="thought-text">{item.content}</p>
-                  {item.meta && (
-                    <div className="thought-meta-row">
-                      {item.meta.performance_trend && (
-                        <span className={`thought-tag thought-trend-${item.meta.performance_trend}`}>
-                          {item.meta.performance_trend}
-                        </span>
-                      )}
-                      {item.meta.frequency_status && item.meta.frequency_status !== 'unknown' && (
-                        <span className="thought-tag">Freq: {item.meta.frequency_status}</span>
-                      )}
-                      {item.meta.needs_new_creatives && (
-                        <span className="thought-tag thought-tag-warning">Necesita creativos</span>
-                      )}
-                    </div>
-                  )}
-                  {item.meta?.creative_health && (
-                    <p className="thought-creative-health">{item.meta.creative_health}</p>
-                  )}
-                </div>
+            <div key={idx} className="thought-row" style={{ borderLeftColor: cfg.color }}>
+              <span className="thought-icon">{cfg.icon}</span>
+              <span className="thought-entity">{item.entity_name || item.entity_id}</span>
+              {item.meta?.performance_trend && (
+                <span className={`thought-tag-sm ${trendCls}`}>{item.meta.performance_trend}</span>
               )}
-
-              {/* Observation: título + descripción */}
-              {item.type === 'observation' && (
-                <div className="thought-body">
-                  <p className="thought-text">{item.content}</p>
-                  {item.meta?.severity && (
-                    <span className={`thought-tag thought-severity-${item.meta.severity}`}>{item.meta.severity}</span>
-                  )}
-                </div>
+              {item.type === 'action' && item.meta?.action && (
+                <span className="thought-tag-sm" style={{ color: (ACTION_LABELS[item.meta.action] || {}).color }}>
+                  {(ACTION_LABELS[item.meta.action] || { icon: '' }).icon} {(ACTION_LABELS[item.meta.action] || { label: item.meta.action }).label}
+                  {typeof item.meta.before_value === 'number' ? ` $${item.meta.before_value}\u2192$${item.meta.after_value}` : ''}
+                </span>
               )}
-
-              {/* Action: qué hizo y por qué */}
-              {item.type === 'action' && (
-                <div className="thought-body">
-                  <div className="thought-action-detail">
-                    <span className="thought-action-name">
-                      {(ACTION_LABELS[item.meta?.action] || { icon: '\u2022', label: item.meta?.action }).icon}{' '}
-                      {(ACTION_LABELS[item.meta?.action] || { label: item.meta?.action }).label}
-                    </span>
-                    {item.meta?.before_value != null && item.meta?.after_value != null && typeof item.meta.before_value === 'number' && (
-                      <span className="thought-action-values">
-                        ${item.meta.before_value} → ${item.meta.after_value}
-                        {item.meta.change_percent ? ` (${item.meta.change_percent > 0 ? '+' : ''}${item.meta.change_percent}%)` : ''}
-                      </span>
-                    )}
-                    {item.meta?.target_entity_name && (
-                      <span className="thought-action-target">ad: {item.meta.target_entity_name}</span>
-                    )}
-                  </div>
-                  {item.content && <p className="thought-text">{item.content}</p>}
-                  {item.meta?.follow_up_verdict && item.meta.follow_up_verdict !== 'pending' && (
-                    <span className={`thought-tag thought-verdict-${item.meta.follow_up_verdict}`}>
-                      Resultado: {item.meta.follow_up_verdict}
-                    </span>
-                  )}
-                </div>
-              )}
+              <span className="thought-content">{(item.content || '').substring(0, 200)}</span>
+              <span className="thought-time">{formatTime(item.timestamp)}</span>
             </div>
           );
         })}

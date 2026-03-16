@@ -92,12 +92,14 @@ The bandit system tracks success/failure of past actions across similar contexts
 - Use the signal to calibrate aggression, not as a veto
 
 ## ASSESSMENT FORMAT
-Your assessment (in save_assessment) must be in Spanish and include:
-- Performance summary with key metrics (ROAS, CPA, frequency, spend)
-- Frequency/fatigue analysis per ad
-- What you did and why (or why you held)
-- Creative health: which styles work, what's needed
-- Performance trend: improving/stable/declining/learning
+Your assessment MUST be SHORT — max 3-4 sentences in Spanish. Structure:
+1. One line: key metrics + trend direction (e.g. "ROAS 3.9x mejorando, freq 1.1 OK, CPA $18")
+2. One line: what you did or decided and WHY (e.g. "Hold — historial de scale-up negativo (-39% ROAS)")
+3. One line (optional): creative health if relevant (e.g. "1 ad activo sano, nuevo ad en learning")
+
+DO NOT write long analyses, bullet lists, or detailed breakdowns. Be TELEGRAPHIC.
+Bad: "El ad set muestra una tendencia de mejora consistente con ROAS 7d de 3.34x que representa una mejora del 14% respecto al periodo de 14 días..."
+Good: "ROAS 3.34x (+14% vs 14d), mejorando. CPA $22 OK. Hold — ad nuevo en learning, esperar 5d."
 
 IMPORTANT: Always call save_assessment before finishing — even if you take no actions.
 IMPORTANT: Return ONLY tool calls, minimize text output to save tokens.`;
