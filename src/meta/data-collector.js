@@ -378,6 +378,54 @@ class DataCollector {
       const adSnapshots = adOps.length;
       logger.info(`  ${adSnapshots} snapshots de ads/creativos guardados`);
 
+      // ── 7. Detect deleted/archived ad sets — mark stale snapshots ──
+      // Compare what Meta returned (adSetMap) vs what we have as ACTIVE in DB.
+      // If an ad set is in DB as ACTIVE but Meta didn't return it, it was deleted/archived.
+      try {
+        const { getLatestSnapshots: getSnaps } = require('../db/queries');
+        const dbAdsets = await getSnaps('adset');
+        const metaIds = new Set(Object.keys(adSetMap));
+        const staleIds = dbAdsets
+          .filter(s => s.status === 'ACTIVE' && !metaIds.has(s.entity_id))
+          .map(s => s.entity_id);
+
+        if (staleIds.length > 0) {
+          // Insert a new snapshot marking them as ARCHIVED
+          const archiveOps = staleIds.map(id => {
+            const old = dbAdsets.find(s => s.entity_id === id);
+            return {
+              insertOne: {
+                document: {
+                  entity_type: 'adset',
+                  entity_id: id,
+                  entity_name: old?.entity_name || 'Unknown',
+                  parent_id: old?.parent_id || old?.campaign_id || '',
+                  campaign_id: old?.campaign_id || '',
+                  status: 'ARCHIVED',
+                  daily_budget: old?.daily_budget || 0,
+                  metrics: old?.metrics || {},
+                  snapshot_at: now
+                }
+              }
+            };
+          });
+          await MetricSnapshot.bulkWrite(archiveOps, { ordered: false });
+          logger.info(`  ${staleIds.length} ad sets marcados como ARCHIVED (eliminados de Meta): ${staleIds.join(', ')}`);
+
+          // Also update AICreation if managed_by_ai
+          try {
+            await AICreation.updateMany(
+              { meta_entity_id: { $in: staleIds }, managed_by_ai: true },
+              { $set: { current_status: 'ARCHIVED', managed_by_ai: false, lifecycle_phase: 'dead', verdict_reason: 'Ad set eliminado de Meta' } }
+            );
+          } catch (aiErr) {
+            logger.warn(`  Error actualizando AICreation para ad sets eliminados: ${aiErr.message}`);
+          }
+        }
+      } catch (detectErr) {
+        logger.warn(`  Error detectando ad sets eliminados: ${detectErr.message}`);
+      }
+
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       logger.info(`${totalSnapshots} snapshots guardados en MongoDB`);
       logger.info(`═══ Recolección completada en ${elapsed}s (${totalAdSets} ad sets, ${adSnapshots} ads, ~5 API calls) ═══`);
