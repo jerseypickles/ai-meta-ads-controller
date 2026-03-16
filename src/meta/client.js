@@ -977,7 +977,7 @@ class MetaClient {
       optimization_goal,
       billing_event,
       targeting: JSON.stringify(targeting || defaultTargeting),
-      pacing_type: ['standard'], // Distribución uniforme durante el día — evita gastar el budget de golpe
+      pacing_type: JSON.stringify(['standard']), // Distribución uniforme durante el día — evita gastar el budget de golpe
       status
     };
 
