@@ -970,7 +970,7 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
     let response;
     try {
       response = await client.messages.create({
-        model: 'claude-sonnet-4-6-20250514',
+        model: config.claude.model,
         max_tokens: 2048,
         system: AGENT_SYSTEM_PROMPT,
         tools: activeTools,
@@ -982,7 +982,7 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
         await new Promise(r => setTimeout(r, 15000));
         try {
           response = await client.messages.create({
-            model: 'claude-sonnet-4-6-20250514',
+            model: config.claude.model,
             max_tokens: 2048,
             system: AGENT_SYSTEM_PROMPT,
             tools: activeTools,
