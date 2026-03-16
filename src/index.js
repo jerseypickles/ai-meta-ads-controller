@@ -539,8 +539,10 @@ async function jobAIManager() {
 }
 
 /**
- * Job: Account Agent unificado — 3x/día (9am, 5pm, 10pm ET).
+ * Job: Account Agent unificado — cada 2h durante horas activas (6am-10pm ET).
  * Itera TODOS los ad sets activos con un agentic loop por ad set.
+ * Barato: pre-checks en MongoDB saltan rápido (cooldown, pending impact).
+ * Solo llama a Claude cuando hay algo que analizar.
  * Feature flag: solo corre si agent_mode === 'unified'.
  */
 async function jobAccountAgent() {
@@ -804,12 +806,15 @@ function initCronJobs() {
   });
   logger.info('  [*] AI Manager autónomo — 3x/día: 9am, 5pm, 10pm ET');
 
-  // 3 veces al día: Account Agent unificado (9am, 5pm, 10pm ET)
-  cron.schedule('0 9,17,22 * * *', jobAccountAgent, {
+  // Cada 2 horas (horas activas 6am-10pm ET): Account Agent unificado
+  // Corre frecuente pero es barato — pre-checks en MongoDB saltan rápido
+  // si la entidad está en cooldown o pending impact. Solo llama a Claude
+  // cuando hay algo que analizar.
+  cron.schedule('0 6,8,10,12,14,16,18,20,22 * * *', jobAccountAgent, {
     timezone: TIMEZONE,
     name: 'account-agent'
   });
-  logger.info('  [*] Account Agent unificado — 3x/día: 9am, 5pm, 10pm ET');
+  logger.info('  [*] Account Agent unificado — cada 2h horas activas (6am-10pm ET)');
 
   // AI Ops metrics refresh — cada 15 min, 24/7
   cron.schedule('5,20,35,50 * * * *', jobAIOpsRefresh, {

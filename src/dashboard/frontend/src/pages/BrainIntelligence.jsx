@@ -674,7 +674,7 @@ function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onR
       {/* Estado: agente nunca ha corrido */}
       {adsets.length > 0 && !global.last_cycle && (
         <div className="agent-first-run-notice">
-          El agente aun no ha corrido. Presiona "Ejecutar Agente" para el primer analisis, o espera al proximo ciclo automatico (9am/5pm/10pm ET).
+          El agente aun no ha corrido. Presiona "Ejecutar Agente" para el primer analisis, o espera al proximo ciclo automatico (cada 2h, 6am-10pm ET).
         </div>
       )}
 
