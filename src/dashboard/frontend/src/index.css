@@ -10030,28 +10030,61 @@ a:hover {
 .agent-card-actions {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   border-top: 1px solid var(--border);
-  padding-top: 4px;
-  margin-top: 2px;
+  padding-top: 6px;
+  margin-top: 4px;
 }
 
-.agent-action-compact {
+.agent-action-pill {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  padding: 5px 8px;
+  background: rgba(255,255,255,0.03);
+  border-left: 2px solid;
+  border-radius: 0 6px 6px 0;
   font-size: 0.75rem;
+  flex-wrap: wrap;
 }
 
-.agent-action-value {
+.agent-action-icon-sm {
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.agent-action-what {
+  font-weight: 600;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.agent-action-pct {
+  font-weight: 400;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.agent-action-target-name {
+  font-weight: 400;
   color: var(--text-secondary);
-  font-family: monospace;
   font-size: 0.72rem;
 }
 
-.agent-action-time {
+.agent-action-reason-sm {
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 60px;
+}
+
+.agent-action-when {
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  flex-shrink: 0;
   margin-left: auto;
 }
 

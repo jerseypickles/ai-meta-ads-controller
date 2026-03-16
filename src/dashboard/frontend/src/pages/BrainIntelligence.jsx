@@ -716,16 +716,27 @@ function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onR
                 </div>
               )}
 
-              {/* Row 4: recent actions (only if has actions) */}
+              {/* Row 4: recent actions */}
               {adset.recent_actions.length > 0 && (
                 <div className="agent-card-actions">
-                  {adset.recent_actions.slice(0, isExpanded ? 5 : 1).map(action => {
+                  {adset.recent_actions.slice(0, isExpanded ? 5 : 2).map(action => {
                     const am = ACTION_LABELS[action.action] || { icon: '\u2022', label: action.action, color: '#6b7280' };
+                    const isScale = action.action === 'scale_up' || action.action === 'scale_down';
+                    const isPause = action.action === 'pause' || action.action === 'reactivate';
                     return (
-                      <div key={action._id} className="agent-action-compact">
-                        <span style={{ color: am.color }}>{am.icon} {am.label}</span>
-                        {typeof action.before_value === 'number' && <span className="agent-action-value">${action.before_value}\u2192${action.after_value}</span>}
-                        <span className="agent-action-time">{formatTime(action.executed_at)}</span>
+                      <div key={action._id} className="agent-action-pill" style={{ borderLeftColor: am.color }}>
+                        <span className="agent-action-icon-sm" style={{ color: am.color }}>{am.icon}</span>
+                        <span className="agent-action-what">
+                          {am.label}
+                          {isScale && typeof action.before_value === 'number' && (
+                            <> ${action.before_value} {'→'} ${action.after_value} <span className="agent-action-pct">({action.change_percent > 0 ? '+' : ''}{action.change_percent}%)</span></>
+                          )}
+                          {isPause && action.target_entity_name && (
+                            <span className="agent-action-target-name"> {action.target_entity_name}</span>
+                          )}
+                        </span>
+                        <span className="agent-action-reason-sm">{(action.reasoning || '').substring(0, 80)}</span>
+                        <span className="agent-action-when">{formatTime(action.executed_at)}</span>
                       </div>
                     );
                   })}
@@ -873,7 +884,7 @@ function AgentThoughtsPanel({ thoughts, loading, formatTime, onRefresh }) {
               {item.type === 'action' && item.meta?.action && (
                 <span className="thought-tag-sm" style={{ color: (ACTION_LABELS[item.meta.action] || {}).color }}>
                   {(ACTION_LABELS[item.meta.action] || { icon: '' }).icon} {(ACTION_LABELS[item.meta.action] || { label: item.meta.action }).label}
-                  {typeof item.meta.before_value === 'number' ? ` $${item.meta.before_value}\u2192$${item.meta.after_value}` : ''}
+                  {typeof item.meta.before_value === 'number' ? ` $${item.meta.before_value} → $${item.meta.after_value}` : ''}
                 </span>
               )}
               <span className="thought-content">{(item.content || '').substring(0, 200)}</span>
