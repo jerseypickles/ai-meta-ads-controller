@@ -539,10 +539,10 @@ async function jobAIManager() {
 }
 
 /**
- * Job: Account Agent unificado — cada 2h durante horas activas (6am-10pm ET).
- * Itera TODOS los ad sets activos con un agentic loop por ad set.
- * Barato: pre-checks en MongoDB saltan rápido (cooldown, pending impact).
- * Solo llama a Claude cuando hay algo que analizar.
+ * Job: Account Agent unificado — cada 2h, 24/7.
+ * 6am-10pm ET: modo completo (examina + actúa)
+ * 10pm-6am ET: modo observador (solo examina, assessments, observaciones)
+ * El agente detecta la hora y ajusta automáticamente.
  * Feature flag: solo corre si agent_mode === 'unified'.
  */
 async function jobAccountAgent() {
@@ -806,15 +806,15 @@ function initCronJobs() {
   });
   logger.info('  [*] AI Manager autónomo — 3x/día: 9am, 5pm, 10pm ET');
 
-  // Cada 2 horas (horas activas 6am-10pm ET): Account Agent unificado
-  // Corre frecuente pero es barato — pre-checks en MongoDB saltan rápido
-  // si la entidad está en cooldown o pending impact. Solo llama a Claude
-  // cuando hay algo que analizar.
-  cron.schedule('0 6,8,10,12,14,16,18,20,22 * * *', jobAccountAgent, {
+  // Account Agent unificado — 24/7 con dos modos:
+  // Horas activas (6am-10pm ET): modo completo — examina + actúa
+  // Nocturno (10pm-6am ET): modo observador — solo examina, no toca nada
+  // El agente detecta la hora y ajusta automáticamente.
+  cron.schedule('0 2,4,6,8,10,12,14,16,18,20,22 * * *', jobAccountAgent, {
     timezone: TIMEZONE,
     name: 'account-agent'
   });
-  logger.info('  [*] Account Agent unificado — cada 2h horas activas (6am-10pm ET)');
+  logger.info('  [*] Account Agent unificado — cada 2h 24/7 (6am-10pm: completo, 10pm-6am: observador)');
 
   // AI Ops metrics refresh — cada 15 min, 24/7
   cron.schedule('5,20,35,50 * * * *', jobAIOpsRefresh, {

@@ -742,17 +742,29 @@ const TOOL_HANDLERS = {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const MAX_TURNS = 10;
+const OBSERVER_TOOLS = TOOLS.filter(t => !['scale_budget', 'pause_ad', 'reactivate_ad'].includes(t.name));
+
+/**
+ * Detect if we're in active hours (6am-10pm ET) or observer mode.
+ */
+function _getAgentMode() {
+  const moment = require('moment-timezone');
+  const hour = moment().tz('America/New_York').hours();
+  return (hour >= 6 && hour < 22) ? 'full' : 'observer';
+}
 
 /**
  * Run the unified Account Agent.
  * Iterates ALL active ad sets and runs an agentic loop on each.
+ * Mode: 'full' (6am-10pm) = examine + act, 'observer' (10pm-6am) = examine only.
  *
- * @returns {Object} { managed, actions_taken, results, elapsed, cycle_id }
+ * @returns {Object} { managed, actions_taken, results, elapsed, cycle_id, mode }
  */
 async function runAccountAgent() {
   const startTime = Date.now();
   const cycleId = `agent_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-  logger.info(`═══ Iniciando Account Agent [${cycleId}] ═══`);
+  const mode = _getAgentMode();
+  logger.info(`═══ Iniciando Account Agent [${cycleId}] modo=${mode} ═══`);
 
   // Freshness guard
   const freshness = await getSnapshotFreshness('adset');
@@ -782,7 +794,7 @@ async function runAccountAgent() {
   for (const adSetSnap of activeAdSets) {
     const adSetId = adSetSnap.entity_id;
     try {
-      const result = await _manageAdSet(adSetSnap, cycleId);
+      const result = await _manageAdSet(adSetSnap, cycleId, mode);
       totalActions += result.actionsExecuted;
       results.push({
         adset_id: adSetId,
@@ -805,13 +817,16 @@ async function runAccountAgent() {
   const elapsed = `${((Date.now() - startTime) / 1000).toFixed(1)}s`;
   logger.info(`═══ Account Agent completado [${cycleId}]: ${activeAdSets.length} ad sets, ${totalActions} acciones en ${elapsed} ═══`);
 
-  return { managed: activeAdSets.length, actions_taken: totalActions, results, elapsed, cycle_id: cycleId };
+  return { managed: activeAdSets.length, actions_taken: totalActions, results, elapsed, cycle_id: cycleId, mode };
 }
 
 /**
  * Process a single ad set through the agentic loop.
+ * @param {Object} adSetSnap - MetricSnapshot for this ad set
+ * @param {string} cycleId
+ * @param {string} mode - 'full' (can act) or 'observer' (read-only)
  */
-async function _manageAdSet(adSetSnap, cycleId) {
+async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
   const adSetId = adSetSnap.entity_id;
   const adSetName = adSetSnap.entity_name || adSetId;
   const meta = getMetaClient();
@@ -907,26 +922,27 @@ async function _manageAdSet(adSetSnap, cycleId) {
     }
   }
 
-  // ═══ PRE-CHECK: Cooldown (unified_agent actions only — ignores legacy) ═══
-  const cooldown = await _isOnAgentCooldown(adSetId);
-  if (cooldown.onCooldown) {
-    logger.debug(`[ACCOUNT-AGENT] ${adSetName}: cooldown (${cooldown.minutesLeft} min remaining)`);
-    return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Cooldown: ${cooldown.minutesLeft} min` };
-  }
+  // ═══ PRE-CHECK: Cooldown + Pending (only in full mode — observer always examines) ═══
+  if (mode === 'full') {
+    const cooldown = await _isOnAgentCooldown(adSetId);
+    if (cooldown.onCooldown) {
+      logger.debug(`[ACCOUNT-AGENT] ${adSetName}: cooldown (${cooldown.minutesLeft} min remaining)`);
+      return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Cooldown: ${cooldown.minutesLeft} min` };
+    }
 
-  // ═══ PRE-CHECK: Pending impact (unified_agent action < 24h not measured) ═══
-  const pendingActions = await ActionLog.find({
-    entity_id: adSetId,
-    agent_type: 'unified_agent',
-    success: true,
-    impact_1d_measured: false,
-    executed_at: { $gte: new Date(Date.now() - 24 * 3600000) }
-  }).sort({ executed_at: -1 }).limit(1).lean();
+    const pendingActions = await ActionLog.find({
+      entity_id: adSetId,
+      agent_type: 'unified_agent',
+      success: true,
+      impact_1d_measured: false,
+      executed_at: { $gte: new Date(Date.now() - 24 * 3600000) }
+    }).sort({ executed_at: -1 }).limit(1).lean();
 
-  if (pendingActions.length > 0) {
-    const hoursAgo = Math.round((Date.now() - new Date(pendingActions[0].executed_at).getTime()) / 3600000);
-    logger.debug(`[ACCOUNT-AGENT] ${adSetName}: pending impact ("${pendingActions[0].action}" ${hoursAgo}h ago)`);
-    return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Pending impact: ${hoursAgo}h` };
+    if (pendingActions.length > 0) {
+      const hoursAgo = Math.round((Date.now() - new Date(pendingActions[0].executed_at).getTime()) / 3600000);
+      logger.debug(`[ACCOUNT-AGENT] ${adSetName}: pending impact ("${pendingActions[0].action}" ${hoursAgo}h ago)`);
+      return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Pending impact: ${hoursAgo}h` };
+    }
   }
 
   // ═══ PRE-CHECK: Low spend filter (< $5/week) ═══
@@ -941,7 +957,12 @@ async function _manageAdSet(adSetSnap, cycleId) {
     assessmentsSaved: 0
   };
 
-  const userMessage = `Analyze and manage ad set ${adSetId} ("${adSetName}"). Budget: $${currentBudget}/day. 7d ROAS: ${adSetRoas.toFixed(2)}x, Spend: $${adSetSpend.toFixed(0)}, Purchases: ${adSetPurchases}, Frequency: ${adSetFrequency.toFixed(1)}. Gather detailed data, decide actions, and save your assessment.`;
+  const isObserver = mode === 'observer';
+  const activeTools = isObserver ? OBSERVER_TOOLS : TOOLS;
+
+  const userMessage = isObserver
+    ? `[OBSERVER MODE — nighttime, read-only] Analyze ad set ${adSetId} ("${adSetName}"). Budget: $${currentBudget}/day. 7d ROAS: ${adSetRoas.toFixed(2)}x, Spend: $${adSetSpend.toFixed(0)}, Purchases: ${adSetPurchases}, Frequency: ${adSetFrequency.toFixed(1)}. Gather data, analyze trends, and save your assessment. You CANNOT take actions right now — only observe and document what you see.`
+    : `Analyze and manage ad set ${adSetId} ("${adSetName}"). Budget: $${currentBudget}/day. 7d ROAS: ${adSetRoas.toFixed(2)}x, Spend: $${adSetSpend.toFixed(0)}, Purchases: ${adSetPurchases}, Frequency: ${adSetFrequency.toFixed(1)}. Gather detailed data, decide actions, and save your assessment.`;
 
   let messages = [{ role: 'user', content: userMessage }];
 
@@ -952,7 +973,7 @@ async function _manageAdSet(adSetSnap, cycleId) {
         model: 'claude-sonnet-4-6-20250514',
         max_tokens: 2048,
         system: AGENT_SYSTEM_PROMPT,
-        tools: TOOLS,
+        tools: activeTools,
         messages
       });
     } catch (apiErr) {
@@ -964,7 +985,7 @@ async function _manageAdSet(adSetSnap, cycleId) {
             model: 'claude-sonnet-4-6-20250514',
             max_tokens: 2048,
             system: AGENT_SYSTEM_PROMPT,
-            tools: TOOLS,
+            tools: activeTools,
             messages
           });
         } catch (retryErr) {
