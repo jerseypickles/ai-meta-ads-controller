@@ -684,6 +684,27 @@ function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onR
         </div>
       )}
 
+      {/* Alerta: ad sets que necesitan creativos frescos */}
+      {(() => {
+        const needCreatives = adsets.filter(a => a.agent?.needs_new_creatives);
+        if (needCreatives.length === 0) return null;
+        return (
+          <div className="agent-creative-alert">
+            <span className="agent-creative-alert-icon">🎨</span>
+            <div className="agent-creative-alert-body">
+              <strong>{needCreatives.length} ad set{needCreatives.length > 1 ? 's' : ''} necesita{needCreatives.length > 1 ? 'n' : ''} creativos frescos:</strong>
+              <div className="agent-creative-alert-list">
+                {needCreatives.map(a => (
+                  <span key={a.adset_id} className="agent-creative-alert-chip" onClick={() => onToggleExpand(a.adset_id)}>
+                    {a.adset_name} <span className="agent-creative-alert-freq">f:{a.metrics_7d.frequency.toFixed(1)}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Grid compacto de ad sets */}
       <div className="agent-grid">
         {adsets.map(adset => {
