@@ -715,6 +715,30 @@ async function manageAdSet(creation) {
     ctr: m7d.ctr || 0
   };
 
+  // ═══ AUTONOMY RULES (updated 2026-03-16) ═══
+  // Learning phase: first 7 days — no autonomous actions, pause_ad needs approval
+  // After 7 days:
+  //   scale_up → only with Brain directive (boost/scale_up)
+  //   scale_down → autonomous (no directive needed)
+  //   pause_ad → autonomous for ads with $20+ spend and 0 purchases
+  //   Budget cooldown: min 7 days between scale_up on same ad set
+  const isLearningPhase = daysSinceCreation < 7;
+
+  // Check if Brain has an active boost/scale_up directive for this ad set
+  const hasScaleUpDirective = brainDirectives.some(d =>
+    (d.type === 'boost' && d.target_action === 'scale_up') ||
+    (d.type === 'boost' && !d.target_action)
+  );
+
+  // Check last scale_up date for 7-day cooldown
+  const lastScaleUp = (creation.lifecycle_actions || [])
+    .filter(a => a.action === 'scale_budget' && a.value > (creation.current_budget || creation.initial_budget))
+    .sort((a, b) => new Date(b.executed_at) - new Date(a.executed_at))[0];
+  const daysSinceLastScaleUp = lastScaleUp
+    ? (Date.now() - new Date(lastScaleUp.executed_at).getTime()) / 86400000
+    : 999;
+  const scaleUpCooldownMet = daysSinceLastScaleUp >= 7;
+
   // Execute actions
   let actionsExecuted = 0;
   for (const action of (decision.actions || [])) {
@@ -722,6 +746,26 @@ async function manageAdSet(creation) {
       switch (action.type) {
         case 'scale_budget': {
           const prevBudget = creation.current_budget || creation.initial_budget;
+          const isScaleUp = action.new_budget > prevBudget;
+
+          // ── RULE: No scaling during learning phase (first 7 days)
+          if (isLearningPhase) {
+            logger.info(`[AI-MANAGER][RULE] ${adSetId}: BLOCKED ${isScaleUp ? 'scale_up' : 'scale_down'} — learning phase (${daysSinceCreation.toFixed(1)}d < 7d). Reason: ${action.reason}`);
+            break;
+          }
+
+          // ── RULE: Scale_up requires Brain directive
+          if (isScaleUp && !hasScaleUpDirective) {
+            logger.info(`[AI-MANAGER][RULE] ${adSetId}: BLOCKED scale_up $${prevBudget}→$${action.new_budget} — no Brain directive. Claude wanted: ${action.reason}`);
+            break;
+          }
+
+          // ── RULE: Scale_up cooldown — min 7 days between scale_ups
+          if (isScaleUp && !scaleUpCooldownMet) {
+            logger.info(`[AI-MANAGER][RULE] ${adSetId}: BLOCKED scale_up — last scale_up was ${daysSinceLastScaleUp.toFixed(1)}d ago (min 7d). Reason: ${action.reason}`);
+            break;
+          }
+
           await meta.updateBudget(adSetId, action.new_budget);
           creation.current_budget = action.new_budget;
           creation.lifecycle_actions.push({
@@ -738,7 +782,7 @@ async function manageAdSet(creation) {
             entity_name: creation.meta_entity_name,
             campaign_id: creation.parent_entity_id || '',
             campaign_name: creation.parent_entity_name || '',
-            action: action.new_budget > prevBudget ? 'scale_up' : 'scale_down',
+            action: isScaleUp ? 'scale_up' : 'scale_down',
             before_value: prevBudget,
             after_value: action.new_budget,
             change_percent: prevBudget > 0 ? Math.round((action.new_budget - prevBudget) / prevBudget * 100) : 0,
@@ -756,6 +800,12 @@ async function manageAdSet(creation) {
         }
 
         case 'pause_ad': {
+          // ── RULE: During learning phase, pause_ad needs approval (skip autonomous execution)
+          if (isLearningPhase) {
+            logger.info(`[AI-MANAGER][RULE] ${adSetId}: BLOCKED pause_ad ${action.ad_id} — learning phase (${daysSinceCreation.toFixed(1)}d < 7d). Needs approval. Reason: ${action.reason}`);
+            break;
+          }
+
           await meta.updateAdStatus(action.ad_id, 'PAUSED');
           creation.lifecycle_actions.push({
             action: 'pause_ad',
@@ -810,11 +860,14 @@ async function manageAdSet(creation) {
   // ═══ DIRECTIVE ENFORCEMENT: si Claude ignoró suppress+pause, forzar acción ═══
   // El Brain puede enviar múltiples directivas suppress+pause. Si Claude no tomó acción
   // (0 acciones ejecutadas o no hay kill/pause/scale_down), forzamos la decisión.
+  // RULE: Skipped during learning phase (first 7 days)
   const suppressPauseDirectives = brainDirectives.filter(d =>
     d.type === 'suppress' && d.target_action === 'pause'
   );
 
-  if (suppressPauseDirectives.length >= 3 && actionsExecuted === 0) {
+  if (isLearningPhase && suppressPauseDirectives.length > 0) {
+    logger.info(`[AI-MANAGER][RULE] ${adSetId}: SKIPPED directive enforcement — learning phase (${daysSinceCreation.toFixed(1)}d < 7d)`);
+  } else if (suppressPauseDirectives.length >= 3 && actionsExecuted === 0) {
     // Claude ignoró directivas SUPPRESS+pause repetidas — forzar acción
     logger.warn(`[AI-MANAGER][ENFORCE] Claude ignoró ${suppressPauseDirectives.length} directivas suppress+pause para ${creation.meta_entity_name}. Forzando acción.`);
 
@@ -1037,6 +1090,12 @@ async function _hardcodedDecisionTree({
   const adsWithPurchases = activeAds.filter(a => (a.purchases || 0) > 0);
   const suppressDirectives = brainDirectives.filter(d => d.type === 'suppress');
   const criticalDirectives = brainDirectives.filter(d => d.urgency === 'critical');
+
+  // ─── LEARNING PHASE GUARD: No hardcoded actions during first 7 days ───
+  if (daysSinceCreation < 7) {
+    logger.info(`[AI-MANAGER][DECISION-TREE] ${creation.meta_entity_name}: Learning phase (${daysSinceCreation.toFixed(1)}d < 7d) — all hardcoded rules skipped`);
+    return null;
+  }
 
   // ─── RULE 1: Zero purchases, enough time and spend → KILL ───
   if (daysSinceCreation >= 7 && adSetSpend >= 50 && adSetPurchases === 0) {
