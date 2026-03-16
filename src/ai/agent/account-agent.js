@@ -64,6 +64,15 @@ You have tools to fetch data and take actions. For each ad set:
 4. Decide: act or hold
 5. ALWAYS save your assessment and observations
 
+## HOW TO READ METRICS
+You get 4 time windows: today, 3d, 7d, 14d. Use them together:
+- **7d** = baseline performance. Most reliable for decisions.
+- **3d vs 7d** = recent trend. If 3d ROAS < 7d ROAS by >20%, performance is deteriorating FAST.
+- **7d vs 14d** = longer trend. Confirms if decline is new or ongoing.
+- **today** = intraday signal. Only meaningful with $10+ spend. Don't overreact to low-volume today data.
+- **trend.summary** = pre-computed signal. Trust it as a starting point.
+- **trend.recent_deterioration** = true means 3d ROAS dropped >20% vs 7d with meaningful spend. Investigate.
+
 ## META ADS ALGORITHM — CRITICAL RULES
 - **Learning phase (first 72h / ~50 conversions):** ANY change resets Meta's algorithm. Do NOT scale or pause during learning.
 - **Post-learning scaling:** Max 25% budget increase per action. Wait 48h+ between budget changes.
@@ -263,9 +272,31 @@ async function handleGetAdsetMetrics(input) {
   const snap = allSnapshots.find(s => s.entity_id === adset_id);
   if (!snap) return { error: 'No snapshot found for this ad set' };
 
-  const m7d = snap.metrics?.last_7d || {};
-  const m3d = snap.metrics?.last_3d || {};
   const mToday = snap.metrics?.today || {};
+  const m3d = snap.metrics?.last_3d || {};
+  const m7d = snap.metrics?.last_7d || {};
+  const m14d = snap.metrics?.last_14d || {};
+
+  // Helper: compact metrics for a window
+  const compact = (m) => ({
+    spend: m.spend || 0,
+    roas: Math.round((m.roas || 0) * 100) / 100,
+    purchases: m.purchases || 0,
+    purchase_value: m.purchase_value || 0,
+    impressions: m.impressions || 0,
+    clicks: m.clicks || 0,
+    ctr: m.ctr || 0,
+    cpm: m.cpm || 0,
+    frequency: m.frequency || 0,
+    cpa: m.spend > 0 && m.purchases > 0 ? Math.round(m.spend / m.purchases * 100) / 100 : 0
+  });
+
+  // Trend analysis: compare windows to detect deterioration
+  const roas7 = m7d.roas || 0;
+  const roas3 = m3d.roas || 0;
+  const roas14 = m14d.roas || 0;
+  const freq7 = m7d.frequency || 0;
+  const freq3 = m3d.frequency || 0;
 
   // Account context
   const activeSnapshots = allSnapshots.filter(s => s.status === 'ACTIVE');
@@ -278,35 +309,22 @@ async function handleGetAdsetMetrics(input) {
     adset_name: snap.entity_name,
     status: snap.status,
     daily_budget: snap.daily_budget || 0,
-    metrics_7d: {
-      spend: m7d.spend || 0,
-      roas: Math.round((m7d.roas || 0) * 100) / 100,
-      purchases: m7d.purchases || 0,
-      purchase_value: m7d.purchase_value || 0,
-      impressions: m7d.impressions || 0,
-      clicks: m7d.clicks || 0,
-      ctr: m7d.ctr || 0,
-      cpm: m7d.cpm || 0,
-      frequency: m7d.frequency || 0,
-      cpa: m7d.spend > 0 && m7d.purchases > 0 ? Math.round(m7d.spend / m7d.purchases * 100) / 100 : 0
-    },
-    metrics_3d: {
-      spend: m3d.spend || 0,
-      roas: Math.round((m3d.roas || 0) * 100) / 100,
-      purchases: m3d.purchases || 0,
-      ctr: m3d.ctr || 0,
-      frequency: m3d.frequency || 0
-    },
-    metrics_today: {
-      spend: mToday.spend || 0,
-      roas: mToday.roas || 0,
-      purchases: mToday.purchases || 0,
-      impressions: mToday.impressions || 0
-    },
+    days_old: snap.meta_created_time ? Math.round((Date.now() - new Date(snap.meta_created_time).getTime()) / 86400000) : null,
+    metrics_today: compact(mToday),
+    metrics_3d: compact(m3d),
+    metrics_7d: compact(m7d),
+    metrics_14d: compact(m14d),
     trend: {
-      roas_improving: (m3d.roas || 0) > (m7d.roas || 0),
-      frequency_rising: (m3d.frequency || 0) > (m7d.frequency || 0),
-      ctr_declining: (m3d.ctr || 0) < (m7d.ctr || 0)
+      roas_direction: roas3 > roas7 * 1.05 ? 'improving' : roas3 < roas7 * 0.95 ? 'declining' : 'stable',
+      roas_3d_vs_7d_pct: roas7 > 0 ? Math.round((roas3 - roas7) / roas7 * 100) : 0,
+      roas_7d_vs_14d_pct: roas14 > 0 ? Math.round((roas7 - roas14) / roas14 * 100) : 0,
+      frequency_direction: freq3 > freq7 * 1.1 ? 'rising' : freq3 < freq7 * 0.9 ? 'falling' : 'stable',
+      ctr_declining: (m3d.ctr || 0) < (m7d.ctr || 0) * 0.9,
+      recent_deterioration: roas3 < roas7 * 0.8 && (m3d.spend || 0) > 10,
+      summary: roas3 < roas7 * 0.8 ? 'ROAS dropping fast (3d vs 7d)'
+        : freq3 > 3.5 ? 'Frequency critical'
+        : roas3 > roas7 * 1.15 ? 'Performance improving'
+        : 'Stable'
     },
     account_context: {
       active_adsets: activeSnapshots.length,
