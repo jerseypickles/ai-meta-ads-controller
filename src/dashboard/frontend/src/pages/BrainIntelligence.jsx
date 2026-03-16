@@ -10,7 +10,7 @@ import {
   getPolicyState, getPolicyLearning, getKnowledgeHistory, getDeepKnowledge, getLaunchedAdsets, getCreativePerformance,
   getAdHealth, suggestAdHealthAction, quickPauseAd, logout,
   uploadLaunchCreatives, launchStrategize, launchApprove, getCreativeThumbnailUrl,
-  getAgentActivity, runAccountAgent, getAgentAdsetDetail, getAllAdSets
+  getAgentActivity, runAccountAgent, getAgentAdsetDetail
 } from '../api';
 
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
@@ -44,7 +44,7 @@ const SEVERITY_CONFIG = {
 
 export default function BrainIntelligence() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('agent'); // 'agent' | 'knowledge' | 'adsets' | 'launch' | 'chat'
+  const [activeTab, setActiveTab] = useState('agent'); // 'agent' | 'knowledge' | 'chat'
   const [insights, setInsights] = useState([]);
   const [insightsTotal, setInsightsTotal] = useState(0);
   const [insightsPage, setInsightsPage] = useState(1);
@@ -85,10 +85,6 @@ export default function BrainIntelligence() {
   const [agentLoading, setAgentLoading] = useState(false);
   const [agentRunning, setAgentRunning] = useState(false);
   const [expandedAdSet, setExpandedAdSet] = useState(null);
-
-  // Ad Sets tab state
-  const [adSetsData, setAdSetsData] = useState(null);
-  const [adSetsLoading, setAdSetsLoading] = useState(false);
 
   // ═══ CARGA INICIAL ═══
 
@@ -159,18 +155,6 @@ export default function BrainIntelligence() {
     }
   }, []);
 
-  const loadAdSetsData = useCallback(async () => {
-    setAdSetsLoading(true);
-    try {
-      const data = await getAllAdSets();
-      setAdSetsData(data);
-    } catch (err) {
-      console.error('Error loading ad sets:', err);
-    } finally {
-      setAdSetsLoading(false);
-    }
-  }, []);
-
   const handleRunAgent = async () => {
     setAgentRunning(true);
     try {
@@ -189,9 +173,6 @@ export default function BrainIntelligence() {
     loadStats();
   }, [loadAgentData, loadInsights, loadStats]);
 
-  useEffect(() => {
-    if (activeTab === 'adsets' && !adSetsData) loadAdSetsData();
-  }, [activeTab, adSetsData, loadAdSetsData]);
 
   // Load recs on mount so chat picker has data even before visiting recs tab
   useEffect(() => {
@@ -479,7 +460,7 @@ export default function BrainIntelligence() {
         </div>
       </div>
 
-      {/* Tab Switcher — 4 tabs + chat overlay */}
+      {/* Tab Switcher — 3 tabs */}
       <div className="brain-tabs">
         <button
           className={`brain-tab ${activeTab === 'agent' ? 'active' : ''}`}
@@ -493,18 +474,6 @@ export default function BrainIntelligence() {
         >
           Conocimiento
           {unreadCount > 0 && <span className="tab-badge">{unreadCount}</span>}
-        </button>
-        <button
-          className={`brain-tab ${activeTab === 'adsets' ? 'active' : ''}`}
-          onClick={() => setActiveTab('adsets')}
-        >
-          Ad Sets
-        </button>
-        <button
-          className={`brain-tab ${activeTab === 'launch' ? 'active' : ''}`}
-          onClick={() => setActiveTab('launch')}
-        >
-          Lanzar
         </button>
         <button
           className={`brain-tab ${activeTab === 'chat' ? 'active' : ''}`}
@@ -546,15 +515,6 @@ export default function BrainIntelligence() {
             onPageChange={(p) => loadInsights(p)}
             formatTime={formatTime}
           />
-        ) : activeTab === 'adsets' ? (
-          <AdSetsPanel
-            data={adSetsData || (agentData ? { adsets: agentData.adsets } : null)}
-            loading={adSetsLoading}
-            onRefresh={adSetsData ? loadAdSetsData : loadAgentData}
-            formatTime={formatTime}
-          />
-        ) : activeTab === 'launch' ? (
-          <LaunchPanel />
         ) : (
           <ChatPanel
             messages={chatMessages}
