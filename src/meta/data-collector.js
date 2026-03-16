@@ -26,7 +26,7 @@ class DataCollector {
    */
   async collect() {
     const startTime = Date.now();
-    const COLLECT_TIMEOUT_MS = 4 * 60 * 1000; // 4 minutos máximo — abortar si excede
+    const COLLECT_TIMEOUT_MS = 6 * 60 * 1000; // 6 minutos máximo — abortar si excede (subido de 4m para días de API lento)
     logger.info('═══ Iniciando ciclo de recolección de datos ═══');
 
     this.meta.setBusy('data-collector');
@@ -139,14 +139,17 @@ class DataCollector {
       const totalAdSets = Object.keys(adSetMap).length;
 
       // ── 2. Fetch daily insights for all 3 levels IN PARALLEL (3 calls total) ──
-      //    Each call returns 1 row per entity per day for 30 days.
+      //    Each call returns 1 row per entity per day.
       //    aggregateDailyInsights() computes today/3d/7d/14d/30d locally.
-      logger.info('Recolectando insights diarios (3 calls paralelas: campaign + adset + ad)...');
+      //    Ad level uses 14d instead of 30d to reduce pagination (ads × 30 days
+      //    generates too many rows, causing timeouts on slow API days).
+      //    Campaign/adset use 30d for full 30d window snapshots.
+      logger.info('Recolectando insights diarios (3 calls paralelas: campaign 30d + adset 30d + ad 14d)...');
 
       const [campaignResult, adsetResult, adResult] = await Promise.allSettled([
         this.meta.getAccountInsightsDaily('campaign', 30, opts),
         this.meta.getAccountInsightsDaily('adset', 30, opts),
-        this.meta.getAccountInsightsDaily('ad', 30, opts)
+        this.meta.getAccountInsightsDaily('ad', 14, opts)
       ]);
 
       // Process campaign insights

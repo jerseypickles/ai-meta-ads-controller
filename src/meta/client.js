@@ -197,11 +197,11 @@ class MetaClient {
 
   /**
    * Returns { label, since } if another process is busy, or null.
-   * Auto-clears stale busy flags older than 4 minutes (matches collect timeout).
+   * Auto-clears stale busy flags older than 6 minutes (matches collect timeout).
    */
   isBusy() {
     if (!this._busy) return null;
-    if (Date.now() - this._busy.since > 4 * 60 * 1000) {
+    if (Date.now() - this._busy.since > 6 * 60 * 1000) {
       logger.warn(`[META-CLIENT] Clearing stale busy flag: ${this._busy.label}`);
       this._busy = null;
       return null;
