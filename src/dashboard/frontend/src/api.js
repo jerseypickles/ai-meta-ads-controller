@@ -238,6 +238,25 @@ export const uploadAndCreateAd = async ({ adsetId, imageFile, uploadedFile, head
   return data;
 };
 
+// ═══ ACCOUNT AGENT ═══
+
+export const getAgentActivity = async () => {
+  const response = await api.get('/api/agent/activity', { timeout: 15000 });
+  return response.data;
+};
+
+export const runAccountAgent = async () => {
+  const response = await api.post('/api/agent/run', {}, { timeout: 30000 });
+  const data = response.data;
+  if (data.async && data.job_id) return pollForCompletion(`/api/agent/run-status/${data.job_id}`, 3000, 600000);
+  return data;
+};
+
+export const getAgentAdsetDetail = async (adsetId) => {
+  const response = await api.get(`/api/agent/adset/${adsetId}`, { timeout: 15000 });
+  return response.data;
+};
+
 // ═══ BRAIN — Creative Refresh Link ═══
 
 export const getPendingCreativeRec = async (adsetId) => {

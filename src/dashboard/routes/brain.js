@@ -393,6 +393,21 @@ router.post('/recommendations/:id/approve', async (req, res) => {
     if (!rec) return res.status(404).json({ error: 'Recomendación no encontrada' });
     if (rec.status !== 'pending') return res.status(400).json({ error: `No se puede aprobar una recomendación con estado "${rec.status}"` });
 
+    // Guard: ad sets managed by Agent Manager v2 — Brain only emits directives, not direct actions
+    const entityId = rec.entity?.entity_id;
+    if (entityId) {
+      const aiManaged = await AICreation.findOne({
+        meta_entity_id: String(entityId),
+        managed_by_ai: true,
+        agent_version: 'v2'
+      }).lean();
+      if (aiManaged) {
+        return res.status(400).json({
+          error: `Este ad set está gestionado por el Agent Manager v2. Las acciones se ejecutan automáticamente — no se necesita aprobación manual.`
+        });
+      }
+    }
+
     rec.status = 'approved';
     rec.decided_at = new Date();
     rec.decision_note = req.body.note || '';

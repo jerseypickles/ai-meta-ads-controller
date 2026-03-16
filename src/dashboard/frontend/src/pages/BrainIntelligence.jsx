@@ -9,7 +9,8 @@ import {
   triggerBrainRecommendations, getFollowUpStats,
   getPolicyState, getPolicyLearning, getKnowledgeHistory, getDeepKnowledge, getLaunchedAdsets, getCreativePerformance,
   getAdHealth, suggestAdHealthAction, quickPauseAd, logout,
-  uploadLaunchCreatives, launchStrategize, launchApprove, getCreativeThumbnailUrl
+  uploadLaunchCreatives, launchStrategize, launchApprove, getCreativeThumbnailUrl,
+  getAgentActivity, runAccountAgent, getAgentAdsetDetail, getAllAdSets
 } from '../api';
 
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
@@ -43,7 +44,7 @@ const SEVERITY_CONFIG = {
 
 export default function BrainIntelligence() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('feed'); // 'feed' | 'recs' | 'followup' | 'knowledge' | 'creatives' | 'launch' | 'chat'
+  const [activeTab, setActiveTab] = useState('agent'); // 'agent' | 'knowledge' | 'adsets' | 'launch' | 'chat'
   const [insights, setInsights] = useState([]);
   const [insightsTotal, setInsightsTotal] = useState(0);
   const [insightsPage, setInsightsPage] = useState(1);
@@ -78,6 +79,16 @@ export default function BrainIntelligence() {
   // Filter
   const [typeFilter, setTypeFilter] = useState('all');
   const [severityFilter, setSeverityFilter] = useState('all');
+
+  // Agent state
+  const [agentData, setAgentData] = useState(null);
+  const [agentLoading, setAgentLoading] = useState(false);
+  const [agentRunning, setAgentRunning] = useState(false);
+  const [expandedAdSet, setExpandedAdSet] = useState(null);
+
+  // Ad Sets tab state
+  const [adSetsData, setAdSetsData] = useState(null);
+  const [adSetsLoading, setAdSetsLoading] = useState(false);
 
   // ═══ CARGA INICIAL ═══
 
@@ -135,10 +146,52 @@ export default function BrainIntelligence() {
     }
   }, [recsStatusFilter]);
 
+  // Load agent data
+  const loadAgentData = useCallback(async () => {
+    setAgentLoading(true);
+    try {
+      const data = await getAgentActivity();
+      setAgentData(data);
+    } catch (err) {
+      console.error('Error loading agent data:', err);
+    } finally {
+      setAgentLoading(false);
+    }
+  }, []);
+
+  const loadAdSetsData = useCallback(async () => {
+    setAdSetsLoading(true);
+    try {
+      const data = await getAllAdSets();
+      setAdSetsData(data);
+    } catch (err) {
+      console.error('Error loading ad sets:', err);
+    } finally {
+      setAdSetsLoading(false);
+    }
+  }, []);
+
+  const handleRunAgent = async () => {
+    setAgentRunning(true);
+    try {
+      await runAccountAgent();
+      await loadAgentData();
+    } catch (err) {
+      console.error('Error running agent:', err);
+    } finally {
+      setAgentRunning(false);
+    }
+  };
+
   useEffect(() => {
+    loadAgentData();
     loadInsights();
     loadStats();
-  }, [loadInsights, loadStats]);
+  }, [loadAgentData, loadInsights, loadStats]);
+
+  useEffect(() => {
+    if (activeTab === 'adsets' && !adSetsData) loadAdSetsData();
+  }, [activeTab, adSetsData, loadAdSetsData]);
 
   // Load recs on mount so chat picker has data even before visiting recs tab
   useEffect(() => {
@@ -426,60 +479,56 @@ export default function BrainIntelligence() {
         </div>
       </div>
 
-      {/* Tab Switcher */}
+      {/* Tab Switcher — 4 tabs + chat overlay */}
       <div className="brain-tabs">
         <button
-          className={`brain-tab ${activeTab === 'feed' ? 'active' : ''}`}
-          onClick={() => setActiveTab('feed')}
+          className={`brain-tab ${activeTab === 'agent' ? 'active' : ''}`}
+          onClick={() => setActiveTab('agent')}
         >
-          Feed de Insights
-          {unreadCount > 0 && <span className="tab-badge">{unreadCount}</span>}
-        </button>
-        <button
-          className={`brain-tab ${activeTab === 'recs' ? 'active' : ''}`}
-          onClick={() => setActiveTab('recs')}
-        >
-          Recomendaciones
-          {(stats?.pending_recommendations || recsPendingCount) > 0 && (
-            <span className="tab-badge rec-badge">{stats?.pending_recommendations || recsPendingCount}</span>
-          )}
-        </button>
-        <button
-          className={`brain-tab ${activeTab === 'followup' ? 'active' : ''}`}
-          onClick={() => setActiveTab('followup')}
-        >
-          Seguimiento
+          Agente
         </button>
         <button
           className={`brain-tab ${activeTab === 'knowledge' ? 'active' : ''}`}
           onClick={() => setActiveTab('knowledge')}
         >
           Conocimiento
+          {unreadCount > 0 && <span className="tab-badge">{unreadCount}</span>}
         </button>
         <button
-          className={`brain-tab ${activeTab === 'creatives' ? 'active' : ''}`}
-          onClick={() => setActiveTab('creatives')}
+          className={`brain-tab ${activeTab === 'adsets' ? 'active' : ''}`}
+          onClick={() => setActiveTab('adsets')}
         >
-          Creativos
+          Ad Sets
         </button>
         <button
           className={`brain-tab ${activeTab === 'launch' ? 'active' : ''}`}
           onClick={() => setActiveTab('launch')}
         >
-          Lanzar Ad Set
+          Lanzar
         </button>
         <button
           className={`brain-tab ${activeTab === 'chat' ? 'active' : ''}`}
           onClick={() => setActiveTab('chat')}
         >
-          Chat con el Brain
+          Chat
         </button>
       </div>
 
       {/* Content */}
       <div className="brain-content">
-        {activeTab === 'feed' ? (
-          <FeedPanel
+        {activeTab === 'agent' ? (
+          <AgentPanel
+            data={agentData}
+            loading={agentLoading}
+            running={agentRunning}
+            expandedAdSet={expandedAdSet}
+            onToggleExpand={(id) => setExpandedAdSet(expandedAdSet === id ? null : id)}
+            onRunAgent={handleRunAgent}
+            onRefresh={loadAgentData}
+            formatTime={formatTime}
+          />
+        ) : activeTab === 'knowledge' ? (
+          <KnowledgePanelUnified
             insights={insights}
             loadingInsights={loadingInsights}
             analyzing={analyzing}
@@ -488,10 +537,7 @@ export default function BrainIntelligence() {
             insightsPage={insightsPage}
             totalPages={totalPages}
             insightsTotal={insightsTotal}
-            stats={stats}
             unreadCount={unreadCount}
-            pendingCount={recsPendingCount}
-            entityCount={stats?.entities_tracked || 0}
             onTypeFilter={setTypeFilter}
             onSeverityFilter={setSeverityFilter}
             onAnalyze={handleAnalyze}
@@ -500,31 +546,13 @@ export default function BrainIntelligence() {
             onPageChange={(p) => loadInsights(p)}
             formatTime={formatTime}
           />
-        ) : activeTab === 'recs' ? (
-          <RecommendationsPanel
-            recommendations={recommendations}
-            loading={loadingRecs}
-            generating={generatingRecs}
-            statusFilter={recsStatusFilter}
-            recsPage={recsPage}
-            totalPages={Math.ceil(recsTotal / 20)}
-            recsTotal={recsTotal}
-            pendingCount={recsPendingCount}
-            onStatusFilter={setRecsStatusFilter}
-            onGenerate={handleGenerateRecs}
-            onApprove={handleApproveRec}
-            onReject={handleRejectRec}
-            onPageChange={(p) => loadRecommendations(p)}
-            onDiscussRec={handleDiscussRec}
-            onGoToFollowUp={() => setActiveTab('followup')}
+        ) : activeTab === 'adsets' ? (
+          <AdSetsPanel
+            data={adSetsData || (agentData ? { adsets: agentData.adsets } : null)}
+            loading={adSetsLoading}
+            onRefresh={adSetsData ? loadAdSetsData : loadAgentData}
             formatTime={formatTime}
           />
-        ) : activeTab === 'followup' ? (
-          <FollowUpPanel formatTime={formatTime} onApprovalAction={openApprovalModal} onDiscuss={handleDiscussFollowUp} />
-        ) : activeTab === 'knowledge' ? (
-          <KnowledgePanel formatTime={formatTime} />
-        ) : activeTab === 'creatives' ? (
-          <CreativesPanel formatTime={formatTime} />
         ) : activeTab === 'launch' ? (
           <LaunchPanel />
         ) : (
@@ -612,6 +640,360 @@ export default function BrainIntelligence() {
 }
 
 // ═══ FEED PANEL — Split-panel: compact list left, detail right ═══
+
+// ═══════════════════════════════════════════════════════════════════
+// AGENT PANEL — Tab 1: Lo que opina y hace el agente
+// ═══════════════════════════════════════════════════════════════════
+
+const TREND_BADGE = {
+  improving: { label: 'Mejorando', color: '#10b981', bg: 'rgba(16,185,129,0.15)' },
+  stable: { label: 'Estable', color: '#3b82f6', bg: 'rgba(59,130,246,0.15)' },
+  declining: { label: 'Bajando', color: '#ef4444', bg: 'rgba(239,68,68,0.15)' },
+  learning: { label: 'Learning', color: '#f59e0b', bg: 'rgba(245,158,11,0.15)' },
+  unknown: { label: '—', color: '#6b7280', bg: 'rgba(107,114,128,0.15)' }
+};
+
+const FREQ_BADGE = {
+  ok: { label: 'OK', color: '#10b981' },
+  moderate: { label: 'Moderada', color: '#f59e0b' },
+  high: { label: 'Alta', color: '#ef4444' },
+  critical: { label: 'Critica', color: '#dc2626' },
+  unknown: { label: '—', color: '#6b7280' }
+};
+
+const ACTION_LABELS = {
+  scale_up: { icon: '\u2B06', label: 'Escalar', color: '#10b981' },
+  scale_down: { icon: '\u2B07', label: 'Reducir', color: '#f59e0b' },
+  pause: { icon: '\u23F8', label: 'Pausar', color: '#ef4444' },
+  reactivate: { icon: '\u25B6', label: 'Reactivar', color: '#3b82f6' },
+  create_ad: { icon: '\u2795', label: 'Crear Ad', color: '#8b5cf6' },
+  kill_switch: { icon: '\u26A0', label: 'Kill Switch', color: '#dc2626' },
+  delete: { icon: '\u274C', label: 'Eliminar', color: '#dc2626' }
+};
+
+function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onRunAgent, onRefresh, formatTime }) {
+  if (loading && !data) {
+    return <div className="brain-loading">Cargando actividad del agente...</div>;
+  }
+
+  if (!data) {
+    return <div className="brain-empty">Sin datos del agente</div>;
+  }
+
+  const { adsets, global } = data;
+
+  return (
+    <div className="agent-panel">
+      {/* Estado general */}
+      <div className="agent-global-bar">
+        <div className="agent-global-stats">
+          <div className="agent-stat">
+            <span className="agent-stat-value">{global.total_adsets}</span>
+            <span className="agent-stat-label">Ad Sets Activos</span>
+          </div>
+          <div className="agent-stat">
+            <span className="agent-stat-value">{global.win_rate}%</span>
+            <span className="agent-stat-label">Win Rate</span>
+          </div>
+          <div className="agent-stat">
+            <span className="agent-stat-value">{global.total_measured}</span>
+            <span className="agent-stat-label">Acciones Medidas</span>
+          </div>
+          <div className="agent-stat">
+            <span className="agent-stat-value">{global.last_cycle ? formatTime(global.last_cycle) : '—'}</span>
+            <span className="agent-stat-label">Ultimo Ciclo</span>
+          </div>
+        </div>
+        <div className="agent-actions">
+          <button className="btn-agent-run" onClick={onRunAgent} disabled={running}>
+            {running ? 'Ejecutando...' : 'Ejecutar Agente'}
+          </button>
+          <button className="btn-agent-refresh" onClick={onRefresh} disabled={loading}>
+            Refrescar
+          </button>
+        </div>
+      </div>
+
+      {/* Feed de actividad por ad set */}
+      <div className="agent-adset-list">
+        {adsets.map(adset => {
+          const isExpanded = expandedAdSet === adset.adset_id;
+          const trend = TREND_BADGE[adset.agent?.performance_trend] || TREND_BADGE.unknown;
+          const freq = FREQ_BADGE[adset.agent?.frequency_status] || FREQ_BADGE.unknown;
+
+          return (
+            <div key={adset.adset_id} className={`agent-adset-card ${isExpanded ? 'expanded' : ''}`}>
+              {/* Header */}
+              <div className="agent-adset-header" onClick={() => onToggleExpand(adset.adset_id)}>
+                <div className="agent-adset-info">
+                  <span className="agent-adset-name">{adset.adset_name}</span>
+                  <div className="agent-adset-badges">
+                    <span className="agent-badge" style={{ background: trend.bg, color: trend.color }}>{trend.label}</span>
+                    <span className="agent-badge" style={{ color: freq.color }}>Freq: {freq.label}</span>
+                    {adset.agent?.needs_new_creatives && (
+                      <span className="agent-badge" style={{ color: '#f59e0b', background: 'rgba(245,158,11,0.15)' }}>Necesita creativos</span>
+                    )}
+                  </div>
+                </div>
+                <div className="agent-adset-metrics">
+                  <span className="agent-metric">
+                    <strong>ROAS</strong> {adset.metrics_7d.roas.toFixed(2)}x
+                  </span>
+                  <span className="agent-metric">
+                    <strong>Spend</strong> ${adset.metrics_7d.spend.toFixed(0)}
+                  </span>
+                  <span className="agent-metric">
+                    <strong>Freq</strong> {adset.metrics_7d.frequency.toFixed(1)}
+                  </span>
+                  <span className="agent-metric">
+                    <strong>Budget</strong> ${adset.daily_budget}/d
+                  </span>
+                  <span className="agent-expand-icon">{isExpanded ? '\u25B2' : '\u25BC'}</span>
+                </div>
+              </div>
+
+              {/* Assessment */}
+              {adset.agent?.assessment && (
+                <div className="agent-adset-assessment">
+                  <p>{adset.agent.assessment}</p>
+                  {adset.agent.last_check && (
+                    <span className="agent-assessment-time">{formatTime(adset.agent.last_check)}</span>
+                  )}
+                </div>
+              )}
+
+              {/* Recent actions */}
+              {adset.recent_actions.length > 0 && (
+                <div className="agent-adset-actions">
+                  {adset.recent_actions.slice(0, isExpanded ? 10 : 3).map(action => {
+                    const actionMeta = ACTION_LABELS[action.action] || { icon: '\u2022', label: action.action, color: '#6b7280' };
+                    return (
+                      <div key={action._id} className="agent-action-row">
+                        <span className="agent-action-icon" style={{ color: actionMeta.color }}>{actionMeta.icon}</span>
+                        <span className="agent-action-label">{actionMeta.label}</span>
+                        {action.before_value != null && action.after_value != null && typeof action.before_value === 'number' && (
+                          <span className="agent-action-value">
+                            ${action.before_value} → ${action.after_value}
+                            {action.change_percent ? ` (${action.change_percent > 0 ? '+' : ''}${action.change_percent}%)` : ''}
+                          </span>
+                        )}
+                        {action.target_entity_name && (
+                          <span className="agent-action-target">ad: {action.target_entity_name}</span>
+                        )}
+                        <span className="agent-action-reason">{(action.reasoning || '').substring(0, 120)}</span>
+                        <span className="agent-action-time">{formatTime(action.executed_at)}</span>
+                        {action.follow_up_verdict && action.follow_up_verdict !== 'pending' && (
+                          <span className={`agent-verdict agent-verdict-${action.follow_up_verdict}`}>
+                            {action.follow_up_verdict === 'positive' ? '+' : action.follow_up_verdict === 'negative' ? '-' : '~'}
+                          </span>
+                        )}
+                        {action.impact_3d && action.impact_3d.delta_roas != null && (
+                          <span className={`agent-impact ${action.impact_3d.delta_roas >= 0 ? 'positive' : 'negative'}`}>
+                            ROAS {action.impact_3d.delta_roas > 0 ? '+' : ''}{action.impact_3d.delta_roas.toFixed(1)}%
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Expanded: creative health, more details */}
+              {isExpanded && adset.agent?.creative_health && (
+                <div className="agent-adset-creative-health">
+                  <strong>Salud Creativa:</strong> {adset.agent.creative_health}
+                </div>
+              )}
+
+              {isExpanded && (
+                <div className="agent-adset-extra-metrics">
+                  <span>CPA: ${adset.metrics_7d.cpa.toFixed(2)}</span>
+                  <span>CTR: {adset.metrics_7d.ctr.toFixed(2)}%</span>
+                  <span>Compras 7d: {adset.metrics_7d.purchases}</span>
+                  <span>3d ROAS: {adset.metrics_3d.roas.toFixed(2)}x</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// KNOWLEDGE PANEL UNIFIED — Tab 2: Memoria + Insights + Bandit
+// ═══════════════════════════════════════════════════════════════════
+
+function KnowledgePanelUnified({
+  insights, loadingInsights, analyzing, typeFilter, severityFilter,
+  insightsPage, totalPages, insightsTotal, unreadCount,
+  onTypeFilter, onSeverityFilter, onAnalyze, onMarkAllRead, onInsightClick, onPageChange,
+  formatTime
+}) {
+  const [knowledgeSubTab, setKnowledgeSubTab] = useState('insights'); // 'insights' | 'memory' | 'bandit' | 'patterns'
+
+  return (
+    <div className="knowledge-unified">
+      <div className="knowledge-sub-tabs">
+        <button className={`sub-tab ${knowledgeSubTab === 'insights' ? 'active' : ''}`} onClick={() => setKnowledgeSubTab('insights')}>
+          Insights {unreadCount > 0 && <span className="tab-badge">{unreadCount}</span>}
+        </button>
+        <button className={`sub-tab ${knowledgeSubTab === 'memory' ? 'active' : ''}`} onClick={() => setKnowledgeSubTab('memory')}>
+          Memoria
+        </button>
+        <button className={`sub-tab ${knowledgeSubTab === 'bandit' ? 'active' : ''}`} onClick={() => setKnowledgeSubTab('bandit')}>
+          Aprendizaje
+        </button>
+        <button className={`sub-tab ${knowledgeSubTab === 'patterns' ? 'active' : ''}`} onClick={() => setKnowledgeSubTab('patterns')}>
+          Patrones
+        </button>
+      </div>
+
+      {knowledgeSubTab === 'insights' ? (
+        <FeedPanel
+          insights={insights}
+          loadingInsights={loadingInsights}
+          analyzing={analyzing}
+          typeFilter={typeFilter}
+          severityFilter={severityFilter}
+          insightsPage={insightsPage}
+          totalPages={totalPages}
+          insightsTotal={insightsTotal}
+          stats={null}
+          unreadCount={unreadCount}
+          pendingCount={0}
+          entityCount={0}
+          onTypeFilter={onTypeFilter}
+          onSeverityFilter={onSeverityFilter}
+          onAnalyze={onAnalyze}
+          onMarkAllRead={onMarkAllRead}
+          onInsightClick={onInsightClick}
+          onPageChange={onPageChange}
+          formatTime={formatTime}
+        />
+      ) : knowledgeSubTab === 'memory' || knowledgeSubTab === 'bandit' || knowledgeSubTab === 'patterns' ? (
+        <KnowledgePanel formatTime={formatTime} />
+      ) : null}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// AD SETS PANEL — Tab 3: Grid/tabla de todos los ad sets
+// ═══════════════════════════════════════════════════════════════════
+
+function AdSetsPanel({ data, loading, onRefresh, formatTime }) {
+  const [sortBy, setSortBy] = useState('spend');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [expandedRow, setExpandedRow] = useState(null);
+
+  if (loading && !data) {
+    return <div className="brain-loading">Cargando ad sets...</div>;
+  }
+
+  const adsets = data?.adsets || [];
+  const filtered = adsets.filter(a => {
+    if (filterStatus === 'active') return a.status === 'ACTIVE';
+    if (filterStatus === 'paused') return a.status === 'PAUSED';
+    return true;
+  });
+
+  const sorted = [...filtered].sort((a, b) => {
+    const ma = a.metrics_7d || {};
+    const mb = b.metrics_7d || {};
+    if (sortBy === 'spend') return (mb.spend || 0) - (ma.spend || 0);
+    if (sortBy === 'roas') return (mb.roas || 0) - (ma.roas || 0);
+    if (sortBy === 'frequency') return (mb.frequency || 0) - (ma.frequency || 0);
+    if (sortBy === 'purchases') return (mb.purchases || 0) - (ma.purchases || 0);
+    return 0;
+  });
+
+  return (
+    <div className="adsets-panel">
+      <div className="adsets-toolbar">
+        <div className="adsets-filters">
+          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+            <option value="all">Todos</option>
+            <option value="active">Activos</option>
+            <option value="paused">Pausados</option>
+          </select>
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)}>
+            <option value="spend">Spend (mayor)</option>
+            <option value="roas">ROAS (mayor)</option>
+            <option value="frequency">Frequency (mayor)</option>
+            <option value="purchases">Compras (mayor)</option>
+          </select>
+        </div>
+        <button className="btn-agent-refresh" onClick={onRefresh} disabled={loading}>Refrescar</button>
+      </div>
+
+      <div className="adsets-table">
+        <div className="adsets-table-header">
+          <span className="adsets-col-name">Ad Set</span>
+          <span className="adsets-col">Status</span>
+          <span className="adsets-col">Budget</span>
+          <span className="adsets-col">ROAS 7d</span>
+          <span className="adsets-col">CPA</span>
+          <span className="adsets-col">Spend 7d</span>
+          <span className="adsets-col">Compras</span>
+          <span className="adsets-col">Freq</span>
+          <span className="adsets-col">CTR</span>
+        </div>
+
+        {sorted.map(adset => {
+          const m = adset.metrics_7d || {};
+          const isExpanded = expandedRow === adset.adset_id;
+          const freqColor = (m.frequency || 0) > 3.5 ? '#ef4444' : (m.frequency || 0) > 2.5 ? '#f59e0b' : '#10b981';
+          const roasColor = (m.roas || 0) >= 3 ? '#10b981' : (m.roas || 0) >= 1.5 ? '#3b82f6' : (m.roas || 0) >= 1 ? '#f59e0b' : '#ef4444';
+
+          return (
+            <React.Fragment key={adset.adset_id}>
+              <div className={`adsets-table-row ${isExpanded ? 'expanded' : ''}`} onClick={() => setExpandedRow(isExpanded ? null : adset.adset_id)}>
+                <span className="adsets-col-name" title={adset.adset_name}>
+                  {(adset.adset_name || '').substring(0, 35)}
+                </span>
+                <span className="adsets-col">
+                  <span className={`status-dot ${adset.status === 'ACTIVE' ? 'active' : 'paused'}`} />
+                  {adset.status}
+                </span>
+                <span className="adsets-col">${adset.daily_budget || 0}</span>
+                <span className="adsets-col" style={{ color: roasColor, fontWeight: 600 }}>{(m.roas || 0).toFixed(2)}x</span>
+                <span className="adsets-col">${(m.cpa || 0).toFixed(2)}</span>
+                <span className="adsets-col">${(m.spend || 0).toFixed(0)}</span>
+                <span className="adsets-col">{m.purchases || 0}</span>
+                <span className="adsets-col" style={{ color: freqColor }}>{(m.frequency || 0).toFixed(1)}</span>
+                <span className="adsets-col">{(m.ctr || 0).toFixed(2)}%</span>
+              </div>
+
+              {isExpanded && adset.ads && (
+                <div className="adsets-expanded-row">
+                  <div className="adsets-ads-list">
+                    <strong>Ads ({adset.ads?.length || 0}):</strong>
+                    {(adset.ads || []).map(ad => (
+                      <div key={ad.ad_id} className="adsets-ad-row">
+                        <span className={`status-dot ${ad.status === 'ACTIVE' ? 'active' : 'paused'}`} />
+                        <span className="ad-name">{(ad.ad_name || ad.ad_id).substring(0, 40)}</span>
+                        <span>ROAS {(ad.roas || 0).toFixed(2)}x</span>
+                        <span>CTR {(ad.ctr || 0).toFixed(2)}%</span>
+                        <span>Spend ${(ad.spend || 0).toFixed(0)}</span>
+                        <span style={{ color: (ad.frequency || 0) > 3 ? '#ef4444' : '#6b7280' }}>Freq {(ad.frequency || 0).toFixed(1)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// LEGACY PANELS (preserved for compatibility)
+// ═══════════════════════════════════════════════════════════════════
 
 function FeedPanel({
   insights, loadingInsights, analyzing, typeFilter, severityFilter,

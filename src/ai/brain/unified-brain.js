@@ -45,6 +45,50 @@ class UnifiedBrain {
   }
 
   /**
+   * Modo "unified": solo consume feedback + actualiza memoria/learning.
+   * No genera recomendaciones — el Account Agent actúa directamente.
+   */
+  async analyzeAndLearn() {
+    const startTime = Date.now();
+    const cycleId = `learn_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    logger.info(`═══ Iniciando ciclo de aprendizaje [${cycleId}] ═══`);
+
+    try {
+      // Consumir feedback de impacto (actualizar Thompson Sampling)
+      const learningResult = await this.learner.consumeImpactFeedback();
+
+      // Actualizar patrones temporales
+      try {
+        const snapshots = await getLatestSnapshots('adset');
+        const activeSnapshots = snapshots.filter(s => s.status === 'ACTIVE');
+        for (const snap of activeSnapshots) {
+          const m7d = snap.metrics?.last_7d || {};
+          await BrainTemporalPattern.updateDayPattern(snap.entity_id, {
+            roas: m7d.roas || 0,
+            spend: m7d.spend || 0,
+            frequency: m7d.frequency || 0
+          });
+        }
+      } catch (patternErr) {
+        logger.warn(`[BRAIN-LEARN] Error actualizando patrones: ${patternErr.message}`);
+      }
+
+      const elapsed = `${((Date.now() - startTime) / 1000).toFixed(1)}s`;
+      logger.info(`═══ Ciclo de aprendizaje completado [${cycleId}] en ${elapsed} — ${learningResult.processed || 0} impactos procesados ═══`);
+
+      return {
+        cycleId,
+        elapsed,
+        processed: learningResult.processed || 0,
+        rewards_applied: learningResult.rewards_applied || 0
+      };
+    } catch (error) {
+      logger.error(`[BRAIN-LEARN] Error en ciclo de aprendizaje: ${error.message}`);
+      return { cycleId, elapsed: '0s', processed: 0, error: error.message };
+    }
+  }
+
+  /**
    * Ejecuta un ciclo completo del cerebro IA.
    * @returns {Object} { report, autoExecuted, elapsed }
    */
@@ -1902,6 +1946,17 @@ REGLAS:
       if (!shouldExecute) continue;
 
       try {
+        // Guard: ad sets managed by Agent Manager v2 are off-limits — Brain only emits directives
+        const aiManaged = await AICreation.findOne({
+          meta_entity_id: String(rec.entity_id),
+          managed_by_ai: true,
+          agent_version: 'v2'
+        }).lean();
+        if (aiManaged) {
+          logger.info(`[BRAIN][AUTO] Saltando ${rec.entity_name} — gestionado por Agent Manager v2, solo directivas`);
+          continue;
+        }
+
         const cooldownManager = new CooldownManager();
         const cooldownCheck = await cooldownManager.isOnCooldown(rec.entity_id);
         if (cooldownCheck.onCooldown) {

@@ -31,7 +31,17 @@ const actionLogSchema = new mongoose.Schema({
   evidence_points: [{ type: String }],
   research_context: { type: String, default: '' },
   confidence: { type: String, enum: ['high', 'medium', 'low'] },
-  agent_type: { type: String, enum: ['scaling', 'performance', 'creative', 'pacing', 'ai_manager', 'brain', 'manual'], default: null, index: true },
+  agent_type: { type: String, enum: ['scaling', 'performance', 'creative', 'pacing', 'ai_manager', 'brain', 'manual', 'unified_agent'], default: null, index: true },
+  // Follow-up verdict para Account Agent
+  follow_up_verdict: { type: String, enum: ['positive', 'negative', 'neutral', 'pending'], default: 'pending' },
+  follow_up_deltas: {
+    roas_pct_1d: { type: Number, default: null },
+    roas_pct_3d: { type: Number, default: null },
+    roas_pct_7d: { type: Number, default: null },
+    cpa_pct_1d: { type: Number, default: null },
+    cpa_pct_3d: { type: Number, default: null },
+    cpa_pct_7d: { type: Number, default: null }
+  },
   // Campos para acciones avanzadas
   target_entity_id: { type: String, default: null },
   target_entity_name: { type: String, default: null },

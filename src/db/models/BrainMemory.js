@@ -59,6 +59,14 @@ const brainMemorySchema = new mongoose.Schema({
   last_insight_at: { type: Date, default: null },
   last_insight_id: { type: mongoose.Schema.Types.ObjectId, default: null },
 
+  // ═══ Account Agent assessment fields ═══
+  agent_assessment: { type: String, default: '' },
+  agent_frequency_status: { type: String, enum: ['ok', 'moderate', 'high', 'critical', 'unknown'], default: 'unknown' },
+  agent_creative_health: { type: String, default: '' },
+  agent_needs_new_creatives: { type: Boolean, default: false },
+  agent_performance_trend: { type: String, enum: ['improving', 'stable', 'declining', 'learning', 'unknown'], default: 'unknown' },
+  agent_last_check: { type: Date, default: null },
+
   // Timestamps
   first_seen_at: { type: Date, default: Date.now },
   last_updated_at: { type: Date, default: Date.now }

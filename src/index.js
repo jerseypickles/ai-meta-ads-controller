@@ -15,6 +15,7 @@ const AICreation = require('./db/models/AICreation');
 const SystemConfig = require('./db/models/SystemConfig');
 const LifecycleManager = require('./ai/lifecycle-manager');
 const { runManager } = require('./ai/adset-creator/manager');
+const { runAccountAgent } = require('./ai/agent/account-agent');
 const { startDashboard } = require('./dashboard/server');
 const { refreshMetaToken } = require('./dashboard/routes/meta-auth');
 const { syncCreativeMetrics } = require('./dashboard/routes/creatives');
@@ -165,11 +166,23 @@ async function jobAgentsCycle() {
   }
 
   try {
-    logger.info('[CRON] Iniciando ciclo del Cerebro IA...');
+    const agentMode = await SystemConfig.get('agent_mode', 'unified');
     const brain = new UnifiedBrain();
-    const result = await brain.runCycle();
-    if (result) {
-      logger.info(`[CRON] Cerebro IA completado en ${result.elapsed} — ${result.recommendations} recomendaciones, ${result.autoExecuted} auto-ejecutadas`);
+
+    if (agentMode === 'unified') {
+      // En modo unified: solo aprendizaje y memoria (Account Agent actúa)
+      logger.info('[CRON] Cerebro IA (modo unified): aprendizaje...');
+      const result = await brain.analyzeAndLearn();
+      if (result) {
+        logger.info(`[CRON] Cerebro IA aprendizaje completado en ${result.elapsed} — ${result.processed || 0} impactos procesados`);
+      }
+    } else {
+      // En modo legacy: ciclo completo con recomendaciones
+      logger.info('[CRON] Iniciando ciclo del Cerebro IA (legacy)...');
+      const result = await brain.runCycle();
+      if (result) {
+        logger.info(`[CRON] Cerebro IA completado en ${result.elapsed} — ${result.recommendations} recomendaciones, ${result.autoExecuted} auto-ejecutadas`);
+      }
     }
   } catch (error) {
     logger.error('[CRON] Error en ciclo del Cerebro IA:', error);
@@ -505,6 +518,13 @@ async function jobAIManager() {
     return;
   }
 
+  // Feature flag: skip if unified mode (Account Agent handles it)
+  const agentMode = await SystemConfig.get('agent_mode', 'unified');
+  if (agentMode === 'unified') {
+    logger.debug('[CRON] agent_mode=unified — AI Manager deshabilitado, Account Agent toma su lugar');
+    return;
+  }
+
   try {
     logger.info('[CRON] Ejecutando AI Manager autónomo...');
     const result = await runManager();
@@ -515,6 +535,38 @@ async function jobAIManager() {
     }
   } catch (error) {
     logger.error('[CRON] Error en AI Manager:', error);
+  }
+}
+
+/**
+ * Job: Account Agent unificado — 3x/día (9am, 5pm, 10pm ET).
+ * Itera TODOS los ad sets activos con un agentic loop por ad set.
+ * Feature flag: solo corre si agent_mode === 'unified'.
+ */
+async function jobAccountAgent() {
+  const aiEnabled = await isAIEnabled();
+  if (!aiEnabled) {
+    logger.info('[CRON] IA desactivada — saltando Account Agent');
+    return;
+  }
+
+  // Feature flag check
+  const agentMode = await SystemConfig.get('agent_mode', 'unified');
+  if (agentMode !== 'unified') {
+    logger.debug('[CRON] agent_mode !== unified — saltando Account Agent');
+    return;
+  }
+
+  try {
+    logger.info('[CRON] Ejecutando Account Agent unificado...');
+    const result = await runAccountAgent();
+    if (result.managed > 0) {
+      logger.info(`[CRON] Account Agent: ${result.managed} ad sets revisados, ${result.actions_taken} acciones en ${result.elapsed}`);
+    } else {
+      logger.debug(`[CRON] Account Agent: sin ad sets activos`);
+    }
+  } catch (error) {
+    logger.error('[CRON] Error en Account Agent:', error);
   }
 }
 
@@ -751,6 +803,13 @@ function initCronJobs() {
     name: 'ai-manager'
   });
   logger.info('  [*] AI Manager autónomo — 3x/día: 9am, 5pm, 10pm ET');
+
+  // 3 veces al día: Account Agent unificado (9am, 5pm, 10pm ET)
+  cron.schedule('0 9,17,22 * * *', jobAccountAgent, {
+    timezone: TIMEZONE,
+    name: 'account-agent'
+  });
+  logger.info('  [*] Account Agent unificado — 3x/día: 9am, 5pm, 10pm ET');
 
   // AI Ops metrics refresh — cada 15 min, 24/7
   cron.schedule('5,20,35,50 * * * *', jobAIOpsRefresh, {
