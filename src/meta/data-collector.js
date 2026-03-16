@@ -331,6 +331,7 @@ class DataCollector {
               daily_budget: parseBudget(info.daily_budget),
               lifetime_budget: parseBudget(info.lifetime_budget),
               budget_remaining: parseBudget(info.budget_remaining),
+              meta_created_time: info.created_time ? new Date(info.created_time) : null,
               metrics,
               analysis: this._buildAnalysis(metrics),
               ads_count: adsPerAdSet[adSetId] || 0,
