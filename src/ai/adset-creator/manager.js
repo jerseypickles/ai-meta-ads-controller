@@ -185,7 +185,14 @@ async function runManager() {
 
   for (const creation of managed) {
     try {
-      const result = await manageAdSet(creation);
+      let result;
+      if (creation.agent_version === 'v2') {
+        // Agentic tool-use flow for v2 ad sets
+        const { manageAdSetWithAgent } = require('./agent-manager');
+        result = await manageAdSetWithAgent(creation);
+      } else {
+        result = await manageAdSet(creation);
+      }
       totalActions += result.actionsExecuted;
       results.push({
         adset_id: creation.meta_entity_id,
@@ -1431,4 +1438,4 @@ async function getManagerStatusLive() {
   return { managed: enriched, campaign: campaignMetrics };
 }
 
-module.exports = { runManager, manageAdSet, getManagerStatus, getManagerStatusLive };
+module.exports = { runManager, manageAdSet, getManagerStatus, getManagerStatusLive, _hardcodedDecisionTree, _forceKill, _forceScaleDown };

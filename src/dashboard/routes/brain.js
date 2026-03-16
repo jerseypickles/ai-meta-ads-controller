@@ -2385,6 +2385,7 @@ router.post('/launch/approve', async (req, res) => {
         parent_entity_id: proposal.campaign_id,
         parent_entity_name: proposal.campaign_name || '',
         agent_type: 'creative',
+        agent_version: 'v2',
         reasoning: proposal.strategy_summary || '',
         confidence: proposal.risk_assessment === 'low' ? 'high' : proposal.risk_assessment === 'high' ? 'low' : 'medium',
         initial_budget: proposal.daily_budget,
@@ -2408,17 +2409,17 @@ router.post('/launch/approve', async (req, res) => {
       try {
         const learningEnds = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
         await BrainInsight.create({
-          type: 'status_change',
+          insight_type: 'status_change',
           severity: 'high',
           title: `Nuevo ad set lanzado: ${proposal.adset_name}`,
-          summary: `Se lanzó un nuevo ad set con ${createdAds.length} ads y budget de $${proposal.daily_budget}/día. ` +
+          body: `Se lanzó un nuevo ad set con ${createdAds.length} ads y budget de $${proposal.daily_budget}/día. ` +
             `Fase de aprendizaje activa hasta ${learningEnds.toLocaleDateString('es-MX', { day: 'numeric', month: 'short' })}. ` +
             `No se deben hacer cambios durante los primeros 3 días.` +
             (proposal.strategy_summary ? `\n\nEstrategia: ${proposal.strategy_summary}` : ''),
           entity_id: adSetResult.adset_id,
           entity_name: proposal.adset_name,
           entity_type: 'adset',
-          data: {
+          data_points: {
             action: 'brain_launch',
             ads_created: createdAds.length,
             daily_budget: proposal.daily_budget,

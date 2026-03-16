@@ -34,6 +34,9 @@ const aiCreationSchema = new mongoose.Schema({
   ads_paused: [{ type: String }],
   initial_budget: { type: Number, default: 0 },
 
+  // Agent version: v1 = single-call manager, v2 = agentic tool-use manager
+  agent_version: { type: String, enum: ['v1', 'v2'], default: 'v1' },
+
   // AI-managed ad set (Claude tiene control total)
   managed_by_ai: { type: Boolean, default: false },
   child_ad_ids: [{ type: String }],

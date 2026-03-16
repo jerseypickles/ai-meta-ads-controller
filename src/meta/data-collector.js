@@ -117,8 +117,19 @@ class DataCollector {
           const fetched = await this.meta.getMultipleObjects(missingIds, fields);
 
           let injected = 0;
+          const deadIds = [];
           for (const [asId, info] of Object.entries(fetched)) {
-            if (info.error) continue; // Object not accessible
+            if (info.error) {
+              // Object deleted/archived in Meta — mark as dead
+              deadIds.push(asId);
+              continue;
+            }
+            // If Meta returns DELETED or ARCHIVED status, also mark as dead
+            const metaStatus = (info.effective_status || info.status || '').toUpperCase();
+            if (metaStatus === 'DELETED' || metaStatus === 'ARCHIVED') {
+              deadIds.push(asId);
+              continue;
+            }
             const campaignId = info.campaign_id;
             const creation = aiCreations.find(c => c.meta_entity_id === asId);
             adSetMap[asId] = {
@@ -127,6 +138,19 @@ class DataCollector {
               campaign_id: campaignId
             };
             injected++;
+          }
+          // Also check for IDs that Meta didn't return at all (truly deleted)
+          for (const id of missingIds) {
+            if (!fetched[id] && !deadIds.includes(id)) {
+              deadIds.push(id);
+            }
+          }
+          if (deadIds.length > 0) {
+            await AICreation.updateMany(
+              { meta_entity_id: { $in: deadIds }, managed_by_ai: true },
+              { $set: { current_status: 'ARCHIVED', managed_by_ai: false, lifecycle_phase: 'dead', verdict_reason: 'Ad set eliminado de Meta externamente' } }
+            );
+            logger.info(`  ${deadIds.length} ad sets AI-managed marcados como dead (eliminados de Meta): ${deadIds.join(', ')}`);
           }
           if (injected > 0) {
             logger.info(`  ${injected} ad sets AI-managed inyectados (multi-object read, 1 API call)`);

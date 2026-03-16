@@ -293,6 +293,7 @@ async function executeAdSetApproval(proposal) {
       parent_entity_id: proposal.campaign_id,
       parent_entity_name: proposal.campaign_name || '',
       agent_type: 'creative',
+      agent_version: 'v2',
       reasoning: proposal.strategy_summary,
       confidence: proposal.risk_assessment === 'low' ? 'high' : proposal.risk_assessment === 'high' ? 'low' : 'medium',
       creative_rationale: proposal.budget_rationale,

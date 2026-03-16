@@ -75,22 +75,9 @@ router.get('/stats', async (req, res) => {
 });
 
 /**
- * GET /api/ai-creations/:id
- * Detalle de una creacion especifica.
- */
-router.get('/:id', async (req, res) => {
-  try {
-    const creation = await AICreation.findById(req.params.id).lean();
-    if (!creation) return res.status(404).json({ error: 'Creacion no encontrada' });
-    res.json(creation);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-/**
  * GET /api/ai-creations/launched-adsets
  * Ad sets launched from the panel, with scaling history and current metrics.
+ * NOTE: Must be defined BEFORE /:id to avoid Express matching 'launched-adsets' as an :id param.
  */
 router.get('/launched-adsets', async (req, res) => {
   try {
@@ -99,7 +86,8 @@ router.get('/launched-adsets', async (req, res) => {
 
     const creations = await AICreation.find({
       creation_type: 'create_adset',
-      managed_by_ai: true
+      managed_by_ai: true,
+      lifecycle_phase: { $nin: ['dead'] }
     }).sort({ created_at: -1 }).lean();
 
     const adsetSnaps = await getLatestSnapshots('adset');
@@ -173,6 +161,21 @@ router.get('/launched-adsets', async (req, res) => {
     res.json({ adsets: result });
   } catch (error) {
     logger.error('Error listing launched adsets:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/ai-creations/:id
+ * Detalle de una creacion especifica.
+ * NOTE: Must be AFTER all named routes to avoid catching them as :id.
+ */
+router.get('/:id', async (req, res) => {
+  try {
+    const creation = await AICreation.findById(req.params.id).lean();
+    if (!creation) return res.status(404).json({ error: 'Creacion no encontrada' });
+    res.json(creation);
+  } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
