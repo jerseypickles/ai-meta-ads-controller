@@ -28,20 +28,24 @@ router.get('/activity', async (req, res) => {
     const memoryMap = {};
     for (const m of memories) { memoryMap[m.entity_id] = m; }
 
-    // 3. Get recent actions from unified agent only
+    // 3. Get recent actions from unified agent only (adset-level + ad-level via parent_adset_id)
     const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000);
     const recentActions = await ActionLog.find({
-      entity_id: { $in: entityIds },
+      $or: [
+        { entity_id: { $in: entityIds } },
+        { parent_adset_id: { $in: entityIds } }
+      ],
       agent_type: 'unified_agent',
       success: true,
       executed_at: { $gte: thirtyDaysAgo }
     }).sort({ executed_at: -1 }).lean();
 
-    // Group actions by entity
+    // Group actions by ad set (use parent_adset_id for ad-level actions)
     const actionsByEntity = {};
     for (const a of recentActions) {
-      if (!actionsByEntity[a.entity_id]) actionsByEntity[a.entity_id] = [];
-      actionsByEntity[a.entity_id].push(a);
+      const key = a.parent_adset_id || a.entity_id;
+      if (!actionsByEntity[key]) actionsByEntity[key] = [];
+      actionsByEntity[key].push(a);
     }
 
     // 4. Build response per ad set
