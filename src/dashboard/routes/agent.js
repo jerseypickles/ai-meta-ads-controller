@@ -28,10 +28,11 @@ router.get('/activity', async (req, res) => {
     const memoryMap = {};
     for (const m of memories) { memoryMap[m.entity_id] = m; }
 
-    // 3. Get recent actions (last 30 days)
+    // 3. Get recent actions from unified agent only
     const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000);
     const recentActions = await ActionLog.find({
       entity_id: { $in: entityIds },
+      agent_type: 'unified_agent',
       success: true,
       executed_at: { $gte: thirtyDaysAgo }
     }).sort({ executed_at: -1 }).lean();
@@ -77,14 +78,14 @@ router.get('/activity', async (req, res) => {
           frequency: m3d.frequency || 0,
           ctr: m3d.ctr || 0
         },
-        agent: {
+        agent: memory.agent_last_check ? {
           assessment: memory.agent_assessment || null,
           frequency_status: memory.agent_frequency_status || 'unknown',
           creative_health: memory.agent_creative_health || null,
           needs_new_creatives: memory.agent_needs_new_creatives || false,
           performance_trend: memory.agent_performance_trend || 'unknown',
-          last_check: memory.agent_last_check || null
-        },
+          last_check: memory.agent_last_check
+        } : null,
         recent_actions: actions.map(a => ({
           _id: a._id,
           action: a.action,
@@ -118,9 +119,9 @@ router.get('/activity', async (req, res) => {
       };
     });
 
-    // 5. Compute global stats
+    // 5. Compute global stats (unified_agent only)
     const allAgentActions = await ActionLog.find({
-      agent_type: { $in: ['unified_agent', 'ai_manager'] },
+      agent_type: 'unified_agent',
       success: true,
       impact_measured: true
     }).lean();
@@ -130,7 +131,7 @@ router.get('/activity', async (req, res) => {
 
     // Last cycle info
     const lastAction = await ActionLog.findOne({
-      agent_type: { $in: ['unified_agent', 'ai_manager'] },
+      agent_type: 'unified_agent',
       success: true
     }).sort({ executed_at: -1 }).lean();
 

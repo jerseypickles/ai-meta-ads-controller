@@ -791,26 +791,22 @@ function KnowledgePanelUnified({
   onTypeFilter, onSeverityFilter, onAnalyze, onMarkAllRead, onInsightClick, onPageChange,
   formatTime
 }) {
-  const [knowledgeSubTab, setKnowledgeSubTab] = useState('insights'); // 'insights' | 'memory' | 'bandit' | 'patterns'
+  const [knowledgeSubTab, setKnowledgeSubTab] = useState('brain'); // 'brain' | 'insights'
 
   return (
     <div className="knowledge-unified">
       <div className="knowledge-sub-tabs">
+        <button className={`sub-tab ${knowledgeSubTab === 'brain' ? 'active' : ''}`} onClick={() => setKnowledgeSubTab('brain')}>
+          Brain
+        </button>
         <button className={`sub-tab ${knowledgeSubTab === 'insights' ? 'active' : ''}`} onClick={() => setKnowledgeSubTab('insights')}>
           Insights {unreadCount > 0 && <span className="tab-badge">{unreadCount}</span>}
         </button>
-        <button className={`sub-tab ${knowledgeSubTab === 'memory' ? 'active' : ''}`} onClick={() => setKnowledgeSubTab('memory')}>
-          Memoria
-        </button>
-        <button className={`sub-tab ${knowledgeSubTab === 'bandit' ? 'active' : ''}`} onClick={() => setKnowledgeSubTab('bandit')}>
-          Aprendizaje
-        </button>
-        <button className={`sub-tab ${knowledgeSubTab === 'patterns' ? 'active' : ''}`} onClick={() => setKnowledgeSubTab('patterns')}>
-          Patrones
-        </button>
       </div>
 
-      {knowledgeSubTab === 'insights' ? (
+      {knowledgeSubTab === 'brain' ? (
+        <KnowledgePanel formatTime={formatTime} />
+      ) : (
         <FeedPanel
           insights={insights}
           loadingInsights={loadingInsights}
@@ -832,9 +828,7 @@ function KnowledgePanelUnified({
           onPageChange={onPageChange}
           formatTime={formatTime}
         />
-      ) : knowledgeSubTab === 'memory' || knowledgeSubTab === 'bandit' || knowledgeSubTab === 'patterns' ? (
-        <KnowledgePanel formatTime={formatTime} />
-      ) : null}
+      )}
     </div>
   );
 }
