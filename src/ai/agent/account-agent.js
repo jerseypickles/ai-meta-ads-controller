@@ -17,6 +17,40 @@ const { hardcodedDecisionTree, forceKill, forceScaleDown } = require('./safety-d
 
 const client = new Anthropic({ apiKey: config.claude.apiKey });
 
+const { TIERED_COOLDOWN_HOURS } = require('../../safety/cooldown-manager');
+
+/**
+ * Check cooldown for unified_agent only — ignores legacy ai_manager/brain actions.
+ * This lets the Account Agent start fresh without inheriting cooldowns from the old system.
+ */
+async function _isOnAgentCooldown(entityId) {
+  const COOLDOWN_DAYS = 3; // max lookback window
+  const since = new Date(Date.now() - COOLDOWN_DAYS * 86400000);
+
+  const lastAction = await ActionLog.findOne({
+    entity_id: entityId,
+    agent_type: 'unified_agent',
+    success: true,
+    executed_at: { $gte: since }
+  }).sort({ executed_at: -1 }).lean();
+
+  if (!lastAction) return { onCooldown: false };
+
+  const tieredHours = TIERED_COOLDOWN_HOURS[lastAction.action] || 48;
+  const cooldownUntil = new Date(new Date(lastAction.executed_at).getTime() + tieredHours * 3600000);
+  const now = new Date();
+
+  if (cooldownUntil > now) {
+    return {
+      onCooldown: true,
+      minutesLeft: Math.round((cooldownUntil - now) / 60000),
+      hoursLeft: Math.round((cooldownUntil - now) / 3600000),
+      lastAction: lastAction.action
+    };
+  }
+  return { onCooldown: false };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SYSTEM PROMPT — personalidad y reglas del agente unificado
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -447,8 +481,8 @@ async function handleScaleBudget(input, ctx) {
     return { blocked: true, reason: `Budget cannot go below $${minBudget}. Requested: $${new_budget}.` };
   }
 
-  // ── GATE: Cooldown (48h)
-  const cooldown = await cooldownMgr.isOnCooldown(adset_id);
+  // ── GATE: Cooldown (unified_agent only — ignores legacy cooldowns)
+  const cooldown = await _isOnAgentCooldown(adset_id);
   if (cooldown.onCooldown) {
     return { blocked: true, reason: `Cooldown: ${cooldown.minutesLeft} minutes remaining (last: ${cooldown.lastAction}).` };
   }
@@ -526,10 +560,9 @@ async function handleScaleBudget(input, ctx) {
 async function handlePauseAd(input, ctx) {
   const { ad_id, adset_id, reason } = input;
   const meta = getMetaClient();
-  const cooldownMgr = new CooldownManager();
 
-  // ── GATE: Cooldown
-  const cooldown = await cooldownMgr.isOnCooldown(ad_id);
+  // ── GATE: Cooldown (unified_agent only)
+  const cooldown = await _isOnAgentCooldown(ad_id);
   if (cooldown.onCooldown) {
     return { blocked: true, reason: `Cooldown: ${cooldown.minutesLeft} minutes remaining.` };
   }
@@ -579,10 +612,9 @@ async function handlePauseAd(input, ctx) {
 async function handleReactivateAd(input, ctx) {
   const { ad_id, adset_id, reason } = input;
   const meta = getMetaClient();
-  const cooldownMgr = new CooldownManager();
 
-  // ── GATE: Cooldown
-  const cooldown = await cooldownMgr.isOnCooldown(ad_id);
+  // ── GATE: Cooldown (unified_agent only)
+  const cooldown = await _isOnAgentCooldown(ad_id);
   if (cooldown.onCooldown) {
     return { blocked: true, reason: `Cooldown: ${cooldown.minutesLeft} minutes remaining.` };
   }
@@ -857,17 +889,17 @@ async function _manageAdSet(adSetSnap, cycleId) {
     }
   }
 
-  // ═══ PRE-CHECK: Cooldown (recent action < 48h) ═══
-  const cooldownMgr = new CooldownManager();
-  const cooldown = await cooldownMgr.isOnCooldown(adSetId);
+  // ═══ PRE-CHECK: Cooldown (unified_agent actions only — ignores legacy) ═══
+  const cooldown = await _isOnAgentCooldown(adSetId);
   if (cooldown.onCooldown) {
     logger.debug(`[ACCOUNT-AGENT] ${adSetName}: cooldown (${cooldown.minutesLeft} min remaining)`);
     return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Cooldown: ${cooldown.minutesLeft} min` };
   }
 
-  // ═══ PRE-CHECK: Pending impact (action < 24h not measured) ═══
+  // ═══ PRE-CHECK: Pending impact (unified_agent action < 24h not measured) ═══
   const pendingActions = await ActionLog.find({
     entity_id: adSetId,
+    agent_type: 'unified_agent',
     success: true,
     impact_1d_measured: false,
     executed_at: { $gte: new Date(Date.now() - 24 * 3600000) }
