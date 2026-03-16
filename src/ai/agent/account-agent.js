@@ -264,6 +264,38 @@ const TOOLS = [
   }
 ];
 
+/**
+ * Record an action in BrainMemory.action_history so the Brain learns per-entity.
+ */
+async function _recordActionInMemory(entityId, entityName, actionType, context) {
+  try {
+    await BrainMemory.findOneAndUpdate(
+      { entity_id: entityId },
+      {
+        $set: { entity_name: entityName, entity_type: 'adset', last_updated_at: new Date() },
+        $push: {
+          action_history: {
+            $each: [{
+              action_type: actionType,
+              executed_at: new Date(),
+              result: 'pending', // will be updated by impact measurement
+              roas_delta_pct: 0,
+              cpa_delta_pct: 0,
+              context: context || '',
+              concurrent_actions: [],
+              attribution: 'sole'
+            }],
+            $slice: -20 // keep last 20
+          }
+        }
+      },
+      { upsert: true }
+    );
+  } catch (err) {
+    logger.warn(`[ACCOUNT-AGENT] Error recording action in BrainMemory: ${err.message}`);
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // TOOL HANDLERS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -566,6 +598,7 @@ async function handleScaleBudget(input, ctx) {
   });
 
   ctx.actionsExecuted++;
+  await _recordActionInMemory(adset_id, snap.entity_name, isScaleUp ? 'scale_up' : 'scale_down', reason.substring(0, 100));
   logger.info(`[ACCOUNT-AGENT] ${adset_id}: Budget $${prevBudget} → $${finalBudget} — ${reason}`);
 
   return {
@@ -624,6 +657,7 @@ async function handlePauseAd(input, ctx) {
   });
 
   ctx.actionsExecuted++;
+  await _recordActionInMemory(adset_id, adSnap?.entity_name || adset_id, 'pause', `ad:${ad_id} ${reason.substring(0, 80)}`);
   logger.info(`[ACCOUNT-AGENT] ${adset_id}: Paused ad ${ad_id} — ${reason}`);
 
   return { success: true, ad_id, status: 'PAUSED' };
@@ -670,6 +704,7 @@ async function handleReactivateAd(input, ctx) {
   });
 
   ctx.actionsExecuted++;
+  await _recordActionInMemory(adset_id, adset_id, 'reactivate', `ad:${ad_id} ${reason.substring(0, 80)}`);
   logger.info(`[ACCOUNT-AGENT] ${adset_id}: Reactivated ad ${ad_id} — ${reason}`);
 
   return { success: true, ad_id, status: 'ACTIVE' };
