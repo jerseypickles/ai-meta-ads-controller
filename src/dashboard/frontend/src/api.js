@@ -257,6 +257,11 @@ export const getAgentAdsetDetail = async (adsetId) => {
   return response.data;
 };
 
+export const getAgentThoughts = async (limit = 50) => {
+  const response = await api.get('/api/agent/thoughts', { params: { limit }, timeout: 15000 });
+  return response.data;
+};
+
 // ═══ BRAIN — Creative Refresh Link ═══
 
 export const getPendingCreativeRec = async (adsetId) => {

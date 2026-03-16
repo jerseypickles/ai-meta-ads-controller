@@ -10,7 +10,7 @@ import {
   getPolicyState, getPolicyLearning, getKnowledgeHistory, getDeepKnowledge, getLaunchedAdsets, getCreativePerformance,
   getAdHealth, suggestAdHealthAction, quickPauseAd, logout,
   uploadLaunchCreatives, launchStrategize, launchApprove, getCreativeThumbnailUrl,
-  getAgentActivity, runAccountAgent, getAgentAdsetDetail
+  getAgentActivity, runAccountAgent, getAgentAdsetDetail, getAgentThoughts
 } from '../api';
 
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
@@ -801,11 +801,27 @@ function KnowledgePanelUnified({
   onTypeFilter, onSeverityFilter, onAnalyze, onMarkAllRead, onInsightClick, onPageChange,
   formatTime
 }) {
-  const [knowledgeSubTab, setKnowledgeSubTab] = useState('brain'); // 'brain' | 'insights'
+  const [knowledgeSubTab, setKnowledgeSubTab] = useState('thoughts'); // 'thoughts' | 'brain' | 'insights'
+  const [thoughts, setThoughts] = useState(null);
+  const [thoughtsLoading, setThoughtsLoading] = useState(false);
+
+  useEffect(() => {
+    if (knowledgeSubTab === 'thoughts' && !thoughts) {
+      setThoughtsLoading(true);
+      getAgentThoughts(50).then(data => {
+        setThoughts(data);
+      }).catch(err => {
+        console.error('Error loading thoughts:', err);
+      }).finally(() => setThoughtsLoading(false));
+    }
+  }, [knowledgeSubTab, thoughts]);
 
   return (
     <div className="knowledge-unified">
       <div className="knowledge-sub-tabs">
+        <button className={`sub-tab ${knowledgeSubTab === 'thoughts' ? 'active' : ''}`} onClick={() => setKnowledgeSubTab('thoughts')}>
+          Que piensa el Agente
+        </button>
         <button className={`sub-tab ${knowledgeSubTab === 'brain' ? 'active' : ''}`} onClick={() => setKnowledgeSubTab('brain')}>
           Brain
         </button>
@@ -814,7 +830,9 @@ function KnowledgePanelUnified({
         </button>
       </div>
 
-      {knowledgeSubTab === 'brain' ? (
+      {knowledgeSubTab === 'thoughts' ? (
+        <AgentThoughtsPanel thoughts={thoughts} loading={thoughtsLoading} formatTime={formatTime} onRefresh={() => { setThoughts(null); }} />
+      ) : knowledgeSubTab === 'brain' ? (
         <KnowledgePanel formatTime={formatTime} />
       ) : (
         <FeedPanel
@@ -839,6 +857,119 @@ function KnowledgePanelUnified({
           formatTime={formatTime}
         />
       )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// AGENT THOUGHTS — Stream de consciencia del agente
+// ═══════════════════════════════════════════════════════════════════
+
+const THOUGHT_TYPE_CONFIG = {
+  assessment: { icon: '\uD83E\uDDE0', label: 'Assessment', color: '#3b82f6', bg: 'rgba(59,130,246,0.1)' },
+  observation: { icon: '\uD83D\uDC41', label: 'Observacion', color: '#a855f7', bg: 'rgba(168,85,247,0.1)' },
+  action: { icon: '\u26A1', label: 'Accion', color: '#10b981', bg: 'rgba(16,185,129,0.1)' }
+};
+
+function AgentThoughtsPanel({ thoughts, loading, formatTime, onRefresh }) {
+  if (loading && !thoughts) {
+    return <div className="brain-loading">Cargando pensamientos del agente...</div>;
+  }
+
+  const feed = thoughts?.feed || [];
+
+  if (feed.length === 0) {
+    return (
+      <div className="thoughts-empty">
+        <p>El agente aun no ha compartido sus pensamientos.</p>
+        <p className="thoughts-empty-hint">Ejecuta el agente desde el tab "Agente" y vuelve aqui para ver que piensa de cada ad set.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="thoughts-panel">
+      <div className="thoughts-header">
+        <span className="thoughts-count">{feed.length} pensamientos</span>
+        <button className="btn-agent-refresh" onClick={onRefresh} disabled={loading}>Refrescar</button>
+      </div>
+      <div className="thoughts-feed">
+        {feed.map((item, idx) => {
+          const cfg = THOUGHT_TYPE_CONFIG[item.type] || THOUGHT_TYPE_CONFIG.assessment;
+          return (
+            <div key={idx} className="thought-card" style={{ borderLeftColor: cfg.color }}>
+              <div className="thought-header">
+                <span className="thought-icon">{cfg.icon}</span>
+                <span className="thought-type" style={{ color: cfg.color }}>{cfg.label}</span>
+                <span className="thought-entity">{item.entity_name || item.entity_id}</span>
+                <span className="thought-time">{formatTime(item.timestamp)}</span>
+              </div>
+
+              {/* Assessment: mostrar el texto completo + meta */}
+              {item.type === 'assessment' && (
+                <div className="thought-body">
+                  <p className="thought-text">{item.content}</p>
+                  {item.meta && (
+                    <div className="thought-meta-row">
+                      {item.meta.performance_trend && (
+                        <span className={`thought-tag thought-trend-${item.meta.performance_trend}`}>
+                          {item.meta.performance_trend}
+                        </span>
+                      )}
+                      {item.meta.frequency_status && item.meta.frequency_status !== 'unknown' && (
+                        <span className="thought-tag">Freq: {item.meta.frequency_status}</span>
+                      )}
+                      {item.meta.needs_new_creatives && (
+                        <span className="thought-tag thought-tag-warning">Necesita creativos</span>
+                      )}
+                    </div>
+                  )}
+                  {item.meta?.creative_health && (
+                    <p className="thought-creative-health">{item.meta.creative_health}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Observation: título + descripción */}
+              {item.type === 'observation' && (
+                <div className="thought-body">
+                  <p className="thought-text">{item.content}</p>
+                  {item.meta?.severity && (
+                    <span className={`thought-tag thought-severity-${item.meta.severity}`}>{item.meta.severity}</span>
+                  )}
+                </div>
+              )}
+
+              {/* Action: qué hizo y por qué */}
+              {item.type === 'action' && (
+                <div className="thought-body">
+                  <div className="thought-action-detail">
+                    <span className="thought-action-name">
+                      {(ACTION_LABELS[item.meta?.action] || { icon: '\u2022', label: item.meta?.action }).icon}{' '}
+                      {(ACTION_LABELS[item.meta?.action] || { label: item.meta?.action }).label}
+                    </span>
+                    {item.meta?.before_value != null && item.meta?.after_value != null && typeof item.meta.before_value === 'number' && (
+                      <span className="thought-action-values">
+                        ${item.meta.before_value} → ${item.meta.after_value}
+                        {item.meta.change_percent ? ` (${item.meta.change_percent > 0 ? '+' : ''}${item.meta.change_percent}%)` : ''}
+                      </span>
+                    )}
+                    {item.meta?.target_entity_name && (
+                      <span className="thought-action-target">ad: {item.meta.target_entity_name}</span>
+                    )}
+                  </div>
+                  {item.content && <p className="thought-text">{item.content}</p>}
+                  {item.meta?.follow_up_verdict && item.meta.follow_up_verdict !== 'pending' && (
+                    <span className={`thought-tag thought-verdict-${item.meta.follow_up_verdict}`}>
+                      Resultado: {item.meta.follow_up_verdict}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

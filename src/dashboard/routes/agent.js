@@ -300,4 +300,83 @@ router.get('/adset/:adsetId', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/agent/thoughts — Stream de consciencia del agente.
+ * Mezcla assessments + observaciones + acciones en un feed cronológico.
+ * Lo que el agente pensó, observó, y decidió — en orden.
+ */
+router.get('/thoughts', async (req, res) => {
+  try {
+    const limit = Math.min(100, parseInt(req.query.limit) || 50);
+
+    // 1. Assessments recientes (de BrainMemory con agent_last_check)
+    const memories = await BrainMemory.find({
+      agent_last_check: { $ne: null }
+    }).sort({ agent_last_check: -1 }).limit(limit).lean();
+
+    const assessmentItems = memories.map(m => ({
+      type: 'assessment',
+      timestamp: m.agent_last_check,
+      entity_id: m.entity_id,
+      entity_name: m.entity_name,
+      content: m.agent_assessment,
+      meta: {
+        frequency_status: m.agent_frequency_status,
+        performance_trend: m.agent_performance_trend,
+        needs_new_creatives: m.agent_needs_new_creatives,
+        creative_health: m.agent_creative_health
+      }
+    }));
+
+    // 2. Observaciones del agente (BrainInsight con source=unified_agent)
+    const insights = await BrainInsight.find({
+      source: 'unified_agent'
+    }).sort({ created_at: -1 }).limit(limit).lean();
+
+    const insightItems = insights.map(i => ({
+      type: 'observation',
+      timestamp: i.created_at,
+      entity_id: i.entity_id,
+      entity_name: i.entity_name,
+      content: i.title + (i.description ? ': ' + i.description : ''),
+      meta: {
+        insight_type: i.type,
+        severity: i.severity
+      }
+    }));
+
+    // 3. Acciones del agente (ActionLog con unified_agent)
+    const actions = await ActionLog.find({
+      agent_type: 'unified_agent',
+      success: true
+    }).sort({ executed_at: -1 }).limit(limit).lean();
+
+    const actionItems = actions.map(a => ({
+      type: 'action',
+      timestamp: a.executed_at,
+      entity_id: a.entity_id,
+      entity_name: a.entity_name,
+      content: a.reasoning || '',
+      meta: {
+        action: a.action,
+        before_value: a.before_value,
+        after_value: a.after_value,
+        change_percent: a.change_percent,
+        target_entity_name: a.target_entity_name,
+        follow_up_verdict: a.follow_up_verdict || 'pending'
+      }
+    }));
+
+    // 4. Merge y ordenar cronológicamente (más reciente primero)
+    const feed = [...assessmentItems, ...insightItems, ...actionItems]
+      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+      .slice(0, limit);
+
+    res.json({ feed, total: feed.length });
+  } catch (error) {
+    logger.error(`[AGENT-API] Error en /thoughts: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;

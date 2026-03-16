@@ -9860,6 +9860,164 @@ a:hover {
 .btn-agent-refresh:hover { background: var(--bg-hover); }
 .btn-agent-refresh:disabled { opacity: 0.5; }
 
+/* ═══════════════════════════════════════════════════════════════════
+   AGENT THOUGHTS — Stream de consciencia
+   ═══════════════════════════════════════════════════════════════════ */
+
+.thoughts-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.thoughts-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.thoughts-count {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.thoughts-empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-muted);
+}
+
+.thoughts-empty-hint {
+  font-size: 0.8rem;
+  margin-top: 8px;
+  opacity: 0.7;
+}
+
+.thoughts-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.thought-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-left: 3px solid;
+  border-radius: 8px;
+  padding: 12px 16px;
+  transition: border-color 0.2s;
+}
+
+.thought-card:hover {
+  border-color: var(--accent-muted);
+}
+
+.thought-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.thought-icon {
+  font-size: 1rem;
+}
+
+.thought-type {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.thought-entity {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.thought-time {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.thought-body {
+  padding-left: 4px;
+}
+
+.thought-text {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+  margin: 0 0 6px 0;
+  white-space: pre-wrap;
+}
+
+.thought-meta-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.thought-tag {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: rgba(255,255,255,0.05);
+  color: var(--text-muted);
+}
+
+.thought-trend-improving { color: #10b981; background: rgba(16,185,129,0.15); }
+.thought-trend-stable { color: #3b82f6; background: rgba(59,130,246,0.15); }
+.thought-trend-declining { color: #ef4444; background: rgba(239,68,68,0.15); }
+.thought-trend-learning { color: #f59e0b; background: rgba(245,158,11,0.15); }
+.thought-tag-warning { color: #f59e0b; background: rgba(245,158,11,0.15); }
+
+.thought-severity-critical { color: #ef4444; background: rgba(239,68,68,0.15); }
+.thought-severity-high { color: #f59e0b; background: rgba(245,158,11,0.15); }
+.thought-severity-medium { color: #3b82f6; background: rgba(59,130,246,0.15); }
+.thought-severity-low { color: #6b7280; background: rgba(107,114,128,0.15); }
+
+.thought-verdict-positive { color: #10b981; background: rgba(16,185,129,0.15); }
+.thought-verdict-negative { color: #ef4444; background: rgba(239,68,68,0.15); }
+.thought-verdict-neutral { color: #6b7280; background: rgba(107,114,128,0.15); }
+
+.thought-creative-health {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 4px 0 0 0;
+  font-style: italic;
+}
+
+.thought-action-detail {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.thought-action-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+.thought-action-values {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.thought-action-target {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
 .agent-first-run-notice {
   padding: 16px 20px;
   background: rgba(59,130,246,0.1);
