@@ -727,10 +727,11 @@ function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onR
                   const roasDelta = prevRoas && w.account.roas ? Math.round((w.account.roas - prevRoas) / Math.max(prevRoas, 0.01) * 100) : null;
                   const roasColor = w.account.roas >= 4 ? '#10b981' : w.account.roas >= 2.5 ? '#3b82f6' : w.account.roas >= 1.5 ? '#f59e0b' : '#ef4444';
                   return (
-                    <div key={w.week_start} className={`agent-perf-row ${w.is_current ? 'current' : ''} ${hasAgent ? 'with-agent' : ''}`}>
+                    <div key={w.week_start} className={`agent-perf-row ${w.is_current ? 'current' : ''} ${hasAgent ? 'with-agent' : ''} ${w.is_baseline ? 'baseline' : ''}`}>
                       <span className="agent-perf-col-week">
                         {w.week}
                         {w.is_current && <span className="agent-perf-current-badge">actual</span>}
+                        {w.is_baseline && <span className="agent-perf-baseline-badge">pre-agente</span>}
                       </span>
                       <span className="agent-perf-col" style={{ color: roasColor, fontWeight: 700 }}>
                         {w.account.roas.toFixed(2)}x

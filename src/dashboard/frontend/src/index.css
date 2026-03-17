@@ -10131,6 +10131,18 @@ a:hover {
   text-transform: uppercase;
 }
 
+.agent-perf-row.baseline { opacity: 0.6; }
+
+.agent-perf-baseline-badge {
+  font-size: 0.58rem;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(107,114,128,0.2);
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
 .agent-perf-col {
   text-align: right;
 }
