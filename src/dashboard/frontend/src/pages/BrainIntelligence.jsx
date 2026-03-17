@@ -10,7 +10,7 @@ import {
   getPolicyState, getPolicyLearning, getKnowledgeHistory, getDeepKnowledge, getLaunchedAdsets, getCreativePerformance,
   getAdHealth, suggestAdHealthAction, quickPauseAd, logout,
   uploadLaunchCreatives, launchStrategize, launchApprove, getCreativeThumbnailUrl,
-  getAgentActivity, runAccountAgent, getAgentAdsetDetail, getAgentThoughts
+  getAgentActivity, runAccountAgent, getAgentAdsetDetail, getAgentThoughts, getAgentPerformance
 } from '../api';
 
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
@@ -632,6 +632,17 @@ const ACTION_LABELS = {
 };
 
 function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onRunAgent, onRefresh, formatTime }) {
+  const [perfData, setPerfData] = useState(null);
+  const [perfLoading, setPerfLoading] = useState(false);
+  const [showPerf, setShowPerf] = useState(false);
+
+  useEffect(() => {
+    if (showPerf && !perfData) {
+      setPerfLoading(true);
+      getAgentPerformance(8).then(d => setPerfData(d)).catch(err => console.error(err)).finally(() => setPerfLoading(false));
+    }
+  }, [showPerf, perfData]);
+
   if (loading && !data) {
     return <div className="brain-loading">Cargando actividad del agente...</div>;
   }
@@ -681,6 +692,82 @@ function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onR
       {adsets.length === 0 && (
         <div className="agent-first-run-notice">
           No hay ad sets activos en la cuenta.
+        </div>
+      )}
+
+      {/* Rendimiento semanal */}
+      <div className="agent-perf-toggle">
+        <button className="agent-perf-btn" onClick={() => setShowPerf(!showPerf)}>
+          {showPerf ? 'Ocultar rendimiento' : 'Ver rendimiento semanal'}
+        </button>
+      </div>
+
+      {showPerf && (
+        <div className="agent-perf-section">
+          {perfLoading ? (
+            <div className="brain-loading">Cargando...</div>
+          ) : perfData?.weeks?.length > 0 ? (
+            <>
+              {perfData.agent_started && (
+                <div className="agent-perf-started">Agente activo desde {new Date(perfData.agent_started).toLocaleDateString('es', { month: 'short', day: 'numeric' })}</div>
+              )}
+              <div className="agent-perf-table">
+                <div className="agent-perf-header">
+                  <span className="agent-perf-col-week">Semana</span>
+                  <span className="agent-perf-col">ROAS</span>
+                  <span className="agent-perf-col">Spend</span>
+                  <span className="agent-perf-col">Compras</span>
+                  <span className="agent-perf-col">Acciones</span>
+                  <span className="agent-perf-col">Win Rate</span>
+                  <span className="agent-perf-col">Reward</span>
+                </div>
+                {perfData.weeks.map((w, i) => {
+                  const hasAgent = w.agent.actions_total > 0;
+                  const prevRoas = i > 0 ? perfData.weeks[i - 1].account.roas : null;
+                  const roasDelta = prevRoas && w.account.roas ? Math.round((w.account.roas - prevRoas) / Math.max(prevRoas, 0.01) * 100) : null;
+                  const roasColor = w.account.roas >= 4 ? '#10b981' : w.account.roas >= 2.5 ? '#3b82f6' : w.account.roas >= 1.5 ? '#f59e0b' : '#ef4444';
+                  return (
+                    <div key={w.week_start} className={`agent-perf-row ${w.is_current ? 'current' : ''} ${hasAgent ? 'with-agent' : ''}`}>
+                      <span className="agent-perf-col-week">
+                        {w.week}
+                        {w.is_current && <span className="agent-perf-current-badge">actual</span>}
+                      </span>
+                      <span className="agent-perf-col" style={{ color: roasColor, fontWeight: 700 }}>
+                        {w.account.roas.toFixed(2)}x
+                        {roasDelta != null && <span className={`agent-perf-delta ${roasDelta >= 0 ? 'pos' : 'neg'}`}>{roasDelta > 0 ? '+' : ''}{roasDelta}%</span>}
+                      </span>
+                      <span className="agent-perf-col">${w.account.spend.toLocaleString()}</span>
+                      <span className="agent-perf-col">{w.account.purchases}</span>
+                      <span className="agent-perf-col">
+                        {hasAgent ? (
+                          <span className="agent-perf-actions-detail">
+                            {w.agent.actions_total}
+                            <span className="agent-perf-actions-breakdown">
+                              {w.agent.scale_ups > 0 && <span style={{color:'#10b981'}}>+{w.agent.scale_ups}</span>}
+                              {w.agent.scale_downs > 0 && <span style={{color:'#f59e0b'}}>-{w.agent.scale_downs}</span>}
+                              {w.agent.pauses > 0 && <span style={{color:'#ef4444'}}>P{w.agent.pauses}</span>}
+                            </span>
+                          </span>
+                        ) : <span className="agent-perf-no-agent">—</span>}
+                      </span>
+                      <span className="agent-perf-col">
+                        {w.agent.win_rate != null ? (
+                          <span style={{ color: w.agent.win_rate >= 50 ? '#10b981' : '#ef4444' }}>{w.agent.win_rate}%</span>
+                        ) : '—'}
+                      </span>
+                      <span className="agent-perf-col">
+                        {w.agent.avg_reward != null ? (
+                          <span style={{ color: w.agent.avg_reward >= 0 ? '#10b981' : '#ef4444' }}>{w.agent.avg_reward > 0 ? '+' : ''}{w.agent.avg_reward}</span>
+                        ) : '—'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <div className="agent-perf-empty">Sin datos de rendimiento aun</div>
+          )}
         </div>
       )}
 

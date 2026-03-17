@@ -386,4 +386,108 @@ router.get('/thoughts', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/agent/performance — Rendimiento semanal del agente + cuenta.
+ * Agrega métricas por semana para ver progreso desde que el agente empezó.
+ */
+router.get('/performance', async (req, res) => {
+  try {
+    const moment = require('moment-timezone');
+    const weeks = Math.min(12, parseInt(req.query.weeks) || 8);
+    const tz = 'America/New_York';
+    const now = moment().tz(tz);
+
+    const weeklyData = [];
+
+    for (let w = 0; w < weeks; w++) {
+      const weekEnd = moment(now).subtract(w, 'weeks').endOf('isoWeek');
+      const weekStart = moment(now).subtract(w, 'weeks').startOf('isoWeek');
+      const weekLabel = weekStart.format('MMM D');
+
+      // Account metrics: get snapshots from around end of this week
+      // Use the latest snapshot taken during this week for account-level ROAS
+      const weekSnapshots = await MetricSnapshot.find({
+        entity_type: 'adset',
+        snapshot_at: { $gte: weekStart.toDate(), $lte: weekEnd.toDate() }
+      }).sort({ snapshot_at: -1 }).lean();
+
+      // Deduplicate: keep latest snapshot per entity_id in this week
+      const latestByEntity = {};
+      for (const s of weekSnapshots) {
+        if (!latestByEntity[s.entity_id]) latestByEntity[s.entity_id] = s;
+      }
+      const weekAdSets = Object.values(latestByEntity).filter(s => s.status === 'ACTIVE');
+
+      let accountRoas = 0;
+      let accountSpend = 0;
+      let accountPurchases = 0;
+      let accountPV = 0;
+      for (const s of weekAdSets) {
+        const m7 = s.metrics?.last_7d || {};
+        accountSpend += m7.spend || 0;
+        accountPurchases += m7.purchases || 0;
+        accountPV += m7.purchase_value || 0;
+      }
+      accountRoas = accountSpend > 0 ? Math.round(accountPV / accountSpend * 100) / 100 : 0;
+
+      // Agent actions this week
+      const weekActions = await ActionLog.find({
+        agent_type: 'unified_agent',
+        success: true,
+        executed_at: { $gte: weekStart.toDate(), $lte: weekEnd.toDate() }
+      }).lean();
+
+      const measuredActions = weekActions.filter(a => a.impact_measured);
+      const positiveActions = measuredActions.filter(a => (a.learned_reward || 0) > 0.1);
+      const negativeActions = measuredActions.filter(a => (a.learned_reward || 0) < -0.1);
+      const rewards = measuredActions.filter(a => a.learned_reward != null).map(a => a.learned_reward);
+      const avgReward = rewards.length > 0 ? Math.round(rewards.reduce((s, r) => s + r, 0) / rewards.length * 1000) / 1000 : null;
+
+      weeklyData.push({
+        week: weekLabel,
+        week_start: weekStart.format('YYYY-MM-DD'),
+        week_end: weekEnd.format('YYYY-MM-DD'),
+        is_current: w === 0,
+        account: {
+          roas: accountRoas,
+          spend: Math.round(accountSpend),
+          purchases: accountPurchases,
+          active_adsets: weekAdSets.length
+        },
+        agent: {
+          actions_total: weekActions.length,
+          actions_measured: measuredActions.length,
+          positive: positiveActions.length,
+          negative: negativeActions.length,
+          win_rate: measuredActions.length > 0 ? Math.round(positiveActions.length / measuredActions.length * 100) : null,
+          avg_reward: avgReward,
+          scale_ups: weekActions.filter(a => a.action === 'scale_up').length,
+          scale_downs: weekActions.filter(a => a.action === 'scale_down').length,
+          pauses: weekActions.filter(a => a.action === 'pause').length
+        }
+      });
+    }
+
+    // Find when unified_agent started
+    const firstAgentAction = await ActionLog.findOne({
+      agent_type: 'unified_agent', success: true
+    }).sort({ executed_at: 1 }).lean();
+
+    const firstAssessment = await BrainMemory.findOne({
+      agent_last_check: { $ne: null }
+    }).sort({ agent_last_check: 1 }).lean();
+
+    const agentStartDate = firstAgentAction?.executed_at || firstAssessment?.agent_last_check || null;
+
+    res.json({
+      weeks: weeklyData.reverse(), // oldest first
+      agent_started: agentStartDate,
+      total_weeks: weeklyData.length
+    });
+  } catch (error) {
+    logger.error(`[AGENT-API] Error en /performance: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;

@@ -252,6 +252,11 @@ export const runAccountAgent = async () => {
   return data;
 };
 
+export const getAgentPerformance = async (weeks = 8) => {
+  const response = await api.get('/api/agent/performance', { params: { weeks }, timeout: 15000 });
+  return response.data;
+};
+
 export const getAgentAdsetDetail = async (adsetId) => {
   const response = await api.get(`/api/agent/adset/${adsetId}`, { timeout: 15000 });
   return response.data;

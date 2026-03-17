@@ -10042,6 +10042,131 @@ a:hover {
 .thought-trend-declining { color: #ef4444; background: rgba(239,68,68,0.15); }
 .thought-trend-learning { color: #f59e0b; background: rgba(245,158,11,0.15); }
 
+/* Performance weekly table */
+.agent-perf-toggle {
+  display: flex;
+  justify-content: center;
+}
+
+.agent-perf-btn {
+  padding: 6px 16px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.agent-perf-btn:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.agent-perf-section {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  overflow-x: auto;
+}
+
+.agent-perf-started {
+  font-size: 0.72rem;
+  color: var(--accent);
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.agent-perf-table {
+  display: flex;
+  flex-direction: column;
+  min-width: 600px;
+}
+
+.agent-perf-header {
+  display: grid;
+  grid-template-columns: 100px repeat(6, 1fr);
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.agent-perf-row {
+  display: grid;
+  grid-template-columns: 100px repeat(6, 1fr);
+  gap: 6px;
+  padding: 7px 10px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  transition: background 0.1s;
+}
+
+.agent-perf-row:hover { background: var(--bg-hover); }
+.agent-perf-row.current { background: rgba(59,130,246,0.06); }
+.agent-perf-row.with-agent { border-left: 2px solid var(--accent); }
+
+.agent-perf-col-week {
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.agent-perf-current-badge {
+  font-size: 0.6rem;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.agent-perf-col {
+  text-align: right;
+}
+
+.agent-perf-delta {
+  font-size: 0.65rem;
+  margin-left: 3px;
+  font-weight: 400;
+}
+
+.agent-perf-delta.pos { color: #10b981; }
+.agent-perf-delta.neg { color: #ef4444; }
+
+.agent-perf-actions-detail {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.agent-perf-actions-breakdown {
+  display: inline-flex;
+  gap: 3px;
+  font-size: 0.65rem;
+}
+
+.agent-perf-no-agent {
+  color: var(--text-muted);
+}
+
+.agent-perf-empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 20px;
+  font-size: 0.8rem;
+}
+
 /* Creative alert banner */
 .agent-creative-alert {
   display: flex;
