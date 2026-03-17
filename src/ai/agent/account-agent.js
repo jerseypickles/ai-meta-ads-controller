@@ -85,6 +85,17 @@ You get 4 time windows: today, 3d, 7d, 14d. Use them together:
 - Frequency > 3.5 = CRITICAL — flag needs_new_creatives urgently
 - High frequency + declining ROAS = pause fatigued ads
 
+## AD HEALTH DETECTION (from get_ad_performance)
+Each ad has a "health" field and multi-window metrics (3d/7d/14d). Use them:
+- "healthy" — performing well, don't touch
+- "ignored_by_meta" — ad has <$2 spend after 5+ days. Meta won't explore it. Flag this in your assessment.
+- "fatigued" — ROAS declining across windows (14d > 7d > 3d). Watch closely, pause if 3d ROAS < 1.0x
+- "dying" — ROAS AND CTR both declining across all windows. This ad is done. Pause it.
+- "saturated" — frequency > 4, audience exhausted. Pause it.
+
+When you see a "dying" or "saturated" ad, pause it and flag needs_new_creatives.
+When you see "ignored_by_meta", mention it in your assessment — the team may need to pause the old ad to force Meta to test the new one.
+
 ## BANDIT SIGNALS (Thompson Sampling)
 The bandit system tracks success/failure of past actions across similar contexts.
 - mean > 0.6 = historically successful action in this context
@@ -375,21 +386,48 @@ async function handleGetAdPerformance(input) {
   return {
     adset_id,
     ads: adSnapshots.map(snap => {
-      const am = snap.metrics?.last_7d || {};
-      const freq = am.frequency || 0;
+      const m3 = snap.metrics?.last_3d || {};
+      const m7 = snap.metrics?.last_7d || {};
+      const m14 = snap.metrics?.last_14d || {};
+      const m30 = snap.metrics?.last_30d || {};
+      const freq7 = m7.frequency || 0;
+      const freq3 = m3.frequency || 0;
+      const daysOld = snap.meta_created_time ? Math.round((Date.now() - new Date(snap.meta_created_time).getTime()) / 86400000) : null;
+
+      // Fatigue detection: compare windows to detect decay curve
+      const roas7 = m7.roas || 0;
+      const roas3 = m3.roas || 0;
+      const roas14 = m14.roas || 0;
+      const ctr7 = m7.ctr || 0;
+      const ctr3 = m3.ctr || 0;
+      const ctr14 = m14.ctr || 0;
+
+      // Dying: 3d < 7d < 14d (consistent downtrend)
+      const roasDying = roas14 > 0 && roas7 < roas14 * 0.85 && roas3 < roas7 * 0.85;
+      const ctrDying = ctr14 > 0 && ctr7 < ctr14 * 0.85 && ctr3 < ctr7 * 0.85;
+      // Ignored by Meta: very low spend relative to ad set
+      const isIgnored = (m7.spend || 0) < 2 && daysOld != null && daysOld >= 5;
+
+      let health = 'healthy';
+      if (isIgnored) health = 'ignored_by_meta';
+      else if (roasDying && ctrDying) health = 'dying';
+      else if (roasDying || (freq7 > 3 && ctrDying)) health = 'fatigued';
+      else if (freq7 > 4) health = 'saturated';
+
       return {
         ad_id: snap.entity_id,
         ad_name: snap.entity_name,
         status: snap.status || 'ACTIVE',
-        spend: am.spend || 0,
-        impressions: am.impressions || 0,
-        clicks: am.clicks || 0,
-        ctr: am.ctr || 0,
-        purchases: am.purchases || 0,
-        purchase_value: am.purchase_value || 0,
-        roas: am.roas || 0,
-        frequency: freq,
-        fatigue_level: freq > 4 ? 'critical' : freq > 3 ? 'high' : freq > 2.5 ? 'moderate' : 'ok'
+        days_old: daysOld,
+        metrics_3d: { spend: m3.spend || 0, roas: Math.round((m3.roas || 0) * 100) / 100, ctr: m3.ctr || 0, frequency: freq3, purchases: m3.purchases || 0 },
+        metrics_7d: { spend: m7.spend || 0, roas: Math.round(roas7 * 100) / 100, ctr: ctr7, frequency: freq7, purchases: m7.purchases || 0, impressions: m7.impressions || 0 },
+        metrics_14d: { spend: m14.spend || 0, roas: Math.round(roas14 * 100) / 100, ctr: ctr14, frequency: m14.frequency || 0, purchases: m14.purchases || 0 },
+        health,
+        health_detail: health === 'ignored_by_meta' ? `Only $${(m7.spend || 0).toFixed(2)} spend in ${daysOld}d — Meta not exploring this ad`
+          : health === 'dying' ? `ROAS declining: 14d ${roas14.toFixed(2)}x → 7d ${roas7.toFixed(2)}x → 3d ${roas3.toFixed(2)}x. CTR also falling. Kill candidate.`
+          : health === 'fatigued' ? `Performance dropping: ROAS 7d ${roas7.toFixed(2)}x vs 14d ${roas14.toFixed(2)}x. Frequency ${freq7.toFixed(1)}. Watch closely.`
+          : health === 'saturated' ? `Frequency ${freq7.toFixed(1)} — audience exhausted`
+          : 'Performance stable or improving'
       };
     })
   };
