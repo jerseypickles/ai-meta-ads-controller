@@ -528,6 +528,14 @@ async function handleScaleBudget(input, ctx) {
   const prevBudget = snap.daily_budget || 0;
   const isScaleUp = new_budget > prevBudget;
 
+  // ── GATE: Learning phase (ad set < 3 days old)
+  if (snap.meta_created_time) {
+    const daysOld = (Date.now() - new Date(snap.meta_created_time).getTime()) / 86400000;
+    if (daysOld < 3) {
+      return { blocked: true, reason: `Learning phase: ad set is ${daysOld.toFixed(1)} days old (min 3d). Cannot change budget.` };
+    }
+  }
+
   // ── GATE: Budget floor
   if (new_budget < minBudget) {
     return { blocked: true, reason: `Budget cannot go below $${minBudget}. Requested: $${new_budget}.` };
@@ -614,6 +622,15 @@ async function handlePauseAd(input, ctx) {
   const { ad_id, adset_id, reason } = input;
   const meta = getMetaClient();
 
+  // ── GATE: Learning phase (ad set < 3 days old)
+  const parentSnap = (await getLatestSnapshots('adset')).find(s => s.entity_id === adset_id);
+  if (parentSnap?.meta_created_time) {
+    const daysOld = (Date.now() - new Date(parentSnap.meta_created_time).getTime()) / 86400000;
+    if (daysOld < 3) {
+      return { blocked: true, reason: `Learning phase: ad set is ${daysOld.toFixed(1)} days old (min 3d). Cannot pause ads.` };
+    }
+  }
+
   // ── GATE: Cooldown (unified_agent only)
   const cooldown = await _isOnAgentCooldown(ad_id);
   if (cooldown.onCooldown) {
@@ -624,7 +641,7 @@ async function handlePauseAd(input, ctx) {
   await meta.updateAdStatus(ad_id, 'PAUSED');
 
   // Metrics for impact tracking
-  const snap = (await getLatestSnapshots('adset')).find(s => s.entity_id === adset_id);
+  const snap = parentSnap || (await getLatestSnapshots('adset')).find(s => s.entity_id === adset_id);
   const m7d = snap?.metrics?.last_7d || {};
   const metricsAtExecution = {
     roas_7d: Math.round((m7d.roas || 0) * 100) / 100,
@@ -666,6 +683,15 @@ async function handlePauseAd(input, ctx) {
 async function handleReactivateAd(input, ctx) {
   const { ad_id, adset_id, reason } = input;
   const meta = getMetaClient();
+
+  // ── GATE: Learning phase (ad set < 3 days old)
+  const adsetSnap = (await getLatestSnapshots('adset')).find(s => s.entity_id === adset_id);
+  if (adsetSnap?.meta_created_time) {
+    const daysOld = (Date.now() - new Date(adsetSnap.meta_created_time).getTime()) / 86400000;
+    if (daysOld < 3) {
+      return { blocked: true, reason: `Learning phase: ad set is ${daysOld.toFixed(1)} days old (min 3d). Cannot reactivate ads.` };
+    }
+  }
 
   // ── GATE: Cooldown (unified_agent only)
   const cooldown = await _isOnAgentCooldown(ad_id);
