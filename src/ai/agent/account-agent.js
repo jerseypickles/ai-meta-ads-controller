@@ -497,17 +497,17 @@ async function handleGetEntityMemory(input) {
 async function handleGetRecentInsights(input) {
   const { entity_id } = input;
   const insights = await BrainInsight.find({
-    entity_id
+    'entities.entity_id': entity_id
   }).sort({ created_at: -1 }).limit(5).lean();
 
   return {
     entity_id,
     count: insights.length,
     insights: insights.map(i => ({
-      type: i.type,
+      type: i.insight_type,
       severity: i.severity,
       title: i.title,
-      description: (i.description || '').substring(0, 300),
+      description: (i.body || '').substring(0, 300),
       created_at: i.created_at
     }))
   };
@@ -738,14 +738,16 @@ async function handleReactivateAd(input, ctx) {
 
 async function handleSaveObservation(input) {
   await BrainInsight.create({
-    entity_type: input.entity_type || 'adset',
-    entity_id: input.entity_id,
-    entity_name: input.entity_name,
-    type: input.type,
-    severity: input.severity,
+    insight_type: input.type,
+    severity: input.severity || 'medium',
+    entities: [{
+      entity_type: input.entity_type || 'adset',
+      entity_id: input.entity_id,
+      entity_name: input.entity_name
+    }],
     title: input.title,
-    description: input.description,
-    source: 'unified_agent'
+    body: input.description || input.title,
+    generated_by: 'brain'
   });
 
   return { saved: true };

@@ -232,7 +232,7 @@ router.get('/adset/:adsetId', async (req, res) => {
 
     // Get insights
     const insights = await BrainInsight.find({
-      entity_id: adsetId
+      'entities.entity_id': adsetId
     }).sort({ created_at: -1 }).limit(10).lean();
 
     const m7d = snap.metrics?.last_7d || {};
@@ -332,22 +332,25 @@ router.get('/thoughts', async (req, res) => {
       }
     }));
 
-    // 2. Observaciones del agente (BrainInsight con source=unified_agent)
+    // 2. Observaciones del agente (BrainInsight con generated_by=brain, recientes)
     const insights = await BrainInsight.find({
-      source: 'unified_agent'
+      generated_by: 'brain'
     }).sort({ created_at: -1 }).limit(limit).lean();
 
-    const insightItems = insights.map(i => ({
+    const insightItems = insights.map(i => {
+      const firstEntity = (i.entities || [])[0] || {};
+      return {
       type: 'observation',
       timestamp: i.created_at,
-      entity_id: i.entity_id,
-      entity_name: i.entity_name,
-      content: i.title + (i.description ? ': ' + i.description : ''),
+      entity_id: firstEntity.entity_id || '',
+      entity_name: firstEntity.entity_name || '',
+      content: i.title + (i.body ? ': ' + i.body : ''),
       meta: {
-        insight_type: i.type,
+        insight_type: i.insight_type,
         severity: i.severity
       }
-    }));
+    };
+    });
 
     // 3. Acciones del agente (ActionLog con unified_agent)
     const actions = await ActionLog.find({
