@@ -75,5 +75,6 @@ const brainMemorySchema = new mongoose.Schema({
 });
 
 brainMemorySchema.index({ entity_type: 1, last_updated_at: -1 });
+brainMemorySchema.index({ agent_last_check: -1 });
 
 module.exports = mongoose.model('BrainMemory', brainMemorySchema);

@@ -226,4 +226,13 @@ const actionLogSchema = new mongoose.Schema({
 // Índice para buscar acciones recientes por entidad
 actionLogSchema.index({ entity_id: 1, executed_at: -1 });
 
+// Índices para impact measurement queries (corren cada 2h, scan toda la colección sin estos)
+actionLogSchema.index({ success: 1, impact_measured: 1, executed_at: 1 });
+actionLogSchema.index({ success: 1, impact_1d_measured: 1, executed_at: 1 });
+actionLogSchema.index({ success: 1, impact_7d_measured: 1, executed_at: 1 });
+
+// Índice para queries del Account Agent
+actionLogSchema.index({ agent_type: 1, success: 1, executed_at: -1 });
+actionLogSchema.index({ parent_adset_id: 1, agent_type: 1, executed_at: -1 });
+
 module.exports = mongoose.model('ActionLog', actionLogSchema);
