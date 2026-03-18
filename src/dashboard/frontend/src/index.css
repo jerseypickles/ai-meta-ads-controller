@@ -9832,6 +9832,11 @@ a:hover {
   gap: 8px;
 }
 
+.agent-countdown-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--accent) !important;
+}
+
 .btn-agent-run {
   padding: 8px 20px;
   background: var(--accent);

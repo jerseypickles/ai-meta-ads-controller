@@ -631,6 +631,47 @@ const ACTION_LABELS = {
   delete: { icon: '\u274C', label: 'Eliminar', color: '#dc2626' }
 };
 
+function AgentCountdown() {
+  const [timeLeft, setTimeLeft] = useState('');
+  const [mode, setMode] = useState('');
+
+  useEffect(() => {
+    const tick = () => {
+      const now = new Date();
+      // Convert to ET
+      const etStr = now.toLocaleString('en-US', { timeZone: 'America/New_York' });
+      const et = new Date(etStr);
+      const currentHour = et.getHours();
+
+      // Next even hour: 0,2,4,6,8,10,12,14,16,18,20,22
+      let nextHour = currentHour % 2 === 0 ? currentHour + 2 : currentHour + 1;
+      const nextRun = new Date(et);
+      nextRun.setHours(nextHour, 0, 0, 0);
+      if (nextHour >= 24) {
+        nextRun.setDate(nextRun.getDate() + 1);
+        nextRun.setHours(0, 0, 0, 0);
+        nextHour = 0;
+      }
+
+      const diffMs = nextRun - et;
+      const mins = Math.floor(diffMs / 60000);
+      const secs = Math.floor((diffMs % 60000) / 1000);
+      setTimeLeft(`${mins}m ${secs < 10 ? '0' : ''}${secs}s`);
+      setMode(nextHour >= 6 && nextHour < 22 ? 'completo' : 'observador');
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="agent-stat agent-countdown">
+      <span className="agent-stat-value agent-countdown-time">{timeLeft}</span>
+      <span className="agent-stat-label">Proximo ({mode})</span>
+    </div>
+  );
+}
+
 function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onRunAgent, onRefresh, formatTime }) {
   const [perfData, setPerfData] = useState(null);
   const [perfLoading, setPerfLoading] = useState(false);
@@ -671,6 +712,7 @@ function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onR
             <span className="agent-stat-value">{global.last_cycle ? formatTime(global.last_cycle) : '—'}</span>
             <span className="agent-stat-label">Ultimo Ciclo</span>
           </div>
+          <AgentCountdown />
         </div>
         <div className="agent-actions">
           <button className="btn-agent-run" onClick={onRunAgent} disabled={running}>
