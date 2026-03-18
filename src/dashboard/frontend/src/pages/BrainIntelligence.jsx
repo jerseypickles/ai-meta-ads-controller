@@ -10,7 +10,8 @@ import {
   getPolicyState, getPolicyLearning, getKnowledgeHistory, getDeepKnowledge, getLaunchedAdsets, getCreativePerformance,
   getAdHealth, suggestAdHealthAction, quickPauseAd, logout,
   uploadLaunchCreatives, launchStrategize, launchApprove, getCreativeThumbnailUrl,
-  getAgentActivity, runAccountAgent, getAgentAdsetDetail, getAgentThoughts, getAgentPerformance
+  getAgentActivity, runAccountAgent, getAgentAdsetDetail, getAgentThoughts, getAgentPerformance,
+  generateCopyForUpload, uploadAndCreateAd
 } from '../api';
 
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
@@ -631,6 +632,125 @@ const ACTION_LABELS = {
   delete: { icon: '\u274C', label: 'Eliminar', color: '#dc2626' }
 };
 
+function AgentCreativeUpload({ adsetId, adsetName, onDone }) {
+  const [step, setStep] = useState('idle'); // idle | uploading | review | creating | done | error
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [copyOptions, setCopyOptions] = useState(null);
+  const [selectedHeadline, setSelectedHeadline] = useState('');
+  const [selectedBody, setSelectedBody] = useState('');
+  const [linkUrl, setLinkUrl] = useState('https://jerseypickles.com');
+  const [errorMsg, setErrorMsg] = useState('');
+  const fileRef = useRef(null);
+
+  const handleFileSelect = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFile(f);
+    setPreview(URL.createObjectURL(f));
+  };
+
+  const handleGenerateCopy = async () => {
+    if (!file) return;
+    setStep('uploading');
+    try {
+      const result = await generateCopyForUpload(file);
+      setCopyOptions(result);
+      setSelectedHeadline(result.headlines?.[0] || '');
+      setSelectedBody(result.bodies?.[0] || '');
+      setStep('review');
+    } catch (err) {
+      setErrorMsg(err.message);
+      setStep('error');
+    }
+  };
+
+  const handleCreate = async () => {
+    setStep('creating');
+    try {
+      await uploadAndCreateAd({
+        adsetId,
+        uploadedFile: copyOptions?.uploaded_file,
+        imageFile: copyOptions?.uploaded_file ? null : file,
+        headline: selectedHeadline,
+        primaryText: selectedBody,
+        linkUrl
+      });
+
+      // Log to BrainInsight for the feed
+      try {
+        const api = (await import('../api')).default;
+        await api.post('/api/brain/insights/manual', {
+          insight_type: 'status_change',
+          severity: 'info',
+          title: `Creativo subido manualmente a "${adsetName}"`,
+          body: `Se subio un creativo fresco al ad set que el agente pidio. Headline: "${selectedHeadline}". El agente detectara el nuevo ad en el proximo ciclo.`,
+          entity_type: 'adset',
+          entity_id: adsetId,
+          entity_name: adsetName
+        });
+      } catch (logErr) { /* non-critical */ }
+
+      setStep('done');
+      if (onDone) onDone();
+    } catch (err) {
+      setErrorMsg(err.message);
+      setStep('error');
+    }
+  };
+
+  if (step === 'done') {
+    return <div className="agent-upload-done">Creativo subido. El agente lo detectara en el proximo ciclo.</div>;
+  }
+
+  if (step === 'error') {
+    return <div className="agent-upload-error">Error: {errorMsg} <button onClick={() => setStep('idle')}>Reintentar</button></div>;
+  }
+
+  return (
+    <div className="agent-upload" onClick={e => e.stopPropagation()}>
+      {step === 'idle' && (
+        <div className="agent-upload-start">
+          <input type="file" accept="image/*" ref={fileRef} onChange={handleFileSelect} style={{ display: 'none' }} />
+          {!file ? (
+            <button className="agent-upload-btn" onClick={() => fileRef.current?.click()}>Seleccionar imagen</button>
+          ) : (
+            <div className="agent-upload-preview">
+              <img src={preview} alt="preview" className="agent-upload-thumb" />
+              <button className="agent-upload-btn" onClick={handleGenerateCopy}>Generar copy con AI</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {step === 'uploading' && <div className="agent-upload-loading">Analizando imagen y generando copy...</div>}
+      {step === 'creating' && <div className="agent-upload-loading">Creando ad en Meta...</div>}
+
+      {step === 'review' && copyOptions && (
+        <div className="agent-upload-review">
+          <div className="agent-upload-field">
+            <label>Headline</label>
+            <select value={selectedHeadline} onChange={e => setSelectedHeadline(e.target.value)}>
+              {(copyOptions.headlines || []).map((h, i) => <option key={i} value={h}>{h}</option>)}
+            </select>
+          </div>
+          <div className="agent-upload-field">
+            <label>Texto</label>
+            <select value={selectedBody} onChange={e => setSelectedBody(e.target.value)}>
+              {(copyOptions.bodies || []).map((b, i) => <option key={i} value={b}>{b}</option>)}
+            </select>
+          </div>
+          <div className="agent-upload-field">
+            <label>Link</label>
+            <input type="text" value={linkUrl} onChange={e => setLinkUrl(e.target.value)} />
+          </div>
+          <button className="agent-upload-btn primary" onClick={handleCreate}>Crear Ad</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AgentCountdown() {
   const [timeLeft, setTimeLeft] = useState('');
   const [mode, setMode] = useState('');
@@ -905,6 +1025,9 @@ function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onR
                   </div>
                   {adset.agent?.creative_health && (
                     <div className="agent-card-creative">{adset.agent.creative_health}</div>
+                  )}
+                  {adset.agent?.needs_new_creatives && (
+                    <AgentCreativeUpload adsetId={adset.adset_id} adsetName={adset.adset_name} onDone={onRefresh} />
                   )}
                   {adset.agent?.last_check && (
                     <span className="agent-card-time">Revisado {formatTime(adset.agent.last_check)}</span>

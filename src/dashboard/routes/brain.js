@@ -119,6 +119,26 @@ router.post('/insights/read-all', async (req, res) => {
 });
 
 /**
+ * POST /api/brain/insights/manual — Crear insight manual (para log de acciones humanas)
+ */
+router.post('/insights/manual', async (req, res) => {
+  try {
+    const { insight_type, severity, title, body, entity_type, entity_id, entity_name } = req.body;
+    await BrainInsight.create({
+      insight_type: insight_type || 'status_change',
+      severity: severity || 'info',
+      title: title || 'Accion manual',
+      body: body || '',
+      entities: [{ entity_type: entity_type || 'adset', entity_id, entity_name }],
+      generated_by: 'brain'
+    });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
  * POST /api/brain/analyze — Trigger manual de análisis
  */
 router.post('/analyze', async (req, res) => {
