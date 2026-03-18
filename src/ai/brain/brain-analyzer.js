@@ -1222,7 +1222,8 @@ IMPORTANTE: Responde SOLO con el JSON, sin texto adicional ni markdown.`;
    * Usado tanto por chat() como por chatStream().
    */
   async _prepareChatContext(userMessage) {
-    const [adsetSnapshots, accountOverview, recentInsights, chatHistory, activeRecs, recHistory, cycleMemories, adSnapshots, memories] = await Promise.all([
+    const ActionLog = require('../../db/models/ActionLog');
+    const [adsetSnapshots, accountOverview, recentInsights, chatHistory, activeRecs, recHistory, cycleMemories, adSnapshots, memories, agentActions] = await Promise.all([
       getLatestSnapshots('adset'),
       getAccountOverview(),
       BrainInsight.find({}).sort({ created_at: -1 }).limit(10).lean(),
@@ -1231,7 +1232,8 @@ IMPORTANTE: Responde SOLO con el JSON, sin texto adicional ni markdown.`;
       BrainRecommendation.find({ status: { $in: ['approved', 'rejected'] } }).sort({ decided_at: -1 }).limit(20).lean(),
       BrainCycleMemory.find({}).sort({ created_at: -1 }).limit(3).lean().catch(() => []),
       getLatestSnapshots('ad').catch(() => []),
-      BrainMemory.find({}).lean().catch(() => [])
+      BrainMemory.find({}).lean().catch(() => []),
+      ActionLog.find({ agent_type: 'unified_agent', success: true }).sort({ executed_at: -1 }).limit(15).lean().catch(() => [])
     ]);
 
     await BrainChat.create({ role: 'user', content: userMessage });
@@ -1248,6 +1250,36 @@ IMPORTANTE: Responde SOLO con el JSON, sin texto adicional ni markdown.`;
 
     const context = this._buildChatContext(adsetSnapshots, accountOverview, recentInsights, activeRecs, recHistory, cycleMemories);
 
+    // Build agent context
+    let agentCtx = '';
+    const memoriesWithAgent = memories.filter(m => m.agent_last_check);
+    if (memoriesWithAgent.length > 0 || agentActions.length > 0) {
+      agentCtx = '\n## ACCOUNT AGENT (autonomo, corre cada 2h)\n';
+
+      // Recent actions
+      if (agentActions.length > 0) {
+        agentCtx += 'Acciones recientes del agente:\n';
+        for (const a of agentActions.slice(0, 8)) {
+          const daysAgo = Math.round((Date.now() - new Date(a.executed_at).getTime()) / 86400000);
+          agentCtx += `- ${a.action} ${a.entity_name || a.entity_id}${typeof a.before_value === 'number' ? ` $${a.before_value}->${a.after_value}` : ''} (hace ${daysAgo}d) — ${(a.reasoning || '').substring(0, 80)}\n`;
+        }
+      }
+
+      // Assessments + plans
+      const withAssessment = memoriesWithAgent
+        .sort((a, b) => new Date(b.agent_last_check) - new Date(a.agent_last_check))
+        .slice(0, 10);
+      if (withAssessment.length > 0) {
+        agentCtx += '\nAssessments del agente por ad set:\n';
+        for (const m of withAssessment) {
+          agentCtx += `- ${m.entity_name}: [${m.agent_performance_trend}] ${(m.agent_assessment || '').substring(0, 120)}`;
+          if (m.agent_pending_plan) agentCtx += ` | Plan: ${m.agent_pending_plan.substring(0, 80)}`;
+          if (m.agent_needs_new_creatives) agentCtx += ' | NECESITA CREATIVOS';
+          agentCtx += '\n';
+        }
+      }
+    }
+
     const messages = [];
     const history = chatHistory.reverse();
     for (const msg of history) {
@@ -1256,6 +1288,7 @@ IMPORTANTE: Responde SOLO con el JSON, sin texto adicional ni markdown.`;
     messages.push({ role: 'user', content: userMessage });
 
     const systemPrompt = `Eres el Brain — el cerebro que controla las campañas de Meta Ads de Jersey Pickles.
+Tienes un Account Agent autonomo que analiza y actua sobre los ad sets cada 2h. Tu sabes lo que el agente hizo, piensa, y planea.
 
 PERSONALIDAD: Estratega directo. Sin rodeos, sin adular. Hablas en primera persona ("Yo veo...", "Lo que haría..."). Tienes opinión propia. Humor seco cuando toca. Si algo es basura lo dices. Si no sabes, lo admites.
 
@@ -1271,7 +1304,7 @@ Esto es una CONVERSACIÓN, no un reporte. Responde como hablarías con tu socio 
 
 DATOS EN VIVO:
 ${context}
-
+${agentCtx}
 ${diagnosticSummary ? `DIAGNÓSTICOS:\n${diagnosticSummary}` : ''}
 
 Responde en español, con datos concretos (nombres, números). Causa raíz > síntoma. 7d es tu referencia principal.`;
