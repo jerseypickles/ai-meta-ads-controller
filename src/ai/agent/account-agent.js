@@ -680,13 +680,26 @@ async function handlePauseAd(input, ctx) {
   const { ad_id, adset_id, reason } = input;
   const meta = getMetaClient();
 
+  // ── GATE: Prevent pausing ad set itself (ad_id must not be an ad set)
+  const allAdSetSnaps = await getLatestSnapshots('adset');
+  if (allAdSetSnaps.some(s => s.entity_id === ad_id)) {
+    return { blocked: true, reason: `BLOCKED: ${ad_id} is an AD SET, not an ad. Never pause ad sets — only individual ads.` };
+  }
+
   // ── GATE: Learning phase (ad set < 3 days old)
-  const parentSnap = (await getLatestSnapshots('adset')).find(s => s.entity_id === adset_id);
+  const parentSnap = allAdSetSnaps.find(s => s.entity_id === adset_id);
   if (parentSnap?.meta_created_time) {
     const daysOld = (Date.now() - new Date(parentSnap.meta_created_time).getTime()) / 86400000;
     if (daysOld < 3) {
       return { blocked: true, reason: `Learning phase: ad set is ${daysOld.toFixed(1)} days old (min 3d). Cannot pause ads.` };
     }
+  }
+
+  // ── GATE: Don't pause the last active ad in an ad set
+  const adsInSet = await getAdsForAdSet(adset_id);
+  const activeAds = adsInSet.filter(a => a.status === 'ACTIVE');
+  if (activeAds.length <= 1 && activeAds.some(a => a.entity_id === ad_id)) {
+    return { blocked: true, reason: `BLOCKED: Cannot pause the last active ad in this ad set. It would effectively kill the ad set.` };
   }
 
   // ── GATE: Cooldown (unified_agent only)
