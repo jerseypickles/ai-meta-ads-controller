@@ -52,8 +52,10 @@ router.get('/activity', async (req, res) => {
     const adsets = activeAdSets.map(snap => {
       const memory = memoryMap[snap.entity_id] || {};
       const actions = (actionsByEntity[snap.entity_id] || []).slice(0, 10);
-      const m7d = snap.metrics?.last_7d || {};
+      const mToday = snap.metrics?.today || {};
       const m3d = snap.metrics?.last_3d || {};
+      const m7d = snap.metrics?.last_7d || {};
+      const daysOld = snap.meta_created_time ? Math.round((Date.now() - new Date(snap.meta_created_time).getTime()) / 86400000) : null;
 
       // Determine status badge
       let statusBadge = 'activo';
@@ -67,6 +69,12 @@ router.get('/activity', async (req, res) => {
         daily_budget: snap.daily_budget || 0,
         status: snap.status,
         status_badge: statusBadge,
+        days_old: daysOld,
+        metrics_today: {
+          roas: Math.round((mToday.roas || 0) * 100) / 100,
+          spend: mToday.spend || 0,
+          purchases: mToday.purchases || 0
+        },
         metrics_7d: {
           roas: Math.round((m7d.roas || 0) * 100) / 100,
           spend: m7d.spend || 0,

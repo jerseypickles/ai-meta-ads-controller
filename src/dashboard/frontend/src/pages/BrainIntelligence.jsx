@@ -961,7 +961,18 @@ function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onR
           const isExpanded = expandedAdSet === adset.adset_id;
           const trend = TREND_BADGE[adset.agent?.performance_trend] || TREND_BADGE.unknown;
           const freq = FREQ_BADGE[adset.agent?.frequency_status] || FREQ_BADGE.unknown;
-          const roasColor = adset.metrics_7d.roas >= 4 ? '#10b981' : adset.metrics_7d.roas >= 2.5 ? '#3b82f6' : adset.metrics_7d.roas >= 1.5 ? '#f59e0b' : '#ef4444';
+          // Pick best metrics based on age
+          const isNew = adset.days_old != null && adset.days_old < 7;
+          const displayRoas = isNew
+            ? (adset.metrics_today?.roas > 0 ? adset.metrics_today.roas : adset.metrics_3d.roas || adset.metrics_7d.roas)
+            : adset.metrics_7d.roas;
+          const displaySpend = isNew
+            ? (adset.metrics_today?.spend > 0 ? adset.metrics_today.spend : adset.metrics_7d.spend)
+            : adset.metrics_7d.spend;
+          const displayLabel = isNew
+            ? (adset.metrics_today?.roas > 0 ? 'hoy' : adset.metrics_3d.roas > 0 ? '3d' : '7d')
+            : '7d';
+          const roasColor = displayRoas >= 4 ? '#10b981' : displayRoas >= 2.5 ? '#3b82f6' : displayRoas >= 1.5 ? '#f59e0b' : displayRoas > 0 ? '#ef4444' : '#6b7280';
 
           return (
             <div key={adset.adset_id} className={`agent-card ${isExpanded ? 'expanded' : ''}`} onClick={() => onToggleExpand(adset.adset_id)}>
@@ -969,13 +980,14 @@ function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onR
               <div className="agent-card-top">
                 <span className="agent-card-name" title={adset.adset_name}>{adset.adset_name}</span>
                 <span className="agent-badge-sm" style={{ background: trend.bg, color: trend.color }}>{trend.label}</span>
+                {isNew && <span className="agent-badge-sm" style={{ color: '#3b82f6', background: 'rgba(59,130,246,0.15)' }}>{adset.days_old}d</span>}
                 {adset.agent?.needs_new_creatives && <span className="agent-badge-sm" style={{ color: '#f59e0b', background: 'rgba(245,158,11,0.15)' }}>Creativos</span>}
               </div>
 
               {/* Row 2: key metrics inline */}
               <div className="agent-card-metrics">
-                <span style={{ color: roasColor, fontWeight: 700 }}>{adset.metrics_7d.roas.toFixed(2)}x</span>
-                <span>${adset.metrics_7d.spend.toFixed(0)}/7d</span>
+                <span style={{ color: roasColor, fontWeight: 700 }}>{displayRoas.toFixed(2)}x <span style={{ fontSize: '0.65rem', fontWeight: 400, color: 'var(--text-muted)' }}>{displayLabel}</span></span>
+                <span>${displaySpend.toFixed(0)}/{displayLabel}</span>
                 <span style={{ color: freq.color }}>f:{adset.metrics_7d.frequency.toFixed(1)}</span>
                 <span>${adset.daily_budget}/d</span>
               </div>
