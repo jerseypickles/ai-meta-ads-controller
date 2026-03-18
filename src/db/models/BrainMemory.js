@@ -66,6 +66,8 @@ const brainMemorySchema = new mongoose.Schema({
   agent_needs_new_creatives: { type: Boolean, default: false },
   agent_performance_trend: { type: String, enum: ['improving', 'stable', 'declining', 'learning', 'unknown'], default: 'unknown' },
   agent_last_check: { type: Date, default: null },
+  agent_next_review_at: { type: Date, default: null },
+  agent_pending_plan: { type: String, default: '' },
 
   // Timestamps
   first_seen_at: { type: Date, default: Date.now },

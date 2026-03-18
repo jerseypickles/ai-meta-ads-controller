@@ -118,15 +118,17 @@ The bandit system tracks success/failure of past actions across similar contexts
 - mean < 0.4 = historically poor action — be cautious
 - Use the signal to calibrate aggression, not as a veto
 
-## ASSESSMENT FORMAT
-Your assessment MUST be SHORT — max 3-4 sentences in Spanish. Structure:
-1. One line: key metrics + trend direction (e.g. "ROAS 3.9x mejorando, freq 1.1 OK, CPA $18")
-2. One line: what you did or decided and WHY (e.g. "Hold — historial de scale-up negativo (-39% ROAS)")
-3. One line (optional): creative health if relevant (e.g. "1 ad activo sano, nuevo ad en learning")
-
-DO NOT write long analyses, bullet lists, or detailed breakdowns. Be TELEGRAPHIC.
-Bad: "El ad set muestra una tendencia de mejora consistente con ROAS 7d de 3.34x que representa una mejora del 14% respecto al periodo de 14 días..."
+## ASSESSMENT + PLAN FORMAT
+Your assessment MUST be SHORT — max 3-4 sentences in Spanish.
 Good: "ROAS 3.34x (+14% vs 14d), mejorando. CPA $22 OK. Hold — ad nuevo en learning, esperar 5d."
+
+In save_assessment, ALWAYS include:
+- **pending_plan**: What to check/do next time. Be specific and conditional.
+  Good: "Si ROAS 3d < 2.5x, scale down 20%. Si ad nuevo tiene >$15 spend con 0 purchases, pausar."
+  Bad: "Monitorear" (too vague — monitorear QUE?)
+- **next_review_hours**: How soon to re-check. 4=urgent/declining, 12=normal, 24=stable, 48=very stable.
+
+If you received YOUR PREVIOUS PLAN in the message, check if its conditions are met and act. Don't re-analyze from scratch — continue your reasoning.
 
 IMPORTANT: Always call save_assessment before finishing — even if you take no actions.
 IMPORTANT: Return ONLY tool calls, minimize text output to save tokens.`;
@@ -260,18 +262,20 @@ const TOOLS = [
   },
   {
     name: 'save_assessment',
-    description: 'Save your assessment to BrainMemory. ALWAYS call this before finishing.',
+    description: 'Save your assessment to BrainMemory. ALWAYS call this before finishing. Include your plan for next review.',
     input_schema: {
       type: 'object',
       properties: {
         entity_id: { type: 'string', description: 'Ad set ID' },
         entity_name: { type: 'string', description: 'Ad set name' },
-        assessment: { type: 'string', description: 'Overall assessment in Spanish' },
+        assessment: { type: 'string', description: 'Overall assessment in Spanish (max 3-4 sentences)' },
         frequency_status: { type: 'string', enum: ['ok', 'moderate', 'high', 'critical'] },
         creative_health: { type: 'string', description: 'Creative health analysis in Spanish' },
         needs_new_creatives: { type: 'boolean' },
         suggested_creative_styles: { type: 'array', items: { type: 'string' } },
-        performance_trend: { type: 'string', enum: ['improving', 'stable', 'declining', 'learning'] }
+        performance_trend: { type: 'string', enum: ['improving', 'stable', 'declining', 'learning'] },
+        next_review_hours: { type: 'number', description: 'Hours until next review needed. 4=urgent, 12=normal, 48=stable. Default 12.' },
+        pending_plan: { type: 'string', description: 'What to check/do next cycle. E.g. "If 3d ROAS still < 2.5x, scale down 20%. If new ad has > $15 spend with 0 purchases, pause it."' }
       },
       required: ['entity_id', 'entity_name', 'assessment', 'frequency_status', 'performance_trend']
     }
@@ -810,6 +814,9 @@ async function handleSaveObservation(input) {
 async function handleSaveAssessment(input, ctx) {
   const { entity_id, entity_name } = input;
 
+  const nextReviewHours = input.next_review_hours || 12;
+  const nextReviewAt = new Date(Date.now() + nextReviewHours * 3600000);
+
   await BrainMemory.findOneAndUpdate(
     { entity_id },
     {
@@ -822,6 +829,8 @@ async function handleSaveAssessment(input, ctx) {
         agent_needs_new_creatives: input.needs_new_creatives || false,
         agent_performance_trend: input.performance_trend || 'unknown',
         agent_last_check: new Date(),
+        agent_next_review_at: nextReviewAt,
+        agent_pending_plan: input.pending_plan || '',
         last_updated_at: new Date()
       }
     },
@@ -1070,6 +1079,17 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
     return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: 'Low spend < $5/7d' };
   }
 
+  // ═══ PRE-CHECK: Next review not due yet (agent set its own schedule) ═══
+  const memory = await BrainMemory.findOne({ entity_id: adSetId }).lean();
+  const pendingPlan = memory?.agent_pending_plan || '';
+  const nextReview = memory?.agent_next_review_at;
+
+  if (mode === 'full' && nextReview && new Date(nextReview) > new Date() && !pendingPlan) {
+    const hoursLeft = Math.round((new Date(nextReview) - new Date()) / 3600000);
+    logger.debug(`[ACCOUNT-AGENT] ${adSetName}: next review in ${hoursLeft}h — skip`);
+    return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Next review in ${hoursLeft}h` };
+  }
+
   // ═══ AGENTIC LOOP ═══
   const ctx = {
     actionsExecuted: 0,
@@ -1079,9 +1099,12 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
   const isObserver = mode === 'observer';
   const activeTools = isObserver ? OBSERVER_TOOLS : TOOLS;
 
+  const baseContext = `Ad set ${adSetId} ("${adSetName}"). Budget: $${currentBudget}/day. 7d ROAS: ${adSetRoas.toFixed(2)}x, Spend: $${adSetSpend.toFixed(0)}, Purchases: ${adSetPurchases}, Frequency: ${adSetFrequency.toFixed(1)}.`;
+  const planContext = pendingPlan ? `\n\nYOUR PREVIOUS PLAN for this ad set: "${pendingPlan}"\nCheck if conditions are met and execute accordingly. If conditions changed, make a new plan.` : '';
+
   const userMessage = isObserver
-    ? `[OBSERVER MODE — nighttime, read-only] Analyze ad set ${adSetId} ("${adSetName}"). Budget: $${currentBudget}/day. 7d ROAS: ${adSetRoas.toFixed(2)}x, Spend: $${adSetSpend.toFixed(0)}, Purchases: ${adSetPurchases}, Frequency: ${adSetFrequency.toFixed(1)}. Gather data, analyze trends, and save your assessment. You CANNOT take actions right now — only observe and document what you see.`
-    : `Analyze and manage ad set ${adSetId} ("${adSetName}"). Budget: $${currentBudget}/day. 7d ROAS: ${adSetRoas.toFixed(2)}x, Spend: $${adSetSpend.toFixed(0)}, Purchases: ${adSetPurchases}, Frequency: ${adSetFrequency.toFixed(1)}. Gather detailed data, decide actions, and save your assessment.`;
+    ? `[OBSERVER MODE — nighttime, read-only] Analyze ${baseContext} Gather data, analyze trends, and save your assessment. You CANNOT take actions right now — only observe and document what you see.${planContext}`
+    : `Analyze and manage ${baseContext} Gather detailed data, decide actions, and save your assessment.${planContext}`;
 
   let messages = [{ role: 'user', content: userMessage }];
 
