@@ -1059,7 +1059,7 @@ function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onR
                   {adset.agent?.creative_health && (
                     <div className="agent-card-creative">{adset.agent.creative_health}</div>
                   )}
-                  {adset.agent?.needs_new_creatives && (
+                  {(adset.agent?.needs_new_creatives || (adset.active_ads_count || 0) <= 1) && (
                     <AgentCreativeUpload adsetId={adset.adset_id} adsetName={adset.adset_name} onDone={onRefresh} />
                   )}
                   {adset.agent?.last_check && (

@@ -48,6 +48,21 @@ router.get('/activity', async (req, res) => {
       actionsByEntity[key].push(a);
     }
 
+    // 3.5. Count active ads per ad set (batch query)
+    const allAdSnapshots = await MetricSnapshot.aggregate([
+      { $match: { entity_type: 'ad', parent_id: { $in: entityIds } } },
+      { $sort: { entity_id: 1, snapshot_at: -1 } },
+      { $group: { _id: '$entity_id', doc: { $first: '$$ROOT' } } },
+      { $replaceRoot: { newRoot: '$doc' } }
+    ]);
+    const activeAdsByAdSet = {};
+    for (const ad of allAdSnapshots) {
+      if (ad.status === 'ACTIVE') {
+        const pid = ad.parent_id;
+        activeAdsByAdSet[pid] = (activeAdsByAdSet[pid] || 0) + 1;
+      }
+    }
+
     // 4. Build response per ad set
     const adsets = activeAdSets.map(snap => {
       const memory = memoryMap[snap.entity_id] || {};
@@ -90,7 +105,7 @@ router.get('/activity', async (req, res) => {
           frequency: m3d.frequency || 0,
           ctr: m3d.ctr || 0
         },
-        active_ads_count: snap.ads_count || 0,
+        active_ads_count: activeAdsByAdSet[snap.entity_id] || 0,
         agent: memory.agent_last_check ? {
           assessment: memory.agent_assessment || null,
           frequency_status: memory.agent_frequency_status || 'unknown',
