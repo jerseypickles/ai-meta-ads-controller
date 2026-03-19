@@ -70,4 +70,8 @@ metricSnapshotSchema.index({ entity_id: 1, snapshot_at: -1 });
 metricSnapshotSchema.index({ entity_type: 1, snapshot_at: -1 });
 metricSnapshotSchema.index({ campaign_id: 1, entity_type: 1, snapshot_at: -1 });
 
+// Índices para getAdsForAdSet (parent_id) y getLatestSnapshots con entity_type
+metricSnapshotSchema.index({ entity_type: 1, parent_id: 1, snapshot_at: -1 });
+metricSnapshotSchema.index({ entity_type: 1, entity_id: 1, snapshot_at: -1 });
+
 module.exports = mongoose.model('MetricSnapshot', metricSnapshotSchema);
