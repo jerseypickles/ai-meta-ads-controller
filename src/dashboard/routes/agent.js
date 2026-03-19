@@ -90,6 +90,7 @@ router.get('/activity', async (req, res) => {
           frequency: m3d.frequency || 0,
           ctr: m3d.ctr || 0
         },
+        active_ads_count: snap.ads_count || 0,
         agent: memory.agent_last_check ? {
           assessment: memory.agent_assessment || null,
           frequency_status: memory.agent_frequency_status || 'unknown',

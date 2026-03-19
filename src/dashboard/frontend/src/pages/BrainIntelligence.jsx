@@ -687,7 +687,8 @@ function AgentCreativeUpload({ adsetId, adsetName, onDone }) {
           body: `Se subio un creativo fresco al ad set que el agente pidio. Headline: "${selectedHeadline}". El agente detectara el nuevo ad en el proximo ciclo.`,
           entity_type: 'adset',
           entity_id: adsetId,
-          entity_name: adsetName
+          entity_name: adsetName,
+          clear_creative_flag: true
         });
       } catch (logErr) { /* non-critical */ }
 
@@ -934,24 +935,44 @@ function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onR
         </div>
       )}
 
-      {/* Alerta: ad sets que necesitan creativos frescos */}
+      {/* Alertas de creativos — 2 niveles de urgencia */}
       {(() => {
-        const needCreatives = adsets.filter(a => a.agent?.needs_new_creatives);
-        if (needCreatives.length === 0) return null;
+        const critical = adsets.filter(a => (a.active_ads_count || 0) <= 1 && a.status === 'ACTIVE');
+        const needCreatives = adsets.filter(a => a.agent?.needs_new_creatives && !critical.some(c => c.adset_id === a.adset_id));
+
         return (
-          <div className="agent-creative-alert">
-            <span className="agent-creative-alert-icon">🎨</span>
-            <div className="agent-creative-alert-body">
-              <strong>{needCreatives.length} ad set{needCreatives.length > 1 ? 's' : ''} necesita{needCreatives.length > 1 ? 'n' : ''} creativos frescos:</strong>
-              <div className="agent-creative-alert-list">
-                {needCreatives.map(a => (
-                  <span key={a.adset_id} className="agent-creative-alert-chip" onClick={() => onToggleExpand(a.adset_id)}>
-                    {a.adset_name} <span className="agent-creative-alert-freq">f:{a.metrics_7d.frequency.toFixed(1)}</span>
-                  </span>
-                ))}
+          <>
+            {critical.length > 0 && (
+              <div className="agent-creative-alert critical">
+                <span className="agent-creative-alert-icon">🚨</span>
+                <div className="agent-creative-alert-body">
+                  <strong>{critical.length} ad set{critical.length > 1 ? 's' : ''} con 1 solo ad activo — riesgo critico:</strong>
+                  <div className="agent-creative-alert-list">
+                    {critical.map(a => (
+                      <span key={a.adset_id} className="agent-creative-alert-chip critical" onClick={() => onToggleExpand(a.adset_id)}>
+                        {a.adset_name} <span className="agent-creative-alert-freq">{a.active_ads_count} ad</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
+            )}
+            {needCreatives.length > 0 && (
+              <div className="agent-creative-alert">
+                <span className="agent-creative-alert-icon">🎨</span>
+                <div className="agent-creative-alert-body">
+                  <strong>{needCreatives.length} ad set{needCreatives.length > 1 ? 's' : ''} necesita{needCreatives.length > 1 ? 'n' : ''} creativos frescos:</strong>
+                  <div className="agent-creative-alert-list">
+                    {needCreatives.map(a => (
+                      <span key={a.adset_id} className="agent-creative-alert-chip" onClick={() => onToggleExpand(a.adset_id)}>
+                        {a.adset_name} <span className="agent-creative-alert-freq">f:{a.metrics_7d.frequency.toFixed(1)}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
         );
       })()}
 

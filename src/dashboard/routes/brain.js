@@ -123,7 +123,7 @@ router.post('/insights/read-all', async (req, res) => {
  */
 router.post('/insights/manual', async (req, res) => {
   try {
-    const { insight_type, severity, title, body, entity_type, entity_id, entity_name } = req.body;
+    const { insight_type, severity, title, body, entity_type, entity_id, entity_name, clear_creative_flag } = req.body;
     await BrainInsight.create({
       insight_type: insight_type || 'status_change',
       severity: severity || 'info',
@@ -132,6 +132,16 @@ router.post('/insights/manual', async (req, res) => {
       entities: [{ entity_type: entity_type || 'adset', entity_id, entity_name }],
       generated_by: 'brain'
     });
+
+    // Clear needs_new_creatives flag immediately when creative is uploaded
+    if (clear_creative_flag && entity_id) {
+      const BrainMemory = require('../../db/models/BrainMemory');
+      await BrainMemory.findOneAndUpdate(
+        { entity_id },
+        { $set: { agent_needs_new_creatives: false, last_updated_at: new Date() } }
+      );
+    }
+
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });

@@ -10287,6 +10287,27 @@ a:hover {
   align-items: flex-start;
 }
 
+.agent-creative-alert.critical {
+  background: linear-gradient(135deg, rgba(239,68,68,0.15), rgba(220,38,38,0.1));
+  border: 1px solid rgba(239,68,68,0.4);
+  animation: pulse-border 2s ease-in-out infinite;
+}
+
+@keyframes pulse-border {
+  0%, 100% { border-color: rgba(239,68,68,0.4); }
+  50% { border-color: rgba(239,68,68,0.8); }
+}
+
+.agent-creative-alert.critical strong {
+  color: #ef4444;
+}
+
+.agent-creative-alert-chip.critical {
+  background: rgba(239,68,68,0.2);
+  border-color: rgba(239,68,68,0.3);
+  color: #fca5a5;
+}
+
 .agent-creative-alert-icon {
   font-size: 1.3rem;
   flex-shrink: 0;
