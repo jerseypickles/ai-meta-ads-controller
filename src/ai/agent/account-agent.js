@@ -707,10 +707,12 @@ async function handlePauseAd(input, ctx) {
   }
 
   // ── GATE: Don't pause the last active ad in an ad set
+  // Track pauses within this cycle to catch same-cycle double pauses
+  if (!ctx._pausedAdsThisCycle) ctx._pausedAdsThisCycle = new Set();
   const adsInSet = await getAdsForAdSet(adset_id);
-  const activeAds = adsInSet.filter(a => a.status === 'ACTIVE');
+  const activeAds = adsInSet.filter(a => a.status === 'ACTIVE' && !ctx._pausedAdsThisCycle.has(a.entity_id));
   if (activeAds.length <= 1 && activeAds.some(a => a.entity_id === ad_id)) {
-    return { blocked: true, reason: `BLOCKED: Cannot pause the last active ad in this ad set. It would effectively kill the ad set.` };
+    return { blocked: true, reason: `BLOCKED: Cannot pause the last active ad in this ad set. It would effectively kill the ad set. Keep at least 1 ad running.` };
   }
 
   // ── GATE: Cooldown (unified_agent only)
@@ -756,6 +758,8 @@ async function handlePauseAd(input, ctx) {
   });
 
   ctx.actionsExecuted++;
+  if (!ctx._pausedAdsThisCycle) ctx._pausedAdsThisCycle = new Set();
+  ctx._pausedAdsThisCycle.add(ad_id);
   await _recordActionInMemory(adset_id, adSnap?.entity_name || adset_id, 'pause', `ad:${ad_id} ${reason.substring(0, 80)}`);
   logger.info(`[ACCOUNT-AGENT] ${adset_id}: Paused ad ${ad_id} — ${reason}`);
 
