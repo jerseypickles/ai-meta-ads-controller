@@ -147,14 +147,15 @@ router.get('/activity', async (req, res) => {
       };
     });
 
-    // 5. Compute global stats (unified_agent only)
+    // 5. Compute global stats (unified_agent only — exclude actions with cleaned/null reward)
     const allAgentActions = await ActionLog.find({
       agent_type: 'unified_agent',
       success: true,
-      impact_measured: true
+      impact_measured: true,
+      learned_reward: { $ne: null }
     }).lean();
 
-    const positiveActions = allAgentActions.filter(a => (a.learned_reward || 0) > 0.1).length;
+    const positiveActions = allAgentActions.filter(a => a.learned_reward > 0.1).length;
     const winRate = allAgentActions.length > 0 ? Math.round(positiveActions / allAgentActions.length * 100) : 0;
 
     // Last cycle info
