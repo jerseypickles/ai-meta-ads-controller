@@ -295,13 +295,21 @@ async function jobMeasureImpact() {
       return extra;
     };
 
+    // Helper: for pause/reactivate ad-level actions, measure parent ad set instead of the ad itself
+    const getImpactSnapshot = (action, sMap) => {
+      const entityType = action.entity_type || 'adset';
+      // For ad-level pause/reactivate, the impact is on the parent ad set, not the ad (which is 0 after pause)
+      if (entityType === 'ad' && ['pause', 'reactivate', 'update_ad_status'].includes(action.action) && action.parent_adset_id) {
+        return sMap.get(`adset:${action.parent_adset_id}`);
+      }
+      return sMap.get(`${entityType}:${action.entity_id}`) || sMap.get(`adset:${action.entity_id}`);
+    };
+
     // Checkpoint 1: Medición a las 24 horas
     const pending1d = await getPending1dImpactMeasurement();
     let measured1d = 0;
     for (const action of pending1d) {
-      const entityType = action.entity_type || 'adset';
-      const entitySnapshot = snapshotMap.get(`${entityType}:${action.entity_id}`)
-        || snapshotMap.get(`adset:${action.entity_id}`);
+      const entitySnapshot = getImpactSnapshot(action, snapshotMap);
       if (!entitySnapshot) continue;
 
       const updates = {
@@ -322,9 +330,7 @@ async function jobMeasureImpact() {
     const pending3d = await getPendingImpactMeasurement();
     let measured3d = 0;
     for (const action of pending3d) {
-      const entityType = action.entity_type || 'adset';
-      const entitySnapshot = snapshotMap.get(`${entityType}:${action.entity_id}`)
-        || snapshotMap.get(`adset:${action.entity_id}`);
+      const entitySnapshot = getImpactSnapshot(action, snapshotMap);
       if (!entitySnapshot) continue;
 
       const updates = {
@@ -344,9 +350,7 @@ async function jobMeasureImpact() {
     const pending7d = await getPending7dImpactMeasurement();
     let measured7d = 0;
     for (const action of pending7d) {
-      const entityType = action.entity_type || 'adset';
-      const entitySnapshot = snapshotMap.get(`${entityType}:${action.entity_id}`)
-        || snapshotMap.get(`adset:${action.entity_id}`);
+      const entitySnapshot = getImpactSnapshot(action, snapshotMap);
       if (!entitySnapshot) continue;
 
       const updates = {
