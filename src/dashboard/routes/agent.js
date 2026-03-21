@@ -147,12 +147,13 @@ router.get('/activity', async (req, res) => {
       };
     });
 
-    // 5. Compute global stats (unified_agent only — exclude actions with cleaned/null reward)
+    // 5. Compute global stats (unified_agent only — exclude null reward and bug-excluded)
     const allAgentActions = await ActionLog.find({
       agent_type: 'unified_agent',
       success: true,
       impact_measured: true,
-      learned_reward: { $ne: null }
+      learned_reward: { $ne: null },
+      learned_bucket: { $ne: 'excluded_bug' }
     }).lean();
 
     const positiveActions = allAgentActions.filter(a => a.learned_reward > 0.1).length;
