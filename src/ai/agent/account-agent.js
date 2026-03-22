@@ -74,7 +74,7 @@ You get 4 time windows: today, 3d, 7d, 14d. Use them together:
 - **trend.recent_deterioration** = true means 3d ROAS dropped >20% vs 7d with meaningful spend. Investigate.
 
 ## META ADS ALGORITHM — CRITICAL RULES
-- **Learning phase (first 72h / ~50 conversions):** ANY change resets Meta's algorithm. Do NOT scale or pause during learning.
+- **Learning phase (first 5 days / ~50 conversions):** ANY change resets Meta's algorithm. Do NOT scale or pause during learning.
 - **Post-learning scaling:** Max 25% budget increase per action. Wait 48h+ between budget changes.
 - **Pause ads freely** after learning: ads with $20+ spend and 0 purchases, CTR < 0.5% after 1000+ impressions, or frequency > 4.
 - **Never pause the ad set itself** — only manage individual ads and budget.
@@ -622,8 +622,8 @@ async function handleScaleBudget(input, ctx) {
   // ── GATE: Learning phase (ad set < 3 days old)
   if (snap.meta_created_time) {
     const daysOld = (Date.now() - new Date(snap.meta_created_time).getTime()) / 86400000;
-    if (daysOld < 3) {
-      return { blocked: true, reason: `Learning phase: ad set is ${daysOld.toFixed(1)} days old (min 3d). Cannot change budget.` };
+    if (daysOld < 5) {
+      return { blocked: true, reason: `Learning phase: ad set is ${daysOld.toFixed(1)} days old (min 5d). Cannot change budget.` };
     }
   }
 
@@ -723,8 +723,8 @@ async function handlePauseAd(input, ctx) {
   const parentSnap = allAdSetSnaps.find(s => s.entity_id === adset_id);
   if (parentSnap?.meta_created_time) {
     const daysOld = (Date.now() - new Date(parentSnap.meta_created_time).getTime()) / 86400000;
-    if (daysOld < 3) {
-      return { blocked: true, reason: `Learning phase: ad set is ${daysOld.toFixed(1)} days old (min 3d). Cannot pause ads.` };
+    if (daysOld < 5) {
+      return { blocked: true, reason: `Learning phase: ad set is ${daysOld.toFixed(1)} days old (min 5d). Cannot pause ads.` };
     }
   }
 
@@ -806,8 +806,8 @@ async function handleReactivateAd(input, ctx) {
   const adsetSnap = (await getLatestSnapshots('adset')).find(s => s.entity_id === adset_id);
   if (adsetSnap?.meta_created_time) {
     const daysOld = (Date.now() - new Date(adsetSnap.meta_created_time).getTime()) / 86400000;
-    if (daysOld < 3) {
-      return { blocked: true, reason: `Learning phase: ad set is ${daysOld.toFixed(1)} days old (min 3d). Cannot reactivate ads.` };
+    if (daysOld < 5) {
+      return { blocked: true, reason: `Learning phase: ad set is ${daysOld.toFixed(1)} days old (min 5d). Cannot reactivate ads.` };
     }
   }
 
