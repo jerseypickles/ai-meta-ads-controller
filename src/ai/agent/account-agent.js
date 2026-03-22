@@ -104,13 +104,35 @@ If account ROAS is below target, reduce the worst performers to redirect Meta's 
 ## AD HEALTH DETECTION (from get_ad_performance)
 Each ad has a "health" field and multi-window metrics (3d/7d/14d). Use them:
 - "healthy" — performing well, don't touch
-- "ignored_by_meta" — ad has <$2 spend after 5+ days. Meta won't explore it. Flag this in your assessment.
-- "fatigued" — ROAS declining across windows (14d > 7d > 3d). Watch closely, pause if 3d ROAS < 1.0x
-- "dying" — ROAS AND CTR both declining across all windows. This ad is done. Pause it.
-- "saturated" — frequency > 4, audience exhausted. Pause it.
+- "ignored_by_meta" — ad has <$2 spend after 5+ days. Meta won't explore it.
+- "fatigued" — ROAS declining across windows (14d > 7d > 3d). Watch closely.
+- "dying" — ROAS AND CTR both declining across all windows. This ad is done.
+- "saturated" — frequency > 4, audience exhausted.
 
-When you see a "dying" or "saturated" ad, pause it and flag needs_new_creatives.
-When you see "ignored_by_meta", mention it in your assessment — the team may need to pause the old ad to force Meta to test the new one.
+## CREATIVE ROTATION (critical — read carefully)
+When you see an ad with "ignored_by_meta" AND there is an older ad (14+ days) hogging all the spend, you must ROTATE — pause the OLD ad to force Meta to spend on the new one.
+
+ROTATION RULES:
+1. Only rotate if the OLD ad is 14+ days old
+2. Only rotate if the NEW ad has been in the ad set 3+ days with <$5 spend (confirmed ignored)
+3. Check health of the old ad before rotating:
+   - Old ad "dying" or "saturated" -> PAUSE IT immediately, rotation is obvious
+   - Old ad "fatigued" AND frequency > 2.0 -> PAUSE IT, give new ad the chance
+   - Old ad "healthy" AND frequency > 2.5 -> PAUSE IT preventively, fatigue is coming
+   - Old ad "healthy" AND frequency < 2.0 -> DO NOT rotate. Old ad is still strong. Let Meta decide.
+4. After rotating, set pending_plan: "Paused old ad [name] for rotation. If new ad ROAS < 1.0x with $30+ spend after 5d, reactivate old. If new ad ROAS > 2.0x after 5d, rotation successful."
+5. Set next_review_hours: 120 (5 days to evaluate)
+
+WHAT NOT TO DO:
+- NEVER pause a NEW ad (<7 days, <$15 spend) just because it has 0 purchases. It needs time.
+- NEVER pause both old AND new in the same cycle.
+- NEVER rotate if there is no new ad waiting (only rotate to GIVE opportunity to a new creative).
+
+After 5 days, evaluate the rotation:
+- New ad ROAS > 2.0x with purchases -> SUCCESS, old stays paused
+- New ad ROAS 1.0-2.0x -> Give more time, extend review 5 more days
+- New ad ROAS < 1.0x with $30+ spend -> FAILED, reactivate old ad, pause new, flag needs_new_creatives
+- New ad still <$5 spend -> FAILED (Meta ignores it too), reactivate old ad
 
 ## EXTERNAL BUDGET CHANGES (critical)
 You are the ONLY one managing budgets. If you see that the current budget differs from what you last remember (in entity memory) and your scaling history has no recent action that explains it — someone changed the budget externally (from Meta Ads Manager).
@@ -710,6 +732,16 @@ async function handlePauseAd(input, ctx) {
   // Track pauses within this cycle to catch same-cycle double pauses
   if (!ctx._pausedAdsThisCycle) ctx._pausedAdsThisCycle = new Set();
   const adsInSet = await getAdsForAdSet(adset_id);
+
+  // ── GATE: Don't pause new ads with insufficient data (<$15 spend AND <7 days old)
+  const adToCheck = adsInSet.find(a => a.entity_id === ad_id);
+  if (adToCheck) {
+    const adSpend = adToCheck.metrics?.last_7d?.spend || 0;
+    const adDaysOld = adToCheck.meta_created_time ? (Date.now() - new Date(adToCheck.meta_created_time).getTime()) / 86400000 : 999;
+    if (adSpend < 15 && adDaysOld < 7) {
+      return { blocked: true, reason: `BLOCKED: Ad has only $${adSpend.toFixed(2)} spend in ${adDaysOld.toFixed(0)} days. Need $15+ spend to evaluate. Let it run.` };
+    }
+  }
   const activeAds = adsInSet.filter(a => a.status === 'ACTIVE' && !ctx._pausedAdsThisCycle.has(a.entity_id));
   if (activeAds.length <= 1 && activeAds.some(a => a.entity_id === ad_id)) {
     return { blocked: true, reason: `BLOCKED: Cannot pause the last active ad in this ad set. It would effectively kill the ad set. Keep at least 1 ad running.` };
