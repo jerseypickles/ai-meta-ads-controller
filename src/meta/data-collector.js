@@ -26,7 +26,7 @@ class DataCollector {
    */
   async collect() {
     const startTime = Date.now();
-    const COLLECT_TIMEOUT_MS = 6 * 60 * 1000; // 6 minutos máximo — abortar si excede (subido de 4m para días de API lento)
+    const COLLECT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutos máximo — abortar si excede
     logger.info('═══ Iniciando ciclo de recolección de datos ═══');
 
     this.meta.setBusy('data-collector');
@@ -41,7 +41,7 @@ class DataCollector {
     const timeoutPromise = new Promise((_, reject) => {
       this._collectTimeout = setTimeout(() => {
         controller.abort();
-        reject(new Error('COLLECT_TIMEOUT: Recolección excedió 4 minutos — abortando (requests canceladas)'));
+        reject(new Error('COLLECT_TIMEOUT: Recolección excedió 10 minutos — abortando (requests canceladas)'));
       }, COLLECT_TIMEOUT_MS);
     });
 
