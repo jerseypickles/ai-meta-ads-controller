@@ -71,7 +71,7 @@ class DataCollector {
     const opts = signal ? { signal } : {};
 
     try {
-      const WINDOWS = ['today', 'last_3d', 'last_7d', 'last_14d', 'last_30d'];
+      const WINDOWS = ['today', 'last_3d', 'last_7d', 'last_14d'];
       let totalSnapshots = 0;
 
       // ── 1. Structural data: campaigns + ad sets in 1 call (field expansion) ──
@@ -164,15 +164,14 @@ class DataCollector {
 
       // ── 2. Fetch daily insights for all 3 levels IN PARALLEL (3 calls total) ──
       //    Each call returns 1 row per entity per day.
-      //    aggregateDailyInsights() computes today/3d/7d/14d/30d locally.
-      //    Ad level uses 14d instead of 30d to reduce pagination (ads × 30 days
-      //    generates too many rows, causing timeouts on slow API days).
-      //    Campaign/adset use 30d for full 30d window snapshots.
-      logger.info('Recolectando insights diarios (3 calls paralelas: campaign 30d + adset 30d + ad 14d)...');
+      //    aggregateDailyInsights() computes today/3d/7d/14d locally.
+      //    All levels use 14d to reduce pagination and prevent timeouts.
+      //    30d window removed — agent only uses today/3d/7d/14d.
+      logger.info('Recolectando insights diarios (3 calls paralelas: campaign 14d + adset 14d + ad 14d)...');
 
       const [campaignResult, adsetResult, adResult] = await Promise.allSettled([
-        this.meta.getAccountInsightsDaily('campaign', 30, opts),
-        this.meta.getAccountInsightsDaily('adset', 30, opts),
+        this.meta.getAccountInsightsDaily('campaign', 14, opts),
+        this.meta.getAccountInsightsDaily('adset', 14, opts),
         this.meta.getAccountInsightsDaily('ad', 14, opts)
       ]);
 
