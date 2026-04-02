@@ -48,19 +48,17 @@ router.get('/activity', async (req, res) => {
       actionsByEntity[key].push(a);
     }
 
-    // 3.5. Count active ads per ad set (batch query)
-    const allAdSnapshots = await MetricSnapshot.aggregate([
+    // 3.5. Count active ads per ad set (optimized — count only, no full doc load)
+    const activeAdCounts = await MetricSnapshot.aggregate([
       { $match: { entity_type: 'ad', parent_id: { $in: entityIds } } },
-      { $sort: { entity_id: 1, snapshot_at: -1 } },
-      { $group: { _id: '$entity_id', doc: { $first: '$$ROOT' } } },
-      { $replaceRoot: { newRoot: '$doc' } }
+      { $sort: { snapshot_at: -1 } },
+      { $group: { _id: '$entity_id', status: { $first: '$status' }, parent_id: { $first: '$parent_id' } } },
+      { $match: { status: 'ACTIVE' } },
+      { $group: { _id: '$parent_id', count: { $sum: 1 } } }
     ]);
     const activeAdsByAdSet = {};
-    for (const ad of allAdSnapshots) {
-      if (ad.status === 'ACTIVE') {
-        const pid = ad.parent_id;
-        activeAdsByAdSet[pid] = (activeAdsByAdSet[pid] || 0) + 1;
-      }
+    for (const r of activeAdCounts) {
+      activeAdsByAdSet[r._id] = r.count;
     }
 
     // 4. Build response per ad set
