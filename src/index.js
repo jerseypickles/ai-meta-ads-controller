@@ -16,6 +16,7 @@ const SystemConfig = require('./db/models/SystemConfig');
 const LifecycleManager = require('./ai/lifecycle-manager');
 const { runManager } = require('./ai/adset-creator/manager');
 const { runAccountAgent } = require('./ai/agent/account-agent');
+const { runCreativeAgent } = require('./ai/agent/creative-agent');
 const { startDashboard } = require('./dashboard/server');
 const { refreshMetaToken } = require('./dashboard/routes/meta-auth');
 const { syncCreativeMetrics } = require('./dashboard/routes/creatives');
@@ -577,6 +578,31 @@ async function jobAccountAgent() {
 }
 
 /**
+ * Job: Creative Agent — cada 6h durante horas activas (8am, 2pm, 8pm ET).
+ * Genera creativos con Gemini para ad sets que el Account Agent flag como needs_new_creatives.
+ * Solo corre si hay productos en el banco Y ad sets que necesitan creativos.
+ */
+async function jobCreativeAgent() {
+  const aiEnabled = await isAIEnabled();
+  if (!aiEnabled) return;
+
+  const agentMode = await SystemConfig.get('agent_mode', 'unified');
+  if (agentMode !== 'unified') return;
+
+  try {
+    logger.info('[CRON] Ejecutando Creative Agent...');
+    const result = await runCreativeAgent();
+    if (result.generated > 0) {
+      logger.info(`[CRON] Creative Agent: ${result.generated} generados, ${result.uploaded} subidos en ${result.elapsed}`);
+    } else {
+      logger.debug('[CRON] Creative Agent: sin creativos que generar');
+    }
+  } catch (error) {
+    logger.error('[CRON] Error en Creative Agent:', error);
+  }
+}
+
+/**
  * Job: AI Ops Metrics Refresh — 24/7 con frecuencia adaptativa.
  * Horas activas: cada 15 min (Meta refresca insights cada ~15 min).
  * Fuera de horas: cada 30 min (mantener datos razonablemente frescos).
@@ -819,6 +845,13 @@ function initCronJobs() {
     name: 'account-agent'
   });
   logger.info('  [*] Account Agent unificado — cada 2h 24/7 (6am-10pm: completo, 10pm-6am: observador)');
+
+  // Creative Agent — 3x/día durante horas activas (8am, 2pm, 8pm ET)
+  cron.schedule('0 8,14,20 * * *', jobCreativeAgent, {
+    timezone: TIMEZONE,
+    name: 'creative-agent'
+  });
+  logger.info('  [*] Creative Agent — 3x/día: 8am, 2pm, 8pm ET');
 
   // AI Ops metrics refresh — cada 15 min, 24/7
   cron.schedule('5,20,35,50 * * * *', jobAIOpsRefresh, {

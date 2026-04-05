@@ -24,6 +24,10 @@ module.exports = {
     maxTokens: 4096
   },
 
+  googleAI: {
+    apiKey: process.env.GOOGLE_AI_API_KEY || ''
+  },
+
   mongodb: {
     uri: process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-meta-ads'
   },

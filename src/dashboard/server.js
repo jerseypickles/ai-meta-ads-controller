@@ -20,6 +20,7 @@ const aiOpsRoutes = require('./routes/ai-ops');
 const videoRoutes = require('./routes/video');
 const brainRoutes = require('./routes/brain');
 const agentRoutes = require('./routes/agent');
+const creativeAgentRoutes = require('./routes/creative-agent');
 const authRoutes = require('./routes/auth');
 const metaAuthRoutes = require('./routes/meta-auth');
 
@@ -78,6 +79,7 @@ app.use('/api/ai-ops', aiOpsRoutes);
 app.use('/api/video', videoRoutes);
 app.use('/api/brain', brainRoutes);
 app.use('/api/agent', agentRoutes);
+app.use('/api/creative-agent', creativeAgentRoutes);
 
 // SPA fallback — todas las rutas no-API sirven el frontend
 app.get('*', (req, res) => {
