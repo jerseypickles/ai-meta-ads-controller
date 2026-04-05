@@ -384,15 +384,25 @@ async function approveProposal(proposalId) {
     fs.writeFileSync(imagePath, Buffer.from(proposal.image_base64, 'base64'));
   }
 
-  const uploadResult = await uploadToMeta(
-    proposal.adset_id,
-    imagePath,
-    proposal.headline,
-    proposal.primary_text,
-    proposal.link_url
-  );
+  let uploadResult;
+  try {
+    uploadResult = await uploadToMeta(
+      proposal.adset_id,
+      imagePath,
+      proposal.headline,
+      proposal.primary_text,
+      proposal.link_url
+    );
+  } catch (uploadErr) {
+    // Upload fallo — marcar como failed pero NO limpiar el flag needs_new_creatives
+    proposal.status = 'failed';
+    proposal.decided_at = new Date();
+    await proposal.save();
+    logger.error(`[CREATIVE-AGENT] Upload failed for proposal ${proposalId}: ${uploadErr.message}`);
+    throw new Error(`Upload a Meta fallo: ${uploadErr.message}`);
+  }
 
-  // Update proposal
+  // Upload exitoso — actualizar proposal
   proposal.status = 'uploaded';
   proposal.decided_at = new Date();
   proposal.meta_ad_id = uploadResult.adId;
@@ -414,7 +424,7 @@ async function approveProposal(proposalId) {
     new_entity_id: uploadResult.adId
   });
 
-  // Clear needs_new_creatives flag
+  // Clear needs_new_creatives flag — solo si upload fue exitoso
   await BrainMemory.findOneAndUpdate(
     { entity_id: proposal.adset_id },
     { $set: { agent_needs_new_creatives: false, last_updated_at: new Date() } }
@@ -447,4 +457,111 @@ async function rejectProposal(proposalId, reason = '') {
   return { success: true };
 }
 
-module.exports = { runCreativeAgent, approveProposal, rejectProposal, generateImage, generateCopy, uploadToMeta, SCENES };
+/**
+ * Sync performance metrics for uploaded CreativeProposals + ProductBank stats.
+ * Runs as part of jobCreativeMetricsSync (every 6h).
+ */
+async function syncProposalPerformance() {
+  const MetricSnapshot = require('../../db/models/MetricSnapshot');
+
+  // Buscar propuestas subidas a Meta con ad ID
+  const uploaded = await CreativeProposal.find({
+    status: 'uploaded',
+    meta_ad_id: { $ne: null }
+  }).lean();
+
+  if (uploaded.length === 0) return { synced: 0, products_updated: 0 };
+
+  let synced = 0;
+
+  for (const proposal of uploaded) {
+    try {
+      // Buscar snapshot mas reciente del ad
+      const snapshot = await MetricSnapshot.findOne({
+        entity_type: 'ad',
+        entity_id: proposal.meta_ad_id
+      }).sort({ snapshot_at: -1 }).lean();
+
+      if (!snapshot || !snapshot.metrics?.last_7d) continue;
+
+      const m = snapshot.metrics.last_7d;
+      if (m.spend <= 0) continue; // sin datos aun
+
+      await CreativeProposal.findByIdAndUpdate(proposal._id, {
+        $set: {
+          'performance.roas_7d': m.roas || 0,
+          'performance.spend_7d': m.spend || 0,
+          'performance.purchases_7d': m.purchases || 0,
+          'performance.ctr_7d': m.ctr || 0,
+          'performance.measured_at': new Date()
+        }
+      });
+
+      synced++;
+    } catch (err) {
+      logger.error(`[CREATIVE-AGENT] Sync error for proposal ${proposal._id}: ${err.message}`);
+    }
+  }
+
+  // Actualizar ProductBank stats agregando metricas de todas las propuestas uploaded
+  const products = await ProductBank.find({ active: true }).lean();
+  let productsUpdated = 0;
+
+  for (const product of products) {
+    try {
+      const proposals = await CreativeProposal.find({
+        product_id: product._id,
+        status: 'uploaded',
+        'performance.measured_at': { $ne: null }
+      }).lean();
+
+      if (proposals.length === 0) continue;
+
+      const totalSpend = proposals.reduce((s, p) => s + (p.performance?.spend_7d || 0), 0);
+      const totalPurchases = proposals.reduce((s, p) => s + (p.performance?.purchases_7d || 0), 0);
+      const withRoas = proposals.filter(p => p.performance?.roas_7d > 0);
+      const avgRoas = withRoas.length > 0
+        ? withRoas.reduce((s, p) => s + p.performance.roas_7d, 0) / withRoas.length
+        : 0;
+
+      // Calcular best/worst scene
+      const sceneMap = {};
+      for (const p of proposals) {
+        if (!p.scene_short || !p.performance?.roas_7d) continue;
+        if (!sceneMap[p.scene_short]) sceneMap[p.scene_short] = { roas: [], spend: 0, ads: 0 };
+        sceneMap[p.scene_short].roas.push(p.performance.roas_7d);
+        sceneMap[p.scene_short].spend += p.performance.spend_7d || 0;
+        sceneMap[p.scene_short].ads++;
+      }
+
+      const sceneEntries = Object.entries(sceneMap).map(([scene, data]) => ({
+        scene,
+        avg_roas: data.roas.reduce((a, b) => a + b, 0) / data.roas.length,
+        total_spend: data.spend,
+        ads_created: data.ads
+      }));
+      sceneEntries.sort((a, b) => b.avg_roas - a.avg_roas);
+
+      await ProductBank.findByIdAndUpdate(product._id, {
+        $set: {
+          'performance.total_spend': totalSpend,
+          'performance.total_purchases': totalPurchases,
+          'performance.avg_roas': Math.round(avgRoas * 100) / 100,
+          'performance.best_scene': sceneEntries[0]?.scene || '',
+          'performance.worst_scene': sceneEntries[sceneEntries.length - 1]?.scene || '',
+          scene_performance: sceneEntries,
+          updated_at: new Date()
+        }
+      });
+
+      productsUpdated++;
+    } catch (err) {
+      logger.error(`[CREATIVE-AGENT] Product stats error for ${product.product_name}: ${err.message}`);
+    }
+  }
+
+  logger.info(`[CREATIVE-AGENT] Performance sync: ${synced} propuestas actualizadas, ${productsUpdated} productos actualizados`);
+  return { synced, products_updated: productsUpdated };
+}
+
+module.exports = { runCreativeAgent, approveProposal, rejectProposal, syncProposalPerformance, generateImage, generateCopy, uploadToMeta, SCENES };

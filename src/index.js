@@ -16,7 +16,7 @@ const SystemConfig = require('./db/models/SystemConfig');
 const LifecycleManager = require('./ai/lifecycle-manager');
 const { runManager } = require('./ai/adset-creator/manager');
 const { runAccountAgent } = require('./ai/agent/account-agent');
-const { runCreativeAgent } = require('./ai/agent/creative-agent');
+const { runCreativeAgent, syncProposalPerformance } = require('./ai/agent/creative-agent');
 const { startDashboard } = require('./dashboard/server');
 const { refreshMetaToken } = require('./dashboard/routes/meta-auth');
 const { syncCreativeMetrics } = require('./dashboard/routes/creatives');
@@ -146,6 +146,12 @@ async function jobCreativeMetricsSync() {
     const result = await syncCreativeMetrics();
     if (result.discovered > 0 || result.synced > 0) {
       logger.info(`[CRON] Creative metrics sync: ${result.discovered || 0} links descubiertos, ${result.synced} actualizados, ${result.skipped} sin datos`);
+    }
+
+    // Sync CreativeProposal performance + ProductBank stats
+    const proposalResult = await syncProposalPerformance();
+    if (proposalResult.synced > 0 || proposalResult.products_updated > 0) {
+      logger.info(`[CRON] Proposal performance sync: ${proposalResult.synced} propuestas, ${proposalResult.products_updated} productos`);
     }
   } catch (error) {
     logger.error('[CRON] Error en sync de métricas de creativos:', error.message);
