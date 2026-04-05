@@ -161,18 +161,19 @@ async function uploadToMeta(adsetId, imagePath, headline, primaryText, linkUrl) 
 
   let creativeResponse;
   try {
+    const storySpec = {
+      page_id: String(pageId),
+      link_data: {
+        image_hash: String(imageHash),
+        link: String(linkUrl),
+        message: String(primaryText),
+        name: String(headline),
+        call_to_action: { type: 'SHOP_NOW' }
+      }
+    };
     creativeResponse = await meta.post(`/${config.meta.adAccountId}/adcreatives`, {
-      name: creativeName,
-      object_story_spec: JSON.stringify({
-        page_id: pageId,
-        link_data: {
-          image_hash: imageHash,
-          link: linkUrl,
-          message: primaryText,
-          name: headline,
-          call_to_action: { type: 'SHOP_NOW', value: { link: linkUrl } }
-        }
-      })
+      name: String(creativeName),
+      object_story_spec: JSON.stringify(storySpec)
     });
   } catch (creativeErr) {
     const metaError = creativeErr.response?.data?.error || {};
