@@ -84,7 +84,7 @@ async function generateImage(prompt, referencePaths, outputPath) {
   }
 
   const response = await genAI.models.generateContent({
-    model: 'gemini-2.0-flash-exp',
+    model: 'gemini-2.0-flash-preview-image-generation',
     contents: [{ role: 'user', parts }],
     config: {
       responseModalities: ['image', 'text'],
