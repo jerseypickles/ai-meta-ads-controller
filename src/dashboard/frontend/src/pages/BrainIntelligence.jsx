@@ -1102,6 +1102,8 @@ function ProductBankPanel() {
   const [creating, setCreating] = useState(false);
   const [runningCreative, setRunningCreative] = useState(false);
   const [approvingId, setApprovingId] = useState(null);
+  const [creativeSubTab, setCreativeSubTab] = useState('pending');
+  const [lightboxImg, setLightboxImg] = useState(null);
   const fileRef = useRef(null);
 
   const loadAll = useCallback(async () => {
@@ -1138,6 +1140,7 @@ function ProductBankPanel() {
   };
 
   const handleDelete = async (id) => {
+    if (!window.confirm('Eliminar este producto?')) return;
     try { await deleteProduct(id); await loadAll(); } catch (err) { console.error(err); }
   };
 
@@ -1158,116 +1161,284 @@ function ProductBankPanel() {
     try { await rejectCreativeProposal(id, reason); await loadAll(); } catch (err) { console.error(err); }
   };
 
+  const pendingProposals = useMemo(() => proposals.filter(p => p.status === 'pending'), [proposals]);
+  const historyProposals = useMemo(() => proposals.filter(p => p.status !== 'pending'), [proposals]);
+
+  const fmtDate = (d) => {
+    if (!d) return '';
+    const dt = new Date(d);
+    return `${dt.getDate()}/${dt.getMonth() + 1} ${dt.getHours().toString().padStart(2, '0')}:${dt.getMinutes().toString().padStart(2, '0')}`;
+  };
+
+  // Stats summary
+  const statsApproved = historyProposals.filter(p => p.status === 'uploaded' || p.status === 'approved').length;
+  const statsRejected = historyProposals.filter(p => p.status === 'rejected').length;
+  const statsWithPerf = historyProposals.filter(p => p.performance?.roas_7d > 0);
+  const avgRoas = statsWithPerf.length > 0 ? (statsWithPerf.reduce((s, p) => s + p.performance.roas_7d, 0) / statsWithPerf.length) : 0;
+
   return (
-    <div className="product-bank-section">
-      <div className="product-bank-header">
-        <h3>Creativos {pendingCount > 0 && <span className="tab-badge">{pendingCount}</span>}</h3>
+    <div className="creative-panel">
+      {/* Header */}
+      <div className="creative-panel-header">
+        <div className="creative-panel-stats">
+          <div className="creative-stat-card">
+            <span className="creative-stat-value">{pendingCount}</span>
+            <span className="creative-stat-label">Pendientes</span>
+          </div>
+          <div className="creative-stat-card">
+            <span className="creative-stat-value">{statsApproved}</span>
+            <span className="creative-stat-label">Aprobados</span>
+          </div>
+          <div className="creative-stat-card">
+            <span className="creative-stat-value">{statsRejected}</span>
+            <span className="creative-stat-label">Rechazados</span>
+          </div>
+          <div className="creative-stat-card">
+            <span className="creative-stat-value">{avgRoas > 0 ? `${avgRoas.toFixed(1)}x` : '--'}</span>
+            <span className="creative-stat-label">ROAS Prom</span>
+          </div>
+          <div className="creative-stat-card">
+            <span className="creative-stat-value">{products.length}</span>
+            <span className="creative-stat-label">Productos</span>
+          </div>
+        </div>
         <button className="btn-agent-run" onClick={handleRunCreative} disabled={runningCreative}>
           {runningCreative ? 'Generando...' : 'Generar Creativos'}
         </button>
       </div>
 
-      {/* Proposals pending approval */}
-      {proposals.filter(p => p.status === 'pending').length > 0 && (
-        <div className="proposals-section">
-          <h4>Pendientes de aprobacion ({proposals.filter(p => p.status === 'pending').length})</h4>
-          <div className="proposals-grid">
-            {proposals.filter(p => p.status === 'pending').map(p => (
-              <div key={p._id} className="proposal-card">
-                <div className="proposal-image-wrap">
-                  <img src={getProposalImageUrl(p._id)} alt={p.headline} className="proposal-image" onClick={() => window.open(getProposalImageUrl(p._id), '_blank')} />
-                  <span className="proposal-fullscreen-hint">Click para ver grande</span>
-                </div>
-                <div className="proposal-body">
-                  <div className="proposal-copy">
-                    <strong className="proposal-headline">{p.headline}</strong>
-                    <p className="proposal-text">{p.primary_text}</p>
-                  </div>
-                  <div className="proposal-meta-row">
-                    <span className="proposal-meta-chip">{p.product_name}</span>
-                    <span className="proposal-meta-chip">{p.scene_short}</span>
-                  </div>
-                  <div className="proposal-target">Ad set: <strong>{p.adset_name}</strong></div>
-                  <div className="proposal-actions">
-                    <button className="proposal-approve" onClick={(e) => { e.stopPropagation(); handleApproveProposal(p._id); }} disabled={approvingId === p._id}>
-                      {approvingId === p._id ? 'Subiendo a Meta...' : 'Aprobar y Subir'}
-                    </button>
-                    <button className="proposal-reject" onClick={(e) => { e.stopPropagation(); handleRejectProposal(p._id); }}>Rechazar</button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+      {/* Sub-tabs */}
+      <div className="knowledge-sub-tabs" style={{ marginBottom: 16 }}>
+        <button className={`sub-tab ${creativeSubTab === 'pending' ? 'active' : ''}`} onClick={() => setCreativeSubTab('pending')}>
+          Pendientes {pendingCount > 0 && <span className="tab-badge">{pendingCount}</span>}
+        </button>
+        <button className={`sub-tab ${creativeSubTab === 'history' ? 'active' : ''}`} onClick={() => setCreativeSubTab('history')}>
+          Historial
+        </button>
+        <button className={`sub-tab ${creativeSubTab === 'products' ? 'active' : ''}`} onClick={() => setCreativeSubTab('products')}>
+          Productos
+        </button>
+      </div>
+
+      {/* Lightbox */}
+      {lightboxImg && (
+        <div className="creative-lightbox" onClick={() => setLightboxImg(null)}>
+          <img src={lightboxImg} alt="Creative preview" />
+          <span className="creative-lightbox-close">ESC para cerrar</span>
         </div>
       )}
 
-      {/* Recent proposals (approved/rejected) */}
-      {proposals.filter(p => p.status !== 'pending').length > 0 && (
-        <div className="proposals-history">
-          <h4>Historial</h4>
-          <div className="proposals-history-list">
-            {proposals.filter(p => p.status !== 'pending').slice(0, 10).map(p => (
-              <div key={p._id} className={`proposal-history-row ${p.status}`}>
-                <img src={getProposalImageUrl(p._id)} alt="" className="proposal-thumb-sm" />
-                <span className="proposal-history-headline">{p.headline}</span>
-                <span className="proposal-history-adset">{p.adset_name}</span>
-                <span className={`proposal-status-badge ${p.status}`}>
-                  {p.status === 'uploaded' ? 'Aprobado' : p.status === 'approved' ? 'Aprobado' : 'Rechazado'}
-                </span>
-                {p.rejection_reason && <span className="proposal-rejection-reason">{p.rejection_reason}</span>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {loading ? <div className="brain-loading">Cargando productos...</div> : (
-        <>
-          <div className="product-bank-grid">
-            {products.map(p => (
-              <div key={p._id} className="product-bank-card">
-                <div className="product-bank-card-images">
-                  {(p.png_references || []).map((ref, i) => (
-                    <img key={i} src={getProductImageUrl(ref.filename)} alt={ref.type} className="product-bank-thumb" />
-                  ))}
-                </div>
-                <div className="product-bank-card-info">
-                  <strong>{p.product_name}</strong>
-                  <span className="product-bank-slug">{p.product_slug}</span>
-                  <span className="product-bank-stats">
-                    {p.performance?.total_ads_created || 0} ads creados
-                    {p.performance?.avg_roas > 0 && ` | ROAS ${p.performance.avg_roas.toFixed(2)}x`}
-                  </span>
-                </div>
-                <button className="product-bank-delete" onClick={() => handleDelete(p._id)}>x</button>
-              </div>
-            ))}
-          </div>
-
-          {!showForm ? (
-            <button className="agent-perf-btn" onClick={() => setShowForm(true)} style={{ marginTop: 8 }}>
-              + Agregar producto
-            </button>
+      {/* ═══ SUB-TAB: Pendientes ═══ */}
+      {creativeSubTab === 'pending' && (
+        <div className="creative-pending-section">
+          {loading ? <div className="brain-loading">Cargando...</div> : pendingProposals.length === 0 ? (
+            <div className="creative-empty-state">
+              <span className="creative-empty-icon">🎨</span>
+              <p>No hay creativos pendientes de aprobacion</p>
+              <span className="creative-empty-hint">El Creative Agent genera propuestas automaticamente o puedes forzar con el boton "Generar Creativos"</span>
+            </div>
           ) : (
-            <form className="product-bank-form" onSubmit={handleCreate} onClick={e => e.stopPropagation()}>
-              <input type="text" placeholder="Nombre (ej: Hot Pickled Tomatoes)" value={formName} onChange={e => { setFormName(e.target.value); setFormSlug(e.target.value.toLowerCase().replace(/\s+/g, '-')); }} />
-              <input type="text" placeholder="Slug (ej: hot-pickled-tomatoes)" value={formSlug} onChange={e => setFormSlug(e.target.value)} />
-              <input type="text" placeholder="Link URL" value={formUrl} onChange={e => setFormUrl(e.target.value)} />
-              <div className="product-bank-file-row">
-                <input type="file" accept="image/*" multiple ref={fileRef} onChange={e => setFormFiles(e.target.files)} />
-                <span className="product-bank-file-hint">{formFiles?.length || 0} PNGs</span>
-              </div>
-              <div className="product-bank-form-actions">
-                <button type="submit" className="btn-agent-run" disabled={creating}>{creating ? 'Creando...' : 'Crear'}</button>
-                <button type="button" className="agent-perf-btn" onClick={() => setShowForm(false)}>Cancelar</button>
-              </div>
-            </form>
+            <div className="creative-pending-grid">
+              {pendingProposals.map(p => (
+                <div key={p._id} className="creative-proposal-card">
+                  <div className="creative-proposal-img-wrap" onClick={() => setLightboxImg(getProposalImageUrl(p._id))}>
+                    <img src={getProposalImageUrl(p._id)} alt={p.headline} className="creative-proposal-img" />
+                    <div className="creative-proposal-img-overlay">
+                      <span>Ver imagen</span>
+                    </div>
+                  </div>
+                  <div className="creative-proposal-content">
+                    <h4 className="creative-proposal-headline">{p.headline}</h4>
+                    <p className="creative-proposal-text">{p.primary_text}</p>
+                    <div className="creative-proposal-tags">
+                      <span className="creative-tag product">{p.product_name}</span>
+                      <span className="creative-tag scene">{p.scene_short}</span>
+                    </div>
+                    <div className="creative-proposal-target">
+                      <span className="creative-target-label">Ad Set</span>
+                      <span className="creative-target-name">{p.adset_name}</span>
+                    </div>
+                    <div className="creative-proposal-date">{fmtDate(p.created_at)}</div>
+                    <div className="creative-proposal-actions">
+                      <button className="creative-btn-approve" onClick={(e) => { e.stopPropagation(); handleApproveProposal(p._id); }} disabled={approvingId === p._id}>
+                        {approvingId === p._id ? 'Subiendo...' : 'Aprobar y Subir a Meta'}
+                      </button>
+                      <button className="creative-btn-reject" onClick={(e) => { e.stopPropagation(); handleRejectProposal(p._id); }}>
+                        Rechazar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
+        </div>
+      )}
 
-          {products.length === 0 && !loading && (
-            <div className="product-bank-empty">Sin productos. Agrega PNGs de tus productos para que el Creative Agent genere creativos automaticamente.</div>
+      {/* ═══ SUB-TAB: Historial ═══ */}
+      {creativeSubTab === 'history' && (
+        <div className="creative-history-section">
+          {loading ? <div className="brain-loading">Cargando...</div> : historyProposals.length === 0 ? (
+            <div className="creative-empty-state">
+              <span className="creative-empty-icon">📋</span>
+              <p>Sin historial de creativos</p>
+            </div>
+          ) : (
+            <div className="creative-history-grid">
+              {historyProposals.map(p => (
+                <div key={p._id} className={`creative-history-card ${p.status}`}>
+                  <div className="creative-history-img-wrap" onClick={() => setLightboxImg(getProposalImageUrl(p._id))}>
+                    <img src={getProposalImageUrl(p._id)} alt={p.headline} className="creative-history-img" />
+                    <span className={`creative-history-badge ${p.status}`}>
+                      {p.status === 'uploaded' || p.status === 'approved' ? 'Aprobado' : p.status === 'rejected' ? 'Rechazado' : p.status === 'failed' ? 'Error' : p.status}
+                    </span>
+                  </div>
+                  <div className="creative-history-body">
+                    <h5 className="creative-history-headline">{p.headline}</h5>
+                    <div className="creative-history-meta">
+                      <span className="creative-tag product">{p.product_name}</span>
+                      <span className="creative-tag scene">{p.scene_short}</span>
+                    </div>
+                    <div className="creative-history-target">{p.adset_name}</div>
+                    <div className="creative-history-date">{fmtDate(p.decided_at || p.created_at)}</div>
+
+                    {/* Performance metrics for approved creatives */}
+                    {(p.status === 'uploaded' || p.status === 'approved') && (
+                      <div className="creative-history-perf">
+                        {p.performance?.roas_7d > 0 ? (
+                          <>
+                            <div className="creative-perf-metric">
+                              <span className="creative-perf-val" style={{ color: p.performance.roas_7d >= 3 ? '#10b981' : p.performance.roas_7d >= 1.5 ? '#f59e0b' : '#ef4444' }}>
+                                {p.performance.roas_7d.toFixed(2)}x
+                              </span>
+                              <span className="creative-perf-lbl">ROAS 7d</span>
+                            </div>
+                            {p.performance.spend_7d > 0 && (
+                              <div className="creative-perf-metric">
+                                <span className="creative-perf-val">${p.performance.spend_7d.toFixed(0)}</span>
+                                <span className="creative-perf-lbl">Spend</span>
+                              </div>
+                            )}
+                            {p.performance.purchases_7d > 0 && (
+                              <div className="creative-perf-metric">
+                                <span className="creative-perf-val">{p.performance.purchases_7d}</span>
+                                <span className="creative-perf-lbl">Compras</span>
+                              </div>
+                            )}
+                            {p.performance.ctr_7d > 0 && (
+                              <div className="creative-perf-metric">
+                                <span className="creative-perf-val">{p.performance.ctr_7d.toFixed(2)}%</span>
+                                <span className="creative-perf-lbl">CTR</span>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <span className="creative-perf-pending">Esperando metricas...</span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Rejection reason */}
+                    {p.status === 'rejected' && p.rejection_reason && (
+                      <div className="creative-history-rejection">"{p.rejection_reason}"</div>
+                    )}
+
+                    {/* Meta ad ID */}
+                    {p.meta_ad_id && (
+                      <div className="creative-history-meta-id">Ad: {p.meta_ad_id}</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
-        </>
+        </div>
+      )}
+
+      {/* ═══ SUB-TAB: Productos ═══ */}
+      {creativeSubTab === 'products' && (
+        <div className="creative-products-section">
+          {loading ? <div className="brain-loading">Cargando productos...</div> : (
+            <>
+              <div className="creative-products-grid">
+                {products.map(p => (
+                  <div key={p._id} className="creative-product-card">
+                    <div className="creative-product-images">
+                      {(p.png_references || []).map((ref, i) => (
+                        <img key={i} src={getProductImageUrl(ref.filename)} alt={ref.type} className="creative-product-thumb" onClick={() => setLightboxImg(getProductImageUrl(ref.filename))} />
+                      ))}
+                    </div>
+                    <div className="creative-product-info">
+                      <strong className="creative-product-name">{p.product_name}</strong>
+                      <span className="creative-product-slug">{p.product_slug}</span>
+                      <div className="creative-product-stats-row">
+                        <span className="creative-product-stat">
+                          {p.png_references?.length || 0} PNGs
+                        </span>
+                        <span className="creative-product-stat">
+                          {p.performance?.total_ads_created || 0} ads creados
+                        </span>
+                        {p.performance?.avg_roas > 0 && (
+                          <span className="creative-product-stat" style={{ color: '#10b981' }}>
+                            ROAS {p.performance.avg_roas.toFixed(2)}x
+                          </span>
+                        )}
+                      </div>
+                      {p.link_url && <span className="creative-product-url">{p.link_url}</span>}
+                    </div>
+                    <button className="creative-product-delete" onClick={() => handleDelete(p._id)} title="Eliminar producto">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14" /></svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Add product form */}
+              {!showForm ? (
+                <button className="creative-add-product-btn" onClick={() => setShowForm(true)}>
+                  + Agregar Producto
+                </button>
+              ) : (
+                <form className="creative-product-form" onSubmit={handleCreate} onClick={e => e.stopPropagation()}>
+                  <div className="creative-form-title">Nuevo Producto</div>
+                  <div className="creative-form-grid">
+                    <div className="creative-form-field">
+                      <label>Nombre del producto</label>
+                      <input type="text" placeholder="Hot Pickled Tomatoes" value={formName} onChange={e => { setFormName(e.target.value); setFormSlug(e.target.value.toLowerCase().replace(/\s+/g, '-')); }} />
+                    </div>
+                    <div className="creative-form-field">
+                      <label>Slug</label>
+                      <input type="text" placeholder="hot-pickled-tomatoes" value={formSlug} onChange={e => setFormSlug(e.target.value)} />
+                    </div>
+                    <div className="creative-form-field">
+                      <label>Link URL</label>
+                      <input type="text" placeholder="https://jerseypickles.com" value={formUrl} onChange={e => setFormUrl(e.target.value)} />
+                    </div>
+                    <div className="creative-form-field">
+                      <label>Imagenes PNG del producto</label>
+                      <div className="creative-form-file-wrap">
+                        <input type="file" accept="image/*" multiple ref={fileRef} onChange={e => setFormFiles(e.target.files)} />
+                        {formFiles?.length > 0 && <span className="creative-form-file-count">{formFiles.length} archivo{formFiles.length > 1 ? 's' : ''}</span>}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="creative-form-actions">
+                    <button type="submit" className="btn-agent-run" disabled={creating}>{creating ? 'Creando...' : 'Crear Producto'}</button>
+                    <button type="button" className="creative-form-cancel" onClick={() => setShowForm(false)}>Cancelar</button>
+                  </div>
+                </form>
+              )}
+
+              {products.length === 0 && !loading && (
+                <div className="creative-empty-state">
+                  <span className="creative-empty-icon">📦</span>
+                  <p>Sin productos</p>
+                  <span className="creative-empty-hint">Agrega PNGs de tus productos para que el Creative Agent genere creativos automaticamente</span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       )}
     </div>
   );
