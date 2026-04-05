@@ -159,19 +159,26 @@ async function uploadToMeta(adsetId, imagePath, headline, primaryText, linkUrl) 
   const creativeName = `AI Creative - ${path.basename(imagePath, path.extname(imagePath))}`;
   const pageId = process.env.META_PAGE_ID;
 
-  const creativeResponse = await meta.post(`/${config.meta.adAccountId}/adcreatives`, {
-    name: creativeName,
-    object_story_spec: JSON.stringify({
-      page_id: pageId,
-      link_data: {
-        image_hash: imageHash,
-        link: linkUrl,
-        message: primaryText,
-        name: headline,
-        call_to_action: { type: 'SHOP_NOW', value: { link: linkUrl } }
-      }
-    })
-  });
+  let creativeResponse;
+  try {
+    creativeResponse = await meta.post(`/${config.meta.adAccountId}/adcreatives`, {
+      name: creativeName,
+      object_story_spec: JSON.stringify({
+        page_id: pageId,
+        link_data: {
+          image_hash: imageHash,
+          link: linkUrl,
+          message: primaryText,
+          name: headline,
+          call_to_action: { type: 'SHOP_NOW', value: { link: linkUrl } }
+        }
+      })
+    });
+  } catch (creativeErr) {
+    const metaError = creativeErr.response?.data?.error || {};
+    logger.error(`[CREATIVE-AGENT] Ad creative creation failed: code=${metaError.code} type=${metaError.type} msg=${metaError.message} fbtrace=${metaError.fbtrace_id}`);
+    throw creativeErr;
+  }
 
   const creativeId = creativeResponse.id;
 
