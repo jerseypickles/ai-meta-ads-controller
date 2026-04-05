@@ -155,44 +155,23 @@ async function uploadToMeta(adsetId, imagePath, headline, primaryText, linkUrl) 
   if (!fs.existsSync(imagePath)) throw new Error(`Image file not found: ${imagePath}`);
   const imageHash = await meta.uploadImage(imagePath);
 
-  // 2. Create ad creative
-  const creativeName = `AI Creative - ${path.basename(imagePath, path.extname(imagePath))}`;
+  // 2. Create ad creative using existing meta client method
   const pageId = process.env.META_PAGE_ID;
-
-  let creativeResponse;
-  try {
-    const storySpec = {
-      page_id: String(pageId),
-      link_data: {
-        image_hash: String(imageHash),
-        link: String(linkUrl),
-        message: String(primaryText),
-        name: String(headline),
-        call_to_action: { type: 'SHOP_NOW' }
-      }
-    };
-    creativeResponse = await meta.post(`/${config.meta.adAccountId}/adcreatives`, {
-      name: String(creativeName),
-      object_story_spec: JSON.stringify(storySpec)
-    });
-  } catch (creativeErr) {
-    const metaError = creativeErr.response?.data?.error || {};
-    logger.error(`[CREATIVE-AGENT] Ad creative creation failed: code=${metaError.code} type=${metaError.type} msg=${metaError.message} fbtrace=${metaError.fbtrace_id}`);
-    throw creativeErr;
-  }
-
-  const creativeId = creativeResponse.id;
+  const creative = await meta.createAdCreative({
+    page_id: pageId,
+    image_hash: imageHash,
+    headline: headline,
+    body: primaryText,
+    description: '',
+    cta: 'SHOP_NOW',
+    link_url: linkUrl
+  });
 
   // 3. Create ad in the ad set
   const adName = `${headline} [AI Creative Agent]`;
-  const adResponse = await meta.post(`/${config.meta.adAccountId}/ads`, {
-    name: adName,
-    adset_id: adsetId,
-    creative: JSON.stringify({ creative_id: creativeId }),
-    status: 'ACTIVE'
-  });
+  const ad = await meta.createAd(adsetId, creative.creative_id, adName, 'ACTIVE');
 
-  return { adId: adResponse.id, creativeId, adName, imageHash };
+  return { adId: ad.id, creativeId: creative.creative_id, adName, imageHash };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
