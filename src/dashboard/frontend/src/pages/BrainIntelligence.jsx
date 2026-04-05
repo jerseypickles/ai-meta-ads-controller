@@ -12,7 +12,8 @@ import {
   uploadLaunchCreatives, launchStrategize, launchApprove, getCreativeThumbnailUrl,
   getAgentActivity, runAccountAgent, getAgentAdsetDetail, getAgentThoughts, getAgentPerformance,
   generateCopyForUpload, uploadAndCreateAd,
-  getProducts, createProduct, deleteProduct, getProductImageUrl, runCreativeAgentApi
+  getProducts, createProduct, deleteProduct, getProductImageUrl, runCreativeAgentApi,
+  getCreativeProposals, approveCreativeProposal, rejectCreativeProposal, getProposalImageUrl
 } from '../api';
 
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
@@ -1090,6 +1091,8 @@ function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onR
 
 function ProductBankPanel() {
   const [products, setProducts] = useState([]);
+  const [proposals, setProposals] = useState([]);
+  const [pendingCount, setPendingCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState('');
@@ -1098,12 +1101,24 @@ function ProductBankPanel() {
   const [formFiles, setFormFiles] = useState(null);
   const [creating, setCreating] = useState(false);
   const [runningCreative, setRunningCreative] = useState(false);
+  const [approvingId, setApprovingId] = useState(null);
   const fileRef = useRef(null);
 
-  useEffect(() => {
+  const loadAll = useCallback(async () => {
     setLoading(true);
-    getProducts().then(d => setProducts(d.products || [])).catch(console.error).finally(() => setLoading(false));
+    try {
+      const [prodData, propData] = await Promise.all([
+        getProducts(),
+        getCreativeProposals()
+      ]);
+      setProducts(prodData.products || []);
+      setProposals(propData.proposals || []);
+      setPendingCount(propData.pending_count || 0);
+    } catch (err) { console.error(err); }
+    finally { setLoading(false); }
   }, []);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -1117,34 +1132,85 @@ function ProductBankPanel() {
       for (const f of formFiles) fd.append('images', f);
       await createProduct(fd);
       setFormName(''); setFormSlug(''); setFormFiles(null); setShowForm(false);
-      setProducts([]); // force reload
+      await loadAll();
     } catch (err) { console.error(err); }
     finally { setCreating(false); }
   };
 
   const handleDelete = async (id) => {
-    try {
-      await deleteProduct(id);
-      setProducts(prev => prev.filter(p => p._id !== id));
-    } catch (err) { console.error(err); }
+    try { await deleteProduct(id); await loadAll(); } catch (err) { console.error(err); }
   };
 
   const handleRunCreative = async () => {
     setRunningCreative(true);
-    try {
-      await runCreativeAgentApi();
-    } catch (err) { console.error(err); }
+    try { await runCreativeAgentApi(); await loadAll(); } catch (err) { console.error(err); }
     finally { setRunningCreative(false); }
+  };
+
+  const handleApproveProposal = async (id) => {
+    setApprovingId(id);
+    try { await approveCreativeProposal(id); await loadAll(); } catch (err) { console.error(err); }
+    finally { setApprovingId(null); }
+  };
+
+  const handleRejectProposal = async (id) => {
+    const reason = prompt('Razon del rechazo (opcional):') || '';
+    try { await rejectCreativeProposal(id, reason); await loadAll(); } catch (err) { console.error(err); }
   };
 
   return (
     <div className="product-bank-section">
       <div className="product-bank-header">
-        <h3>Banco de Productos</h3>
+        <h3>Creativos {pendingCount > 0 && <span className="tab-badge">{pendingCount}</span>}</h3>
         <button className="btn-agent-run" onClick={handleRunCreative} disabled={runningCreative}>
-          {runningCreative ? 'Generando...' : 'Ejecutar Creative Agent'}
+          {runningCreative ? 'Generando...' : 'Generar Creativos'}
         </button>
       </div>
+
+      {/* Proposals pending approval */}
+      {proposals.filter(p => p.status === 'pending').length > 0 && (
+        <div className="proposals-section">
+          <h4>Pendientes de aprobacion</h4>
+          <div className="proposals-grid">
+            {proposals.filter(p => p.status === 'pending').map(p => (
+              <div key={p._id} className="proposal-card">
+                <img src={getProposalImageUrl(p._id)} alt={p.headline} className="proposal-image" />
+                <div className="proposal-info">
+                  <strong>{p.headline}</strong>
+                  <span className="proposal-text">{p.primary_text}</span>
+                  <span className="proposal-meta">{p.product_name} &middot; {p.scene_short} &middot; {p.adset_name}</span>
+                </div>
+                <div className="proposal-actions">
+                  <button className="proposal-approve" onClick={() => handleApproveProposal(p._id)} disabled={approvingId === p._id}>
+                    {approvingId === p._id ? 'Subiendo...' : 'Aprobar'}
+                  </button>
+                  <button className="proposal-reject" onClick={() => handleRejectProposal(p._id)}>Rechazar</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Recent proposals (approved/rejected) */}
+      {proposals.filter(p => p.status !== 'pending').length > 0 && (
+        <div className="proposals-history">
+          <h4>Historial</h4>
+          <div className="proposals-history-list">
+            {proposals.filter(p => p.status !== 'pending').slice(0, 10).map(p => (
+              <div key={p._id} className={`proposal-history-row ${p.status}`}>
+                <img src={getProposalImageUrl(p._id)} alt="" className="proposal-thumb-sm" />
+                <span className="proposal-history-headline">{p.headline}</span>
+                <span className="proposal-history-adset">{p.adset_name}</span>
+                <span className={`proposal-status-badge ${p.status}`}>
+                  {p.status === 'uploaded' ? 'Aprobado' : p.status === 'approved' ? 'Aprobado' : 'Rechazado'}
+                </span>
+                {p.rejection_reason && <span className="proposal-rejection-reason">{p.rejection_reason}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {loading ? <div className="brain-loading">Cargando productos...</div> : (
         <>

@@ -307,6 +307,28 @@ export const getProductImageUrl = (filename) => {
   return `${BASE}/uploads/product-bank/${filename}`;
 };
 
+export const getCreativeProposals = async (status = '') => {
+  const params = status ? { status } : {};
+  const response = await api.get('/api/creative-agent/proposals', { params });
+  return response.data;
+};
+
+export const approveCreativeProposal = async (id) => {
+  const response = await api.post(`/api/creative-agent/proposals/${id}/approve`, {}, { timeout: 60000 });
+  return response.data;
+};
+
+export const rejectCreativeProposal = async (id, reason = '') => {
+  const response = await api.post(`/api/creative-agent/proposals/${id}/reject`, { reason });
+  return response.data;
+};
+
+export const getProposalImageUrl = (id) => {
+  const BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
+  const token = localStorage.getItem('auth_token');
+  return `${BASE}/api/creative-agent/proposals/${id}/image?token=${token}`;
+};
+
 // ═══ BRAIN — Creative Refresh Link ═══
 
 export const getPendingCreativeRec = async (adsetId) => {

@@ -164,4 +164,68 @@ router.get('/scenes', (req, res) => {
   res.json({ scenes: SCENES });
 });
 
+// ═══ Creative Proposals ═══
+
+const CreativeProposal = require('../../db/models/CreativeProposal');
+
+/**
+ * GET /api/creative-agent/proposals — List proposals (pending first)
+ */
+router.get('/proposals', async (req, res) => {
+  try {
+    const status = req.query.status || '';
+    const query = status ? { status } : {};
+    const proposals = await CreativeProposal.find(query)
+      .sort({ status: 1, created_at: -1 })
+      .limit(50)
+      .lean();
+
+    const pending = proposals.filter(p => p.status === 'pending').length;
+    res.json({ proposals, pending_count: pending });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/creative-agent/proposals/:id/approve — Approve and upload to Meta
+ */
+router.post('/proposals/:id/approve', async (req, res) => {
+  try {
+    const { approveProposal } = require('../../ai/agent/creative-agent');
+    const result = await approveProposal(req.params.id);
+    res.json(result);
+  } catch (error) {
+    logger.error(`[CREATIVE-AGENT] Approve error: ${error.message}`);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/creative-agent/proposals/:id/reject — Reject proposal
+ */
+router.post('/proposals/:id/reject', async (req, res) => {
+  try {
+    const { rejectProposal } = require('../../ai/agent/creative-agent');
+    const result = await rejectProposal(req.params.id, req.body.reason || '');
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/creative-agent/proposals/:id/image — Serve generated image
+ */
+router.get('/proposals/:id/image', async (req, res) => {
+  try {
+    const proposal = await CreativeProposal.findById(req.params.id).lean();
+    if (!proposal) return res.status(404).json({ error: 'Not found' });
+    if (fs.existsSync(proposal.image_path)) res.sendFile(proposal.image_path);
+    else res.status(404).json({ error: 'Image file not found' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;

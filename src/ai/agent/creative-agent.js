@@ -187,9 +187,12 @@ async function uploadToMeta(adsetId, imagePath, headline, primaryText, linkUrl) 
 // MAIN: RUN CREATIVE AGENT
 // ═══════════════════════════════════════════════════════════════════════════════
 
+const CreativeProposal = require('../../db/models/CreativeProposal');
+
 /**
  * Run the Creative Agent.
- * Checks for ad sets needing creatives, generates images + copy, uploads to Meta.
+ * Generates images + copy and saves as proposals for user approval.
+ * Does NOT upload to Meta — user approves first.
  */
 async function runCreativeAgent() {
   const startTime = Date.now();
@@ -202,36 +205,52 @@ async function runCreativeAgent() {
     entity_type: 'adset'
   }).lean();
 
-  if (needCreatives.length === 0) {
-    logger.info('[CREATIVE-AGENT] No ad sets need creatives');
-    return { generated: 0, uploaded: 0, elapsed: '0s', cycle_id: cycleId };
+  // Also skip ad sets that already have pending proposals
+  const pendingAdSets = await CreativeProposal.distinct('adset_id', { status: 'pending' });
+  const pendingSet = new Set(pendingAdSets);
+  const filtered = needCreatives.filter(m => !pendingSet.has(m.entity_id));
+
+  if (filtered.length === 0) {
+    logger.info('[CREATIVE-AGENT] No ad sets need creatives (or already have pending proposals)');
+    return { generated: 0, elapsed: '0s', cycle_id: cycleId };
   }
 
-  logger.info(`[CREATIVE-AGENT] ${needCreatives.length} ad sets need creatives`);
+  logger.info(`[CREATIVE-AGENT] ${filtered.length} ad sets need creatives`);
 
   // 2. Get available products
   const products = await ProductBank.find({ active: true }).lean();
   if (products.length === 0) {
     logger.warn('[CREATIVE-AGENT] No products in bank — cannot generate creatives');
-    return { generated: 0, uploaded: 0, elapsed: '0s', cycle_id: cycleId, error: 'No products in bank' };
+    return { generated: 0, elapsed: '0s', cycle_id: cycleId, error: 'No products in bank' };
+  }
+
+  // 3. Learn from past approvals/rejections
+  const pastProposals = await CreativeProposal.find({
+    status: { $in: ['approved', 'rejected'] }
+  }).sort({ created_at: -1 }).limit(50).lean();
+
+  const approvedScenes = {};
+  const rejectedScenes = {};
+  for (const p of pastProposals) {
+    const s = p.scene_short || 'unknown';
+    if (p.status === 'approved') approvedScenes[s] = (approvedScenes[s] || 0) + 1;
+    if (p.status === 'rejected') rejectedScenes[s] = (rejectedScenes[s] || 0) + 1;
   }
 
   let generated = 0;
-  let uploaded = 0;
   const results = [];
   const uploadsDir = path.join(config.system.uploadsDir || 'uploads', 'ai-creatives');
 
-  // Ensure output directory exists
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
 
-  for (const memory of needCreatives) {
+  for (const memory of filtered) {
     const adsetId = memory.entity_id;
     const adsetName = memory.entity_name;
 
     try {
-      // 3. Pick a product — try to match from ad set name, or use best performing
+      // Pick product
       let product = null;
       for (const p of products) {
         if ((adsetName || '').toLowerCase().includes(p.product_slug.toLowerCase()) ||
@@ -240,7 +259,6 @@ async function runCreativeAgent() {
           break;
         }
       }
-      // Fallback: use product with best avg_roas, or first available
       if (!product) {
         product = products.sort((a, b) => (b.performance?.avg_roas || 0) - (a.performance?.avg_roas || 0))[0];
       }
@@ -250,115 +268,148 @@ async function runCreativeAgent() {
         continue;
       }
 
-      // 4. Pick a scene — random for now, later weighted by performance
-      const sceneIdx = Math.floor(Math.random() * SCENES.length);
-      const scene = SCENES[sceneIdx];
-      const sceneShort = scene.substring(0, 40);
+      // Pick scene — weighted by approval history
+      let scene, sceneShort;
+      const availableScenes = SCENES.filter(s => {
+        const short = s.substring(0, 40);
+        const rejCount = rejectedScenes[short] || 0;
+        const appCount = approvedScenes[short] || 0;
+        return rejCount < 3 || appCount > rejCount; // skip scenes rejected 3+ times without approvals
+      });
+      const scenePool = availableScenes.length > 0 ? availableScenes : SCENES;
+      scene = scenePool[Math.floor(Math.random() * scenePool.length)];
+      sceneShort = scene.substring(0, 40);
 
-      // 5. Build reference paths
+      // Build references
       const refPaths = product.png_references.map(ref =>
         path.join(config.system.uploadsDir || 'uploads', 'product-bank', ref.filename)
       );
       const refTypes = product.png_references.map(ref => ref.type);
 
-      // 6. Build prompt
+      // Build prompt
       const prompt = buildImagePrompt(product.product_name, scene, refTypes);
 
-      // 7. Generate image with Gemini
+      // Generate image
       const outputFilename = `creative_${adsetId}_${Date.now()}.png`;
       const outputPath = path.join(uploadsDir, outputFilename);
 
       logger.info(`[CREATIVE-AGENT] Generating image for ${adsetName} — ${sceneShort}...`);
       await generateImage(prompt, refPaths, outputPath);
-      generated++;
 
-      // 8. Generate copy with Claude
+      // Generate copy
       const copy = await generateCopy(product.product_name, sceneShort);
 
-      // 9. Upload to Meta
-      logger.info(`[CREATIVE-AGENT] Uploading to Meta for ad set ${adsetId}...`);
-      const uploadResult = await uploadToMeta(
-        adsetId,
-        outputPath,
-        copy.headline,
-        copy.primary_text,
-        product.link_url || 'https://jerseypickles.com'
-      );
-      uploaded++;
-
-      // 10. Log in ActionLog
-      const snap = (await getLatestSnapshots('adset')).find(s => s.entity_id === adsetId);
-      const m7d = snap?.metrics?.last_7d || {};
-
-      await ActionLog.create({
-        entity_type: 'adset',
-        entity_id: adsetId,
-        entity_name: adsetName,
-        action: 'create_ad',
-        before_value: null,
-        after_value: uploadResult.adName,
-        reasoning: `[CREATIVE-AGENT] Generated ugly-ad style creative for "${product.product_name}" in scene "${sceneShort}". Copy: "${copy.headline}"`,
-        confidence: 'medium',
-        agent_type: 'creative_agent',
-        success: true,
-        executed_at: new Date(),
-        new_entity_id: uploadResult.adId,
-        metrics_at_execution: {
-          roas_7d: m7d.roas || 0,
-          spend_7d: m7d.spend || 0,
-          purchases_7d: m7d.purchases || 0,
-          frequency: m7d.frequency || 0,
-          ctr: m7d.ctr || 0
-        }
+      // Save as proposal (NOT uploaded yet)
+      await CreativeProposal.create({
+        adset_id: adsetId,
+        adset_name: adsetName,
+        product_id: product._id,
+        product_name: product.product_name,
+        image_path: outputPath,
+        image_filename: outputFilename,
+        scene,
+        scene_short: sceneShort,
+        headline: copy.headline,
+        primary_text: copy.primary_text,
+        link_url: product.link_url || 'https://jerseypickles.com',
+        prompt_used: prompt,
+        status: 'pending'
       });
 
-      // 11. Log in BrainInsight for the feed
-      await BrainInsight.create({
-        insight_type: 'status_change',
-        severity: 'info',
-        entities: [{ entity_type: 'adset', entity_id: adsetId, entity_name: adsetName }],
-        title: `Creative Agent genero creativo para "${adsetName}"`,
-        body: `Producto: ${product.product_name}. Escena: ${sceneShort}. Headline: "${copy.headline}". Subido a Meta como "${uploadResult.adName}".`,
-        generated_by: 'brain'
-      });
-
-      // 12. Clear the flag
-      await BrainMemory.findOneAndUpdate(
-        { entity_id: adsetId },
-        { $set: { agent_needs_new_creatives: false, last_updated_at: new Date() } }
-      );
-
-      // 13. Update product performance
-      await ProductBank.findByIdAndUpdate(product._id, {
-        $inc: { 'performance.total_ads_created': 1 },
-        $set: { updated_at: new Date() }
-      });
-
+      generated++;
       results.push({
         adset_id: adsetId,
         adset_name: adsetName,
         product: product.product_name,
         scene: sceneShort,
-        ad_id: uploadResult.adId,
-        headline: copy.headline
+        headline: copy.headline,
+        status: 'pending_approval'
       });
 
-      logger.info(`[CREATIVE-AGENT] ✅ ${adsetName}: "${copy.headline}" uploaded as ${uploadResult.adId}`);
+      logger.info(`[CREATIVE-AGENT] ✅ ${adsetName}: "${copy.headline}" — pendiente de aprobacion`);
 
     } catch (err) {
       logger.error(`[CREATIVE-AGENT] Error for ${adsetName}: ${err.message}`);
-      results.push({
-        adset_id: adsetId,
-        adset_name: adsetName,
-        error: err.message
-      });
+      results.push({ adset_id: adsetId, adset_name: adsetName, error: err.message });
     }
   }
 
   const elapsed = `${((Date.now() - startTime) / 1000).toFixed(1)}s`;
-  logger.info(`═══ Creative Agent completado [${cycleId}]: ${generated} generados, ${uploaded} subidos en ${elapsed} ═══`);
+  logger.info(`═══ Creative Agent completado [${cycleId}]: ${generated} propuestas generadas en ${elapsed} ═══`);
 
-  return { generated, uploaded, results, elapsed, cycle_id: cycleId };
+  return { generated, results, elapsed, cycle_id: cycleId };
 }
 
-module.exports = { runCreativeAgent, generateImage, generateCopy, SCENES };
+/**
+ * Approve a creative proposal — upload to Meta.
+ */
+async function approveProposal(proposalId) {
+  const proposal = await CreativeProposal.findById(proposalId);
+  if (!proposal) throw new Error('Proposal not found');
+  if (proposal.status !== 'pending') throw new Error(`Proposal is ${proposal.status}, not pending`);
+
+  // Upload to Meta
+  const uploadResult = await uploadToMeta(
+    proposal.adset_id,
+    proposal.image_path,
+    proposal.headline,
+    proposal.primary_text,
+    proposal.link_url
+  );
+
+  // Update proposal
+  proposal.status = 'uploaded';
+  proposal.decided_at = new Date();
+  proposal.meta_ad_id = uploadResult.adId;
+  proposal.meta_creative_id = uploadResult.creativeId;
+  proposal.meta_ad_name = uploadResult.adName;
+  await proposal.save();
+
+  // Log
+  await ActionLog.create({
+    entity_type: 'adset',
+    entity_id: proposal.adset_id,
+    entity_name: proposal.adset_name,
+    action: 'create_ad',
+    after_value: uploadResult.adName,
+    reasoning: `[CREATIVE-AGENT] Approved: "${proposal.headline}" for ${proposal.product_name} (${proposal.scene_short})`,
+    confidence: 'high',
+    agent_type: 'creative_agent',
+    success: true,
+    new_entity_id: uploadResult.adId
+  });
+
+  // Clear needs_new_creatives flag
+  await BrainMemory.findOneAndUpdate(
+    { entity_id: proposal.adset_id },
+    { $set: { agent_needs_new_creatives: false, last_updated_at: new Date() } }
+  );
+
+  // Update product stats
+  await ProductBank.findByIdAndUpdate(proposal.product_id, {
+    $inc: { 'performance.total_ads_created': 1 },
+    $set: { updated_at: new Date() }
+  });
+
+  logger.info(`[CREATIVE-AGENT] Proposal ${proposalId} approved and uploaded as ${uploadResult.adId}`);
+  return { success: true, ad_id: uploadResult.adId, ad_name: uploadResult.adName };
+}
+
+/**
+ * Reject a creative proposal.
+ */
+async function rejectProposal(proposalId, reason = '') {
+  const proposal = await CreativeProposal.findById(proposalId);
+  if (!proposal) throw new Error('Proposal not found');
+  if (proposal.status !== 'pending') throw new Error(`Proposal is ${proposal.status}, not pending`);
+
+  proposal.status = 'rejected';
+  proposal.decided_at = new Date();
+  proposal.rejection_reason = reason;
+  await proposal.save();
+
+  logger.info(`[CREATIVE-AGENT] Proposal ${proposalId} rejected: ${reason || 'no reason'}`);
+  return { success: true };
+}
+
+module.exports = { runCreativeAgent, approveProposal, rejectProposal, generateImage, generateCopy, uploadToMeta, SCENES };
