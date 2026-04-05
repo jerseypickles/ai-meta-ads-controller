@@ -221,8 +221,17 @@ router.get('/proposals/:id/image', async (req, res) => {
   try {
     const proposal = await CreativeProposal.findById(req.params.id).lean();
     if (!proposal) return res.status(404).json({ error: 'Not found' });
-    if (fs.existsSync(proposal.image_path)) res.sendFile(proposal.image_path);
-    else res.status(404).json({ error: 'Image file not found' });
+
+    // Try file first, fall back to base64 from DB
+    if (proposal.image_path && fs.existsSync(proposal.image_path)) {
+      res.sendFile(proposal.image_path);
+    } else if (proposal.image_base64) {
+      const buffer = Buffer.from(proposal.image_base64, 'base64');
+      res.set('Content-Type', 'image/png');
+      res.send(buffer);
+    } else {
+      res.status(404).json({ error: 'Image not found' });
+    }
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

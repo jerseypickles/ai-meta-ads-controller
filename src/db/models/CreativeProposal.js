@@ -14,8 +14,9 @@ const creativeProposalSchema = new mongoose.Schema({
   product_name: { type: String, default: '' },
 
   // Generated content
-  image_path: { type: String, required: true },
-  image_filename: { type: String, required: true },
+  image_path: { type: String, default: '' },
+  image_filename: { type: String, default: '' },
+  image_base64: { type: String, default: '' }, // fallback: store image in DB if filesystem is ephemeral
   scene: { type: String, default: '' },
   scene_short: { type: String, default: '' },
   headline: { type: String, default: '' },
