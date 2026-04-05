@@ -153,7 +153,8 @@ async function uploadToMeta(adsetId, imagePath, headline, primaryText, linkUrl) 
 
   // 1. Upload image to Meta (expects file path)
   if (!fs.existsSync(imagePath)) throw new Error(`Image file not found: ${imagePath}`);
-  const imageHash = await meta.uploadImage(imagePath);
+  const upload = await meta.uploadImage(imagePath);
+  const imageHash = upload.image_hash;
 
   // 2. Create ad creative using existing meta client method
   const pageId = process.env.META_PAGE_ID;
