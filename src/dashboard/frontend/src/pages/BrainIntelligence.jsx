@@ -11,7 +11,8 @@ import {
   getAdHealth, suggestAdHealthAction, quickPauseAd, logout,
   uploadLaunchCreatives, launchStrategize, launchApprove, getCreativeThumbnailUrl,
   getAgentActivity, runAccountAgent, getAgentAdsetDetail, getAgentThoughts, getAgentPerformance,
-  generateCopyForUpload, uploadAndCreateAd
+  generateCopyForUpload, uploadAndCreateAd,
+  getProducts, createProduct, deleteProduct, getProductImageUrl, runCreativeAgentApi
 } from '../api';
 
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
@@ -1071,6 +1072,134 @@ function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onR
           );
         })}
       </div>
+
+      {/* Product Bank */}
+      <ProductBankPanel />
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PRODUCT BANK — Banco de productos para Creative Agent
+// ═══════════════════════════════════════════════════════════════════
+
+function ProductBankPanel() {
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [showBank, setShowBank] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [formName, setFormName] = useState('');
+  const [formSlug, setFormSlug] = useState('');
+  const [formUrl, setFormUrl] = useState('https://jerseypickles.com');
+  const [formFiles, setFormFiles] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [runningCreative, setRunningCreative] = useState(false);
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    if (showBank && products.length === 0) {
+      setLoading(true);
+      getProducts().then(d => setProducts(d.products || [])).catch(console.error).finally(() => setLoading(false));
+    }
+  }, [showBank, products.length]);
+
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    if (!formName || !formSlug || !formFiles?.length) return;
+    setCreating(true);
+    try {
+      const fd = new FormData();
+      fd.append('product_name', formName);
+      fd.append('product_slug', formSlug);
+      fd.append('link_url', formUrl);
+      for (const f of formFiles) fd.append('images', f);
+      await createProduct(fd);
+      setFormName(''); setFormSlug(''); setFormFiles(null); setShowForm(false);
+      setProducts([]); // force reload
+    } catch (err) { console.error(err); }
+    finally { setCreating(false); }
+  };
+
+  const handleDelete = async (id) => {
+    try {
+      await deleteProduct(id);
+      setProducts(prev => prev.filter(p => p._id !== id));
+    } catch (err) { console.error(err); }
+  };
+
+  const handleRunCreative = async () => {
+    setRunningCreative(true);
+    try {
+      await runCreativeAgentApi();
+    } catch (err) { console.error(err); }
+    finally { setRunningCreative(false); }
+  };
+
+  return (
+    <div className="product-bank-section">
+      <div className="product-bank-toggle">
+        <button className="agent-perf-btn" onClick={() => setShowBank(!showBank)}>
+          {showBank ? 'Ocultar banco de productos' : 'Banco de Productos (Creative Agent)'}
+        </button>
+        {showBank && (
+          <button className="btn-agent-run" onClick={handleRunCreative} disabled={runningCreative} style={{ marginLeft: 8 }}>
+            {runningCreative ? 'Generando...' : 'Ejecutar Creative Agent'}
+          </button>
+        )}
+      </div>
+
+      {showBank && (
+        <div className="product-bank-content">
+          {loading ? <div className="brain-loading">Cargando productos...</div> : (
+            <>
+              <div className="product-bank-grid">
+                {products.map(p => (
+                  <div key={p._id} className="product-bank-card">
+                    <div className="product-bank-card-images">
+                      {(p.png_references || []).map((ref, i) => (
+                        <img key={i} src={getProductImageUrl(ref.filename)} alt={ref.type} className="product-bank-thumb" />
+                      ))}
+                    </div>
+                    <div className="product-bank-card-info">
+                      <strong>{p.product_name}</strong>
+                      <span className="product-bank-slug">{p.product_slug}</span>
+                      <span className="product-bank-stats">
+                        {p.performance?.total_ads_created || 0} ads creados
+                        {p.performance?.avg_roas > 0 && ` | ROAS ${p.performance.avg_roas.toFixed(2)}x`}
+                      </span>
+                    </div>
+                    <button className="product-bank-delete" onClick={() => handleDelete(p._id)}>x</button>
+                  </div>
+                ))}
+              </div>
+
+              {!showForm ? (
+                <button className="agent-perf-btn" onClick={() => setShowForm(true)} style={{ marginTop: 8 }}>
+                  + Agregar producto
+                </button>
+              ) : (
+                <form className="product-bank-form" onSubmit={handleCreate} onClick={e => e.stopPropagation()}>
+                  <input type="text" placeholder="Nombre (ej: Hot Pickled Tomatoes)" value={formName} onChange={e => { setFormName(e.target.value); setFormSlug(e.target.value.toLowerCase().replace(/\s+/g, '-')); }} />
+                  <input type="text" placeholder="Slug (ej: hot-pickled-tomatoes)" value={formSlug} onChange={e => setFormSlug(e.target.value)} />
+                  <input type="text" placeholder="Link URL" value={formUrl} onChange={e => setFormUrl(e.target.value)} />
+                  <div className="product-bank-file-row">
+                    <input type="file" accept="image/*" multiple ref={fileRef} onChange={e => setFormFiles(e.target.files)} />
+                    <span className="product-bank-file-hint">{formFiles?.length || 0} PNGs</span>
+                  </div>
+                  <div className="product-bank-form-actions">
+                    <button type="submit" className="btn-agent-run" disabled={creating}>{creating ? 'Creando...' : 'Crear'}</button>
+                    <button type="button" className="agent-perf-btn" onClick={() => setShowForm(false)}>Cancelar</button>
+                  </div>
+                </form>
+              )}
+
+              {products.length === 0 && !loading && (
+                <div className="product-bank-empty">Sin productos. Agrega PNGs de tus productos para que el Creative Agent genere creativos.</div>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

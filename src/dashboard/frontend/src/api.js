@@ -267,6 +267,46 @@ export const getAgentThoughts = async (limit = 50) => {
   return response.data;
 };
 
+// ═══ CREATIVE AGENT — Product Bank ═══
+
+export const getProducts = async () => {
+  const response = await api.get('/api/creative-agent/products');
+  return response.data;
+};
+
+export const createProduct = async (formData) => {
+  const response = await api.post('/api/creative-agent/products', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 30000
+  });
+  return response.data;
+};
+
+export const addProductImages = async (productId, formData) => {
+  const response = await api.post(`/api/creative-agent/products/${productId}/images`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 30000
+  });
+  return response.data;
+};
+
+export const deleteProduct = async (productId) => {
+  const response = await api.delete(`/api/creative-agent/products/${productId}`);
+  return response.data;
+};
+
+export const runCreativeAgentApi = async () => {
+  const response = await api.post('/api/creative-agent/run', {}, { timeout: 30000 });
+  const data = response.data;
+  if (data.async && data.job_id) return pollForCompletion(`/api/creative-agent/run-status/${data.job_id}`, 3000, 600000);
+  return data;
+};
+
+export const getProductImageUrl = (filename) => {
+  const BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
+  return `${BASE}/uploads/product-bank/${filename}`;
+};
+
 // ═══ BRAIN — Creative Refresh Link ═══
 
 export const getPendingCreativeRec = async (adsetId) => {
