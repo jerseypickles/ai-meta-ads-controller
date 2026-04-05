@@ -147,21 +147,13 @@ Style: casual, fun, crave-inducing. Like a friend recommending a snack. English 
 // ═══════════════════════════════════════════════════════════════════════════════
 // UPLOAD TO META
 // ═══════════════════════════════════════════════════════════════════════════════
-async function uploadToMeta(adsetId, imagePathOrBase64, headline, primaryText, linkUrl) {
+async function uploadToMeta(adsetId, imagePath, headline, primaryText, linkUrl) {
   const { getMetaClient } = require('../../meta/client');
   const meta = getMetaClient();
 
-  // 1. Upload image to Meta — try file first, fall back to base64
-  let imageBuffer;
-  if (typeof imagePathOrBase64 === 'string' && imagePathOrBase64.length < 500 && fs.existsSync(imagePathOrBase64)) {
-    imageBuffer = fs.readFileSync(imagePathOrBase64);
-  } else if (typeof imagePathOrBase64 === 'string' && imagePathOrBase64.length > 500) {
-    // It's base64 data
-    imageBuffer = Buffer.from(imagePathOrBase64, 'base64');
-  } else {
-    throw new Error(`Image not found: ${typeof imagePathOrBase64 === 'string' ? imagePathOrBase64.substring(0, 100) : 'invalid'}`);
-  }
-  const imageHash = await meta.uploadImage(imageBuffer);
+  // 1. Upload image to Meta (expects file path)
+  if (!fs.existsSync(imagePath)) throw new Error(`Image file not found: ${imagePath}`);
+  const imageHash = await meta.uploadImage(imagePath);
 
   // 2. Create ad creative
   const creativeName = `AI Creative - ${path.basename(imagePath, path.extname(imagePath))}`;
@@ -364,16 +356,21 @@ async function approveProposal(proposalId) {
   if (!proposal) throw new Error('Proposal not found');
   if (proposal.status !== 'pending') throw new Error(`Proposal is ${proposal.status}, not pending`);
 
-  // Upload to Meta — use file if exists, otherwise base64 from DB
-  const imageSource = (proposal.image_path && fs.existsSync(proposal.image_path))
-    ? proposal.image_path
-    : proposal.image_base64;
+  // Upload to Meta — use file if exists, otherwise write base64 to temp file
+  let imagePath = proposal.image_path;
 
-  if (!imageSource) throw new Error('No image data available — file missing and no base64 in DB');
+  if (!imagePath || !fs.existsSync(imagePath)) {
+    if (!proposal.image_base64) throw new Error('No image data available — file missing and no base64 in DB');
+    // Write base64 to temp file
+    const tmpDir = path.join(require('os').tmpdir(), 'creative-agent');
+    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+    imagePath = path.join(tmpDir, `proposal_${proposal._id}.png`);
+    fs.writeFileSync(imagePath, Buffer.from(proposal.image_base64, 'base64'));
+  }
 
   const uploadResult = await uploadToMeta(
     proposal.adset_id,
-    imageSource,
+    imagePath,
     proposal.headline,
     proposal.primary_text,
     proposal.link_url
