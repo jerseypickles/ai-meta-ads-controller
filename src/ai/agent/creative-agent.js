@@ -191,16 +191,22 @@ async function runCreativeAgent() {
   const cycleId = `creative_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   logger.info(`═══ Iniciando Creative Agent [${cycleId}] ═══`);
 
-  // 1. Check for ad sets needing creatives
+  // 1. Auto-rechazar propuestas pendientes de oleadas anteriores
+  const stale = await CreativeProposal.updateMany(
+    { status: 'pending' },
+    { $set: { status: 'rejected', rejection_reason: 'auto: nueva oleada', decided_at: new Date() } }
+  );
+  if (stale.modifiedCount > 0) {
+    logger.info(`[CREATIVE-AGENT] Auto-rechazadas ${stale.modifiedCount} propuestas pendientes de oleadas anteriores`);
+  }
+
+  // 2. Check for ad sets needing creatives
   const needCreatives = await BrainMemory.find({
     agent_needs_new_creatives: true,
     entity_type: 'adset'
   }).lean();
 
-  // Also skip ad sets that already have pending proposals
-  const pendingAdSets = await CreativeProposal.distinct('adset_id', { status: 'pending' });
-  const pendingSet = new Set(pendingAdSets);
-  const filtered = needCreatives.filter(m => !pendingSet.has(m.entity_id));
+  const filtered = needCreatives;
 
   if (filtered.length === 0) {
     logger.info('[CREATIVE-AGENT] No ad sets need creatives (or already have pending proposals)');
