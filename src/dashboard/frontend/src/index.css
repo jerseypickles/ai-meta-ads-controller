@@ -9929,19 +9929,17 @@ a:hover {
   margin-top: 16px;
 }
 
-.product-bank-toggle {
+.product-bank-header {
   display: flex;
-  justify-content: center;
+  justify-content: space-between;
   align-items: center;
-  gap: 8px;
+  margin-bottom: 12px;
 }
 
-.product-bank-content {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 14px;
-  margin-top: 8px;
+.product-bank-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text-primary);
 }
 
 .product-bank-grid {

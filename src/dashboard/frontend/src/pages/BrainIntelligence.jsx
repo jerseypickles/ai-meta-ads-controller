@@ -478,6 +478,12 @@ export default function BrainIntelligence() {
           {unreadCount > 0 && <span className="tab-badge">{unreadCount}</span>}
         </button>
         <button
+          className={`brain-tab ${activeTab === 'creatives' ? 'active' : ''}`}
+          onClick={() => setActiveTab('creatives')}
+        >
+          Creativos
+        </button>
+        <button
           className={`brain-tab ${activeTab === 'chat' ? 'active' : ''}`}
           onClick={() => setActiveTab('chat')}
         >
@@ -517,6 +523,8 @@ export default function BrainIntelligence() {
             onPageChange={(p) => loadInsights(p)}
             formatTime={formatTime}
           />
+        ) : activeTab === 'creatives' ? (
+          <ProductBankPanel />
         ) : (
           <ChatPanel
             messages={chatMessages}
@@ -1072,21 +1080,17 @@ function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onR
           );
         })}
       </div>
-
-      {/* Product Bank */}
-      <ProductBankPanel />
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// PRODUCT BANK — Banco de productos para Creative Agent
+// PRODUCT BANK — Tab Creativos: Banco de productos para Creative Agent
 // ═══════════════════════════════════════════════════════════════════
 
 function ProductBankPanel() {
   const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [showBank, setShowBank] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState('');
   const [formSlug, setFormSlug] = useState('');
@@ -1097,11 +1101,9 @@ function ProductBankPanel() {
   const fileRef = useRef(null);
 
   useEffect(() => {
-    if (showBank && products.length === 0) {
-      setLoading(true);
-      getProducts().then(d => setProducts(d.products || [])).catch(console.error).finally(() => setLoading(false));
-    }
-  }, [showBank, products.length]);
+    setLoading(true);
+    getProducts().then(d => setProducts(d.products || [])).catch(console.error).finally(() => setLoading(false));
+  }, []);
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -1137,68 +1139,60 @@ function ProductBankPanel() {
 
   return (
     <div className="product-bank-section">
-      <div className="product-bank-toggle">
-        <button className="agent-perf-btn" onClick={() => setShowBank(!showBank)}>
-          {showBank ? 'Ocultar banco de productos' : 'Banco de Productos (Creative Agent)'}
+      <div className="product-bank-header">
+        <h3>Banco de Productos</h3>
+        <button className="btn-agent-run" onClick={handleRunCreative} disabled={runningCreative}>
+          {runningCreative ? 'Generando...' : 'Ejecutar Creative Agent'}
         </button>
-        {showBank && (
-          <button className="btn-agent-run" onClick={handleRunCreative} disabled={runningCreative} style={{ marginLeft: 8 }}>
-            {runningCreative ? 'Generando...' : 'Ejecutar Creative Agent'}
-          </button>
-        )}
       </div>
 
-      {showBank && (
-        <div className="product-bank-content">
-          {loading ? <div className="brain-loading">Cargando productos...</div> : (
-            <>
-              <div className="product-bank-grid">
-                {products.map(p => (
-                  <div key={p._id} className="product-bank-card">
-                    <div className="product-bank-card-images">
-                      {(p.png_references || []).map((ref, i) => (
-                        <img key={i} src={getProductImageUrl(ref.filename)} alt={ref.type} className="product-bank-thumb" />
-                      ))}
-                    </div>
-                    <div className="product-bank-card-info">
-                      <strong>{p.product_name}</strong>
-                      <span className="product-bank-slug">{p.product_slug}</span>
-                      <span className="product-bank-stats">
-                        {p.performance?.total_ads_created || 0} ads creados
-                        {p.performance?.avg_roas > 0 && ` | ROAS ${p.performance.avg_roas.toFixed(2)}x`}
-                      </span>
-                    </div>
-                    <button className="product-bank-delete" onClick={() => handleDelete(p._id)}>x</button>
-                  </div>
-                ))}
+      {loading ? <div className="brain-loading">Cargando productos...</div> : (
+        <>
+          <div className="product-bank-grid">
+            {products.map(p => (
+              <div key={p._id} className="product-bank-card">
+                <div className="product-bank-card-images">
+                  {(p.png_references || []).map((ref, i) => (
+                    <img key={i} src={getProductImageUrl(ref.filename)} alt={ref.type} className="product-bank-thumb" />
+                  ))}
+                </div>
+                <div className="product-bank-card-info">
+                  <strong>{p.product_name}</strong>
+                  <span className="product-bank-slug">{p.product_slug}</span>
+                  <span className="product-bank-stats">
+                    {p.performance?.total_ads_created || 0} ads creados
+                    {p.performance?.avg_roas > 0 && ` | ROAS ${p.performance.avg_roas.toFixed(2)}x`}
+                  </span>
+                </div>
+                <button className="product-bank-delete" onClick={() => handleDelete(p._id)}>x</button>
               </div>
+            ))}
+          </div>
 
-              {!showForm ? (
-                <button className="agent-perf-btn" onClick={() => setShowForm(true)} style={{ marginTop: 8 }}>
-                  + Agregar producto
-                </button>
-              ) : (
-                <form className="product-bank-form" onSubmit={handleCreate} onClick={e => e.stopPropagation()}>
-                  <input type="text" placeholder="Nombre (ej: Hot Pickled Tomatoes)" value={formName} onChange={e => { setFormName(e.target.value); setFormSlug(e.target.value.toLowerCase().replace(/\s+/g, '-')); }} />
-                  <input type="text" placeholder="Slug (ej: hot-pickled-tomatoes)" value={formSlug} onChange={e => setFormSlug(e.target.value)} />
-                  <input type="text" placeholder="Link URL" value={formUrl} onChange={e => setFormUrl(e.target.value)} />
-                  <div className="product-bank-file-row">
-                    <input type="file" accept="image/*" multiple ref={fileRef} onChange={e => setFormFiles(e.target.files)} />
-                    <span className="product-bank-file-hint">{formFiles?.length || 0} PNGs</span>
-                  </div>
-                  <div className="product-bank-form-actions">
-                    <button type="submit" className="btn-agent-run" disabled={creating}>{creating ? 'Creando...' : 'Crear'}</button>
-                    <button type="button" className="agent-perf-btn" onClick={() => setShowForm(false)}>Cancelar</button>
-                  </div>
-                </form>
-              )}
-
-              {products.length === 0 && !loading && (
-                <div className="product-bank-empty">Sin productos. Agrega PNGs de tus productos para que el Creative Agent genere creativos.</div>
-              )}
-            </>
+          {!showForm ? (
+            <button className="agent-perf-btn" onClick={() => setShowForm(true)} style={{ marginTop: 8 }}>
+              + Agregar producto
+            </button>
+          ) : (
+            <form className="product-bank-form" onSubmit={handleCreate} onClick={e => e.stopPropagation()}>
+              <input type="text" placeholder="Nombre (ej: Hot Pickled Tomatoes)" value={formName} onChange={e => { setFormName(e.target.value); setFormSlug(e.target.value.toLowerCase().replace(/\s+/g, '-')); }} />
+              <input type="text" placeholder="Slug (ej: hot-pickled-tomatoes)" value={formSlug} onChange={e => setFormSlug(e.target.value)} />
+              <input type="text" placeholder="Link URL" value={formUrl} onChange={e => setFormUrl(e.target.value)} />
+              <div className="product-bank-file-row">
+                <input type="file" accept="image/*" multiple ref={fileRef} onChange={e => setFormFiles(e.target.files)} />
+                <span className="product-bank-file-hint">{formFiles?.length || 0} PNGs</span>
+              </div>
+              <div className="product-bank-form-actions">
+                <button type="submit" className="btn-agent-run" disabled={creating}>{creating ? 'Creando...' : 'Crear'}</button>
+                <button type="button" className="agent-perf-btn" onClick={() => setShowForm(false)}>Cancelar</button>
+              </div>
+            </form>
           )}
-        </div>
+
+          {products.length === 0 && !loading && (
+            <div className="product-bank-empty">Sin productos. Agrega PNGs de tus productos para que el Creative Agent genere creativos automaticamente.</div>
+          )}
+        </>
       )}
     </div>
   );
