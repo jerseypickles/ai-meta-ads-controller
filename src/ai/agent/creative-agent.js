@@ -237,92 +237,120 @@ async function runCreativeAgent() {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
 
+  // ── Smart scene ranking: approved scenes first, then unused, skip over-rejected ──
+  const rankedScenes = SCENES
+    .map(s => {
+      const short = s.substring(0, 40);
+      const app = approvedScenes[short] || 0;
+      const rej = rejectedScenes[short] || 0;
+      if (rej >= 3 && app <= rej) return null; // blacklisted
+      // Score: approved scenes get big boost, unused scenes get neutral score, rejected get penalty
+      const score = (app * 3) - (rej * 2) + (app === 0 && rej === 0 ? 1 : 0);
+      return { scene: s, short, score };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score);
+
+  if (rankedScenes.length === 0) {
+    logger.warn('[CREATIVE-AGENT] All scenes blacklisted — resetting to full pool');
+    rankedScenes.push(...SCENES.map(s => ({ scene: s, short: s.substring(0, 40), score: 0 })));
+  }
+
+  // ── Smart product ranking: best ROAS first, then most ads created ──
+  const rankedProducts = products
+    .filter(p => p.png_references && p.png_references.length > 0)
+    .sort((a, b) => {
+      const roasA = a.performance?.avg_roas || 0;
+      const roasB = b.performance?.avg_roas || 0;
+      if (roasA !== roasB) return roasB - roasA; // best ROAS first
+      return (b.performance?.total_ads_created || 0) - (a.performance?.total_ads_created || 0);
+    });
+
+  if (rankedProducts.length === 0) {
+    logger.warn('[CREATIVE-AGENT] No products with PNG references — cannot generate');
+    return { generated: 0, elapsed: '0s', cycle_id: cycleId, error: 'No products with PNGs' };
+  }
+
+  const PROPOSALS_PER_ADSET = 2;
+
   for (const memory of filtered) {
     const adsetId = memory.entity_id;
     const adsetName = memory.entity_name;
 
     try {
-      // Pick product
-      let product = null;
-      for (const p of products) {
-        if ((adsetName || '').toLowerCase().includes(p.product_slug.toLowerCase()) ||
-            (adsetName || '').toLowerCase().includes(p.product_name.toLowerCase())) {
-          product = p;
-          break;
+      // Pick product — match by name first, fallback to best ROAS
+      let product = rankedProducts.find(p =>
+        (adsetName || '').toLowerCase().includes(p.product_slug.toLowerCase()) ||
+        (adsetName || '').toLowerCase().includes(p.product_name.toLowerCase())
+      ) || rankedProducts[0];
+
+      // Pick N different scenes for this ad set (avoid duplicates)
+      const usedScenes = new Set();
+      const scenePicks = [];
+      for (const s of rankedScenes) {
+        if (scenePicks.length >= PROPOSALS_PER_ADSET) break;
+        if (!usedScenes.has(s.short)) {
+          usedScenes.add(s.short);
+          scenePicks.push(s);
         }
       }
-      if (!product) {
-        product = products.sort((a, b) => (b.performance?.avg_roas || 0) - (a.performance?.avg_roas || 0))[0];
-      }
 
-      if (!product.png_references || product.png_references.length === 0) {
-        logger.warn(`[CREATIVE-AGENT] Product "${product.product_name}" has no PNG references — skipping`);
-        continue;
-      }
-
-      // Pick scene — weighted by approval history
-      let scene, sceneShort;
-      const availableScenes = SCENES.filter(s => {
-        const short = s.substring(0, 40);
-        const rejCount = rejectedScenes[short] || 0;
-        const appCount = approvedScenes[short] || 0;
-        return rejCount < 3 || appCount > rejCount; // skip scenes rejected 3+ times without approvals
-      });
-      const scenePool = availableScenes.length > 0 ? availableScenes : SCENES;
-      scene = scenePool[Math.floor(Math.random() * scenePool.length)];
-      sceneShort = scene.substring(0, 40);
-
-      // Build references
+      // Build references once per product
       const refPaths = product.png_references.map(ref =>
         path.join(config.system.uploadsDir || 'uploads', 'product-bank', ref.filename)
       );
       const refTypes = product.png_references.map(ref => ref.type);
 
-      // Build prompt
-      const prompt = buildImagePrompt(product.product_name, scene, refTypes);
+      for (const scenePick of scenePicks) {
+        const scene = scenePick.scene;
+        const sceneShort = scenePick.short;
 
-      // Generate image
-      const outputFilename = `creative_${adsetId}_${Date.now()}.png`;
-      const outputPath = path.join(uploadsDir, outputFilename);
+        // Build prompt
+        const prompt = buildImagePrompt(product.product_name, scene, refTypes);
 
-      logger.info(`[CREATIVE-AGENT] Generating image for ${adsetName} — ${sceneShort}...`);
-      await generateImage(prompt, refPaths, outputPath);
+        // Generate image
+        const outputFilename = `creative_${adsetId}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}.png`;
+        const outputPath = path.join(uploadsDir, outputFilename);
 
-      // Generate copy
-      const copy = await generateCopy(product.product_name, sceneShort);
+        logger.info(`[CREATIVE-AGENT] Generating image for ${adsetName} — ${sceneShort}...`);
+        await generateImage(prompt, refPaths, outputPath);
 
-      // Read image as base64 for DB storage (Render has ephemeral filesystem)
-      const imageBase64 = fs.readFileSync(outputPath).toString('base64');
+        // Generate copy
+        const copy = await generateCopy(product.product_name, sceneShort);
 
-      // Save as proposal (NOT uploaded yet)
-      await CreativeProposal.create({
-        adset_id: adsetId,
-        adset_name: adsetName,
-        product_id: product._id,
-        product_name: product.product_name,
-        image_path: outputPath,
-        image_filename: outputFilename,
-        image_base64: imageBase64,
-        scene,
-        scene_short: sceneShort,
-        headline: copy.headline,
-        primary_text: copy.primary_text,
-        link_url: product.link_url || 'https://jerseypickles.com',
-        prompt_used: prompt,
-        status: 'pending'
-      });
+        // Read image as base64 for DB storage (Render has ephemeral filesystem)
+        const imageBase64 = fs.readFileSync(outputPath).toString('base64');
 
-      generated++;
-      results.push({
-        adset_id: adsetId,
-        adset_name: adsetName,
-        product: product.product_name,
-        scene: sceneShort,
-        headline: copy.headline,
-        status: 'pending_approval'
-      });
+        // Save as proposal (NOT uploaded yet)
+        await CreativeProposal.create({
+          adset_id: adsetId,
+          adset_name: adsetName,
+          product_id: product._id,
+          product_name: product.product_name,
+          image_path: outputPath,
+          image_filename: outputFilename,
+          image_base64: imageBase64,
+          scene,
+          scene_short: sceneShort,
+          headline: copy.headline,
+          primary_text: copy.primary_text,
+          link_url: product.link_url || 'https://jerseypickles.com',
+          prompt_used: prompt,
+          status: 'pending'
+        });
 
-      logger.info(`[CREATIVE-AGENT] ✅ ${adsetName}: "${copy.headline}" — pendiente de aprobacion`);
+        generated++;
+        results.push({
+          adset_id: adsetId,
+          adset_name: adsetName,
+          product: product.product_name,
+          scene: sceneShort,
+          headline: copy.headline,
+          status: 'pending_approval'
+        });
+
+        logger.info(`[CREATIVE-AGENT] ✅ ${adsetName}: "${copy.headline}" — pendiente de aprobacion`);
+      }
 
     } catch (err) {
       logger.error(`[CREATIVE-AGENT] Error for ${adsetName}: ${err.message}`);

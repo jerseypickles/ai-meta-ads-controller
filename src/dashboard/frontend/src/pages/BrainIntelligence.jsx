@@ -1162,7 +1162,7 @@ function ProductBankPanel() {
   };
 
   const pendingProposals = useMemo(() => proposals.filter(p => p.status === 'pending'), [proposals]);
-  const historyProposals = useMemo(() => proposals.filter(p => p.status !== 'pending'), [proposals]);
+  const historyProposals = useMemo(() => proposals.filter(p => p.status === 'uploaded' || p.status === 'approved'), [proposals]);
 
   const fmtDate = (d) => {
     if (!d) return '';
@@ -1172,7 +1172,6 @@ function ProductBankPanel() {
 
   // Stats summary
   const statsApproved = historyProposals.filter(p => p.status === 'uploaded' || p.status === 'approved').length;
-  const statsRejected = historyProposals.filter(p => p.status === 'rejected').length;
   const statsWithPerf = historyProposals.filter(p => p.performance?.roas_7d > 0);
   const avgRoas = statsWithPerf.length > 0 ? (statsWithPerf.reduce((s, p) => s + p.performance.roas_7d, 0) / statsWithPerf.length) : 0;
 
@@ -1188,10 +1187,6 @@ function ProductBankPanel() {
           <div className="creative-stat-card">
             <span className="creative-stat-value">{statsApproved}</span>
             <span className="creative-stat-label">Aprobados</span>
-          </div>
-          <div className="creative-stat-card">
-            <span className="creative-stat-value">{statsRejected}</span>
-            <span className="creative-stat-label">Rechazados</span>
           </div>
           <div className="creative-stat-card">
             <span className="creative-stat-value">{avgRoas > 0 ? `${avgRoas.toFixed(1)}x` : '--'}</span>
@@ -1213,7 +1208,7 @@ function ProductBankPanel() {
           Pendientes {pendingCount > 0 && <span className="tab-badge">{pendingCount}</span>}
         </button>
         <button className={`sub-tab ${creativeSubTab === 'history' ? 'active' : ''}`} onClick={() => setCreativeSubTab('history')}>
-          Historial
+          Subidos a Meta
         </button>
         <button className={`sub-tab ${creativeSubTab === 'products' ? 'active' : ''}`} onClick={() => setCreativeSubTab('products')}>
           Productos
@@ -1286,12 +1281,10 @@ function ProductBankPanel() {
           ) : (
             <div className="creative-history-grid">
               {historyProposals.map(p => (
-                <div key={p._id} className={`creative-history-card ${p.status}`}>
+                <div key={p._id} className="creative-history-card uploaded">
                   <div className="creative-history-img-wrap" onClick={() => setLightboxImg(getProposalImageUrl(p._id))}>
                     <img src={getProposalImageUrl(p._id)} alt={p.headline} className="creative-history-img" />
-                    <span className={`creative-history-badge ${p.status}`}>
-                      {p.status === 'uploaded' || p.status === 'approved' ? 'Aprobado' : p.status === 'rejected' ? 'Rechazado' : p.status === 'failed' ? 'Error' : p.status}
-                    </span>
+                    <span className="creative-history-badge uploaded">Activo</span>
                   </div>
                   <div className="creative-history-body">
                     <h5 className="creative-history-headline">{p.headline}</h5>
@@ -1336,11 +1329,6 @@ function ProductBankPanel() {
                           <span className="creative-perf-pending">Esperando metricas...</span>
                         )}
                       </div>
-                    )}
-
-                    {/* Rejection reason */}
-                    {p.status === 'rejected' && p.rejection_reason && (
-                      <div className="creative-history-rejection">"{p.rejection_reason}"</div>
                     )}
 
                     {/* Meta ad ID */}

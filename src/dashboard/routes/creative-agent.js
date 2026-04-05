@@ -174,10 +174,10 @@ const CreativeProposal = require('../../db/models/CreativeProposal');
 router.get('/proposals', async (req, res) => {
   try {
     const status = req.query.status || '';
-    const query = status ? { status } : {};
+    const query = status ? { status } : { status: { $ne: 'rejected' } };
     const proposals = await CreativeProposal.find(query)
       .sort({ status: 1, created_at: -1 })
-      .limit(50)
+      .limit(100)
       .lean();
 
     const pending = proposals.filter(p => p.status === 'pending').length;
