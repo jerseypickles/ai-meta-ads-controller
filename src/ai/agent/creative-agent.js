@@ -159,7 +159,7 @@ async function uploadToMeta(adsetId, imagePath, headline, primaryText, linkUrl) 
   const creativeName = `AI Creative - ${path.basename(imagePath, path.extname(imagePath))}`;
   const pageId = process.env.META_PAGE_ID;
 
-  const creativeResponse = await meta.post(`/act_${config.meta.adAccountId}/adcreatives`, {
+  const creativeResponse = await meta.post(`/${config.meta.adAccountId}/adcreatives`, {
     name: creativeName,
     object_story_spec: JSON.stringify({
       page_id: pageId,
@@ -177,7 +177,7 @@ async function uploadToMeta(adsetId, imagePath, headline, primaryText, linkUrl) 
 
   // 3. Create ad in the ad set
   const adName = `${headline} [AI Creative Agent]`;
-  const adResponse = await meta.post(`/act_${config.meta.adAccountId}/ads`, {
+  const adResponse = await meta.post(`/${config.meta.adAccountId}/ads`, {
     name: adName,
     adset_id: adsetId,
     creative: JSON.stringify({ creative_id: creativeId }),
