@@ -102,27 +102,31 @@ class BrainAnalyzer {
         logger.warn(`[BRAIN-ANALYZER] Diagnostic engine error (non-fatal): ${diagErr.message}`);
       }
 
-      // 4. Fase IA: si hay hallazgos, generar insights de calidad
+      // 4. Fase IA: DESHABILITADA en modo unified — Account Agent hace su propio análisis.
+      //    Esto ahorra ~$15-20/día en tokens de Claude.
+      //    Los insights matemáticos (findings) se guardan directamente sin pasar por Claude.
       let insightsCreated = 0;
-      if (findings.length > 0) {
+      const SystemConfig = require('../../db/models/SystemConfig');
+      const agentMode = await SystemConfig.get('agent_mode', 'unified');
+
+      if (agentMode !== 'unified' && findings.length > 0) {
+        // Legacy mode: generate insights with Claude
         insightsCreated = await this._generateInsights(findings, adsetSnapshots, accountOverview, recentActions, diagnostics);
       }
 
-      // 5. Actualizar memoria con estado actual
+      // 5. Actualizar memoria con estado actual (siempre — es matemática pura)
       await this._updateMemory(adsetSnapshots);
 
-      // 6. Verificar si toca resumen periódico (cada ~6 horas)
-      const summaryCreated = await this._maybeSummary(adsetSnapshots, accountOverview);
+      // 6-8. Resumen periódico, brain_activity, brain_thinking: DESHABILITADOS en unified
+      let summaryCreated = false;
+      let activityCreated = 0;
+      let thinkingCreated = 0;
 
-      // 7. Generar brain_activity insight (resumen de este ciclo)
-      const activityCreated = await this._generateBrainActivity(
-        adsetSnapshots, findings, insightsCreated, accountOverview
-      );
-
-      // 8. Generar brain_thinking insights (por qué NO actuó en entidades estables)
-      const thinkingCreated = await this._generateBrainThinking(
-        adsetSnapshots, findings, memoryMap, diagnostics
-      );
+      if (agentMode !== 'unified') {
+        summaryCreated = await this._maybeSummary(adsetSnapshots, accountOverview);
+        activityCreated = await this._generateBrainActivity(adsetSnapshots, findings, insightsCreated, accountOverview);
+        thinkingCreated = await this._generateBrainThinking(adsetSnapshots, findings, memoryMap, diagnostics);
+      }
 
       // 9. Conectar insights con recomendaciones pendientes
       await this._linkInsightsToRecommendations();
