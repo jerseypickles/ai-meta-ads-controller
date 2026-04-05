@@ -1170,21 +1170,30 @@ function ProductBankPanel() {
       {/* Proposals pending approval */}
       {proposals.filter(p => p.status === 'pending').length > 0 && (
         <div className="proposals-section">
-          <h4>Pendientes de aprobacion</h4>
+          <h4>Pendientes de aprobacion ({proposals.filter(p => p.status === 'pending').length})</h4>
           <div className="proposals-grid">
             {proposals.filter(p => p.status === 'pending').map(p => (
               <div key={p._id} className="proposal-card">
-                <img src={getProposalImageUrl(p._id)} alt={p.headline} className="proposal-image" />
-                <div className="proposal-info">
-                  <strong>{p.headline}</strong>
-                  <span className="proposal-text">{p.primary_text}</span>
-                  <span className="proposal-meta">{p.product_name} &middot; {p.scene_short} &middot; {p.adset_name}</span>
+                <div className="proposal-image-wrap">
+                  <img src={getProposalImageUrl(p._id)} alt={p.headline} className="proposal-image" onClick={() => window.open(getProposalImageUrl(p._id), '_blank')} />
+                  <span className="proposal-fullscreen-hint">Click para ver grande</span>
                 </div>
-                <div className="proposal-actions">
-                  <button className="proposal-approve" onClick={() => handleApproveProposal(p._id)} disabled={approvingId === p._id}>
-                    {approvingId === p._id ? 'Subiendo...' : 'Aprobar'}
-                  </button>
-                  <button className="proposal-reject" onClick={() => handleRejectProposal(p._id)}>Rechazar</button>
+                <div className="proposal-body">
+                  <div className="proposal-copy">
+                    <strong className="proposal-headline">{p.headline}</strong>
+                    <p className="proposal-text">{p.primary_text}</p>
+                  </div>
+                  <div className="proposal-meta-row">
+                    <span className="proposal-meta-chip">{p.product_name}</span>
+                    <span className="proposal-meta-chip">{p.scene_short}</span>
+                  </div>
+                  <div className="proposal-target">Ad set: <strong>{p.adset_name}</strong></div>
+                  <div className="proposal-actions">
+                    <button className="proposal-approve" onClick={(e) => { e.stopPropagation(); handleApproveProposal(p._id); }} disabled={approvingId === p._id}>
+                      {approvingId === p._id ? 'Subiendo a Meta...' : 'Aprobar y Subir'}
+                    </button>
+                    <button className="proposal-reject" onClick={(e) => { e.stopPropagation(); handleRejectProposal(p._id); }}>Rechazar</button>
+                  </div>
                 </div>
               </div>
             ))}
