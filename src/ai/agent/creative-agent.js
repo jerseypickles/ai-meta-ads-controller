@@ -490,6 +490,36 @@ async function rejectProposal(proposalId, reason = '') {
 async function syncProposalPerformance() {
   const MetricSnapshot = require('../../db/models/MetricSnapshot');
 
+  // Auto-repair: match uploaded proposals missing meta_ad_id by ad name pattern
+  try {
+    const orphans = await CreativeProposal.find({
+      status: 'uploaded',
+      $or: [{ meta_ad_id: null }, { meta_ad_id: { $exists: false } }]
+    }).lean();
+
+    if (orphans.length > 0) {
+      logger.info(`[CREATIVE-AGENT] Auto-repair: ${orphans.length} uploaded proposals missing meta_ad_id`);
+      for (const orphan of orphans) {
+        // Match by headline pattern — ads are named "{headline} [AI Creative Agent]"
+        const expectedName = `${orphan.headline} [AI Creative Agent]`;
+        const adSnapshot = await MetricSnapshot.findOne({
+          entity_type: 'ad',
+          entity_name: expectedName,
+          parent_id: orphan.adset_id
+        }).sort({ snapshot_at: -1 }).lean();
+
+        if (adSnapshot) {
+          await CreativeProposal.findByIdAndUpdate(orphan._id, {
+            $set: { meta_ad_id: adSnapshot.entity_id, meta_ad_name: expectedName }
+          });
+          logger.info(`[CREATIVE-AGENT] Auto-repair: matched "${orphan.headline}" → ${adSnapshot.entity_id}`);
+        }
+      }
+    }
+  } catch (err) {
+    logger.error(`[CREATIVE-AGENT] Auto-repair error: ${err.message}`);
+  }
+
   // Buscar propuestas subidas a Meta con ad ID
   const uploaded = await CreativeProposal.find({
     status: 'uploaded',
