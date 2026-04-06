@@ -85,6 +85,12 @@ Then: scale -20-25%. Set next_review_hours: 168 (7 days).
 - Max 1 pause per ad set per cycle
 Then: set next_review_hours: 120 (5 days).
 
+### CREATIVE FLAGGING (critical — always check)
+After calling get_ad_performance, count ACTIVE ads:
+- 0 or 1 active ads -> ALWAYS set needs_new_creatives: true in save_assessment
+- 2 active ads with any fatigued/dying -> set needs_new_creatives: true
+This triggers the Creative Agent to generate new ads automatically.
+
 ### CREATIVE ROTATION (when new ad is ignored)
 - New ad has <$5 spend after 5+ days (ignored_by_meta)
 - Old ad is 14+ days AND health is fatigued/dying/saturated OR freq > 2.5
