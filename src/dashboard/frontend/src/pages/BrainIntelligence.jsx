@@ -1152,13 +1152,25 @@ function ProductBankPanel() {
 
   const handleApproveProposal = async (id) => {
     setApprovingId(id);
-    try { await approveCreativeProposal(id); await loadAll(); } catch (err) { console.error(err); }
+    try {
+      await approveCreativeProposal(id);
+      // Optimistic update: move to uploaded immediately
+      setProposals(prev => prev.map(p =>
+        p._id === id ? { ...p, status: 'uploaded', decided_at: new Date().toISOString() } : p
+      ));
+      setPendingCount(prev => Math.max(0, prev - 1));
+    } catch (err) { console.error(err); }
     finally { setApprovingId(null); }
   };
 
   const handleRejectProposal = async (id) => {
     const reason = prompt('Razon del rechazo (opcional):') || '';
-    try { await rejectCreativeProposal(id, reason); await loadAll(); } catch (err) { console.error(err); }
+    try {
+      await rejectCreativeProposal(id, reason);
+      // Optimistic update: remove from list
+      setProposals(prev => prev.filter(p => p._id !== id));
+      setPendingCount(prev => Math.max(0, prev - 1));
+    } catch (err) { console.error(err); }
   };
 
   const pendingProposals = useMemo(() => proposals.filter(p => p.status === 'pending'), [proposals]);

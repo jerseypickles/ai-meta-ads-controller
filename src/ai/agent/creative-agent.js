@@ -308,6 +308,7 @@ async function runCreativeAgent() {
   }
 
   const PROPOSALS_PER_ADSET = 2;
+  let globalSceneIndex = 0; // rotates across ad sets so each gets different scenes
 
   for (const memory of filtered) {
     const adsetId = memory.entity_id;
@@ -320,16 +321,13 @@ async function runCreativeAgent() {
         (adsetName || '').toLowerCase().includes(p.product_name.toLowerCase())
       ) || rankedProducts[0];
 
-      // Pick N different scenes for this ad set (avoid duplicates)
-      const usedScenes = new Set();
+      // Pick N different scenes for this ad set — rotate across ad sets
       const scenePicks = [];
-      for (const s of rankedScenes) {
-        if (scenePicks.length >= PROPOSALS_PER_ADSET) break;
-        if (!usedScenes.has(s.short)) {
-          usedScenes.add(s.short);
-          scenePicks.push(s);
-        }
+      for (let i = 0; i < PROPOSALS_PER_ADSET && i < rankedScenes.length; i++) {
+        const idx = (globalSceneIndex + i) % rankedScenes.length;
+        scenePicks.push(rankedScenes[idx]);
       }
+      globalSceneIndex = (globalSceneIndex + PROPOSALS_PER_ADSET) % rankedScenes.length;
 
       // Build references once per product
       const refPaths = product.png_references.map(ref =>
