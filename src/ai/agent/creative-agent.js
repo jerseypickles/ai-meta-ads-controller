@@ -9,7 +9,7 @@ const BrainInsight = require('../../db/models/BrainInsight');
 const ProductBank = require('../../db/models/ProductBank');
 const ActionLog = require('../../db/models/ActionLog');
 const MetricSnapshot = require('../../db/models/MetricSnapshot');
-const { getLatestSnapshots } = require('../../db/queries');
+const { getLatestSnapshots, getAdsForAdSet } = require('../../db/queries');
 
 const claude = new Anthropic({ apiKey: config.claude.apiKey });
 
@@ -200,7 +200,44 @@ async function runCreativeAgent() {
     logger.info(`[CREATIVE-AGENT] Auto-rechazadas ${stale.modifiedCount} propuestas pendientes de oleadas anteriores`);
   }
 
-  // 2. Check for ad sets needing creatives
+  // 2. Pre-scan: detectar ad sets con 0-1 ads activos y forzar flag (no depender del LLM)
+  try {
+    const activeAdsets = await getLatestSnapshots('adset');
+    const onlyActive = activeAdsets.filter(s => s.status === 'ACTIVE');
+    let autoFlagged = 0;
+
+    for (const adset of onlyActive) {
+      const ads = await getAdsForAdSet(adset.entity_id);
+      const activeAds = ads.filter(a => a.status === 'ACTIVE');
+
+      if (activeAds.length <= 1) {
+        const mem = await BrainMemory.findOne({ entity_id: adset.entity_id }).lean();
+        if (!mem?.agent_needs_new_creatives) {
+          await BrainMemory.findOneAndUpdate(
+            { entity_id: adset.entity_id },
+            {
+              $set: {
+                entity_name: adset.entity_name,
+                entity_type: 'adset',
+                agent_needs_new_creatives: true,
+                last_updated_at: new Date()
+              }
+            },
+            { upsert: true }
+          );
+          autoFlagged++;
+        }
+      }
+    }
+
+    if (autoFlagged > 0) {
+      logger.info(`[CREATIVE-AGENT] Pre-scan: ${autoFlagged} ad sets auto-flagged (0-1 active ads)`);
+    }
+  } catch (err) {
+    logger.error(`[CREATIVE-AGENT] Pre-scan error (continuing anyway): ${err.message}`);
+  }
+
+  // 3. Check for ad sets needing creatives
   const needCreatives = await BrainMemory.find({
     agent_needs_new_creatives: true,
     entity_type: 'adset'
