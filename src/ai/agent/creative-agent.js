@@ -170,7 +170,7 @@ async function uploadToMeta(adsetId, imagePath, headline, primaryText, linkUrl) 
   const adName = `${headline} [AI Creative Agent]`;
   const ad = await meta.createAd(adsetId, creative.creative_id, adName, 'ACTIVE');
 
-  return { adId: ad.id, creativeId: creative.creative_id, adName, imageHash };
+  return { adId: ad.ad_id, creativeId: creative.creative_id, adName, imageHash };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
