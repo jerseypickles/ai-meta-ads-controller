@@ -55,7 +55,7 @@ function buildImagePrompt(productName, scene, refTypes) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // GEMINI IMAGE GENERATION
 // ═══════════════════════════════════════════════════════════════════════════════
-async function generateImage(prompt, referencePaths, outputPath) {
+async function generateImage(prompt, referencePaths) {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
   if (!apiKey) throw new Error('GOOGLE_AI_API_KEY not configured');
 
@@ -95,13 +95,11 @@ async function generateImage(prompt, referencePaths, outputPath) {
     }
   });
 
-  // Extract image from response
+  // Extract image as base64 directly — no filesystem needed
   for (const part of response.candidates[0].content.parts) {
     if (part.inlineData) {
-      const imageBuffer = Buffer.from(part.inlineData.data, 'base64');
-      fs.writeFileSync(outputPath, imageBuffer);
-      logger.info(`[CREATIVE-AGENT] Image generated: ${outputPath}`);
-      return outputPath;
+      logger.info('[CREATIVE-AGENT] Image generated (in-memory base64)');
+      return part.inlineData.data; // already base64 string
     }
   }
 
@@ -274,11 +272,6 @@ async function runCreativeAgent() {
 
   let generated = 0;
   const results = [];
-  const uploadsDir = path.join(config.system.uploadsDir || 'uploads', 'ai-creatives');
-
-  if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-  }
 
   // ── Smart scene ranking: approved scenes first, then unused, skip over-rejected ──
   const rankedScenes = SCENES
@@ -351,27 +344,19 @@ async function runCreativeAgent() {
         // Build prompt
         const prompt = buildImagePrompt(product.product_name, scene, refTypes);
 
-        // Generate image
-        const outputFilename = `creative_${adsetId}_${Date.now()}_${Math.random().toString(36).substring(2, 5)}.png`;
-        const outputPath = path.join(uploadsDir, outputFilename);
-
+        // Generate image — returns base64 directly, no filesystem needed
         logger.info(`[CREATIVE-AGENT] Generating image for ${adsetName} — ${sceneShort}...`);
-        await generateImage(prompt, refPaths, outputPath);
+        const imageBase64 = await generateImage(prompt, refPaths);
 
         // Generate copy
         const copy = await generateCopy(product.product_name, sceneShort);
 
-        // Read image as base64 for DB storage (Render has ephemeral filesystem)
-        const imageBase64 = fs.readFileSync(outputPath).toString('base64');
-
-        // Save as proposal (NOT uploaded yet)
+        // Save as proposal (NOT uploaded yet) — image stored as base64 in DB
         await CreativeProposal.create({
           adset_id: adsetId,
           adset_name: adsetName,
           product_id: product._id,
           product_name: product.product_name,
-          image_path: outputPath,
-          image_filename: outputFilename,
           image_base64: imageBase64,
           scene,
           scene_short: sceneShort,
