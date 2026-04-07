@@ -286,7 +286,7 @@ async function runCreativeAgent() {
   // 2. Pre-scan: detectar ad sets con 0-1 ads activos y forzar flag (no depender del LLM)
   try {
     const activeAdsets = await getLatestSnapshots('adset');
-    const onlyActive = activeAdsets.filter(s => s.status === 'ACTIVE');
+    const onlyActive = activeAdsets.filter(s => s.status === 'ACTIVE' && !(s.entity_name || '').startsWith('[TEST]'));
     let autoFlagged = 0;
 
     for (const adset of onlyActive) {
