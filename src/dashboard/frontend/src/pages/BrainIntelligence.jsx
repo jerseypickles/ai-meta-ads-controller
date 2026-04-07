@@ -12,7 +12,7 @@ import {
   uploadLaunchCreatives, launchStrategize, launchApprove, getCreativeThumbnailUrl,
   getAgentActivity, runAccountAgent, getAgentAdsetDetail, getAgentThoughts, getAgentPerformance,
   generateCopyForUpload, uploadAndCreateAd,
-  getProducts, createProduct, deleteProduct, getProductImageUrl, runCreativeAgentApi,
+  getProducts, createProduct, deleteProduct, addProductImages, getProductImageUrl, runCreativeAgentApi,
   getCreativeProposals, approveCreativeProposal, rejectCreativeProposal, getProposalImageUrl,
   getTestRuns, killTestRun, runTestingAgentApi, getTestImageUrl,
   getZeusIntelligence, runZeusApi, getZeusThoughts
@@ -1232,38 +1232,187 @@ function ApolloPanel({ products, proposals, readyProposals, historyProposals, lo
       )}
 
       {apolloSubTab === 'products' && (
-        <div className="creative-products-section">
-          <div className="creative-products-grid">
-            {products.map(p => (
-              <div key={p._id} className="creative-product-card">
-                <div className="creative-product-header">
-                  <h4>{p.product_name}</h4>
-                  <button className="creative-product-delete" onClick={() => handleDelete(p._id)}>x</button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Lista de productos existentes */}
+          {products.map(p => (
+            <div key={p._id} style={{
+              background: 'var(--bg-secondary)', border: '1px solid var(--border-color)',
+              borderRadius: 'var(--radius-lg)', padding: 20, position: 'relative'
+            }}>
+              {/* Header del producto */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <div>
+                  <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-primary)' }}>{p.product_name}</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>{p.product_slug} — {p.link_url}</div>
                 </div>
-                <div className="creative-product-slug">{p.product_slug}</div>
-                <div className="creative-product-images">
-                  {(p.png_references || []).map((ref, i) => (
-                    <img key={i} src={getProductImageUrl(p._id, ref.filename)} alt={ref.type} className="creative-product-thumb" onClick={() => setLightboxImg(getProductImageUrl(p._id, ref.filename))} />
-                  ))}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  {p.performance?.avg_roas > 0 && (
+                    <span style={{ fontSize: '0.75rem', color: '#10b981', background: 'rgba(16,185,129,0.1)', padding: '3px 10px', borderRadius: 12, fontWeight: 600 }}>
+                      ROAS {p.performance.avg_roas.toFixed(1)}x
+                    </span>
+                  )}
+                  {p.performance?.total_spend > 0 && (
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>${p.performance.total_spend.toFixed(0)} spend</span>
+                  )}
+                  <button onClick={() => handleDelete(p._id)} style={{
+                    background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+                    color: '#ef4444', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontSize: '0.72rem'
+                  }}>Eliminar</button>
                 </div>
-                {p.performance?.avg_roas > 0 && (
-                  <div className="creative-product-perf">ROAS: {p.performance.avg_roas.toFixed(1)}x | Spend: ${(p.performance.total_spend || 0).toFixed(0)}</div>
-                )}
               </div>
-            ))}
+
+              {/* Referencias — grid de imagenes */}
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Referencias ({(p.png_references || []).length} {(p.png_references || []).length === 1 ? 'imagen' : 'imagenes'}) — mas referencias = mejor fidelidad de Gemini
+                </div>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  {(p.png_references || []).map((ref, i) => (
+                    <div key={i} style={{ position: 'relative' }}>
+                      <img
+                        src={getProductImageUrl(p._id, ref.filename)}
+                        alt={ref.type}
+                        style={{
+                          width: 120, height: 120, objectFit: 'cover', borderRadius: 8,
+                          border: '2px solid var(--border-color)', cursor: 'pointer'
+                        }}
+                        onClick={() => setLightboxImg(getProductImageUrl(p._id, ref.filename))}
+                      />
+                      <span style={{
+                        position: 'absolute', bottom: 4, left: 4, right: 4,
+                        background: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: '0.6rem',
+                        padding: '2px 6px', borderRadius: 4, textAlign: 'center'
+                      }}>{ref.type}</span>
+                    </div>
+                  ))}
+                  {/* Boton para agregar mas fotos */}
+                  <label style={{
+                    width: 120, height: 120, borderRadius: 8, cursor: 'pointer',
+                    border: '2px dashed var(--border-light)', display: 'flex',
+                    flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                    gap: 4, color: 'var(--text-muted)', fontSize: '0.72rem',
+                    transition: 'all 150ms', background: 'var(--bg-tertiary)'
+                  }}>
+                    <span style={{ fontSize: '1.5rem' }}>+</span>
+                    <span>Agregar foto</span>
+                    <input type="file" accept="image/png,image/jpeg" multiple style={{ display: 'none' }}
+                      onChange={async (e) => {
+                        if (!e.target.files?.length) return;
+                        try {
+                          const fd = new FormData();
+                          for (const f of e.target.files) fd.append('images', f);
+                          await addProductImages(p._id, fd);
+                          await onRefresh();
+                        } catch (err) { console.error(err); }
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Scene performance */}
+              {(p.scene_performance || []).length > 0 && (
+                <div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Rendimiento por escena</div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {(p.scene_performance || []).slice(0, 6).map((sp, i) => (
+                      <span key={i} style={{
+                        fontSize: '0.68rem', padding: '3px 8px', borderRadius: 6,
+                        background: sp.avg_roas >= 3 ? 'rgba(16,185,129,0.1)' : sp.avg_roas >= 1.5 ? 'rgba(245,158,11,0.1)' : 'rgba(107,114,128,0.1)',
+                        color: sp.avg_roas >= 3 ? '#10b981' : sp.avg_roas >= 1.5 ? '#f59e0b' : 'var(--text-muted)',
+                        border: `1px solid ${sp.avg_roas >= 3 ? '#10b98130' : sp.avg_roas >= 1.5 ? '#f59e0b30' : 'var(--border-color)'}`
+                      }}>
+                        {(sp.scene || '').substring(0, 20)}... {sp.avg_roas.toFixed(1)}x
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+
+          {/* Formulario para nuevo producto */}
+          <div style={{
+            background: 'var(--bg-secondary)', border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-lg)', padding: 20
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: showForm ? 16 : 0 }}>
+              <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                {showForm ? 'Nuevo Producto' : ''}
+              </div>
+              <button onClick={() => setShowForm(!showForm)} style={{
+                background: showForm ? 'rgba(239,68,68,0.1)' : 'linear-gradient(135deg, var(--apollo-color), #f97316)',
+                border: showForm ? '1px solid rgba(239,68,68,0.3)' : 'none',
+                color: showForm ? '#ef4444' : '#000', fontWeight: 600,
+                borderRadius: 8, padding: '8px 20px', cursor: 'pointer', fontSize: '0.82rem'
+              }}>
+                {showForm ? 'Cancelar' : '+ Nuevo Producto'}
+              </button>
+            </div>
+            {showForm && (
+              <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 4, display: 'block' }}>Nombre del producto</label>
+                    <input placeholder="Hot Pickled Tomatoes" value={formName}
+                      onChange={e => { setFormName(e.target.value); setFormSlug(e.target.value.toLowerCase().replace(/\s+/g, '-')); }}
+                      style={{
+                        width: '100%', padding: '10px 12px', background: 'var(--bg-tertiary)',
+                        border: '1px solid var(--border-color)', borderRadius: 8, color: 'var(--text-primary)',
+                        fontSize: '0.85rem', outline: 'none'
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 4, display: 'block' }}>Slug</label>
+                    <input placeholder="hot-pickled-tomatoes" value={formSlug}
+                      onChange={e => setFormSlug(e.target.value)}
+                      style={{
+                        width: '100%', padding: '10px 12px', background: 'var(--bg-tertiary)',
+                        border: '1px solid var(--border-color)', borderRadius: 8, color: 'var(--text-primary)',
+                        fontSize: '0.85rem', outline: 'none'
+                      }}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 4, display: 'block' }}>URL del producto</label>
+                  <input placeholder="https://jerseypickles.com/producto" value={formUrl}
+                    onChange={e => setFormUrl(e.target.value)}
+                    style={{
+                      width: '100%', padding: '10px 12px', background: 'var(--bg-tertiary)',
+                      border: '1px solid var(--border-color)', borderRadius: 8, color: 'var(--text-primary)',
+                      fontSize: '0.85rem', outline: 'none'
+                    }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 4, display: 'block' }}>
+                    Fotos de referencia (frente, lado, abierto — entre mas, mejor)
+                  </label>
+                  <label style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                    padding: '20px', background: 'var(--bg-tertiary)', border: '2px dashed var(--border-light)',
+                    borderRadius: 8, cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.85rem'
+                  }}>
+                    <span style={{ fontSize: '1.2rem' }}>📷</span>
+                    {formFiles?.length > 0 ? `${formFiles.length} archivo(s) seleccionado(s)` : 'Click para seleccionar imagenes'}
+                    <input type="file" ref={fileRef} accept="image/png,image/jpeg" multiple
+                      onChange={e => setFormFiles(e.target.files)} style={{ display: 'none' }}
+                    />
+                  </label>
+                </div>
+                <button type="submit" disabled={creating || !formName || !formSlug || !formFiles?.length} style={{
+                  background: creating || !formName || !formSlug || !formFiles?.length ? 'var(--bg-tertiary)' : 'linear-gradient(135deg, var(--apollo-color), #f97316)',
+                  border: 'none', color: creating ? 'var(--text-muted)' : '#000', fontWeight: 600,
+                  borderRadius: 8, padding: '12px 20px', cursor: creating ? 'wait' : 'pointer', fontSize: '0.85rem'
+                }}>
+                  {creating ? 'Creando...' : 'Crear Producto'}
+                </button>
+              </form>
+            )}
           </div>
-          <button className="btn-agent-run" onClick={() => setShowForm(!showForm)} style={{ marginTop: 16 }}>
-            {showForm ? 'Cancelar' : 'Agregar Producto'}
-          </button>
-          {showForm && (
-            <form onSubmit={handleCreate} className="creative-product-form" style={{ marginTop: 12 }}>
-              <input placeholder="Nombre del producto" value={formName} onChange={e => { setFormName(e.target.value); setFormSlug(e.target.value.toLowerCase().replace(/\s+/g, '-')); }} />
-              <input placeholder="Slug" value={formSlug} onChange={e => setFormSlug(e.target.value)} />
-              <input placeholder="URL" value={formUrl} onChange={e => setFormUrl(e.target.value)} />
-              <input type="file" ref={fileRef} accept="image/png,image/jpeg" multiple onChange={e => setFormFiles(e.target.files)} />
-              <button type="submit" disabled={creating}>{creating ? 'Creando...' : 'Crear Producto'}</button>
-            </form>
-          )}
         </div>
       )}
     </div>
