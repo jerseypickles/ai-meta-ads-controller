@@ -236,10 +236,11 @@ async function generateDirectives(patterns, signals, accountData, uploadedData, 
     { $set: { active: false } }
   );
 
-  // Si no hay suficientes datos, no generar
+  // Verificar si hay ALGUN dato para aprender (no solo tests)
   const totalTests = (accountData.prometheus.graduated || 0) + (accountData.prometheus.killed || 0) + (accountData.prometheus.expired || 0);
-  if (totalTests < 3) {
-    logger.info('[ZEUS] Insuficientes datos para generar directivas (< 3 tests finalizados)');
+  const totalDataPoints = totalTests + (uploadedData?.total || 0) + (athenaData?.total || 0) + accountData.athena.actions_7d;
+  if (totalDataPoints === 0) {
+    logger.info('[ZEUS] Sin datos para aprender — saltando generacion de directivas');
     return 0;
   }
 
