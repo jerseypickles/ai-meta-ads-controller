@@ -1008,7 +1008,11 @@ class MetaClient {
       optimization_goal,
       billing_event,
       targeting: JSON.stringify(targeting || defaultTargeting),
-      pacing_type: JSON.stringify(['standard']), // Distribución uniforme durante el día — evita gastar el budget de golpe
+      pacing_type: JSON.stringify(['standard']),
+      attribution_spec: JSON.stringify([
+        { event_type: 'CLICK_THROUGH', window_days: 7 },
+        { event_type: 'VIEW_THROUGH', window_days: 1 }
+      ]),
       status
     };
 
