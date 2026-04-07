@@ -15,6 +15,8 @@ const productBankSchema = new mongoose.Schema({
     filename: { type: String, required: true },
     original_name: { type: String, default: '' },
     type: { type: String, enum: ['front-view', 'top-down', 'side', 'open', 'other'], default: 'front-view' },
+    image_base64: { type: String, default: '' }, // PNG almacenado como base64 (Render disco efimero)
+    mime_type: { type: String, default: 'image/jpeg' },
     uploaded_at: { type: Date, default: Date.now },
     _id: false
   }],

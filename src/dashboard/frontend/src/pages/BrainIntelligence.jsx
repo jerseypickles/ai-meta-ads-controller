@@ -1243,7 +1243,7 @@ function ApolloPanel({ products, proposals, readyProposals, historyProposals, lo
                 <div className="creative-product-slug">{p.product_slug}</div>
                 <div className="creative-product-images">
                   {(p.png_references || []).map((ref, i) => (
-                    <img key={i} src={getProductImageUrl(ref.filename)} alt={ref.type} className="creative-product-thumb" onClick={() => setLightboxImg(getProductImageUrl(ref.filename))} />
+                    <img key={i} src={getProductImageUrl(p._id, ref.filename)} alt={ref.type} className="creative-product-thumb" onClick={() => setLightboxImg(getProductImageUrl(p._id, ref.filename))} />
                   ))}
                 </div>
                 {p.performance?.avg_roas > 0 && (
@@ -2104,7 +2104,7 @@ function ProductBankPanel() {
                   <div key={p._id} className="creative-product-card">
                     <div className="creative-product-images">
                       {(p.png_references || []).map((ref, i) => (
-                        <img key={i} src={getProductImageUrl(ref.filename)} alt={ref.type} className="creative-product-thumb" onClick={() => setLightboxImg(getProductImageUrl(ref.filename))} />
+                        <img key={i} src={getProductImageUrl(p._id, ref.filename)} alt={ref.type} className="creative-product-thumb" onClick={() => setLightboxImg(getProductImageUrl(p._id, ref.filename))} />
                       ))}
                     </div>
                     <div className="creative-product-info">

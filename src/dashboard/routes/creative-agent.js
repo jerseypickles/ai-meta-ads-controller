@@ -7,20 +7,9 @@ const logger = require('../../utils/logger');
 const ProductBank = require('../../db/models/ProductBank');
 const config = require('../../../config');
 
-// Upload config for product PNGs
-const productUploadDir = path.join(config.system.uploadsDir || 'uploads', 'product-bank');
-if (!fs.existsSync(productUploadDir)) {
-  fs.mkdirSync(productUploadDir, { recursive: true });
-}
-
+// Upload config for product PNGs — almacenar en memoria, guardar como base64 en DB
 const productUpload = multer({
-  storage: multer.diskStorage({
-    destination: productUploadDir,
-    filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname);
-      cb(null, `product_${Date.now()}_${Math.random().toString(36).substring(2, 6)}${ext}`);
-    }
-  }),
+  storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) cb(null, true);
     else cb(new Error('Solo imagenes permitidas'));
@@ -53,9 +42,11 @@ router.post('/products', productUpload.array('images', 5), async (req, res) => {
     }
 
     const png_references = (req.files || []).map((file, i) => ({
-      filename: file.filename,
+      filename: `product_${Date.now()}_${Math.random().toString(36).substring(2, 6)}${path.extname(file.originalname)}`,
       original_name: file.originalname,
-      type: req.body[`type_${i}`] || 'front-view'
+      type: req.body[`type_${i}`] || 'front-view',
+      image_base64: file.buffer.toString('base64'),
+      mime_type: file.mimetype
     }));
 
     const product = await ProductBank.create({
@@ -81,9 +72,11 @@ router.post('/products/:id/images', productUpload.array('images', 5), async (req
     if (!product) return res.status(404).json({ error: 'Product not found' });
 
     const newRefs = (req.files || []).map((file, i) => ({
-      filename: file.filename,
+      filename: `product_${Date.now()}_${Math.random().toString(36).substring(2, 6)}${path.extname(file.originalname)}`,
       original_name: file.originalname,
-      type: req.body[`type_${i}`] || 'front-view'
+      type: req.body[`type_${i}`] || 'front-view',
+      image_base64: file.buffer.toString('base64'),
+      mime_type: file.mimetype
     }));
 
     product.png_references.push(...newRefs);
@@ -111,12 +104,33 @@ router.delete('/products/:id', async (req, res) => {
 });
 
 /**
- * GET /api/creative-agent/products/:id/image/:filename — Serve product PNG
+ * GET /api/creative-agent/products/:id/image/:filename — Serve product PNG from DB
  */
-router.get('/products/:id/image/:filename', (req, res) => {
-  const filePath = path.join(productUploadDir, req.params.filename);
-  if (fs.existsSync(filePath)) res.sendFile(filePath);
-  else res.status(404).json({ error: 'Image not found' });
+router.get('/products/:id/image/:filename', async (req, res) => {
+  try {
+    const product = await ProductBank.findById(req.params.id).lean();
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+
+    const ref = product.png_references.find(r => r.filename === req.params.filename);
+    if (!ref) return res.status(404).json({ error: 'Image not found' });
+
+    // Servir desde base64 en DB
+    if (ref.image_base64) {
+      const buffer = Buffer.from(ref.image_base64, 'base64');
+      res.set('Content-Type', ref.mime_type || 'image/jpeg');
+      res.set('Content-Length', buffer.length);
+      return res.send(buffer);
+    }
+
+    // Fallback: intentar desde disco (productos viejos)
+    const productUploadDir = path.join(config.system.uploadsDir || 'uploads', 'product-bank');
+    const filePath = path.join(productUploadDir, req.params.filename);
+    if (fs.existsSync(filePath)) return res.sendFile(filePath);
+
+    res.status(404).json({ error: 'Image not found' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ═══ Creative Agent Control ═══

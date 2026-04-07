@@ -302,9 +302,10 @@ export const runCreativeAgentApi = async () => {
   return data;
 };
 
-export const getProductImageUrl = (filename) => {
+export const getProductImageUrl = (productId, filename) => {
   const BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
-  return `${BASE}/uploads/product-bank/${filename}`;
+  const token = localStorage.getItem('auth_token');
+  return `${BASE}/api/creative-agent/products/${productId}/image/${filename}?token=${token}`;
 };
 
 export const getCreativeProposals = async (status = '') => {

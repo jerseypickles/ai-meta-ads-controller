@@ -128,31 +128,39 @@ function buildImagePrompt(productName, scene, refTypes, style, isCombo = false, 
 // ═══════════════════════════════════════════════════════════════════════════════
 // GEMINI IMAGE GENERATION
 // ═══════════════════════════════════════════════════════════════════════════════
-async function generateImage(prompt, referencePaths) {
+async function generateImage(prompt, referenceImages) {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
   if (!apiKey) throw new Error('GOOGLE_AI_API_KEY not configured');
 
   const genAI = new GoogleGenAI({ apiKey });
 
-  // Build parts: text prompt + reference images
+  // Build parts: text prompt + reference images (base64 from DB or file paths)
   const parts = [{ text: prompt }];
 
-  for (const refPath of referencePaths) {
+  for (const ref of referenceImages) {
     try {
-      const absPath = path.resolve(refPath);
-      const imageData = fs.readFileSync(absPath);
-      const base64 = imageData.toString('base64');
-      const ext = path.extname(refPath).toLowerCase();
-      const mimeType = ext === '.png' ? 'image/png' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png';
+      let base64, mimeType;
+
+      if (ref.image_base64) {
+        // Directo de DB (nuevo flujo)
+        base64 = ref.image_base64;
+        mimeType = ref.mime_type || 'image/jpeg';
+      } else if (ref.path) {
+        // Fallback: leer de disco (productos viejos)
+        const absPath = path.resolve(ref.path);
+        const imageData = fs.readFileSync(absPath);
+        base64 = imageData.toString('base64');
+        const ext = path.extname(ref.path).toLowerCase();
+        mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
+      } else {
+        continue;
+      }
 
       parts.push({
-        inlineData: {
-          mimeType,
-          data: base64
-        }
+        inlineData: { mimeType, data: base64 }
       });
     } catch (err) {
-      logger.warn(`[CREATIVE-AGENT] Could not read reference image ${refPath}: ${err.message}`);
+      logger.warn(`[CREATIVE-AGENT] Could not load reference image: ${err.message}`);
     }
   }
 
@@ -413,22 +421,28 @@ async function runCreativeAgent() {
 
       // Decidir si hacer combo (multi-product) — solo si hay 2+ productos con PNGs
       const doCombo = rankedProducts.length >= 2 && Math.random() < 0.3; // 30% chance de combo
-      let refPaths, refTypes, comboNames = [];
+      let refImages, refTypes, comboNames = [];
 
       if (doCombo) {
         // Combo: usar PNGs de todos los productos (max 3)
         const comboProducts = rankedProducts.slice(0, Math.min(3, rankedProducts.length));
-        refPaths = comboProducts.flatMap(p =>
-          p.png_references.map(ref => path.join(config.system.uploadsDir || 'uploads', 'product-bank', ref.filename))
+        refImages = comboProducts.flatMap(p =>
+          p.png_references.map(ref => ({
+            image_base64: ref.image_base64,
+            mime_type: ref.mime_type,
+            path: !ref.image_base64 ? path.join(config.system.uploadsDir || 'uploads', 'product-bank', ref.filename) : null
+          }))
         );
         refTypes = comboProducts.flatMap(p => p.png_references.map(ref => ref.type));
         comboNames = comboProducts.map(p => p.product_name);
         logger.info(`[CREATIVE-AGENT] Modo COMBO: ${comboNames.join(' + ')}`);
       } else {
         // Single product
-        refPaths = product.png_references.map(ref =>
-          path.join(config.system.uploadsDir || 'uploads', 'product-bank', ref.filename)
-        );
+        refImages = product.png_references.map(ref => ({
+          image_base64: ref.image_base64,
+          mime_type: ref.mime_type,
+          path: !ref.image_base64 ? path.join(config.system.uploadsDir || 'uploads', 'product-bank', ref.filename) : null
+        }));
         refTypes = product.png_references.map(ref => ref.type);
       }
 
@@ -448,7 +462,7 @@ async function runCreativeAgent() {
 
         // Generate image — returns base64 directly, no filesystem needed
         logger.info(`[CREATIVE-AGENT] Generating for ${adsetName} — ${sceneShort} [${style.key}/${copyAngle.key}]${doCombo ? ' COMBO' : ''}...`);
-        const imageBase64 = await generateImage(prompt, refPaths);
+        const imageBase64 = await generateImage(prompt, refImages);
 
         // Generate copy with angle
         const copy = await generateCopy(product.product_name, sceneShort, copyAngle, doCombo, comboNames);
