@@ -538,10 +538,14 @@ async function syncProposalPerformance() {
         entity_id: proposal.meta_ad_id
       }).sort({ snapshot_at: -1 }).lean();
 
-      if (!snapshot || !snapshot.metrics?.last_7d) continue;
+      if (!snapshot) continue;
 
-      const m = snapshot.metrics.last_7d;
-      if (m.spend <= 0) continue; // sin datos aun
+      // Use best available window: 7d > 3d > today
+      const m = (snapshot.metrics?.last_7d?.spend > 0 && snapshot.metrics.last_7d)
+             || (snapshot.metrics?.last_3d?.spend > 0 && snapshot.metrics.last_3d)
+             || (snapshot.metrics?.today?.spend > 0 && snapshot.metrics.today)
+             || null;
+      if (!m) continue;
 
       await CreativeProposal.findByIdAndUpdate(proposal._id, {
         $set: {
