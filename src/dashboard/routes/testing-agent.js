@@ -51,7 +51,7 @@ router.get('/tests', async (req, res) => {
     // Enriquecer con datos de la propuesta
     const proposalIds = tests.map(t => t.proposal_id);
     const proposals = await CreativeProposal.find({ _id: { $in: proposalIds } })
-      .select('headline primary_text scene_short product_name image_base64')
+      .select('headline primary_text scene_short product_name')
       .lean();
     const proposalMap = {};
     for (const p of proposals) proposalMap[p._id.toString()] = p;

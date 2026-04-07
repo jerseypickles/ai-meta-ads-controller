@@ -176,11 +176,12 @@ router.get('/proposals', async (req, res) => {
     const status = req.query.status || '';
     const query = status ? { status } : { status: { $ne: 'rejected' } };
     const proposals = await CreativeProposal.find(query)
+      .select('-image_base64 -prompt_used')
       .sort({ status: 1, created_at: -1 })
       .limit(100)
       .lean();
 
-    const pending = proposals.filter(p => p.status === 'pending').length;
+    const pending = proposals.filter(p => p.status === 'pending' || p.status === 'ready').length;
     res.json({ proposals, pending_count: pending });
   } catch (error) {
     res.status(500).json({ error: error.message });
