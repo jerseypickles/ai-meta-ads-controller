@@ -997,7 +997,15 @@ const AdSetRow = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights, trac
         </td>
         <td className="primary">
           <div className="adset-name-wrap">
-            <div className="adset-name-cell">{adset.entity_name || adset.entity_id}</div>
+            <div className="adset-name-cell">
+              {(adset.entity_name || '').startsWith('[TEST]') && (
+                <span style={{ fontSize: '0.6rem', fontWeight: 700, background: '#f9731620', color: '#fb923c', padding: '1px 6px', borderRadius: 4, marginRight: 6, verticalAlign: 'middle' }}>TEST</span>
+              )}
+              {(adset.entity_name || '').includes('[Prometheus]') && (
+                <span style={{ fontSize: '0.6rem', fontWeight: 700, background: '#10b98120', color: '#34d399', padding: '1px 6px', borderRadius: 4, marginRight: 6, verticalAlign: 'middle' }}>GRADUATED</span>
+              )}
+              {adset.entity_name || adset.entity_id}
+            </div>
             {(recCount > 0 || insightCount > 0 || trackingCount > 0 || pendingCreativeRefresh || adsetFatigue.level !== 'none') && (
               <span className="brain-badges">
                 {adsetFatigue.level !== 'none' && (
@@ -1067,6 +1075,7 @@ export default function AdSetsManager() {
   const [error, setError] = useState(null);
   const [running, setRunning] = useState(null);
   const [filter, setFilter] = useState('active');
+  const [typeFilter, setTypeFilter] = useState('production'); // 'all' | 'production' | 'testing' | 'graduated'
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('spend');
   const [sortAsc, setSortAsc] = useState(false);
@@ -1250,6 +1259,11 @@ export default function AdSetsManager() {
   const filtered = useMemo(() => {
     let list = adSets;
 
+    // Filtro por tipo de ad set (produccion, testing, graduado)
+    if (typeFilter === 'production') list = list.filter(as => !(as.entity_name || '').startsWith('[TEST]') && !(as.entity_name || '').includes('[Prometheus]'));
+    else if (typeFilter === 'testing') list = list.filter(as => (as.entity_name || '').startsWith('[TEST]'));
+    else if (typeFilter === 'graduated') list = list.filter(as => (as.entity_name || '').includes('[Prometheus]'));
+
     if (filter === 'active') list = list.filter(as => isActiveStatus(as.status));
     else if (filter === 'paused') list = list.filter(as => isPausedStatus(as.status));
     else if (filter === 'off') list = list.filter(as => !isActiveStatus(as.status) && !isPausedStatus(as.status));
@@ -1286,7 +1300,7 @@ export default function AdSetsManager() {
       const cmp = typeof va === 'string' ? va.localeCompare(vb) : va - vb;
       return sortAsc ? cmp : -cmp;
     });
-  }, [adSets, filter, search, sortBy, sortAsc, timeWindow]);
+  }, [adSets, filter, typeFilter, search, sortBy, sortAsc, timeWindow]);
 
   // ── Render ──
 
@@ -1490,13 +1504,26 @@ export default function AdSetsManager() {
           </div>
         </div>
 
-        {/* Toolbar: Search + Filters */}
+        {/* Toolbar: Search + Type Filter + Status Filter */}
         <div className="toolbar">
           <div className="search-box">
             <Search size={14} />
             <input type="text" placeholder="Search ad sets or campaigns..." value={search} onChange={e => setSearch(e.target.value)} />
           </div>
           <div className="d-flex gap-1">
+            {[
+              { v: 'production', l: 'Produccion', icon: '🦉', color: '#3b82f6' },
+              { v: 'testing', l: 'Testing', icon: '🔥', color: '#f97316' },
+              { v: 'graduated', l: 'Graduados', icon: '🏆', color: '#10b981' },
+              { v: 'all', l: 'Todos', icon: '', color: '' },
+            ].map(f => (
+              <button key={f.v} onClick={() => setTypeFilter(f.v)}
+                className={`btn btn-sm ${typeFilter === f.v ? 'btn-primary' : 'btn-ghost'}`}
+                style={typeFilter === f.v && f.color ? { background: f.color, borderColor: f.color } : {}}>
+                {f.icon} {f.l}
+              </button>
+            ))}
+            <span style={{ width: 1, background: 'var(--border-color)', margin: '0 4px' }} />
             {[
               { v: 'active', l: 'Active', c: counts.active },
               { v: 'all', l: 'All', c: counts.total },
