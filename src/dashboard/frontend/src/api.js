@@ -329,6 +329,30 @@ export const getProposalImageUrl = (id) => {
   return `${BASE}/api/creative-agent/proposals/${id}/image?token=${token}`;
 };
 
+// ═══ ZEUS ═══
+
+export const runZeusApi = async () => {
+  const response = await api.post('/api/zeus/run', {}, { timeout: 60000 });
+  const data = response.data;
+  if (data.async && data.job_id) return pollForCompletion(`/api/zeus/run-status/${data.job_id}`, 3000, 120000);
+  return data;
+};
+
+export const getZeusIntelligence = async () => {
+  const response = await api.get('/api/zeus/intelligence');
+  return response.data;
+};
+
+export const getZeusDirectives = async () => {
+  const response = await api.get('/api/zeus/directives');
+  return response.data;
+};
+
+export const getZeusStats = async () => {
+  const response = await api.get('/api/zeus/stats');
+  return response.data;
+};
+
 // ═══ TESTING AGENT ═══
 
 export const runTestingAgentApi = async () => {

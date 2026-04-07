@@ -1468,6 +1468,7 @@ a:hover {
   border-bottom-color: var(--blue-primary);
 }
 .brain-tab.active[data-agent="overview"] { color: var(--text-primary); border-bottom-color: var(--text-secondary); }
+.brain-tab.active[data-agent="zeus"] { color: #fbbf24; border-bottom-color: #fbbf24; }
 .brain-tab.active[data-agent="athena"] { color: var(--athena-light); border-bottom-color: var(--athena-color); }
 .brain-tab.active[data-agent="apollo"] { color: var(--apollo-light); border-bottom-color: var(--apollo-color); }
 .brain-tab.active[data-agent="prometheus"] { color: var(--prometheus-light); border-bottom-color: var(--prometheus-color); }

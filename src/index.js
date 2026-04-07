@@ -18,6 +18,7 @@ const { runManager } = require('./ai/adset-creator/manager');
 const { runAccountAgent } = require('./ai/agent/account-agent');
 const { runCreativeAgent, syncProposalPerformance } = require('./ai/agent/creative-agent');
 const { runTestingAgent } = require('./ai/agent/testing-agent');
+const { runZeusLearner } = require('./ai/brain/zeus-learner');
 const { startDashboard } = require('./dashboard/server');
 const { refreshMetaToken } = require('./dashboard/routes/meta-auth');
 const { syncCreativeMetrics } = require('./dashboard/routes/creatives');
@@ -634,6 +635,26 @@ async function jobTestingAgent() {
 }
 
 /**
+ * Job: Zeus Learner — 2x/dia (5am, 5pm ET).
+ * Aprende patrones creativos, senales de tests, genera directivas para agentes.
+ */
+async function jobZeusLearner() {
+  const aiEnabled = await isAIEnabled();
+  if (!aiEnabled) return;
+
+  const agentMode = await SystemConfig.get('agent_mode', 'unified');
+  if (agentMode !== 'unified') return;
+
+  try {
+    logger.info('[CRON] Ejecutando Zeus Learner...');
+    const result = await runZeusLearner();
+    logger.info(`[CRON] Zeus: ${result.patterns_learned} patrones, ${result.directives_generated} directivas en ${result.elapsed}`);
+  } catch (error) {
+    logger.error('[CRON] Error en Zeus Learner:', error);
+  }
+}
+
+/**
  * Job: AI Ops Metrics Refresh — 24/7 con frecuencia adaptativa.
  * Horas activas: cada 15 min (Meta refresca insights cada ~15 min).
  * Fuera de horas: cada 30 min (mantener datos razonablemente frescos).
@@ -890,6 +911,13 @@ function initCronJobs() {
     name: 'testing-agent'
   });
   logger.info('  [*] Testing Agent — 5x/día: 6:30am, 10:30am, 2:30pm, 6:30pm, 10:30pm ET');
+
+  // Zeus Learner — 2x/día (5am, 5pm ET)
+  cron.schedule('0 5,17 * * *', jobZeusLearner, {
+    timezone: TIMEZONE,
+    name: 'zeus-learner'
+  });
+  logger.info('  [*] Zeus Learner — 2x/día: 5am, 5pm ET');
 
   // AI Ops metrics refresh — cada 15 min, 24/7
   cron.schedule('5,20,35,50 * * * *', jobAIOpsRefresh, {

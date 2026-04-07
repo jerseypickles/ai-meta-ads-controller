@@ -14,12 +14,14 @@ import {
   generateCopyForUpload, uploadAndCreateAd,
   getProducts, createProduct, deleteProduct, getProductImageUrl, runCreativeAgentApi,
   getCreativeProposals, approveCreativeProposal, rejectCreativeProposal, getProposalImageUrl,
-  getTestRuns, killTestRun, runTestingAgentApi, getTestImageUrl
+  getTestRuns, killTestRun, runTestingAgentApi, getTestImageUrl,
+  getZeusIntelligence, runZeusApi
 } from '../api';
 
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
 const ImpactOrb = React.lazy(() => import('../components/ImpactOrb'));
 const BrainKnowledgeOrb = React.lazy(() => import('../components/BrainKnowledgeOrb'));
+const ZeusOrb = React.lazy(() => import('../components/ZeusOrb'));
 
 // ═══ CONSTANTES ═══
 
@@ -97,6 +99,11 @@ export default function BrainIntelligence() {
   const [sharedProducts, setSharedProducts] = useState([]);
   const [sharedCreativeLoading, setSharedCreativeLoading] = useState(false);
   const [lightboxImg, setLightboxImg] = useState(null);
+
+  // Zeus state
+  const [zeusData, setZeusData] = useState(null);
+  const [zeusLoading, setZeusLoading] = useState(false);
+  const [zeusRunning, setZeusRunning] = useState(false);
 
   // ═══ CARGA INICIAL ═══
 
@@ -202,12 +209,22 @@ export default function BrainIntelligence() {
   const sharedFinishedTests = useMemo(() => sharedTestRuns.filter(t => ['graduated', 'killed', 'expired'].includes(t.phase)), [sharedTestRuns]);
   const sharedHistoryProposals = useMemo(() => sharedProposals.filter(p => p.status === 'uploaded' || p.status === 'approved'), [sharedProposals]);
 
+  const loadZeusData = useCallback(async () => {
+    setZeusLoading(true);
+    try {
+      const data = await getZeusIntelligence();
+      setZeusData(data);
+    } catch (err) { console.error('Error loading Zeus data:', err); }
+    finally { setZeusLoading(false); }
+  }, []);
+
   useEffect(() => {
     loadAgentData();
     loadInsights();
     loadStats();
     loadCreativeData();
-  }, [loadAgentData, loadInsights, loadStats, loadCreativeData]);
+    loadZeusData();
+  }, [loadAgentData, loadInsights, loadStats, loadCreativeData, loadZeusData]);
 
 
   // Load recs on mount so chat picker has data even before visiting recs tab
@@ -501,6 +518,10 @@ export default function BrainIntelligence() {
         <button className={`brain-tab ${activeTab === 'overview' ? 'active' : ''}`} data-agent="overview" onClick={() => setActiveTab('overview')}>
           Overview
         </button>
+        <button className={`brain-tab ${activeTab === 'zeus' ? 'active' : ''}`} data-agent="zeus" onClick={() => setActiveTab('zeus')}>
+          Zeus
+          {(zeusData?.directives?.active?.length || 0) > 0 && <span className="tab-badge" style={{ background: '#fbbf24', color: '#000' }}>{zeusData.directives.active.length}</span>}
+        </button>
         <button className={`brain-tab ${activeTab === 'athena' ? 'active' : ''}`} data-agent="athena" onClick={() => setActiveTab('athena')}>
           Athena
         </button>
@@ -527,7 +548,23 @@ export default function BrainIntelligence() {
 
       {/* Content */}
       <div className="brain-content">
-        {activeTab === 'overview' ? (
+        {activeTab === 'zeus' ? (
+          <ZeusPanel
+            data={zeusData}
+            loading={zeusLoading}
+            running={zeusRunning}
+            onRun={async () => {
+              setZeusRunning(true);
+              try { await runZeusApi(); await loadZeusData(); } catch (err) { console.error(err); }
+              finally { setZeusRunning(false); }
+            }}
+            agentStats={{
+              athena: { adsets: agentData?.global?.total_adsets || 0, actions: agentData?.global?.total_actions || 0, active: (agentData?.global?.total_adsets || 0) > 0 },
+              apollo: { ready: sharedReadyProposals.length, generated: sharedProposals.length, active: sharedReadyProposals.length > 0 },
+              prometheus: { tests: sharedActiveTests.length, graduated: sharedTestStats.graduated || 0, active: sharedActiveTests.length > 0 }
+            }}
+          />
+        ) : activeTab === 'overview' ? (
           <OverviewPanel
             agentData={agentData}
             testStats={sharedTestStats}
@@ -842,6 +879,117 @@ function AgentCountdown() {
     <div className="agent-stat agent-countdown">
       <span className="agent-stat-value agent-countdown-time">{timeLeft}</span>
       <span className="agent-stat-label">Proximo ({mode})</span>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ZEUS PANEL — Cerebro central: visualizacion neural + directivas
+// ═══════════════════════════════════════════════════════════════════
+
+function ZeusPanel({ data, loading, running, onRun, agentStats }) {
+  const directives = data?.directives?.active || [];
+  const scenePatterns = data?.scene_patterns || [];
+  const testing = data?.testing || {};
+  const intelligence = data?.intelligence_score || 0;
+
+  const DIRECTIVE_COLORS = { prioritize: '#10b981', avoid: '#ef4444', adjust: '#f59e0b', alert: '#8b5cf6', insight: '#3b82f6' };
+  const AGENT_ICONS = { apollo: '☀️', prometheus: '🔥', athena: '🦉', all: '⚡' };
+
+  return (
+    <div>
+      {/* Zeus 3D Visualization */}
+      <Suspense fallback={<div style={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>Cargando red neuronal...</div>}>
+        <ZeusOrb
+          learningActive={running}
+          directives={directives}
+          agentStats={agentStats}
+          intelligence={intelligence}
+        />
+      </Suspense>
+
+      {/* Header + Stats */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '16px 0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: '1.4rem' }}>⚡</span>
+          <div>
+            <div style={{ fontSize: '1.15rem', fontWeight: 600, color: '#fbbf24' }}>Zeus</div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Cerebro Central — IQ: {intelligence}</div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+          <span>{directives.length} directivas</span>
+          <span>{testing.graduation_rate || 0}% win rate</span>
+          <span>{scenePatterns.length} patrones</span>
+          <button className="btn-agent-run" onClick={onRun} disabled={running} style={{ background: 'linear-gradient(135deg, #fbbf24, #f97316)' }}>
+            {running ? 'Aprendiendo...' : 'Run Zeus'}
+          </button>
+        </div>
+      </div>
+
+      {/* Intelligence Summary */}
+      {data?.summary && (
+        <div style={{ background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-lg)', padding: 16, marginBottom: 16, borderLeft: '3px solid #fbbf24' }}>
+          <div style={{ fontSize: '0.75rem', color: '#fbbf24', fontWeight: 600, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Lo que Zeus sabe</div>
+          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>{data.summary}</div>
+        </div>
+      )}
+
+      {/* Directivas Activas */}
+      <div style={{ marginBottom: 20 }}>
+        <h4 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 10 }}>Directivas Activas</h4>
+        {directives.length === 0 ? (
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontStyle: 'italic' }}>
+            Zeus necesita mas datos para generar directivas. Los tests de Prometheus alimentan su aprendizaje.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {directives.map((d, i) => (
+              <div key={i} style={{
+                background: 'var(--bg-secondary)', border: `1px solid ${DIRECTIVE_COLORS[d.directive_type] || 'var(--border-color)'}`,
+                borderRadius: 'var(--radius-md)', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10
+              }}>
+                <span style={{ fontSize: '1rem' }}>{AGENT_ICONS[d.target_agent] || '⚡'}</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>{d.directive}</div>
+                  <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                    {d.target_agent} — {d.directive_type} — confianza: {Math.round((d.confidence || 0) * 100)}% — {d.based_on_samples} muestras
+                  </div>
+                </div>
+                <span style={{
+                  fontSize: '0.6rem', fontWeight: 600, textTransform: 'uppercase',
+                  padding: '2px 8px', borderRadius: 10, background: `${DIRECTIVE_COLORS[d.directive_type]}20`,
+                  color: DIRECTIVE_COLORS[d.directive_type]
+                }}>
+                  {d.directive_type}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Scene Patterns */}
+      {scenePatterns.length > 0 && (
+        <div>
+          <h4 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 10 }}>Patrones de Escenas (datos reales)</h4>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
+            {scenePatterns.map((p, i) => (
+              <div key={i} style={{
+                background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '10px 12px',
+                border: `1px solid ${p.win_rate >= 50 ? '#10b98130' : p.win_rate > 0 ? '#f59e0b30' : '#ef444430'}`
+              }}>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-primary)', marginBottom: 4 }}>{(p.scene || '').substring(0, 35)}...</div>
+                <div style={{ display: 'flex', gap: 12, fontSize: '0.7rem' }}>
+                  <span style={{ color: p.win_rate >= 50 ? '#10b981' : p.win_rate > 0 ? '#f59e0b' : '#ef4444', fontWeight: 600 }}>{p.win_rate}% win</span>
+                  <span style={{ color: 'var(--text-muted)' }}>{p.wins}W/{p.total - p.wins}L</span>
+                  <span style={{ color: 'var(--text-muted)' }}>{p.avg_roas}x ROAS</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
