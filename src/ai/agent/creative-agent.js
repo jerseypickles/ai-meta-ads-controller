@@ -104,18 +104,20 @@ function weightedPick(items) {
 // PROMPT TEMPLATE — soporta single product y combo (multi-product)
 // ═══════════════════════════════════════════════════════════════════════════════
 function buildImagePrompt(productName, scene, refTypes, style, isCombo = false, comboProductNames = []) {
-  let prompt = 'Use the uploaded ';
+  let prompt = '';
 
   // Describe references based on what was provided
   if (isCombo && comboProductNames.length > 1) {
-    prompt += `product container images as mandatory references for the exact package identity and labels of each product: ${comboProductNames.join(', ')}. `;
-    prompt += 'Show ALL containers together in the same scene — this is a product family/variety shot. ';
+    prompt += `Use the uploaded product container images as mandatory references for: ${comboProductNames.join(', ')}. `;
+    prompt += 'Show ALL these containers together in the same scene — this is a product family/variety shot. ';
   } else {
-    if (refTypes.includes('front-view')) {
-      prompt += `front-view ${productName} container image as the primary mandatory reference for the exact package identity, container proportions, and front label. `;
-    }
-    if (refTypes.includes('top-down') || refTypes.includes('open')) {
-      prompt += `Use the uploaded top-down/open container image as the secondary reference for the true appearance of the contents inside. `;
+    prompt += `CRITICAL: Use the uploaded reference image(s) of "${productName}" as the EXACT product to show. `;
+    prompt += 'The container in the final image MUST match the reference EXACTLY — same label text, same colors, same proportions, same brand design. ';
+    prompt += 'Do NOT invent, modify, or show any other product containers that are not in the reference images. ';
+    prompt += `Only show "${productName}" — no other Jersey Pickles varieties unless they appear in the references. `;
+
+    if (refTypes.length > 1) {
+      prompt += `You have ${refTypes.length} reference views (${refTypes.join(', ')}) — use ALL of them to understand the complete product appearance. `;
     }
   }
 
