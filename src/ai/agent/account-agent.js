@@ -959,6 +959,26 @@ async function runAccountAgent() {
   const elapsed = `${((Date.now() - startTime) / 1000).toFixed(1)}s`;
   logger.info(`═══ Account Agent completado [${cycleId}]: ${activeAdSets.length} ad sets, ${totalActions} acciones en ${elapsed} ═══`);
 
+  // Reportar a Zeus
+  try {
+    const ZeusConversation = require('../../db/models/ZeusConversation');
+    const ZeusDirective = require('../../db/models/ZeusDirective');
+    const activeDirectives = await ZeusDirective.find({ target_agent: { $in: ['athena', 'all'] }, active: true }).lean();
+    const scales = results.filter(r => r.actions?.includes('scale'));
+    const pauses = results.filter(r => r.actions?.includes('pause'));
+    const holds = results.filter(r => !r.actions || r.actions.length === 0);
+
+    let msg = `Ciclo completado (${mode}): ${activeAdSets.length} ad sets evaluados, ${totalActions} acciones en ${elapsed}.`;
+    msg += ` Escalé ${scales.length}, pausé ${pauses.length}, holdé ${holds.length}.`;
+    if (activeDirectives.length > 0) {
+      msg += ` Recibí ${activeDirectives.length} directivas tuyas: ${activeDirectives.map(d => `"${d.directive.substring(0, 50)}"`).join(', ')}.`;
+    }
+    await ZeusConversation.create({
+      from: 'athena', to: 'zeus', type: 'report', message: msg, cycle_id: cycleId,
+      context: { managed: activeAdSets.length, actions: totalActions, scales: scales.length, pauses: pauses.length, holds: holds.length, directives_received: activeDirectives.length }
+    });
+  } catch (_) {}
+
   return { managed: activeAdSets.length, actions_taken: totalActions, results, elapsed, cycle_id: cycleId, mode };
 }
 

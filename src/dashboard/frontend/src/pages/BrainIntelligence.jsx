@@ -14,7 +14,7 @@ import {
   getProducts, createProduct, deleteProduct, addProductImages, getProductImageUrl, runCreativeAgentApi,
   getCreativeProposals, approveCreativeProposal, rejectCreativeProposal, getProposalImageUrl,
   getTestRuns, killTestRun, runTestingAgentApi, getTestImageUrl,
-  getZeusIntelligence, runZeusApi, getZeusThoughts
+  getZeusIntelligence, runZeusApi, getZeusThoughts, getZeusConversations
 } from '../api';
 
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
@@ -185,11 +185,12 @@ export default function BrainIntelligence() {
   const loadZeusData = useCallback(async () => {
     setZeusLoading(true);
     try {
-      const [intel, thoughtsData] = await Promise.all([
+      const [intel, thoughtsData, convosData] = await Promise.all([
         getZeusIntelligence(),
-        getZeusThoughts()
+        getZeusThoughts(),
+        getZeusConversations()
       ]);
-      setZeusData({ ...intel, thoughts: thoughtsData.thoughts || [] });
+      setZeusData({ ...intel, thoughts: thoughtsData.thoughts || [], conversations: convosData.conversations || [] });
     } catch (err) { console.error('Error loading Zeus data:', err); }
     finally { setZeusLoading(false); }
   }, []);
@@ -845,6 +846,49 @@ function ZeusPanel({ data, loading, running, onRun, agentStats }) {
                 }}>
                   <div style={{ color: 'var(--text-primary)', lineHeight: 1.4 }}>{t.body || t.title}</div>
                   <div style={{ color: 'var(--text-muted)', fontSize: '0.65rem', marginTop: 3 }}>{timeStr}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Comunicaciones — Zeus habla con agentes */}
+      {(data?.conversations || []).length > 0 && (
+        <div style={{ marginTop: 20 }}>
+          <h4 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 10 }}>Comunicaciones entre Agentes</h4>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {(data.conversations || []).slice(0, 25).map((c, i) => {
+              const date = new Date(c.created_at);
+              const timeStr = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+              const AGENT_STYLE = {
+                zeus: { icon: '⚡', color: '#fbbf24', name: 'Zeus' },
+                athena: { icon: '🦉', color: '#60a5fa', name: 'Athena' },
+                apollo: { icon: '☀️', color: '#fbbf24', name: 'Apollo' },
+                prometheus: { icon: '🔥', color: '#fb923c', name: 'Prometheus' }
+              };
+              const from = AGENT_STYLE[c.from] || { icon: '?', color: '#9ca3af', name: c.from };
+              const to = AGENT_STYLE[c.to] || { icon: '', color: '#9ca3af', name: c.to };
+              const TYPE_COLORS = { directive: '#f97316', report: '#3b82f6', acknowledgment: '#10b981', alert: '#ef4444', thought: '#8b5cf6' };
+
+              return (
+                <div key={i} style={{
+                  display: 'flex', gap: 10, alignItems: 'flex-start',
+                  padding: '8px 12px', borderRadius: 'var(--radius-md)',
+                  background: c.from === 'zeus' ? 'rgba(251,191,36,0.05)' : 'var(--bg-secondary)',
+                  borderLeft: `3px solid ${from.color}`
+                }}>
+                  <span style={{ fontSize: '0.9rem', minWidth: 20 }}>{from.icon}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                      <span style={{ fontSize: '0.72rem', fontWeight: 600, color: from.color }}>{from.name}</span>
+                      <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>→</span>
+                      <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{to.name}</span>
+                      <span style={{ fontSize: '0.55rem', fontWeight: 600, textTransform: 'uppercase', padding: '1px 5px', borderRadius: 4, background: `${TYPE_COLORS[c.type] || '#6b7280'}15`, color: TYPE_COLORS[c.type] || '#6b7280' }}>{c.type}</span>
+                      <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', marginLeft: 'auto' }}>{timeStr}</span>
+                    </div>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-primary)', lineHeight: 1.4 }}>{c.message}</div>
+                  </div>
                 </div>
               );
             })}

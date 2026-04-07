@@ -143,6 +143,20 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+// ═══ GET /conversations — Comunicaciones entre Zeus y agentes ═══
+router.get('/conversations', async (req, res) => {
+  try {
+    const ZeusConversation = require('../../db/models/ZeusConversation');
+    const conversations = await ZeusConversation.find()
+      .sort({ created_at: -1 })
+      .limit(50)
+      .lean();
+    res.json({ conversations, count: conversations.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ═══ GET /thoughts — Stream de consciencia de Zeus ═══
 router.get('/thoughts', async (req, res) => {
   try {

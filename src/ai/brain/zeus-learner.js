@@ -495,6 +495,7 @@ Reglas:
     }
 
     // Guardar pensamientos como BrainInsights (stream de consciencia de Zeus)
+    const ZeusConversation = require('../../db/models/ZeusConversation');
     const thoughts = result.thoughts || [];
     for (const thought of thoughts) {
       await BrainInsight.create({
@@ -506,7 +507,22 @@ Reglas:
         entities: [],
         data_points: { source: 'zeus_learner', directives_created: created, total_tests: totalTests }
       });
+      // Tambien como conversacion
+      await ZeusConversation.create({
+        from: 'zeus', to: 'all', type: 'thought', message: thought
+      });
     }
+
+    // Registrar directivas como conversaciones
+    for (const d of (result.directives || [])) {
+      if (d.confidence < 0.4) continue;
+      await ZeusConversation.create({
+        from: 'zeus', to: d.target_agent, type: 'directive',
+        message: `[${d.directive_type.toUpperCase()}] ${d.directive}`,
+        context: d.data || {}
+      });
+    }
+
     if (thoughts.length > 0) {
       logger.info(`[ZEUS] ${thoughts.length} pensamientos guardados`);
     }

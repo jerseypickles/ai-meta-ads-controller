@@ -534,6 +534,21 @@ async function runTestingAgent() {
 
   logger.info(`═══ Testing Agent completado [${cycleId}]: ${launched} lanzados, ${monitored} monitoreados (${graduated} graduados, ${killed} killed, ${expired} expired), pool: ${readyPool} ready — ${elapsed} ═══`);
 
+  // Reportar a Zeus
+  try {
+    const ZeusConversation = require('../../db/models/ZeusConversation');
+    let msg = `Ciclo completado: ${launched} tests lanzados, ${monitored} monitoreados.`;
+    if (graduated > 0) msg += ` ${graduated} GRADUADOS — creativos ganadores enviados a produccion.`;
+    if (killed > 0) msg += ` ${killed} killed (sin conversiones).`;
+    if (expired > 0) msg += ` ${expired} expirados.`;
+    msg += ` Pool: ${readyPool} propuestas ready.`;
+    if (readyPool < MIN_READY_POOL) msg += ' Pool bajo — necesito que Apollo genere mas.';
+    await ZeusConversation.create({
+      from: 'prometheus', to: 'zeus', type: 'report', message: msg, cycle_id: cycleId,
+      context: { launched, monitored, graduated, killed, expired, pool: readyPool }
+    });
+  } catch (_) {}
+
   return {
     launched,
     monitored,

@@ -598,6 +598,25 @@ async function runCreativeAgent() {
   const elapsed = `${((Date.now() - startTime) / 1000).toFixed(1)}s`;
   logger.info(`═══ Creative Agent completado [${cycleId}]: ${generated} propuestas generadas en ${elapsed} ═══`);
 
+  // Reportar a Zeus
+  try {
+    const ZeusConversation = require('../../db/models/ZeusConversation');
+    const boosts = Object.keys(zeusSceneBoosts).length;
+    let msg = `Generé ${generated} propuestas en ${elapsed}.`;
+    if (boosts > 0) {
+      const boosted = Object.entries(zeusSceneBoosts).filter(([_, v]) => v > 0).map(([k]) => k.substring(0, 25));
+      const avoided = Object.entries(zeusSceneBoosts).filter(([_, v]) => v < 0).map(([k]) => k.substring(0, 25));
+      if (boosted.length > 0) msg += ` Prioricé tus escenas: ${boosted.join(', ')}.`;
+      if (avoided.length > 0) msg += ` Evité: ${avoided.join(', ')}.`;
+    } else {
+      msg += ' Sin directivas tuyas este ciclo.';
+    }
+    await ZeusConversation.create({
+      from: 'apollo', to: 'zeus', type: 'report', message: msg, cycle_id: cycleId,
+      context: { generated, scene_boosts: boosts }
+    });
+  } catch (_) {}
+
   return { generated, results, elapsed, cycle_id: cycleId };
 }
 

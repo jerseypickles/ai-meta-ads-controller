@@ -359,6 +359,11 @@ export const getZeusThoughts = async () => {
   return response.data;
 };
 
+export const getZeusConversations = async () => {
+  const response = await api.get('/api/zeus/conversations');
+  return response.data;
+};
+
 // ═══ TESTING AGENT ═══
 
 export const runTestingAgentApi = async () => {
