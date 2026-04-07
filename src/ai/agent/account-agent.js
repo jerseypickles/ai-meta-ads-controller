@@ -921,7 +921,7 @@ async function runAccountAgent() {
 
   // Get ALL active ad set snapshots
   const allSnapshots = await getLatestSnapshots('adset');
-  const activeAdSets = allSnapshots.filter(s => s.status === 'ACTIVE');
+  const activeAdSets = allSnapshots.filter(s => s.status === 'ACTIVE' && !(s.entity_name || '').startsWith('[TEST]'));
 
   if (activeAdSets.length === 0) {
     logger.info('[ACCOUNT-AGENT] No active ad sets found');
