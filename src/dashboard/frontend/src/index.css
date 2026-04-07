@@ -42,6 +42,17 @@
   --yellow-light: #fbbf24;
   --yellow-dark: #d97706;
 
+  /* Colores de agentes */
+  --athena-color: #3b82f6;
+  --athena-light: #60a5fa;
+  --athena-bg: rgba(59, 130, 246, 0.1);
+  --apollo-color: #f59e0b;
+  --apollo-light: #fbbf24;
+  --apollo-bg: rgba(245, 158, 11, 0.1);
+  --prometheus-color: #f97316;
+  --prometheus-light: #fb923c;
+  --prometheus-bg: rgba(249, 115, 22, 0.1);
+
   /* Colores de texto */
   --text-primary: #f9fafb;
   --text-secondary: #d1d5db;
@@ -1455,6 +1466,94 @@ a:hover {
 .brain-tab.active {
   color: var(--blue-light);
   border-bottom-color: var(--blue-primary);
+}
+.brain-tab.active[data-agent="overview"] { color: var(--text-primary); border-bottom-color: var(--text-secondary); }
+.brain-tab.active[data-agent="athena"] { color: var(--athena-light); border-bottom-color: var(--athena-color); }
+.brain-tab.active[data-agent="apollo"] { color: var(--apollo-light); border-bottom-color: var(--apollo-color); }
+.brain-tab.active[data-agent="prometheus"] { color: var(--prometheus-light); border-bottom-color: var(--prometheus-color); }
+
+/* ═══ OVERVIEW DASHBOARD ═══ */
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  margin-top: 8px;
+}
+.overview-agent-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  cursor: pointer;
+  transition: all var(--transition-base);
+  position: relative;
+  overflow: hidden;
+}
+.overview-agent-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+}
+.overview-agent-card[data-agent="athena"]::before { background: var(--athena-color); }
+.overview-agent-card[data-agent="apollo"]::before { background: var(--apollo-color); }
+.overview-agent-card[data-agent="prometheus"]::before { background: var(--prometheus-color); }
+.overview-agent-card:hover {
+  border-color: var(--border-light);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+}
+.overview-agent-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.overview-agent-icon { font-size: 1.5rem; }
+.overview-agent-name { font-size: 1.1rem; font-weight: 600; color: var(--text-primary); }
+.overview-agent-role { font-size: 0.75rem; color: var(--text-muted); }
+.overview-agent-status {
+  margin-left: auto;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 12px;
+  letter-spacing: 0.5px;
+}
+.overview-agent-status.active { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+.overview-agent-status.idle { background: rgba(107, 114, 128, 0.15); color: #9ca3af; }
+.overview-agent-metrics {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.overview-metric {
+  display: flex;
+  flex-direction: column;
+}
+.overview-metric-value { font-size: 1.4rem; font-weight: 700; color: var(--text-primary); }
+.overview-metric-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.overview-agent-last { font-size: 0.78rem; color: var(--text-tertiary); font-style: italic; }
+
+/* ═══ AGENT PANEL HEADERS ═══ */
+.agent-panel-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+.agent-panel-identity .agent-icon { font-size: 1.4rem; }
+.agent-panel-identity .agent-name { font-size: 1.15rem; font-weight: 600; }
+.agent-panel-identity .agent-role { font-size: 0.78rem; color: var(--text-muted); margin-left: 4px; }
+.agent-panel-identity[data-agent="athena"] .agent-name { color: var(--athena-light); }
+.agent-panel-identity[data-agent="apollo"] .agent-name { color: var(--apollo-light); }
+.agent-panel-identity[data-agent="prometheus"] .agent-name { color: var(--prometheus-light); }
+
+/* Sub-tabs colorean segun agente padre */
+.athena-panel .sub-tab.active { color: var(--athena-light); border-color: var(--athena-color); background: var(--athena-bg); }
+.apollo-panel .sub-tab.active { color: var(--apollo-light); border-color: var(--apollo-color); background: var(--apollo-bg); }
+.prometheus-panel .sub-tab.active { color: var(--prometheus-light); border-color: var(--prometheus-color); background: var(--prometheus-bg); }
+
+@media (max-width: 768px) {
+  .overview-grid { grid-template-columns: 1fr; }
 }
 
 .tab-badge {

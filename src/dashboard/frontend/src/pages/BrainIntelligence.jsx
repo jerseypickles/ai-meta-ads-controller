@@ -48,7 +48,7 @@ const SEVERITY_CONFIG = {
 
 export default function BrainIntelligence() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('agent'); // 'agent' | 'knowledge' | 'chat'
+  const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'athena' | 'apollo' | 'prometheus' | 'chat'
   const [insights, setInsights] = useState([]);
   const [insightsTotal, setInsightsTotal] = useState(0);
   const [insightsPage, setInsightsPage] = useState(1);
@@ -89,6 +89,14 @@ export default function BrainIntelligence() {
   const [agentLoading, setAgentLoading] = useState(false);
   const [agentRunning, setAgentRunning] = useState(false);
   const [expandedAdSet, setExpandedAdSet] = useState(null);
+
+  // Datos compartidos para Overview, Apollo y Prometheus
+  const [sharedTestRuns, setSharedTestRuns] = useState([]);
+  const [sharedTestStats, setSharedTestStats] = useState({});
+  const [sharedProposals, setSharedProposals] = useState([]);
+  const [sharedProducts, setSharedProducts] = useState([]);
+  const [sharedCreativeLoading, setSharedCreativeLoading] = useState(false);
+  const [lightboxImg, setLightboxImg] = useState(null);
 
   // ═══ CARGA INICIAL ═══
 
@@ -171,11 +179,35 @@ export default function BrainIntelligence() {
     }
   };
 
+  // Cargar datos de creativos y tests para Overview/Apollo/Prometheus
+  const loadCreativeData = useCallback(async () => {
+    setSharedCreativeLoading(true);
+    try {
+      const [prodData, propData, testData] = await Promise.all([
+        getProducts(),
+        getCreativeProposals(),
+        getTestRuns()
+      ]);
+      setSharedProducts(prodData.products || []);
+      setSharedProposals(propData.proposals || []);
+      setSharedTestRuns(testData.tests || []);
+      setSharedTestStats(testData.stats || {});
+    } catch (err) { console.error('Error loading creative data:', err); }
+    finally { setSharedCreativeLoading(false); }
+  }, []);
+
+  // Datos derivados para Overview y tabs
+  const sharedReadyProposals = useMemo(() => sharedProposals.filter(p => p.status === 'ready'), [sharedProposals]);
+  const sharedActiveTests = useMemo(() => sharedTestRuns.filter(t => ['learning', 'evaluating'].includes(t.phase)), [sharedTestRuns]);
+  const sharedFinishedTests = useMemo(() => sharedTestRuns.filter(t => ['graduated', 'killed', 'expired'].includes(t.phase)), [sharedTestRuns]);
+  const sharedHistoryProposals = useMemo(() => sharedProposals.filter(p => p.status === 'uploaded' || p.status === 'approved'), [sharedProposals]);
+
   useEffect(() => {
     loadAgentData();
     loadInsights();
     loadStats();
-  }, [loadAgentData, loadInsights, loadStats]);
+    loadCreativeData();
+  }, [loadAgentData, loadInsights, loadStats, loadCreativeData]);
 
 
   // Load recs on mount so chat picker has data even before visiting recs tab
@@ -464,69 +496,79 @@ export default function BrainIntelligence() {
         </div>
       </div>
 
-      {/* Tab Switcher — 3 tabs */}
+      {/* Tab Switcher — 5 tabs con identidad de agentes griegos */}
       <div className="brain-tabs">
-        <button
-          className={`brain-tab ${activeTab === 'agent' ? 'active' : ''}`}
-          onClick={() => setActiveTab('agent')}
-        >
-          Agente
+        <button className={`brain-tab ${activeTab === 'overview' ? 'active' : ''}`} data-agent="overview" onClick={() => setActiveTab('overview')}>
+          Overview
         </button>
-        <button
-          className={`brain-tab ${activeTab === 'knowledge' ? 'active' : ''}`}
-          onClick={() => setActiveTab('knowledge')}
-        >
-          Conocimiento
-          {unreadCount > 0 && <span className="tab-badge">{unreadCount}</span>}
+        <button className={`brain-tab ${activeTab === 'athena' ? 'active' : ''}`} data-agent="athena" onClick={() => setActiveTab('athena')}>
+          Athena
         </button>
-        <button
-          className={`brain-tab ${activeTab === 'creatives' ? 'active' : ''}`}
-          onClick={() => setActiveTab('creatives')}
-        >
-          Creativos
+        <button className={`brain-tab ${activeTab === 'apollo' ? 'active' : ''}`} data-agent="apollo" onClick={() => setActiveTab('apollo')}>
+          Apollo
+          {sharedReadyProposals.length > 0 && <span className="tab-badge" style={{ background: 'var(--apollo-color)' }}>{sharedReadyProposals.length}</span>}
         </button>
-        <button
-          className={`brain-tab ${activeTab === 'chat' ? 'active' : ''}`}
-          onClick={() => setActiveTab('chat')}
-        >
+        <button className={`brain-tab ${activeTab === 'prometheus' ? 'active' : ''}`} data-agent="prometheus" onClick={() => setActiveTab('prometheus')}>
+          Prometheus
+          {sharedActiveTests.length > 0 && <span className="tab-badge" style={{ background: 'var(--prometheus-color)' }}>{sharedActiveTests.length}</span>}
+        </button>
+        <button className={`brain-tab ${activeTab === 'chat' ? 'active' : ''}`} data-agent="chat" onClick={() => setActiveTab('chat')}>
           Chat
         </button>
       </div>
 
+      {/* Lightbox global */}
+      {lightboxImg && (
+        <div className="creative-lightbox" onClick={() => setLightboxImg(null)}>
+          <img src={lightboxImg} alt="Preview" />
+          <span className="creative-lightbox-close">ESC para cerrar</span>
+        </div>
+      )}
+
       {/* Content */}
       <div className="brain-content">
-        {activeTab === 'agent' ? (
-          <AgentPanel
-            data={agentData}
-            loading={agentLoading}
-            running={agentRunning}
-            expandedAdSet={expandedAdSet}
-            onToggleExpand={(id) => setExpandedAdSet(expandedAdSet === id ? null : id)}
-            onRunAgent={handleRunAgent}
-            onRefresh={loadAgentData}
-            formatTime={formatTime}
+        {activeTab === 'overview' ? (
+          <OverviewPanel
+            agentData={agentData}
+            testStats={sharedTestStats}
+            readyCount={sharedReadyProposals.length}
+            activeTestCount={sharedActiveTests.length}
+            onNavigate={setActiveTab}
           />
-        ) : activeTab === 'knowledge' ? (
-          <KnowledgePanelUnified
-            insights={insights}
-            loadingInsights={loadingInsights}
-            analyzing={analyzing}
-            typeFilter={typeFilter}
-            severityFilter={severityFilter}
-            insightsPage={insightsPage}
-            totalPages={totalPages}
-            insightsTotal={insightsTotal}
-            unreadCount={unreadCount}
-            onTypeFilter={setTypeFilter}
-            onSeverityFilter={setSeverityFilter}
-            onAnalyze={handleAnalyze}
-            onMarkAllRead={handleMarkAllRead}
-            onInsightClick={handleInsightClick}
-            onPageChange={(p) => loadInsights(p)}
-            formatTime={formatTime}
+        ) : activeTab === 'athena' ? (
+          <>
+            <AgentPanel
+              data={agentData}
+              loading={agentLoading}
+              running={agentRunning}
+              expandedAdSet={expandedAdSet}
+              onToggleExpand={(id) => setExpandedAdSet(expandedAdSet === id ? null : id)}
+              onRunAgent={handleRunAgent}
+              onRefresh={loadAgentData}
+              formatTime={formatTime}
+            />
+          </>
+        ) : activeTab === 'apollo' ? (
+          <ApolloPanel
+            products={sharedProducts}
+            proposals={sharedProposals}
+            readyProposals={sharedReadyProposals}
+            historyProposals={sharedHistoryProposals}
+            loading={sharedCreativeLoading}
+            onRefresh={loadCreativeData}
+            lightboxImg={lightboxImg}
+            setLightboxImg={setLightboxImg}
           />
-        ) : activeTab === 'creatives' ? (
-          <ProductBankPanel />
+        ) : activeTab === 'prometheus' ? (
+          <PrometheusPanel
+            testRuns={sharedTestRuns}
+            activeTests={sharedActiveTests}
+            finishedTests={sharedFinishedTests}
+            testStats={sharedTestStats}
+            loading={sharedCreativeLoading}
+            onRefresh={loadCreativeData}
+            setLightboxImg={setLightboxImg}
+          />
         ) : (
           <ChatPanel
             messages={chatMessages}
@@ -803,6 +845,428 @@ function AgentCountdown() {
     </div>
   );
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// OVERVIEW PANEL — Vista panoramica de los 3 agentes
+// ═══════════════════════════════════════════════════════════════════
+
+function OverviewPanel({ agentData, testStats, readyCount, activeTestCount, onNavigate }) {
+  const agents = [
+    {
+      key: 'athena', name: 'Athena', role: 'Estratega', icon: '🦉',
+      metrics: [
+        { value: agentData?.global?.total_adsets || 0, label: 'Ad Sets' },
+        { value: agentData?.global?.total_actions || 0, label: 'Acciones' }
+      ],
+      last: agentData?.global?.last_cycle_at ? `Ultimo ciclo: ${new Date(agentData.global.last_cycle_at).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })}` : 'Sin actividad',
+      status: (agentData?.global?.total_adsets || 0) > 0 ? 'active' : 'idle'
+    },
+    {
+      key: 'apollo', name: 'Apollo', role: 'Creador', icon: '☀️',
+      metrics: [
+        { value: readyCount, label: 'Ready' },
+        { value: testStats?.graduated || 0, label: 'Graduados' }
+      ],
+      last: readyCount > 0 ? `${readyCount} creativos listos para testing` : 'Pipeline vacio',
+      status: readyCount > 0 ? 'active' : 'idle'
+    },
+    {
+      key: 'prometheus', name: 'Prometheus', role: 'Evaluador', icon: '🔥',
+      metrics: [
+        { value: activeTestCount, label: 'Tests' },
+        { value: `${testStats?.graduation_rate || 0}%`, label: 'Win Rate' }
+      ],
+      last: activeTestCount > 0 ? `${activeTestCount} tests activos — $${testStats?.daily_budget_exposure || 0}/dia` : 'Sin tests activos',
+      status: activeTestCount > 0 ? 'active' : 'idle'
+    }
+  ];
+
+  return (
+    <div>
+      <div style={{ marginBottom: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span style={{ fontSize: '1.5rem' }}>🏛️</span>
+        <div>
+          <div style={{ fontSize: '1.15rem', fontWeight: 600 }}>Pantheon</div>
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Vista general de los agentes autonomos</div>
+        </div>
+      </div>
+      <div className="overview-grid">
+        {agents.map(a => (
+          <div key={a.key} className="overview-agent-card" data-agent={a.key} onClick={() => onNavigate(a.key)}>
+            <div className="overview-agent-header">
+              <span className="overview-agent-icon">{a.icon}</span>
+              <div>
+                <div className="overview-agent-name">{a.name}</div>
+                <div className="overview-agent-role">{a.role}</div>
+              </div>
+              <span className={`overview-agent-status ${a.status}`}>{a.status}</span>
+            </div>
+            <div className="overview-agent-metrics">
+              {a.metrics.map((m, i) => (
+                <div className="overview-metric" key={i}>
+                  <span className="overview-metric-value">{m.value}</span>
+                  <span className="overview-metric-label">{m.label}</span>
+                </div>
+              ))}
+            </div>
+            <div className="overview-agent-last">{a.last}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// APOLLO PANEL — Creador: Product Bank + Pipeline + Historial
+// ═══════════════════════════════════════════════════════════════════
+
+function ApolloPanel({ products, proposals, readyProposals, historyProposals, loading, onRefresh, setLightboxImg }) {
+  const [apolloSubTab, setApolloSubTab] = useState('pipeline');
+  const [showForm, setShowForm] = useState(false);
+  const [formName, setFormName] = useState('');
+  const [formSlug, setFormSlug] = useState('');
+  const [formUrl, setFormUrl] = useState('https://jerseypickles.com');
+  const [formFiles, setFormFiles] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [runningCreative, setRunningCreative] = useState(false);
+  const fileRef = useRef(null);
+
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    if (!formName || !formSlug || !formFiles?.length) return;
+    setCreating(true);
+    try {
+      const fd = new FormData();
+      fd.append('product_name', formName);
+      fd.append('product_slug', formSlug);
+      fd.append('link_url', formUrl);
+      for (const f of formFiles) fd.append('images', f);
+      await createProduct(fd);
+      setFormName(''); setFormSlug(''); setFormFiles(null); setShowForm(false);
+      await onRefresh();
+    } catch (err) { console.error(err); }
+    finally { setCreating(false); }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('Eliminar este producto?')) return;
+    try { await deleteProduct(id); await onRefresh(); } catch (err) { console.error(err); }
+  };
+
+  const handleRunCreative = async () => {
+    setRunningCreative(true);
+    try { await runCreativeAgentApi(); await onRefresh(); } catch (err) { console.error(err); }
+    finally { setRunningCreative(false); }
+  };
+
+  const fmtDate = (d) => {
+    if (!d) return '';
+    const dt = new Date(d);
+    return `${dt.getDate()}/${dt.getMonth() + 1} ${dt.getHours().toString().padStart(2, '0')}:${dt.getMinutes().toString().padStart(2, '0')}`;
+  };
+
+  return (
+    <div className="apollo-panel">
+      <div className="agent-panel-identity" data-agent="apollo">
+        <span className="agent-icon">☀️</span>
+        <span className="agent-name">Apollo</span>
+        <span className="agent-role">— Creador</span>
+        <button className="btn-agent-run" onClick={handleRunCreative} disabled={runningCreative} style={{ marginLeft: 'auto' }}>
+          {runningCreative ? 'Generando...' : 'Generar Creativos'}
+        </button>
+      </div>
+
+      <div className="knowledge-sub-tabs" style={{ marginBottom: 16 }}>
+        <button className={`sub-tab ${apolloSubTab === 'pipeline' ? 'active' : ''}`} onClick={() => setApolloSubTab('pipeline')}>
+          Pipeline {readyProposals.length > 0 && <span className="tab-badge" style={{ background: 'var(--apollo-color)' }}>{readyProposals.length}</span>}
+        </button>
+        <button className={`sub-tab ${apolloSubTab === 'history' ? 'active' : ''}`} onClick={() => setApolloSubTab('history')}>
+          Subidos a Meta
+        </button>
+        <button className={`sub-tab ${apolloSubTab === 'products' ? 'active' : ''}`} onClick={() => setApolloSubTab('products')}>
+          Productos ({products.length})
+        </button>
+      </div>
+
+      {apolloSubTab === 'pipeline' && (
+        <div className="creative-pending-section">
+          {loading ? <div className="brain-loading">Cargando...</div> : readyProposals.length === 0 ? (
+            <div className="creative-empty-state">
+              <span className="creative-empty-icon">☀️</span>
+              <p>Pipeline vacio — Apollo generara creativos en el proximo ciclo</p>
+            </div>
+          ) : (
+            <div className="creative-pending-grid">
+              {readyProposals.map(p => (
+                <div key={p._id} className="creative-proposal-card">
+                  <div className="creative-proposal-img-wrap" onClick={() => setLightboxImg(getProposalImageUrl(p._id))}>
+                    <img src={getProposalImageUrl(p._id)} alt={p.headline} className="creative-proposal-img" />
+                    <span className="creative-history-badge" style={{ background: 'var(--apollo-color)' }}>Ready</span>
+                  </div>
+                  <div className="creative-proposal-content">
+                    <h4 className="creative-proposal-headline">{p.headline}</h4>
+                    <p className="creative-proposal-text">{p.primary_text}</p>
+                    <div className="creative-proposal-tags">
+                      <span className="creative-tag product">{p.product_name}</span>
+                      <span className="creative-tag scene">{p.scene_short}</span>
+                    </div>
+                    <div className="creative-proposal-target">
+                      <span className="creative-target-label">Para</span>
+                      <span className="creative-target-name">{p.adset_name}</span>
+                    </div>
+                    <div className="creative-proposal-date">{fmtDate(p.created_at)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {apolloSubTab === 'history' && (
+        <div className="creative-history-section">
+          {historyProposals.length === 0 ? (
+            <div className="creative-empty-state"><span className="creative-empty-icon">📋</span><p>Sin historial</p></div>
+          ) : (
+            <div className="creative-history-grid">
+              {historyProposals.map(p => (
+                <div key={p._id} className="creative-history-card uploaded">
+                  <div className="creative-history-img-wrap" onClick={() => setLightboxImg(getProposalImageUrl(p._id))}>
+                    <img src={getProposalImageUrl(p._id)} alt={p.headline} className="creative-history-img" />
+                    <span className="creative-history-badge uploaded">Activo</span>
+                  </div>
+                  <div className="creative-history-body">
+                    <h5 className="creative-history-headline">{p.headline}</h5>
+                    <div className="creative-history-meta">
+                      <span className="creative-tag product">{p.product_name}</span>
+                      <span className="creative-tag scene">{p.scene_short}</span>
+                    </div>
+                    <div className="creative-history-target">{p.adset_name}</div>
+                    {p.performance?.roas_7d > 0 ? (
+                      <div className="creative-history-perf">
+                        <div className="creative-perf-metric"><span className="creative-perf-val" style={{ color: p.performance.roas_7d >= 3 ? '#10b981' : p.performance.roas_7d >= 1.5 ? '#f59e0b' : '#ef4444' }}>{p.performance.roas_7d.toFixed(2)}x</span><span className="creative-perf-lbl">ROAS</span></div>
+                        <div className="creative-perf-metric"><span className="creative-perf-val">${(p.performance.spend_7d || 0).toFixed(0)}</span><span className="creative-perf-lbl">Spend</span></div>
+                        {p.performance.purchases_7d > 0 && <div className="creative-perf-metric"><span className="creative-perf-val">{p.performance.purchases_7d}</span><span className="creative-perf-lbl">Compras</span></div>}
+                      </div>
+                    ) : <span className="creative-perf-pending">Esperando metricas...</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {apolloSubTab === 'products' && (
+        <div className="creative-products-section">
+          <div className="creative-products-grid">
+            {products.map(p => (
+              <div key={p._id} className="creative-product-card">
+                <div className="creative-product-header">
+                  <h4>{p.product_name}</h4>
+                  <button className="creative-product-delete" onClick={() => handleDelete(p._id)}>x</button>
+                </div>
+                <div className="creative-product-slug">{p.product_slug}</div>
+                <div className="creative-product-images">
+                  {(p.png_references || []).map((ref, i) => (
+                    <img key={i} src={getProductImageUrl(ref.filename)} alt={ref.type} className="creative-product-thumb" onClick={() => setLightboxImg(getProductImageUrl(ref.filename))} />
+                  ))}
+                </div>
+                {p.performance?.avg_roas > 0 && (
+                  <div className="creative-product-perf">ROAS: {p.performance.avg_roas.toFixed(1)}x | Spend: ${(p.performance.total_spend || 0).toFixed(0)}</div>
+                )}
+              </div>
+            ))}
+          </div>
+          <button className="btn-agent-run" onClick={() => setShowForm(!showForm)} style={{ marginTop: 16 }}>
+            {showForm ? 'Cancelar' : 'Agregar Producto'}
+          </button>
+          {showForm && (
+            <form onSubmit={handleCreate} className="creative-product-form" style={{ marginTop: 12 }}>
+              <input placeholder="Nombre del producto" value={formName} onChange={e => { setFormName(e.target.value); setFormSlug(e.target.value.toLowerCase().replace(/\s+/g, '-')); }} />
+              <input placeholder="Slug" value={formSlug} onChange={e => setFormSlug(e.target.value)} />
+              <input placeholder="URL" value={formUrl} onChange={e => setFormUrl(e.target.value)} />
+              <input type="file" ref={fileRef} accept="image/png,image/jpeg" multiple onChange={e => setFormFiles(e.target.files)} />
+              <button type="submit" disabled={creating}>{creating ? 'Creando...' : 'Crear Producto'}</button>
+            </form>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PROMETHEUS PANEL — Evaluador: Testing + Graduados + Historial
+// ═══════════════════════════════════════════════════════════════════
+
+function PrometheusPanel({ testRuns, activeTests, finishedTests, testStats, loading, onRefresh, setLightboxImg }) {
+  const [promSubTab, setPromSubTab] = useState('testing');
+  const [runningTesting, setRunningTesting] = useState(false);
+
+  const handleRunTesting = async () => {
+    setRunningTesting(true);
+    try { await runTestingAgentApi(); await onRefresh(); } catch (err) { console.error(err); }
+    finally { setRunningTesting(false); }
+  };
+
+  const handleKillTest = async (id) => {
+    if (!window.confirm('Matar este test?')) return;
+    try { await killTestRun(id); await onRefresh(); } catch (err) { console.error(err); }
+  };
+
+  const fmtDate = (d) => {
+    if (!d) return '';
+    const dt = new Date(d);
+    return `${dt.getDate()}/${dt.getMonth() + 1} ${dt.getHours().toString().padStart(2, '0')}:${dt.getMinutes().toString().padStart(2, '0')}`;
+  };
+
+  const graduatedTests = useMemo(() => finishedTests.filter(t => t.phase === 'graduated'), [finishedTests]);
+  const historyTests = useMemo(() => finishedTests.filter(t => t.phase !== 'graduated'), [finishedTests]);
+
+  return (
+    <div className="prometheus-panel">
+      <div className="agent-panel-identity" data-agent="prometheus">
+        <span className="agent-icon">🔥</span>
+        <span className="agent-name">Prometheus</span>
+        <span className="agent-role">— Evaluador</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 16, alignItems: 'center', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+          <span>{testStats.active || 0} activos</span>
+          <span style={{ color: '#10b981' }}>{testStats.graduated || 0} graduados</span>
+          <span>Win: {testStats.graduation_rate || 0}%</span>
+          <span>${testStats.daily_budget_exposure || 0}/dia</span>
+          <button className="btn-agent-run" onClick={handleRunTesting} disabled={runningTesting} style={{ background: 'linear-gradient(135deg, #f97316, #ef4444)' }}>
+            {runningTesting ? 'Testing...' : 'Run Testing'}
+          </button>
+        </div>
+      </div>
+
+      <div className="knowledge-sub-tabs" style={{ marginBottom: 16 }}>
+        <button className={`sub-tab ${promSubTab === 'testing' ? 'active' : ''}`} onClick={() => setPromSubTab('testing')}>
+          En Testing {activeTests.length > 0 && <span className="tab-badge" style={{ background: 'var(--prometheus-color)' }}>{activeTests.length}</span>}
+        </button>
+        <button className={`sub-tab ${promSubTab === 'graduated' ? 'active' : ''}`} onClick={() => setPromSubTab('graduated')}>
+          Graduados {graduatedTests.length > 0 && <span className="tab-badge" style={{ background: '#10b981' }}>{graduatedTests.length}</span>}
+        </button>
+        <button className={`sub-tab ${promSubTab === 'history' ? 'active' : ''}`} onClick={() => setPromSubTab('history')}>
+          Historial
+        </button>
+      </div>
+
+      {promSubTab === 'testing' && (
+        <div className="creative-pending-section">
+          {loading ? <div className="brain-loading">Cargando...</div> : activeTests.length === 0 ? (
+            <div className="creative-empty-state"><span className="creative-empty-icon">🔥</span><p>No hay tests activos</p></div>
+          ) : (
+            <div className="creative-pending-grid">
+              {activeTests.map(t => {
+                const p = t.proposal || {};
+                const daysActive = Math.floor((Date.now() - new Date(t.launched_at).getTime()) / 86400000);
+                const m = t.metrics || {};
+                return (
+                  <div key={t._id} className="creative-proposal-card">
+                    <div className="creative-proposal-img-wrap" onClick={() => setLightboxImg(getTestImageUrl(t._id))}>
+                      <img src={getTestImageUrl(t._id)} alt={p.headline} className="creative-proposal-img" onError={e => { e.target.style.display = 'none'; }} />
+                      <span className="creative-history-badge" style={{ background: t.phase === 'learning' ? '#3b82f6' : '#f59e0b' }}>{t.phase === 'learning' ? 'Learning' : 'Evaluando'} — Dia {daysActive}</span>
+                    </div>
+                    <div className="creative-proposal-content">
+                      <h4 className="creative-proposal-headline">{p.headline || t.test_adset_name}</h4>
+                      <div className="creative-proposal-tags">
+                        <span className="creative-tag product">{p.product_name || ''}</span>
+                        <span className="creative-tag scene">{p.scene_short || ''}</span>
+                      </div>
+                      <div className="creative-proposal-target"><span className="creative-target-label">Para</span><span className="creative-target-name">{t.source_adset_name}</span></div>
+                      <div className="creative-history-perf" style={{ marginTop: 8 }}>
+                        <div className="creative-perf-metric"><span className="creative-perf-val" style={{ color: m.roas >= 3 ? '#10b981' : m.roas >= 1.5 ? '#f59e0b' : m.spend > 10 ? '#ef4444' : 'var(--text-secondary)' }}>{m.roas > 0 ? `${m.roas.toFixed(2)}x` : '--'}</span><span className="creative-perf-lbl">ROAS</span></div>
+                        <div className="creative-perf-metric"><span className="creative-perf-val">${(m.spend || 0).toFixed(0)}</span><span className="creative-perf-lbl">Spend</span></div>
+                        <div className="creative-perf-metric"><span className="creative-perf-val">{m.purchases || 0}</span><span className="creative-perf-lbl">Compras</span></div>
+                        <div className="creative-perf-metric"><span className="creative-perf-val">{m.ctr > 0 ? `${m.ctr.toFixed(1)}%` : '--'}</span><span className="creative-perf-lbl">CTR</span></div>
+                      </div>
+                      {t.assessments?.length > 0 && <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 6, fontStyle: 'italic' }}>{t.assessments[t.assessments.length - 1].assessment}</div>}
+                      <div className="creative-proposal-actions" style={{ marginTop: 8 }}>
+                        <button className="creative-btn-reject" onClick={(e) => { e.stopPropagation(); handleKillTest(t._id); }}>Matar Test</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {promSubTab === 'graduated' && (
+        <div className="creative-history-section">
+          {graduatedTests.length === 0 ? (
+            <div className="creative-empty-state"><span className="creative-empty-icon">🏆</span><p>Sin graduados aun</p></div>
+          ) : (
+            <div className="creative-history-grid">
+              {graduatedTests.map(t => {
+                const p = t.proposal || {};
+                const m = t.metrics || {};
+                return (
+                  <div key={t._id} className="creative-history-card uploaded">
+                    <div className="creative-history-img-wrap" onClick={() => setLightboxImg(getTestImageUrl(t._id))}>
+                      <img src={getTestImageUrl(t._id)} alt={p.headline} className="creative-history-img" onError={e => { e.target.style.display = 'none'; }} />
+                      <span className="creative-history-badge" style={{ background: '#10b981' }}>Graduado</span>
+                    </div>
+                    <div className="creative-history-body">
+                      <h5 className="creative-history-headline">{p.headline || t.test_adset_name}</h5>
+                      <div className="creative-history-target">{t.source_adset_name}</div>
+                      <div className="creative-history-perf">
+                        <div className="creative-perf-metric"><span className="creative-perf-val" style={{ color: '#10b981' }}>{(m.roas || 0).toFixed(2)}x</span><span className="creative-perf-lbl">ROAS</span></div>
+                        <div className="creative-perf-metric"><span className="creative-perf-val">${(m.spend || 0).toFixed(0)}</span><span className="creative-perf-lbl">Spend</span></div>
+                        <div className="creative-perf-metric"><span className="creative-perf-val">{m.purchases || 0}</span><span className="creative-perf-lbl">Compras</span></div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {promSubTab === 'history' && (
+        <div className="creative-history-section">
+          {historyTests.length === 0 ? (
+            <div className="creative-empty-state"><span className="creative-empty-icon">📋</span><p>Sin historial</p></div>
+          ) : (
+            <div className="creative-history-grid">
+              {historyTests.map(t => {
+                const p = t.proposal || {};
+                const m = t.metrics || {};
+                const badgeColor = t.phase === 'killed' ? '#ef4444' : '#6b7280';
+                return (
+                  <div key={t._id} className="creative-history-card uploaded">
+                    <div className="creative-history-img-wrap" onClick={() => setLightboxImg(getTestImageUrl(t._id))}>
+                      <img src={getTestImageUrl(t._id)} alt={p.headline} className="creative-history-img" onError={e => { e.target.style.display = 'none'; }} />
+                      <span className="creative-history-badge" style={{ background: badgeColor }}>{t.phase === 'killed' ? 'Killed' : 'Expirado'}</span>
+                    </div>
+                    <div className="creative-history-body">
+                      <h5 className="creative-history-headline">{p.headline || t.test_adset_name}</h5>
+                      <div className="creative-history-target">{t.source_adset_name}</div>
+                      <div className="creative-history-perf">
+                        <div className="creative-perf-metric"><span className="creative-perf-val">${(m.spend || 0).toFixed(0)}</span><span className="creative-perf-lbl">Spend</span></div>
+                        <div className="creative-perf-metric"><span className="creative-perf-val">{m.purchases || 0}</span><span className="creative-perf-lbl">Compras</span></div>
+                      </div>
+                      {t.kill_reason && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>{t.kill_reason}</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// AGENT PANEL — Athena: Grid de ad sets con assessments y acciones
+// ═══════════════════════════════════════════════════════════════════
 
 function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onRunAgent, onRefresh, formatTime }) {
   const [perfData, setPerfData] = useState(null);
