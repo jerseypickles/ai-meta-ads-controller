@@ -142,6 +142,7 @@ async function launchTests() {
       const testName = `[TEST] ${proposal.headline}`;
 
       // 1. Crear test ad set
+      if (launched === 0) logger.info(`[TESTING-AGENT] pixelInfo: ${JSON.stringify(pixelInfo)}`);
       const adset = await meta.createAdSet({
         campaign_id: campaignId,
         name: testName,
@@ -149,7 +150,7 @@ async function launchTests() {
         optimization_goal: pixelInfo.optimization_goal || 'OFFSITE_CONVERSIONS',
         billing_event: pixelInfo.billing_event || 'IMPRESSIONS',
         bid_strategy: pixelInfo.bid_strategy || 'LOWEST_COST_WITHOUT_CAP',
-        promoted_object: pixelInfo.promoted_object || null,
+        promoted_object: pixelInfo.promoted_object || { pixel_id: pixelInfo.pixel_id, custom_event_type: 'PURCHASE' },
         targeting: { geo_locations: { countries: ['US'] }, age_min: 18, age_max: 65 },
         status: 'ACTIVE'
       });
@@ -206,10 +207,13 @@ async function launchTests() {
       logger.info(`[TESTING-AGENT] Lanzado: "${proposal.headline}" para ${proposal.adset_name} → ${adset.adset_id}`);
 
     } catch (err) {
-      logger.error(`[TESTING-AGENT] Error lanzando test para "${proposal.headline}": ${err.message}`);
+      const metaError = err.response?.data?.error;
+      const detail = metaError ? `${metaError.message} (code: ${metaError.code}, subcode: ${metaError.error_subcode})` : err.message;
+      logger.error(`[TESTING-AGENT] Error lanzando test para "${proposal.headline}": ${detail}`);
+      if (metaError) logger.error(`[TESTING-AGENT] Meta error detail: ${JSON.stringify(metaError)}`);
       // Marcar como failed para no reintentar
       await CreativeProposal.findByIdAndUpdate(proposal._id, {
-        $set: { status: 'failed', rejection_reason: `test launch failed: ${err.message}` }
+        $set: { status: 'failed', rejection_reason: `test launch failed: ${detail}` }
       });
     }
   }
