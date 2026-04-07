@@ -402,9 +402,26 @@ Reglas:
 
     const text = response.content[0].text;
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return 0;
+    if (!jsonMatch) {
+      logger.warn('[ZEUS] Claude no devolvio JSON valido');
+      return 0;
+    }
 
-    const result = JSON.parse(jsonMatch[0]);
+    let result;
+    try {
+      result = JSON.parse(jsonMatch[0]);
+    } catch (parseErr) {
+      // Intentar limpiar JSON malformado (comillas sin escapar, trailing commas)
+      let cleaned = jsonMatch[0]
+        .replace(/,\s*([}\]])/g, '$1')  // trailing commas
+        .replace(/[\x00-\x1f]/g, ' '); // control chars
+      try {
+        result = JSON.parse(cleaned);
+      } catch (_) {
+        logger.error(`[ZEUS] JSON parse error: ${parseErr.message}. Raw: ${jsonMatch[0].substring(0, 200)}...`);
+        return 0;
+      }
+    }
     let created = 0;
 
     for (const d of (result.directives || [])) {
