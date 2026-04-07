@@ -196,6 +196,42 @@ async function learnFromAthenaActions() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function gatherAccountIntelligence() {
+  const { getLatestSnapshots } = require('../../db/queries');
+
+  // ═══ DATOS GLOBALES DE LA CUENTA ═══
+  const allAdsets = await getLatestSnapshots('adset');
+  const activeAdsets = allAdsets.filter(s => s.status === 'ACTIVE' && !(s.entity_name || '').startsWith('[TEST]'));
+
+  // Metricas globales
+  let totalSpend7d = 0, totalRevenue7d = 0, totalPurchases7d = 0;
+  const adsetPerformance = [];
+
+  for (const as of activeAdsets) {
+    const m = as.metrics?.last_7d || {};
+    totalSpend7d += m.spend || 0;
+    totalRevenue7d += m.purchase_value || 0;
+    totalPurchases7d += m.purchases || 0;
+    if ((m.spend || 0) > 5) {
+      adsetPerformance.push({
+        name: as.entity_name,
+        roas: m.roas || 0,
+        spend: Math.round(m.spend || 0),
+        purchases: m.purchases || 0,
+        cpa: m.cpa || 0,
+        frequency: m.frequency || 0,
+        daily_budget: as.daily_budget || 0
+      });
+    }
+  }
+  adsetPerformance.sort((a, b) => b.roas - a.roas);
+
+  const globalRoas = totalSpend7d > 0 ? Math.round((totalRevenue7d / totalSpend7d) * 100) / 100 : 0;
+  const globalCpa = totalPurchases7d > 0 ? Math.round((totalSpend7d / totalPurchases7d) * 100) / 100 : 0;
+
+  // Top 5 y bottom 5 ad sets
+  const top5 = adsetPerformance.slice(0, 5);
+  const bottom5 = adsetPerformance.filter(a => a.roas < 1.5 && a.spend > 20).slice(-5);
+
   // Resumen de acciones de Athena
   const recentActions = await ActionLog.find({
     success: true,
@@ -219,6 +255,16 @@ async function gatherAccountIntelligence() {
   const readyCount = await CreativeProposal.countDocuments({ status: 'ready' });
 
   return {
+    account: {
+      active_adsets: activeAdsets.length,
+      total_spend_7d: Math.round(totalSpend7d),
+      total_revenue_7d: Math.round(totalRevenue7d),
+      global_roas: globalRoas,
+      global_cpa: globalCpa,
+      total_purchases_7d: totalPurchases7d,
+      top_performers: top5,
+      underperformers: bottom5
+    },
     athena: { actions_7d: recentActions.length, action_types: actionSummary },
     prometheus: { graduated: testMap.graduated || 0, killed: testMap.killed || 0, expired: testMap.expired || 0, active: (testMap.learning || 0) + (testMap.evaluating || 0) },
     apollo: { ready_pool: readyCount }
@@ -254,23 +300,42 @@ async function generateDirectives(patterns, signals, accountData, uploadedData, 
     .map(([action, o]) => `- ${action}: ${o.positive} positivas, ${o.negative} negativas, ${o.neutral} neutral (${o.count} total)`)
     .join('\n') || 'Sin datos medidos';
 
+  // Datos globales de cuenta
+  const acct = accountData.account || {};
+  const topSection = (acct.top_performers || []).map(a => `- ${a.name}: ROAS ${a.roas.toFixed(2)}x, $${a.spend} spend, ${a.purchases} compras, CPA $${a.cpa.toFixed(0)}, freq ${a.frequency.toFixed(1)}`).join('\n') || 'Sin datos';
+  const bottomSection = (acct.underperformers || []).map(a => `- ${a.name}: ROAS ${a.roas.toFixed(2)}x, $${a.spend} spend, ${a.purchases} compras, CPA $${a.cpa.toFixed(0)}, freq ${a.frequency.toFixed(1)}`).join('\n') || 'Ninguno';
+
   const context = `
-## DATOS DE APRENDIZAJE DEL SISTEMA
+## PANORAMA GLOBAL DE LA CUENTA (ultimos 7 dias)
+- Ad sets activos (produccion): ${acct.active_adsets || 0}
+- Spend total 7d: $${acct.total_spend_7d || 0}
+- Revenue total 7d: $${acct.total_revenue_7d || 0}
+- ROAS global: ${acct.global_roas || 0}x
+- CPA global: $${acct.global_cpa || 0}
+- Compras totales 7d: ${acct.total_purchases_7d || 0}
+
+### Top 5 Ad Sets (mejor ROAS)
+${topSection}
+
+### Ad Sets con Bajo Rendimiento (ROAS < 1.5x con $20+ spend)
+${bottomSection}
+
+## DATOS DE AGENTES
 
 ### Patrones Creativos de Tests (Prometheus)
-${patterns.patterns?.length > 0 ? patterns.patterns.map(p => `- ${p.scene}: ${p.win_rate}% win rate (${p.wins}W/${p.losses}L), ROAS prom: ${p.avg_roas}x, ${p.samples} tests`).join('\n') : 'Sin datos de tests aun'}
+${patterns.patterns?.length > 0 ? patterns.patterns.map(p => `- ${p.scene}: ${p.win_rate}% win rate (${p.wins}W/${p.losses}L), ROAS prom: ${p.avg_roas}x, ${p.samples} tests`).join('\n') : 'Sin datos de tests aun (20 tests en learning day 0)'}
 
-### Performance de Creativos Uploaded (historico, datos reales)
+### Performance de Creativos Uploaded (datos reales en produccion)
 ${uploadedSection}
 
 ### Senales Predictivas de Tests
-${signals.signals.length > 0 ? signals.signals.map(s => `- ${s.description} (${s.samples} muestras)`).join('\n') : 'Insuficientes datos'}
+${signals.signals.length > 0 ? signals.signals.map(s => `- ${s.description} (${s.samples} muestras)`).join('\n') : 'Insuficientes datos (tests en fase de learning)'}
 
 ### Acciones de Athena con Impacto Medido
 ${athenaSection}
 
-### Estado de Agentes (ultimos 7 dias)
-- Athena: ${accountData.athena.actions_7d} acciones ejecutadas
+### Estado de Agentes
+- Athena: ${accountData.athena.actions_7d} acciones (7d)
 - Prometheus: ${accountData.prometheus.graduated} graduados, ${accountData.prometheus.killed} killed, ${accountData.prometheus.active} activos
 - Apollo: ${accountData.apollo.ready_pool} creativos en pool
 
@@ -285,12 +350,16 @@ ${athenaSection}
       max_tokens: 1000,
       messages: [{
         role: 'user',
-        content: `Eres Zeus, el cerebro central de un sistema de Meta Ads con 3 agentes:
-- Apollo (genera creativos con Gemini)
-- Prometheus (testea creativos en ad sets dedicados)
-- Athena (gestiona ad sets de produccion)
+        content: `Eres Zeus, el cerebro central de un sistema autonomo de Meta Ads para Jersey Pickles (ecommerce food, mercado US, ~$3K/dia).
 
-Basado en los datos de aprendizaje, genera directivas para los agentes.
+Tienes 3 agentes:
+- Apollo (genera creativos con Gemini + Claude)
+- Prometheus (testea creativos en ad sets dedicados $10/dia)
+- Athena (gestiona ad sets de produccion: scale, pause, hold)
+
+Tu rol: analizar el PANORAMA COMPLETO de la cuenta + los datos de cada agente, y generar directivas estrategicas. No solo mires tests — mira toda la cuenta.
+
+Basado en los datos, genera directivas para los agentes.
 
 ${context}
 
