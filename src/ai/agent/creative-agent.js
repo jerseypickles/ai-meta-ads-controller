@@ -189,13 +189,13 @@ async function runCreativeAgent() {
   const cycleId = `creative_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   logger.info(`═══ Iniciando Creative Agent [${cycleId}] ═══`);
 
-  // 1. Auto-rechazar propuestas pendientes de oleadas anteriores
-  const stale = await CreativeProposal.updateMany(
-    { status: 'pending' },
-    { $set: { status: 'rejected', rejection_reason: 'auto: nueva oleada', decided_at: new Date() } }
+  // 1. Expirar propuestas "ready" con mas de 48h sin ser tomadas por Testing Agent
+  const staleReady = await CreativeProposal.updateMany(
+    { status: 'ready', created_at: { $lt: new Date(Date.now() - 48 * 3600000) } },
+    { $set: { status: 'expired', rejection_reason: 'auto: no tomada por Testing Agent en 48h', decided_at: new Date() } }
   );
-  if (stale.modifiedCount > 0) {
-    logger.info(`[CREATIVE-AGENT] Auto-rechazadas ${stale.modifiedCount} propuestas pendientes de oleadas anteriores`);
+  if (staleReady.modifiedCount > 0) {
+    logger.info(`[CREATIVE-AGENT] Expiradas ${staleReady.modifiedCount} propuestas "ready" con +48h`);
   }
 
   // 2. Pre-scan: detectar ad sets con 0-1 ads activos y forzar flag (no depender del LLM)
@@ -257,17 +257,22 @@ async function runCreativeAgent() {
     return { generated: 0, elapsed: '0s', cycle_id: cycleId, error: 'No products in bank' };
   }
 
-  // 3. Learn from past approvals/rejections
-  const pastProposals = await CreativeProposal.find({
-    status: { $in: ['approved', 'rejected'] }
-  }).sort({ created_at: -1 }).limit(50).lean();
+  // 3. Learn from test results (graduated = winner, killed = loser)
+  const testResults = await CreativeProposal.find({
+    status: { $in: ['graduated', 'killed', 'expired', 'approved', 'rejected'] }
+  }).sort({ created_at: -1 }).limit(100).lean();
 
   const approvedScenes = {};
   const rejectedScenes = {};
-  for (const p of pastProposals) {
+  for (const p of testResults) {
     const s = p.scene_short || 'unknown';
+    // Graduados cuentan como aprobados (con peso extra — dato real del mercado)
+    if (p.status === 'graduated') approvedScenes[s] = (approvedScenes[s] || 0) + 3;
     if (p.status === 'approved') approvedScenes[s] = (approvedScenes[s] || 0) + 1;
+    // Killed/rejected cuentan como rechazados
+    if (p.status === 'killed') rejectedScenes[s] = (rejectedScenes[s] || 0) + 2;
     if (p.status === 'rejected') rejectedScenes[s] = (rejectedScenes[s] || 0) + 1;
+    // Expired = dato neutral, no se cuenta
   }
 
   let generated = 0;
@@ -362,7 +367,7 @@ async function runCreativeAgent() {
           primary_text: copy.primary_text,
           link_url: product.link_url || 'https://jerseypickles.com',
           prompt_used: prompt,
-          status: 'pending'
+          status: 'ready'
         });
 
         generated++;

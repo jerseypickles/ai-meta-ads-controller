@@ -27,7 +27,7 @@ const creativeProposalSchema = new mongoose.Schema({
   // Status
   status: {
     type: String,
-    enum: ['pending', 'approved', 'rejected', 'uploaded', 'failed'],
+    enum: ['pending', 'approved', 'rejected', 'uploaded', 'failed', 'ready', 'testing', 'graduated', 'killed', 'expired'],
     default: 'pending',
     index: true
   },

@@ -329,6 +329,42 @@ export const getProposalImageUrl = (id) => {
   return `${BASE}/api/creative-agent/proposals/${id}/image?token=${token}`;
 };
 
+// ═══ TESTING AGENT ═══
+
+export const runTestingAgentApi = async () => {
+  const response = await api.post('/api/testing-agent/run', {}, { timeout: 30000 });
+  const data = response.data;
+  if (data.async && data.job_id) return pollForCompletion(`/api/testing-agent/run-status/${data.job_id}`, 3000, 600000);
+  return data;
+};
+
+export const getTestRuns = async (phase = '') => {
+  const params = phase ? { phase } : {};
+  const response = await api.get('/api/testing-agent/tests', { params });
+  return response.data;
+};
+
+export const getTestRunDetail = async (id) => {
+  const response = await api.get(`/api/testing-agent/tests/${id}`);
+  return response.data;
+};
+
+export const killTestRun = async (id, reason = '') => {
+  const response = await api.post(`/api/testing-agent/tests/${id}/kill`, { reason });
+  return response.data;
+};
+
+export const getTestingStats = async () => {
+  const response = await api.get('/api/testing-agent/stats');
+  return response.data;
+};
+
+export const getTestImageUrl = (testId) => {
+  const BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
+  const token = localStorage.getItem('auth_token');
+  return `${BASE}/api/testing-agent/tests/${testId}/image?token=${token}`;
+};
+
 // ═══ BRAIN — Creative Refresh Link ═══
 
 export const getPendingCreativeRec = async (adsetId) => {

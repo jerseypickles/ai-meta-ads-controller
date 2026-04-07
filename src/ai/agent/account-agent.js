@@ -1088,7 +1088,7 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
   }
 
   // ═══ PRE-CHECK: Excluded ad sets (traffic campaigns, manual-only) ═══
-  const excludePatterns = ['DONT TOUCH', 'DONT_TOUCH', 'NO TOCAR', 'EXCLUDE', 'MANUAL ONLY'];
+  const excludePatterns = ['DONT TOUCH', 'DONT_TOUCH', 'NO TOCAR', 'EXCLUDE', 'MANUAL ONLY', '[TEST]'];
   if (excludePatterns.some(p => (adSetName || '').toUpperCase().includes(p))) {
     logger.debug(`[ACCOUNT-AGENT] ${adSetName}: excluded by name pattern — skip`);
     return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: 'Excluded by name' };

@@ -13,7 +13,8 @@ import {
   getAgentActivity, runAccountAgent, getAgentAdsetDetail, getAgentThoughts, getAgentPerformance,
   generateCopyForUpload, uploadAndCreateAd,
   getProducts, createProduct, deleteProduct, getProductImageUrl, runCreativeAgentApi,
-  getCreativeProposals, approveCreativeProposal, rejectCreativeProposal, getProposalImageUrl
+  getCreativeProposals, approveCreativeProposal, rejectCreativeProposal, getProposalImageUrl,
+  getTestRuns, killTestRun, runTestingAgentApi, getTestImageUrl
 } from '../api';
 
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
@@ -1101,21 +1102,27 @@ function ProductBankPanel() {
   const [formFiles, setFormFiles] = useState(null);
   const [creating, setCreating] = useState(false);
   const [runningCreative, setRunningCreative] = useState(false);
+  const [runningTesting, setRunningTesting] = useState(false);
   const [approvingId, setApprovingId] = useState(null);
-  const [creativeSubTab, setCreativeSubTab] = useState('pending');
+  const [creativeSubTab, setCreativeSubTab] = useState('testing');
   const [lightboxImg, setLightboxImg] = useState(null);
+  const [testRuns, setTestRuns] = useState([]);
+  const [testStats, setTestStats] = useState({});
   const fileRef = useRef(null);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [prodData, propData] = await Promise.all([
+      const [prodData, propData, testData] = await Promise.all([
         getProducts(),
-        getCreativeProposals()
+        getCreativeProposals(),
+        getTestRuns()
       ]);
       setProducts(prodData.products || []);
       setProposals(propData.proposals || []);
       setPendingCount(propData.pending_count || 0);
+      setTestRuns(testData.tests || []);
+      setTestStats(testData.stats || {});
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   }, []);
@@ -1150,31 +1157,25 @@ function ProductBankPanel() {
     finally { setRunningCreative(false); }
   };
 
-  const handleApproveProposal = async (id) => {
-    setApprovingId(id);
-    try {
-      await approveCreativeProposal(id);
-      // Optimistic update: move to uploaded immediately
-      setProposals(prev => prev.map(p =>
-        p._id === id ? { ...p, status: 'uploaded', decided_at: new Date().toISOString() } : p
-      ));
-      setPendingCount(prev => Math.max(0, prev - 1));
-    } catch (err) { console.error(err); }
-    finally { setApprovingId(null); }
+  const handleRunTesting = async () => {
+    setRunningTesting(true);
+    try { await runTestingAgentApi(); await loadAll(); } catch (err) { console.error(err); }
+    finally { setRunningTesting(false); }
   };
 
-  const handleRejectProposal = async (id) => {
-    const reason = prompt('Razon del rechazo (opcional):') || '';
+  const handleKillTest = async (id) => {
+    if (!window.confirm('Matar este test?')) return;
     try {
-      await rejectCreativeProposal(id, reason);
-      // Optimistic update: remove from list
-      setProposals(prev => prev.filter(p => p._id !== id));
-      setPendingCount(prev => Math.max(0, prev - 1));
+      await killTestRun(id);
+      setTestRuns(prev => prev.map(t => t._id === id ? { ...t, phase: 'killed' } : t));
     } catch (err) { console.error(err); }
   };
 
-  const pendingProposals = useMemo(() => proposals.filter(p => p.status === 'pending'), [proposals]);
+  const readyProposals = useMemo(() => proposals.filter(p => p.status === 'ready'), [proposals]);
+  const graduatedProposals = useMemo(() => proposals.filter(p => p.status === 'graduated'), [proposals]);
   const historyProposals = useMemo(() => proposals.filter(p => p.status === 'uploaded' || p.status === 'approved'), [proposals]);
+  const activeTests = useMemo(() => testRuns.filter(t => ['learning', 'evaluating'].includes(t.phase)), [testRuns]);
+  const finishedTests = useMemo(() => testRuns.filter(t => ['graduated', 'killed', 'expired'].includes(t.phase)), [testRuns]);
 
   const fmtDate = (d) => {
     if (!d) return '';
@@ -1193,31 +1194,43 @@ function ProductBankPanel() {
       <div className="creative-panel-header">
         <div className="creative-panel-stats">
           <div className="creative-stat-card">
-            <span className="creative-stat-value">{pendingCount}</span>
-            <span className="creative-stat-label">Pendientes</span>
+            <span className="creative-stat-value" style={{ color: '#3b82f6' }}>{testStats.active || 0}</span>
+            <span className="creative-stat-label">En Testing</span>
           </div>
           <div className="creative-stat-card">
-            <span className="creative-stat-value">{statsApproved}</span>
-            <span className="creative-stat-label">Aprobados</span>
+            <span className="creative-stat-value" style={{ color: '#10b981' }}>{testStats.graduated || 0}</span>
+            <span className="creative-stat-label">Graduados</span>
           </div>
           <div className="creative-stat-card">
-            <span className="creative-stat-value">{avgRoas > 0 ? `${avgRoas.toFixed(1)}x` : '--'}</span>
-            <span className="creative-stat-label">ROAS Prom</span>
+            <span className="creative-stat-value">{testStats.graduation_rate || 0}%</span>
+            <span className="creative-stat-label">Win Rate</span>
           </div>
           <div className="creative-stat-card">
-            <span className="creative-stat-value">{products.length}</span>
-            <span className="creative-stat-label">Productos</span>
+            <span className="creative-stat-value">${testStats.daily_budget_exposure || 0}/dia</span>
+            <span className="creative-stat-label">Budget Test</span>
+          </div>
+          <div className="creative-stat-card">
+            <span className="creative-stat-value">{readyProposals.length}</span>
+            <span className="creative-stat-label">Pool Ready</span>
           </div>
         </div>
-        <button className="btn-agent-run" onClick={handleRunCreative} disabled={runningCreative}>
-          {runningCreative ? 'Generando...' : 'Generar Creativos'}
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn-agent-run" onClick={handleRunCreative} disabled={runningCreative}>
+            {runningCreative ? 'Generando...' : 'Generar Creativos'}
+          </button>
+          <button className="btn-agent-run" onClick={handleRunTesting} disabled={runningTesting} style={{ background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)' }}>
+            {runningTesting ? 'Testing...' : 'Run Testing Agent'}
+          </button>
+        </div>
       </div>
 
       {/* Sub-tabs */}
       <div className="knowledge-sub-tabs" style={{ marginBottom: 16 }}>
-        <button className={`sub-tab ${creativeSubTab === 'pending' ? 'active' : ''}`} onClick={() => setCreativeSubTab('pending')}>
-          Pendientes {pendingCount > 0 && <span className="tab-badge">{pendingCount}</span>}
+        <button className={`sub-tab ${creativeSubTab === 'testing' ? 'active' : ''}`} onClick={() => setCreativeSubTab('testing')}>
+          En Testing {activeTests.length > 0 && <span className="tab-badge">{activeTests.length}</span>}
+        </button>
+        <button className={`sub-tab ${creativeSubTab === 'graduated' ? 'active' : ''}`} onClick={() => setCreativeSubTab('graduated')}>
+          Graduados {(testStats.graduated || 0) > 0 && <span className="tab-badge">{testStats.graduated}</span>}
         </button>
         <button className={`sub-tab ${creativeSubTab === 'history' ? 'active' : ''}`} onClick={() => setCreativeSubTab('history')}>
           Subidos a Meta
@@ -1235,48 +1248,137 @@ function ProductBankPanel() {
         </div>
       )}
 
-      {/* ═══ SUB-TAB: Pendientes ═══ */}
-      {creativeSubTab === 'pending' && (
+      {/* ═══ SUB-TAB: En Testing ═══ */}
+      {creativeSubTab === 'testing' && (
         <div className="creative-pending-section">
-          {loading ? <div className="brain-loading">Cargando...</div> : pendingProposals.length === 0 ? (
+          {loading ? <div className="brain-loading">Cargando...</div> : activeTests.length === 0 ? (
             <div className="creative-empty-state">
-              <span className="creative-empty-icon">🎨</span>
-              <p>No hay creativos pendientes de aprobacion</p>
-              <span className="creative-empty-hint">El Creative Agent genera propuestas automaticamente o puedes forzar con el boton "Generar Creativos"</span>
+              <span className="creative-empty-icon">🧪</span>
+              <p>No hay tests activos</p>
+              <span className="creative-empty-hint">{readyProposals.length > 0 ? `${readyProposals.length} creativos en pool listos para testear` : 'El Creative Agent genera propuestas automaticamente'}</span>
             </div>
           ) : (
             <div className="creative-pending-grid">
-              {pendingProposals.map(p => (
-                <div key={p._id} className="creative-proposal-card">
-                  <div className="creative-proposal-img-wrap" onClick={() => setLightboxImg(getProposalImageUrl(p._id))}>
-                    <img src={getProposalImageUrl(p._id)} alt={p.headline} className="creative-proposal-img" />
-                    <div className="creative-proposal-img-overlay">
-                      <span>Ver imagen</span>
+              {activeTests.map(t => {
+                const p = t.proposal || {};
+                const daysActive = Math.floor((Date.now() - new Date(t.launched_at).getTime()) / 86400000);
+                const m = t.metrics || {};
+                const phaseColor = t.phase === 'learning' ? '#3b82f6' : '#f59e0b';
+                return (
+                  <div key={t._id} className="creative-proposal-card">
+                    <div className="creative-proposal-img-wrap" onClick={() => setLightboxImg(getTestImageUrl(t._id))}>
+                      {p.image_base64 ? (
+                        <img src={getTestImageUrl(t._id)} alt={p.headline} className="creative-proposal-img" />
+                      ) : (
+                        <div className="creative-proposal-img" style={{ background: '#1a1a2e', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2rem' }}>🧪</div>
+                      )}
+                      <span className="creative-history-badge" style={{ background: phaseColor }}>{t.phase === 'learning' ? 'Learning' : 'Evaluando'} — Dia {daysActive}</span>
+                    </div>
+                    <div className="creative-proposal-content">
+                      <h4 className="creative-proposal-headline">{p.headline || t.test_adset_name}</h4>
+                      <div className="creative-proposal-tags">
+                        <span className="creative-tag product">{p.product_name || 'Producto'}</span>
+                        <span className="creative-tag scene">{p.scene_short || 'Escena'}</span>
+                      </div>
+                      <div className="creative-proposal-target">
+                        <span className="creative-target-label">Para</span>
+                        <span className="creative-target-name">{t.source_adset_name}</span>
+                      </div>
+                      <div className="creative-history-perf" style={{ marginTop: 8 }}>
+                        <div className="creative-perf-metric">
+                          <span className="creative-perf-val" style={{ color: m.roas >= 3 ? '#10b981' : m.roas >= 1.5 ? '#f59e0b' : m.spend > 10 ? '#ef4444' : 'var(--text-secondary)' }}>
+                            {m.roas > 0 ? `${m.roas.toFixed(2)}x` : '--'}
+                          </span>
+                          <span className="creative-perf-lbl">ROAS</span>
+                        </div>
+                        <div className="creative-perf-metric">
+                          <span className="creative-perf-val">${(m.spend || 0).toFixed(0)}</span>
+                          <span className="creative-perf-lbl">Spend</span>
+                        </div>
+                        <div className="creative-perf-metric">
+                          <span className="creative-perf-val">{m.purchases || 0}</span>
+                          <span className="creative-perf-lbl">Compras</span>
+                        </div>
+                        <div className="creative-perf-metric">
+                          <span className="creative-perf-val">{m.ctr > 0 ? `${m.ctr.toFixed(1)}%` : '--'}</span>
+                          <span className="creative-perf-lbl">CTR</span>
+                        </div>
+                      </div>
+                      {t.assessments?.length > 0 && (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 6, fontStyle: 'italic' }}>
+                          {t.assessments[t.assessments.length - 1].assessment}
+                        </div>
+                      )}
+                      <div className="creative-proposal-actions" style={{ marginTop: 8 }}>
+                        <button className="creative-btn-reject" onClick={(e) => { e.stopPropagation(); handleKillTest(t._id); }}>
+                          Matar Test
+                        </button>
+                      </div>
                     </div>
                   </div>
-                  <div className="creative-proposal-content">
-                    <h4 className="creative-proposal-headline">{p.headline}</h4>
-                    <p className="creative-proposal-text">{p.primary_text}</p>
-                    <div className="creative-proposal-tags">
-                      <span className="creative-tag product">{p.product_name}</span>
-                      <span className="creative-tag scene">{p.scene_short}</span>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ═══ SUB-TAB: Graduados ═══ */}
+      {creativeSubTab === 'graduated' && (
+        <div className="creative-history-section">
+          {loading ? <div className="brain-loading">Cargando...</div> : finishedTests.length === 0 ? (
+            <div className="creative-empty-state">
+              <span className="creative-empty-icon">🏆</span>
+              <p>Sin tests finalizados aun</p>
+            </div>
+          ) : (
+            <div className="creative-history-grid">
+              {finishedTests.map(t => {
+                const p = t.proposal || {};
+                const m = t.metrics || {};
+                const daysActive = Math.floor(((t.graduated_at || t.killed_at || t.expired_at || Date.now()) - new Date(t.launched_at).getTime()) / 86400000);
+                const badgeColor = t.phase === 'graduated' ? '#10b981' : t.phase === 'killed' ? '#ef4444' : '#6b7280';
+                const badgeText = t.phase === 'graduated' ? 'Graduado' : t.phase === 'killed' ? 'Killed' : 'Expirado';
+                return (
+                  <div key={t._id} className="creative-history-card uploaded">
+                    <div className="creative-history-img-wrap" onClick={() => setLightboxImg(getTestImageUrl(t._id))}>
+                      {p.image_base64 ? (
+                        <img src={getTestImageUrl(t._id)} alt={p.headline} className="creative-history-img" />
+                      ) : (
+                        <div className="creative-history-img" style={{ background: '#1a1a2e', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>🧪</div>
+                      )}
+                      <span className="creative-history-badge" style={{ background: badgeColor }}>{badgeText}</span>
                     </div>
-                    <div className="creative-proposal-target">
-                      <span className="creative-target-label">Ad Set</span>
-                      <span className="creative-target-name">{p.adset_name}</span>
-                    </div>
-                    <div className="creative-proposal-date">{fmtDate(p.created_at)}</div>
-                    <div className="creative-proposal-actions">
-                      <button className="creative-btn-approve" onClick={(e) => { e.stopPropagation(); handleApproveProposal(p._id); }} disabled={approvingId === p._id}>
-                        {approvingId === p._id ? 'Subiendo...' : 'Aprobar y Subir a Meta'}
-                      </button>
-                      <button className="creative-btn-reject" onClick={(e) => { e.stopPropagation(); handleRejectProposal(p._id); }}>
-                        Rechazar
-                      </button>
+                    <div className="creative-history-body">
+                      <h5 className="creative-history-headline">{p.headline || t.test_adset_name}</h5>
+                      <div className="creative-history-meta">
+                        <span className="creative-tag product">{p.product_name || ''}</span>
+                        <span className="creative-tag scene">{p.scene_short || ''}</span>
+                      </div>
+                      <div className="creative-history-target">{t.source_adset_name} — {daysActive} dias</div>
+                      <div className="creative-history-perf">
+                        <div className="creative-perf-metric">
+                          <span className="creative-perf-val" style={{ color: m.roas >= 3 ? '#10b981' : m.roas >= 1.5 ? '#f59e0b' : '#ef4444' }}>
+                            {m.roas > 0 ? `${m.roas.toFixed(2)}x` : '--'}
+                          </span>
+                          <span className="creative-perf-lbl">ROAS</span>
+                        </div>
+                        <div className="creative-perf-metric">
+                          <span className="creative-perf-val">${(m.spend || 0).toFixed(0)}</span>
+                          <span className="creative-perf-lbl">Spend</span>
+                        </div>
+                        <div className="creative-perf-metric">
+                          <span className="creative-perf-val">{m.purchases || 0}</span>
+                          <span className="creative-perf-lbl">Compras</span>
+                        </div>
+                      </div>
+                      {t.kill_reason && (
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>{t.kill_reason}</div>
+                      )}
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

@@ -17,6 +17,7 @@ const LifecycleManager = require('./ai/lifecycle-manager');
 const { runManager } = require('./ai/adset-creator/manager');
 const { runAccountAgent } = require('./ai/agent/account-agent');
 const { runCreativeAgent, syncProposalPerformance } = require('./ai/agent/creative-agent');
+const { runTestingAgent } = require('./ai/agent/testing-agent');
 const { startDashboard } = require('./dashboard/server');
 const { refreshMetaToken } = require('./dashboard/routes/meta-auth');
 const { syncCreativeMetrics } = require('./dashboard/routes/creatives');
@@ -609,6 +610,30 @@ async function jobCreativeAgent() {
 }
 
 /**
+ * Job: Testing Agent — 5x/dia (6am, 10am, 2pm, 6pm, 10pm ET).
+ * Lanza tests para creativos "ready", monitorea tests activos, gradua/mata.
+ */
+async function jobTestingAgent() {
+  const aiEnabled = await isAIEnabled();
+  if (!aiEnabled) return;
+
+  const agentMode = await SystemConfig.get('agent_mode', 'unified');
+  if (agentMode !== 'unified') return;
+
+  try {
+    logger.info('[CRON] Ejecutando Testing Agent...');
+    const result = await runTestingAgent();
+    if (result.launched > 0 || result.graduated > 0 || result.killed > 0) {
+      logger.info(`[CRON] Testing Agent: ${result.launched} lanzados, ${result.graduated} graduados, ${result.killed} killed en ${result.elapsed}`);
+    } else {
+      logger.debug('[CRON] Testing Agent: sin actividad');
+    }
+  } catch (error) {
+    logger.error('[CRON] Error en Testing Agent:', error);
+  }
+}
+
+/**
  * Job: AI Ops Metrics Refresh — 24/7 con frecuencia adaptativa.
  * Horas activas: cada 15 min (Meta refresca insights cada ~15 min).
  * Fuera de horas: cada 30 min (mantener datos razonablemente frescos).
@@ -858,6 +883,13 @@ function initCronJobs() {
     name: 'creative-agent'
   });
   logger.info('  [*] Creative Agent — 3x/día: 8am, 2pm, 8pm ET');
+
+  // Testing Agent — 5x/día durante horas activas (6am, 10am, 2pm, 6pm, 10pm ET)
+  cron.schedule('30 6,10,14,18,22 * * *', jobTestingAgent, {
+    timezone: TIMEZONE,
+    name: 'testing-agent'
+  });
+  logger.info('  [*] Testing Agent — 5x/día: 6:30am, 10:30am, 2:30pm, 6:30pm, 10:30pm ET');
 
   // AI Ops metrics refresh — cada 15 min, 24/7
   cron.schedule('5,20,35,50 * * * *', jobAIOpsRefresh, {

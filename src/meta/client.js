@@ -949,6 +949,36 @@ class MetaClient {
   // ========================================================================
 
   /**
+   * Crear una campana nueva.
+   * Meta API: POST /act_{ad_account_id}/campaigns
+   */
+  async createCampaign(params) {
+    const {
+      name,
+      objective = 'OUTCOME_SALES',
+      status = 'ACTIVE',
+      special_ad_categories = []
+    } = params;
+
+    if (!name) throw new Error('name es requerido para crear campana');
+
+    const campaignParams = {
+      name,
+      objective,
+      status,
+      special_ad_categories: JSON.stringify(special_ad_categories)
+    };
+
+    logger.info(`Creando campana: "${name}" (${objective})`);
+    const result = await this.post(`/${this.adAccountId}/campaigns`, campaignParams);
+
+    return {
+      campaign_id: result.id,
+      name
+    };
+  }
+
+  /**
    * Crear un ad set nuevo desde cero.
    * Meta API: POST /act_{ad_account_id}/adsets
    * Siempre se crea PAUSED para revisión.
