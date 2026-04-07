@@ -966,6 +966,7 @@ class MetaClient {
       name,
       objective,
       status,
+      bid_strategy: params.bid_strategy || 'LOWEST_COST_WITHOUT_CAP',
       special_ad_categories: JSON.stringify(special_ad_categories)
     };
 
@@ -1011,9 +1012,8 @@ class MetaClient {
       status
     };
 
-    // Only send bid_strategy if explicitly provided and not the default
-    // (sending LOWEST_COST_WITHOUT_CAP explicitly can cause 400 errors on some campaign types)
-    if (bid_strategy && bid_strategy !== 'LOWEST_COST_WITHOUT_CAP') {
+    // Siempre enviar bid_strategy — requerido para campanas OUTCOME_SALES
+    if (bid_strategy) {
       adSetParams.bid_strategy = bid_strategy;
     }
 
