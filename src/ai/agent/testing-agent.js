@@ -14,7 +14,7 @@ const { getAdsForAdSet } = require('../../db/queries');
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURACION
 // ═══════════════════════════════════════════════════════════════════════════════
-const MAX_CONCURRENT_TESTS = 8;
+const MAX_CONCURRENT_TESTS = 20;
 const TEST_DAILY_BUDGET = 10; // $10/dia
 const TEST_MAX_DAYS = 7;
 const KILL_MIN_SPEND = 25;     // Kill si $25+ spend y 0 compras
