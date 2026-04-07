@@ -10,6 +10,7 @@ const ProductBank = require('../../db/models/ProductBank');
 const ActionLog = require('../../db/models/ActionLog');
 const MetricSnapshot = require('../../db/models/MetricSnapshot');
 const { getLatestSnapshots, getAdsForAdSet } = require('../../db/queries');
+const ZeusDirective = require('../../db/models/ZeusDirective');
 
 const claude = new Anthropic({ apiKey: config.claude.apiKey });
 
@@ -365,15 +366,51 @@ async function runCreativeAgent() {
   let generated = 0;
   const results = [];
 
-  // ── Smart scene ranking: approved scenes first, then unused, skip over-rejected ──
+  // ── Leer directivas de Zeus para ajustar weights ──
+  let zeusSceneBoosts = {};   // scene_short → bonus points
+  let zeusStyleBoosts = {};   // style_key → bonus weight
+  let zeusAngleBoosts = {};   // angle_key → bonus weight
+  try {
+    const directives = await ZeusDirective.find({
+      target_agent: { $in: ['apollo', 'all'] },
+      active: true
+    }).lean();
+
+    for (const d of directives) {
+      const data = d.data || {};
+      if (d.directive_type === 'prioritize') {
+        // Boost escenas/estilos/angulos que Zeus recomienda
+        if (data.scenes) for (const s of data.scenes) zeusSceneBoosts[s] = (zeusSceneBoosts[s] || 0) + 5;
+        if (data.styles) for (const s of data.styles) zeusStyleBoosts[s] = (zeusStyleBoosts[s] || 0) + 3;
+        if (data.angles) for (const a of data.angles) zeusAngleBoosts[a] = (zeusAngleBoosts[a] || 0) + 2;
+      } else if (d.directive_type === 'avoid') {
+        // Penalizar escenas/estilos que Zeus dice evitar
+        if (data.scenes) for (const s of data.scenes) zeusSceneBoosts[s] = (zeusSceneBoosts[s] || 0) - 10;
+        if (data.styles) for (const s of data.styles) zeusStyleBoosts[s] = (zeusStyleBoosts[s] || 0) - 5;
+        if (data.angles) for (const a of data.angles) zeusAngleBoosts[a] = (zeusAngleBoosts[a] || 0) - 3;
+      }
+    }
+
+    if (directives.length > 0) {
+      logger.info(`[CREATIVE-AGENT] Zeus directivas aplicadas: ${directives.length} (${Object.keys(zeusSceneBoosts).length} scene boosts, ${Object.keys(zeusStyleBoosts).length} style boosts)`);
+    }
+  } catch (err) {
+    logger.warn(`[CREATIVE-AGENT] Error leyendo Zeus directivas: ${err.message}`);
+  }
+
+  // Aplicar Zeus boosts a estilos y angulos
+  const adjustedStyles = AD_STYLES.map(s => ({ ...s, weight: Math.max(0.1, (s.weight || 1) + (zeusStyleBoosts[s.key] || 0)) }));
+  const adjustedAngles = COPY_ANGLES.map(a => ({ ...a, weight: Math.max(0.1, (a.weight || 1) + (zeusAngleBoosts[a.key] || 0)) }));
+
+  // ── Smart scene ranking: approved scenes first, Zeus boosts, skip over-rejected ──
   const rankedScenes = SCENES
     .map(s => {
       const short = s.substring(0, 40);
       const app = approvedScenes[short] || 0;
       const rej = rejectedScenes[short] || 0;
-      if (rej >= 3 && app <= rej) return null; // blacklisted
-      // Score: approved scenes get big boost, unused scenes get neutral score, rejected get penalty
-      const score = (app * 3) - (rej * 2) + (app === 0 && rej === 0 ? 1 : 0);
+      const zeusBoost = zeusSceneBoosts[short] || 0;
+      if (rej >= 3 && app <= rej && zeusBoost >= 0) return null; // blacklisted (unless Zeus says prioritize)
+      const score = (app * 3) - (rej * 2) + (app === 0 && rej === 0 ? 1 : 0) + zeusBoost;
       return { scene: s, short, score };
     })
     .filter(Boolean)
@@ -452,9 +489,9 @@ async function runCreativeAgent() {
         const scene = scenePick.scene;
         const sceneShort = scenePick.short;
 
-        // Pick random style and copy angle
-        const style = weightedPick(AD_STYLES);
-        const copyAngle = weightedPick(COPY_ANGLES);
+        // Pick random style and copy angle (ajustados por Zeus)
+        const style = weightedPick(adjustedStyles);
+        const copyAngle = weightedPick(adjustedAngles);
 
         // Build prompt with style + combo support
         const prompt = buildImagePrompt(
@@ -517,8 +554,8 @@ async function runCreativeAgent() {
         const product = rankedProducts[p % rankedProducts.length];
         const sceneIdx = (globalSceneIndex + p) % rankedScenes.length;
         const scenePick = rankedScenes[sceneIdx];
-        const style = weightedPick(AD_STYLES);
-        const copyAngle = weightedPick(COPY_ANGLES);
+        const style = weightedPick(adjustedStyles);
+        const copyAngle = weightedPick(adjustedAngles);
 
         // Referencias del producto
         const refImages = product.png_references.map(ref => ({

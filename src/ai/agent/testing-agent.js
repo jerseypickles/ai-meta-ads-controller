@@ -16,6 +16,8 @@ const { getAdsForAdSet } = require('../../db/queries');
 // ═══════════════════════════════════════════════════════════════════════════════
 const MAX_CONCURRENT_TESTS = 20;
 const TEST_DAILY_BUDGET = 10; // $10/dia
+const MAX_DAILY_TESTING_BUDGET = 200; // Cap diario total: $200 max en testing
+const MAX_LAUNCHES_PER_CYCLE = 5; // Max tests nuevos por ciclo (evitar avalancha)
 const TEST_MAX_DAYS = 7;
 const KILL_MIN_SPEND = 25;     // Kill si $25+ spend y 0 compras
 const GRADUATED_BUDGET = 20;   // Budget al promover test ad set graduado ($20/dia)
@@ -105,17 +107,21 @@ async function launchTests() {
 
   // Contar tests activos
   const activeTests = await TestRun.countDocuments({ phase: { $in: ['learning', 'evaluating'] } });
+  const currentDailySpend = activeTests * TEST_DAILY_BUDGET;
   const availableSlots = Math.max(0, MAX_CONCURRENT_TESTS - activeTests);
+  const budgetSlots = Math.max(0, Math.floor((MAX_DAILY_TESTING_BUDGET - currentDailySpend) / TEST_DAILY_BUDGET));
+  const maxLaunches = Math.min(availableSlots, budgetSlots, MAX_LAUNCHES_PER_CYCLE);
 
-  if (availableSlots === 0) {
-    logger.info(`[TESTING-AGENT] ${activeTests} tests activos, max ${MAX_CONCURRENT_TESTS} — no hay slots`);
+  if (maxLaunches === 0) {
+    if (availableSlots === 0) logger.info(`[TESTING-AGENT] ${activeTests} tests activos, max ${MAX_CONCURRENT_TESTS} — no hay slots`);
+    else if (budgetSlots === 0) logger.info(`[TESTING-AGENT] Budget cap alcanzado: $${currentDailySpend}/$${MAX_DAILY_TESTING_BUDGET} diario`);
     return 0;
   }
 
   // Leer proposals "ready"
   const readyProposals = await CreativeProposal.find({ status: 'ready' })
     .sort({ created_at: 1 }) // las mas antiguas primero
-    .limit(availableSlots)
+    .limit(maxLaunches)
     .lean();
 
   if (readyProposals.length === 0) {
