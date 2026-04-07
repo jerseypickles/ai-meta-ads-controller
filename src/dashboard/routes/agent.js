@@ -18,7 +18,7 @@ router.get('/activity', async (req, res) => {
   try {
     // 1. Get all active ad set snapshots
     const allSnapshots = await getLatestSnapshots('adset');
-    const activeAdSets = allSnapshots.filter(s => s.status === 'ACTIVE');
+    const activeAdSets = allSnapshots.filter(s => s.status === 'ACTIVE' && !(s.entity_name || '').startsWith('[TEST]'));
 
     // 2. Get all BrainMemory with agent assessments
     const entityIds = activeAdSets.map(s => s.entity_id);
