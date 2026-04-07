@@ -3,8 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import {
   getBrainInsights, markInsightRead, markAllInsightsRead,
-  triggerBrainAnalysis, sendBrainChat, sendBrainChatStream, getBrainChatHistory,
-  clearBrainChatHistory, getBrainStats, getBrainRecommendations,
+  triggerBrainAnalysis, getBrainStats, getBrainRecommendations,
   approveRecommendation, rejectRecommendation, markRecommendationExecuted,
   triggerBrainRecommendations, getFollowUpStats,
   getPolicyState, getPolicyLearning, getKnowledgeHistory, getDeepKnowledge, getLaunchedAdsets, getCreativePerformance,
@@ -536,9 +535,6 @@ export default function BrainIntelligence() {
           Prometheus
           {sharedActiveTests.length > 0 && <span className="tab-badge" style={{ background: 'var(--prometheus-color)' }}>{sharedActiveTests.length}</span>}
         </button>
-        <button className={`brain-tab ${activeTab === 'chat' ? 'active' : ''}`} data-agent="chat" onClick={() => setActiveTab('chat')}>
-          Chat
-        </button>
       </div>
 
       {/* Lightbox global */}
@@ -609,27 +605,7 @@ export default function BrainIntelligence() {
             onRefresh={loadCreativeData}
             setLightboxImg={setLightboxImg}
           />
-        ) : (
-          <ChatPanel
-            messages={chatMessages}
-            chatInput={chatInput}
-            chatSending={chatSending}
-            chatLoading={chatLoading}
-            chatThinking={chatThinking}
-            streamingText={streamingText}
-            chatEndRef={chatEndRef}
-            chatInputRef={chatInputRef}
-            onInputChange={setChatInput}
-            onSend={handleSendChat}
-            onClear={handleClearChat}
-            formatTime={formatTime}
-            attachedRec={attachedRec}
-            onClearAttachment={() => setAttachedRec(null)}
-            recommendations={recommendations}
-            onAttachRec={handleDiscussRec}
-            onAttachFollowUp={handleDiscussFollowUp}
-          />
-        )}
+        ) : null}
       </div>
 
       {/* ═══ APPROVAL MODAL ═══ */}

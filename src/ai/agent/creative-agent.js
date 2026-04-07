@@ -731,9 +731,9 @@ async function syncProposalPerformance() {
     logger.error(`[CREATIVE-AGENT] Auto-repair error: ${err.message}`);
   }
 
-  // Buscar propuestas subidas a Meta con ad ID
+  // Buscar propuestas con ad en Meta (uploaded + graduated)
   const uploaded = await CreativeProposal.find({
-    status: 'uploaded',
+    status: { $in: ['uploaded', 'graduated'] },
     meta_ad_id: { $ne: null }
   }).lean();
 

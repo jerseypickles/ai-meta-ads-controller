@@ -105,6 +105,19 @@ async function launchTests() {
   const { getMetaClient } = require('../../meta/client');
   const meta = getMetaClient();
 
+  // Verificar que la campana de testing existe y esta activa
+  try {
+    const campaignId = await getTestingCampaignId();
+    const campaigns = await meta.getCampaigns();
+    const testCampaign = campaigns.find(c => c.id === campaignId);
+    if (testCampaign && testCampaign.status !== 'ACTIVE') {
+      logger.warn(`[TESTING-AGENT] Campana de testing ${campaignId} esta ${testCampaign.status} — no se pueden lanzar tests`);
+      return 0;
+    }
+  } catch (err) {
+    logger.warn(`[TESTING-AGENT] No se pudo verificar campana de testing: ${err.message}`);
+  }
+
   // Contar tests activos
   const activeTests = await TestRun.countDocuments({ phase: { $in: ['learning', 'evaluating'] } });
   const currentDailySpend = activeTests * TEST_DAILY_BUDGET;

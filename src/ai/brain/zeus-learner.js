@@ -303,7 +303,11 @@ Responde SOLO en JSON:
       "directive": "texto corto y accionable",
       "category": "creative_pattern|test_signal|account_pattern|cross_agent",
       "confidence": 0.0-1.0,
-      "data": {}
+      "data": {
+        "scenes": ["first 40 chars of scene text that should be boosted/avoided"],
+        "styles": ["ugly-ad|pov-selfie|overhead-flat|close-up-texture|action-shot"],
+        "angles": ["casual-fun|curiosity|social-proof|urgency|humor|controversy|sensory"]
+      }
     }
   ],
   "thoughts": [
@@ -320,6 +324,8 @@ Reglas:
 - Basate en datos reales, no inventes
 - Si no hay datos suficientes para una directiva, no la generes
 - Prioriza directivas accionables
+- IMPORTANTE para Apollo: en "data" incluye los keys exactos. Para scenes usa los primeros 40 chars del texto de la escena. Para styles usa: ugly-ad, pov-selfie, overhead-flat, close-up-texture, action-shot. Para angles usa: casual-fun, curiosity, social-proof, urgency, humor, controversy, sensory.
+- Si no tienes datos para "scenes", "styles" o "angles", omite esos campos de data
 - En "thoughts": habla en primera persona como Zeus. Ej: "Noto que las escenas outdoor tienen 3x mas graduaciones que indoor", "Los tests que convierten en 48h casi siempre graduan", "Athena escalo 3 ad sets esta semana y 2 mejoraron"
 - Max 5 thoughts, sé especifico con datos reales`
       }]
