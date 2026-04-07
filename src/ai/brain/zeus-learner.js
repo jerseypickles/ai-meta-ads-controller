@@ -347,7 +347,7 @@ Reglas:
         directive: d.directive,
         data: d.data || {},
         confidence: d.confidence,
-        based_on_samples: totalTests,
+        based_on_samples: totalDataPoints,
         category: d.category || 'general',
         active: true,
         expires_at: new Date(Date.now() + 72 * 3600000) // expira en 72h
