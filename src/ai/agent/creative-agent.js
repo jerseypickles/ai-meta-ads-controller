@@ -502,6 +502,60 @@ async function runCreativeAgent() {
     }
   }
 
+  // ═══ GENERACION PROACTIVA — mantener pool lleno para Prometheus ═══
+  const MIN_POOL_SIZE = 10;
+  const readyCount = await CreativeProposal.countDocuments({ status: 'ready' });
+  const proactiveNeeded = Math.max(0, MIN_POOL_SIZE - readyCount - generated);
+
+  if (proactiveNeeded > 0 && rankedProducts.length > 0 && rankedScenes.length > 0) {
+    logger.info(`[CREATIVE-AGENT] Pool bajo (${readyCount} + ${generated} generados). Generando ${proactiveNeeded} proactivos para escalar.`);
+
+    for (let p = 0; p < proactiveNeeded; p++) {
+      try {
+        const product = rankedProducts[p % rankedProducts.length];
+        const sceneIdx = (globalSceneIndex + p) % rankedScenes.length;
+        const scenePick = rankedScenes[sceneIdx];
+        const style = weightedPick(AD_STYLES);
+        const copyAngle = weightedPick(COPY_ANGLES);
+
+        // Referencias del producto
+        const refImages = product.png_references.map(ref => ({
+          image_base64: ref.image_base64,
+          mime_type: ref.mime_type,
+          path: !ref.image_base64 ? path.join(config.system.uploadsDir || 'uploads', 'product-bank', ref.filename) : null
+        }));
+        const refTypes = product.png_references.map(ref => ref.type);
+
+        const prompt = buildImagePrompt(product.product_name, scenePick.scene, refTypes, style, false, []);
+
+        logger.info(`[CREATIVE-AGENT] Proactivo ${p + 1}/${proactiveNeeded}: ${scenePick.short} [${style.key}/${copyAngle.key}]`);
+        const imageBase64 = await generateImage(prompt, refImages);
+        const copy = await generateCopy(product.product_name, scenePick.short, copyAngle, false, []);
+
+        // Propuesta proactiva: adset_id = 'proactive' — Prometheus crea ad set nuevo
+        await CreativeProposal.create({
+          adset_id: 'proactive',
+          adset_name: 'Nuevo ad set (Prometheus)',
+          product_id: product._id,
+          product_name: product.product_name,
+          image_base64: imageBase64,
+          scene: scenePick.scene,
+          scene_short: scenePick.short,
+          headline: copy.headline,
+          primary_text: copy.primary_text,
+          link_url: product.link_url || 'https://jerseypickles.com',
+          prompt_used: prompt,
+          status: 'ready'
+        });
+
+        generated++;
+      } catch (err) {
+        logger.error(`[CREATIVE-AGENT] Error generando proactivo: ${err.message}`);
+      }
+    }
+    globalSceneIndex = (globalSceneIndex + proactiveNeeded) % rankedScenes.length;
+  }
+
   const elapsed = `${((Date.now() - startTime) / 1000).toFixed(1)}s`;
   logger.info(`═══ Creative Agent completado [${cycleId}]: ${generated} propuestas generadas en ${elapsed} ═══`);
 
