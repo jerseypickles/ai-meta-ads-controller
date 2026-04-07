@@ -1120,6 +1120,23 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
   const isObserver = mode === 'observer';
   const activeTools = isObserver ? OBSERVER_TOOLS : TOOLS;
 
+  // Leer directivas de Zeus para Athena
+  let zeusContext = '';
+  try {
+    const ZeusDirective = require('../../db/models/ZeusDirective');
+    const directives = await ZeusDirective.find({
+      target_agent: { $in: ['athena', 'all'] },
+      active: true
+    }).lean();
+    if (directives.length > 0) {
+      zeusContext = '\n\n## ZEUS DIRECTIVES (from the central brain — follow these)\n' +
+        directives.map(d => `- [${d.directive_type.toUpperCase()}] ${d.directive}`).join('\n') +
+        '\nThese directives come from Zeus analyzing the full account. Incorporate them into your decisions.';
+    }
+  } catch (_) {}
+
+  const systemPromptWithZeus = AGENT_SYSTEM_PROMPT + zeusContext;
+
   const baseContext = `Ad set ${adSetId} ("${adSetName}"). Budget: $${currentBudget}/day. 7d ROAS: ${adSetRoas.toFixed(2)}x, Spend: $${adSetSpend.toFixed(0)}, Purchases: ${adSetPurchases}, Frequency: ${adSetFrequency.toFixed(1)}.`;
   const planContext = pendingPlan ? `\n\nYOUR PREVIOUS PLAN for this ad set: "${pendingPlan}"\nCheck if conditions are met and execute accordingly. If conditions changed, make a new plan.` : '';
 
@@ -1135,7 +1152,7 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
       response = await client.messages.create({
         model: config.claude.model,
         max_tokens: 2048,
-        system: AGENT_SYSTEM_PROMPT,
+        system: systemPromptWithZeus,
         tools: activeTools,
         messages
       });
@@ -1147,7 +1164,7 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
           response = await client.messages.create({
             model: config.claude.model,
             max_tokens: 2048,
-            system: AGENT_SYSTEM_PROMPT,
+            system: systemPromptWithZeus,
             tools: activeTools,
             messages
           });

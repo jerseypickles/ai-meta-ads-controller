@@ -198,39 +198,64 @@ async function learnFromAthenaActions() {
 async function gatherAccountIntelligence() {
   const { getLatestSnapshots } = require('../../db/queries');
 
-  // ═══ DATOS GLOBALES DE LA CUENTA ═══
+  // ═══ DATOS GLOBALES DE LA CUENTA — TODAS LAS METRICAS ═══
   const allAdsets = await getLatestSnapshots('adset');
   const activeAdsets = allAdsets.filter(s => s.status === 'ACTIVE' && !(s.entity_name || '').startsWith('[TEST]'));
 
-  // Metricas globales
-  let totalSpend7d = 0, totalRevenue7d = 0, totalPurchases7d = 0;
+  // Agregar metricas globales por ventana (7d y 3d para tendencia)
+  let g7d = { spend: 0, revenue: 0, purchases: 0, impressions: 0, clicks: 0, reach: 0 };
+  let g3d = { spend: 0, revenue: 0, purchases: 0, impressions: 0, clicks: 0, reach: 0 };
   const adsetPerformance = [];
 
   for (const as of activeAdsets) {
-    const m = as.metrics?.last_7d || {};
-    totalSpend7d += m.spend || 0;
-    totalRevenue7d += m.purchase_value || 0;
-    totalPurchases7d += m.purchases || 0;
-    if ((m.spend || 0) > 5) {
+    const m7 = as.metrics?.last_7d || {};
+    const m3 = as.metrics?.last_3d || {};
+    g7d.spend += m7.spend || 0;
+    g7d.revenue += m7.purchase_value || 0;
+    g7d.purchases += m7.purchases || 0;
+    g7d.impressions += m7.impressions || 0;
+    g7d.clicks += m7.clicks || 0;
+    g7d.reach += m7.reach || 0;
+    g3d.spend += m3.spend || 0;
+    g3d.revenue += m3.purchase_value || 0;
+    g3d.purchases += m3.purchases || 0;
+
+    if ((m7.spend || 0) > 5) {
       adsetPerformance.push({
         name: as.entity_name,
-        roas: m.roas || 0,
-        spend: Math.round(m.spend || 0),
-        purchases: m.purchases || 0,
-        cpa: m.cpa || 0,
-        frequency: m.frequency || 0,
-        daily_budget: as.daily_budget || 0
+        roas_7d: (m7.roas || 0).toFixed(2),
+        roas_3d: (m3.roas || 0).toFixed(2),
+        spend_7d: Math.round(m7.spend || 0),
+        purchases_7d: m7.purchases || 0,
+        cpa_7d: (m7.cpa || 0).toFixed(0),
+        ctr_7d: (m7.ctr || 0).toFixed(2),
+        cpm_7d: (m7.cpm || 0).toFixed(0),
+        frequency_7d: (m7.frequency || 0).toFixed(1),
+        daily_budget: as.daily_budget || 0,
+        trend: as.analysis?.roas_trend || 'stable'
       });
     }
   }
-  adsetPerformance.sort((a, b) => b.roas - a.roas);
+  adsetPerformance.sort((a, b) => parseFloat(b.roas_7d) - parseFloat(a.roas_7d));
 
-  const globalRoas = totalSpend7d > 0 ? Math.round((totalRevenue7d / totalSpend7d) * 100) / 100 : 0;
-  const globalCpa = totalPurchases7d > 0 ? Math.round((totalSpend7d / totalPurchases7d) * 100) / 100 : 0;
+  // Metricas globales calculadas
+  const globalRoas7d = g7d.spend > 0 ? (g7d.revenue / g7d.spend).toFixed(2) : '0';
+  const globalRoas3d = g3d.spend > 0 ? (g3d.revenue / g3d.spend).toFixed(2) : '0';
+  const globalCpa = g7d.purchases > 0 ? (g7d.spend / g7d.purchases).toFixed(0) : '0';
+  const globalCtr = g7d.clicks > 0 && g7d.impressions > 0 ? ((g7d.clicks / g7d.impressions) * 100).toFixed(2) : '0';
+  const globalCpm = g7d.impressions > 0 ? ((g7d.spend / g7d.impressions) * 1000).toFixed(0) : '0';
+  const globalFreq = g7d.reach > 0 ? (g7d.impressions / g7d.reach).toFixed(1) : '0';
+  const roasTrend = parseFloat(globalRoas3d) > parseFloat(globalRoas7d) * 1.05 ? 'MEJORANDO' : parseFloat(globalRoas3d) < parseFloat(globalRoas7d) * 0.95 ? 'BAJANDO' : 'ESTABLE';
 
-  // Top 5 y bottom 5 ad sets
+  // Top y bottom
   const top5 = adsetPerformance.slice(0, 5);
-  const bottom5 = adsetPerformance.filter(a => a.roas < 1.5 && a.spend > 20).slice(-5);
+  const bottom5 = adsetPerformance.filter(a => parseFloat(a.roas_7d) < 1.5 && a.spend_7d > 20).slice(-5);
+  // Ad sets con frequency alta (quemando audiencia)
+  const highFreq = adsetPerformance.filter(a => parseFloat(a.frequency_7d) >= 2.5);
+  // Ad sets con CTR baja (creativos no enganchan)
+  const lowCtr = adsetPerformance.filter(a => parseFloat(a.ctr_7d) < 0.8 && a.spend_7d > 30);
+  // Total budget diario
+  const totalDailyBudget = activeAdsets.reduce((s, a) => s + (a.daily_budget || 0), 0);
 
   // Resumen de acciones de Athena
   const recentActions = await ActionLog.find({
@@ -257,13 +282,23 @@ async function gatherAccountIntelligence() {
   return {
     account: {
       active_adsets: activeAdsets.length,
-      total_spend_7d: Math.round(totalSpend7d),
-      total_revenue_7d: Math.round(totalRevenue7d),
-      global_roas: globalRoas,
-      global_cpa: globalCpa,
-      total_purchases_7d: totalPurchases7d,
+      total_daily_budget: Math.round(totalDailyBudget),
+      spend_7d: Math.round(g7d.spend),
+      revenue_7d: Math.round(g7d.revenue),
+      purchases_7d: g7d.purchases,
+      roas_7d: globalRoas7d,
+      roas_3d: globalRoas3d,
+      roas_trend: roasTrend,
+      cpa: globalCpa,
+      ctr: globalCtr,
+      cpm: globalCpm,
+      frequency: globalFreq,
+      impressions_7d: g7d.impressions,
+      reach_7d: g7d.reach,
       top_performers: top5,
-      underperformers: bottom5
+      underperformers: bottom5,
+      high_frequency: highFreq,
+      low_ctr: lowCtr
     },
     athena: { actions_7d: recentActions.length, action_types: actionSummary },
     prometheus: { graduated: testMap.graduated || 0, killed: testMap.killed || 0, expired: testMap.expired || 0, active: (testMap.learning || 0) + (testMap.evaluating || 0) },
@@ -302,23 +337,41 @@ async function generateDirectives(patterns, signals, accountData, uploadedData, 
 
   // Datos globales de cuenta
   const acct = accountData.account || {};
-  const topSection = (acct.top_performers || []).map(a => `- ${a.name}: ROAS ${a.roas.toFixed(2)}x, $${a.spend} spend, ${a.purchases} compras, CPA $${a.cpa.toFixed(0)}, freq ${a.frequency.toFixed(1)}`).join('\n') || 'Sin datos';
-  const bottomSection = (acct.underperformers || []).map(a => `- ${a.name}: ROAS ${a.roas.toFixed(2)}x, $${a.spend} spend, ${a.purchases} compras, CPA $${a.cpa.toFixed(0)}, freq ${a.frequency.toFixed(1)}`).join('\n') || 'Ninguno';
+  const fmtAdset = (a) => `- ${a.name}: ROAS ${a.roas_7d}x (3d: ${a.roas_3d}x ${a.trend}), $${a.spend_7d} spend, ${a.purchases_7d} compras, CPA $${a.cpa_7d}, CTR ${a.ctr_7d}%, freq ${a.frequency_7d}, budget $${a.daily_budget}/d`;
+  const topSection = (acct.top_performers || []).map(fmtAdset).join('\n') || 'Sin datos';
+  const bottomSection = (acct.underperformers || []).map(fmtAdset).join('\n') || 'Ninguno';
+  const highFreqSection = (acct.high_frequency || []).map(a => `- ${a.name}: freq ${a.frequency_7d} (QUEMANDO AUDIENCIA), ROAS ${a.roas_7d}x`).join('\n') || 'Ninguno';
+  const lowCtrSection = (acct.low_ctr || []).map(a => `- ${a.name}: CTR ${a.ctr_7d}% (CREATIVOS NO ENGANCHAN), $${a.spend_7d} spend`).join('\n') || 'Ninguno';
 
   const context = `
-## PANORAMA GLOBAL DE LA CUENTA (ultimos 7 dias)
-- Ad sets activos (produccion): ${acct.active_adsets || 0}
-- Spend total 7d: $${acct.total_spend_7d || 0}
-- Revenue total 7d: $${acct.total_revenue_7d || 0}
-- ROAS global: ${acct.global_roas || 0}x
-- CPA global: $${acct.global_cpa || 0}
-- Compras totales 7d: ${acct.total_purchases_7d || 0}
+## PANORAMA FINANCIERO DE LA CUENTA (ultimos 7 dias)
+
+### Metricas Globales
+| Metrica | Valor 7d | Valor 3d | Tendencia |
+|---------|----------|----------|-----------|
+| ROAS | ${acct.roas_7d || 0}x | ${acct.roas_3d || 0}x | ${acct.roas_trend || 'N/A'} |
+| Spend | $${acct.spend_7d || 0} | — | — |
+| Revenue | $${acct.revenue_7d || 0} | — | — |
+| Compras | ${acct.purchases_7d || 0} | — | — |
+| CPA | $${acct.cpa || 0} | — | Target: $25 |
+| CTR | ${acct.ctr || 0}% | — | Min: 1.0% |
+| CPM | $${acct.cpm || 0} | — | — |
+| Frequency | ${acct.frequency || 0} | — | Warning: 2.5, Critico: 4.0 |
+| Reach 7d | ${acct.reach_7d || 0} | — | — |
+| Ad sets activos | ${acct.active_adsets || 0} | — | — |
+| Budget diario total | $${acct.total_daily_budget || 0}/dia | — | — |
 
 ### Top 5 Ad Sets (mejor ROAS)
 ${topSection}
 
-### Ad Sets con Bajo Rendimiento (ROAS < 1.5x con $20+ spend)
+### Ad Sets con Bajo Rendimiento (ROAS < 1.5x, $20+ spend)
 ${bottomSection}
+
+### Ad Sets con Frequency Alta (quemando audiencia, freq >= 2.5)
+${highFreqSection}
+
+### Ad Sets con CTR Baja (creativos no enganchan, CTR < 0.8%)
+${lowCtrSection}
 
 ## DATOS DE AGENTES
 
