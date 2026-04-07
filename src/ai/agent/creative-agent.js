@@ -14,9 +14,10 @@ const { getLatestSnapshots, getAdsForAdSet } = require('../../db/queries');
 const claude = new Anthropic({ apiKey: config.claude.apiKey });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SCENES BANK — escenas cotidianas para creative generation
+// SCENES BANK — escenas cotidianas para creative generation (22 escenas)
 // ═══════════════════════════════════════════════════════════════════════════════
 const SCENES = [
+  // Clasicas (probadas)
   'parked car during daytime, container placed near cupholder with a crumpled napkin nearby, hand lifting a pickle from container with slight dripping brine',
   'living room couch at night watching TV, container on armrest with a blanket nearby and remote control visible, hand reaching in to grab a pickle',
   'beach towel on a sunny day, container on colorful towel with sunscreen and flip flops nearby, hand pulling out a pickle chip',
@@ -28,26 +29,98 @@ const SCENES = [
   'road trip passenger seat, container between seats with snacks and water bottles around',
   'camping outdoors, container on a fold-out table near campfire setup, rustic outdoor mood',
   'tailgate party near a truck, container on cooler lid with drinks around, game day vibe',
-  'pool side on a towel, container next to sunglasses and a drink, summer relaxation mood'
+  'pool side on a towel, container next to sunglasses and a drink, summer relaxation mood',
+  // Nuevas (mas variedad)
+  'gym bag open on bench in locker room, container peeking out next to a water bottle and towel, post-workout snack vibe',
+  'game night table with board game and cards, container open among chips and dip, friends gathering mood',
+  'late night kitchen raid at 2am, fridge light illuminating the scene, hand grabbing container in dim light',
+  'breakfast table in the morning, container next to toast and coffee, sunny window light',
+  'watching sports on TV with friends, container on coffee table among nachos and beer, excited energy',
+  'unboxing moment, package just opened on doorstep, hands lifting container out of shipping box with tissue paper',
+  'farmers market stand outdoors, container displayed among fresh produce, artisanal handmade vibe',
+  'apartment balcony at sunset, container on small table with a drink, city skyline in background, chill vibes',
+  'work from home setup, container on desk next to monitor and plant, casual afternoon snack',
+  'food truck window, hand passing container to customer, street food festival energy'
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PROMPT TEMPLATE
+// AD STYLES — estilos visuales para las imagenes
 // ═══════════════════════════════════════════════════════════════════════════════
-function buildImagePrompt(productName, scene, refTypes) {
+const AD_STYLES = [
+  {
+    key: 'ugly-ad',
+    prompt: 'Create a realistic ugly-ad style iPhone photo. Keep the framing casual, the light natural, and the overall mood believable and unpolished. The photo should look like someone casually took it with their phone — not staged or professional.',
+    weight: 3 // mas probable (probado)
+  },
+  {
+    key: 'pov-selfie',
+    prompt: 'Create a POV-style photo as if someone is taking a selfie or filming themselves. First person perspective, slightly tilted angle, casual and authentic. The viewer should feel like they ARE the person in the scene.',
+    weight: 2
+  },
+  {
+    key: 'overhead-flat',
+    prompt: 'Create a clean overhead flat-lay photo looking straight down. Items neatly arranged but not too perfect. Bright natural lighting, slight shadows. Instagram-worthy but still casual.',
+    weight: 2
+  },
+  {
+    key: 'close-up-texture',
+    prompt: 'Create an extreme close-up macro shot focusing on the food texture and details. Shallow depth of field, mouth-watering detail, condensation or brine visible. Make the viewer TASTE it through the screen.',
+    weight: 1
+  },
+  {
+    key: 'action-shot',
+    prompt: 'Create a dynamic action shot — someone mid-bite, fork mid-air, brine dripping, or container being opened. Slight motion blur is OK. Capture the MOMENT of enjoyment, not a posed photo.',
+    weight: 1
+  }
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COPY ANGLES — angulos de mensaje para el copy
+// ═══════════════════════════════════════════════════════════════════════════════
+const COPY_ANGLES = [
+  { key: 'casual-fun', instruction: 'Style: casual, fun, crave-inducing. Like a friend recommending a snack.', weight: 2 },
+  { key: 'curiosity', instruction: 'Style: curiosity-driven hook. Make them NEED to know what this is. Use "wait..." or "you won\'t believe..." energy without being clickbait.', weight: 2 },
+  { key: 'social-proof', instruction: 'Style: social proof / bandwagon. Imply everyone is obsessed. Use "everyone\'s talking about" or "the snack that broke TikTok" energy.', weight: 2 },
+  { key: 'urgency', instruction: 'Style: gentle urgency. Limited batch, selling fast, seasonal. Not aggressive — just enough FOMO.', weight: 1 },
+  { key: 'humor', instruction: 'Style: humor/meme energy. Self-aware, slightly absurd. "We put hot tomatoes in a jar and somehow it WORKS." Relatable and shareable.', weight: 2 },
+  { key: 'controversy', instruction: 'Style: mild controversy / hot take. "Pickles are NOT a snack... until you try these." Provoke a reaction, make people want to comment.', weight: 1 },
+  { key: 'sensory', instruction: 'Style: sensory description. Focus on taste, texture, crunch, heat, brine. Make them FEEL the flavor through words. Short, punchy, visceral.', weight: 1 }
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// WEIGHTED RANDOM PICK
+// ═══════════════════════════════════════════════════════════════════════════════
+function weightedPick(items) {
+  const totalWeight = items.reduce((sum, item) => sum + (item.weight || 1), 0);
+  let random = Math.random() * totalWeight;
+  for (const item of items) {
+    random -= (item.weight || 1);
+    if (random <= 0) return item;
+  }
+  return items[items.length - 1];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PROMPT TEMPLATE — soporta single product y combo (multi-product)
+// ═══════════════════════════════════════════════════════════════════════════════
+function buildImagePrompt(productName, scene, refTypes, style, isCombo = false, comboProductNames = []) {
   let prompt = 'Use the uploaded ';
 
   // Describe references based on what was provided
-  if (refTypes.includes('front-view')) {
-    prompt += `front-view ${productName} container image as the primary mandatory reference for the exact package identity, container proportions, and front label. `;
-  }
-  if (refTypes.includes('top-down') || refTypes.includes('open')) {
-    prompt += `Use the uploaded top-down/open container image as the secondary reference for the true appearance of the contents inside. `;
+  if (isCombo && comboProductNames.length > 1) {
+    prompt += `product container images as mandatory references for the exact package identity and labels of each product: ${comboProductNames.join(', ')}. `;
+    prompt += 'Show ALL containers together in the same scene — this is a product family/variety shot. ';
+  } else {
+    if (refTypes.includes('front-view')) {
+      prompt += `front-view ${productName} container image as the primary mandatory reference for the exact package identity, container proportions, and front label. `;
+    }
+    if (refTypes.includes('top-down') || refTypes.includes('open')) {
+      prompt += `Use the uploaded top-down/open container image as the secondary reference for the true appearance of the contents inside. `;
+    }
   }
 
-  prompt += `Create a realistic ugly-ad style iPhone photo of ${scene}. `;
-  prompt += 'Keep the framing casual, the light natural, and the overall mood believable and unpolished. ';
-  prompt += 'The photo should look like someone casually took it with their phone — not staged or professional.';
+  prompt += `Scene: ${scene}. `;
+  prompt += style.prompt;
 
   return prompt;
 }
@@ -109,13 +182,16 @@ async function generateImage(prompt, referencePaths) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // COPY GENERATION (Claude)
 // ═══════════════════════════════════════════════════════════════════════════════
-async function generateCopy(productName, scene) {
+async function generateCopy(productName, scene, copyAngle = null, isCombo = false, comboNames = []) {
+  const angle = copyAngle || weightedPick(COPY_ANGLES);
+  const productDesc = isCombo ? `the Jersey Pickles variety pack (${comboNames.join(' + ')})` : `Jersey Pickles "${productName}"`;
+
   const response = await claude.messages.create({
     model: config.claude.model,
     max_tokens: 300,
     messages: [{
       role: 'user',
-      content: `Write ad copy for Jersey Pickles "${productName}" in a ${scene} setting.
+      content: `Write ad copy for ${productDesc} in a ${scene} setting.
 
 Return JSON only:
 {
@@ -123,22 +199,23 @@ Return JSON only:
   "primary_text": "engaging ad text (max 125 chars) with 1-2 emojis"
 }
 
-Style: casual, fun, crave-inducing. Like a friend recommending a snack. English only.`
+${angle.instruction}
+English only. Do NOT mention Jersey Pickles in the headline — save it for primary_text or skip it.`
     }]
   });
 
   try {
     const text = response.content[0].text;
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) return JSON.parse(jsonMatch[0]);
+    if (jsonMatch) return { ...JSON.parse(jsonMatch[0]), copy_angle: angle.key };
   } catch (e) {
     logger.warn(`[CREATIVE-AGENT] Copy parse error: ${e.message}`);
   }
 
-  // Fallback
   return {
     headline: `Try ${productName} Today`,
-    primary_text: `Jersey Pickles ${productName} — the snack you didn't know you needed. Grab a jar! 🥒🔥`
+    primary_text: `Jersey Pickles ${productName} — the snack you didn't know you needed. Grab a jar! 🥒🔥`,
+    copy_angle: 'fallback'
   };
 }
 
@@ -334,32 +411,54 @@ async function runCreativeAgent() {
       }
       globalSceneIndex = (globalSceneIndex + PROPOSALS_PER_ADSET) % rankedScenes.length;
 
-      // Build references once per product
-      const refPaths = product.png_references.map(ref =>
-        path.join(config.system.uploadsDir || 'uploads', 'product-bank', ref.filename)
-      );
-      const refTypes = product.png_references.map(ref => ref.type);
+      // Decidir si hacer combo (multi-product) — solo si hay 2+ productos con PNGs
+      const doCombo = rankedProducts.length >= 2 && Math.random() < 0.3; // 30% chance de combo
+      let refPaths, refTypes, comboNames = [];
+
+      if (doCombo) {
+        // Combo: usar PNGs de todos los productos (max 3)
+        const comboProducts = rankedProducts.slice(0, Math.min(3, rankedProducts.length));
+        refPaths = comboProducts.flatMap(p =>
+          p.png_references.map(ref => path.join(config.system.uploadsDir || 'uploads', 'product-bank', ref.filename))
+        );
+        refTypes = comboProducts.flatMap(p => p.png_references.map(ref => ref.type));
+        comboNames = comboProducts.map(p => p.product_name);
+        logger.info(`[CREATIVE-AGENT] Modo COMBO: ${comboNames.join(' + ')}`);
+      } else {
+        // Single product
+        refPaths = product.png_references.map(ref =>
+          path.join(config.system.uploadsDir || 'uploads', 'product-bank', ref.filename)
+        );
+        refTypes = product.png_references.map(ref => ref.type);
+      }
 
       for (const scenePick of scenePicks) {
         const scene = scenePick.scene;
         const sceneShort = scenePick.short;
 
-        // Build prompt
-        const prompt = buildImagePrompt(product.product_name, scene, refTypes);
+        // Pick random style and copy angle
+        const style = weightedPick(AD_STYLES);
+        const copyAngle = weightedPick(COPY_ANGLES);
+
+        // Build prompt with style + combo support
+        const prompt = buildImagePrompt(
+          product.product_name, scene, refTypes, style,
+          doCombo, comboNames
+        );
 
         // Generate image — returns base64 directly, no filesystem needed
-        logger.info(`[CREATIVE-AGENT] Generating image for ${adsetName} — ${sceneShort}...`);
+        logger.info(`[CREATIVE-AGENT] Generating for ${adsetName} — ${sceneShort} [${style.key}/${copyAngle.key}]${doCombo ? ' COMBO' : ''}...`);
         const imageBase64 = await generateImage(prompt, refPaths);
 
-        // Generate copy
-        const copy = await generateCopy(product.product_name, sceneShort);
+        // Generate copy with angle
+        const copy = await generateCopy(product.product_name, sceneShort, copyAngle, doCombo, comboNames);
 
         // Save as proposal (NOT uploaded yet) — image stored as base64 in DB
         await CreativeProposal.create({
           adset_id: adsetId,
           adset_name: adsetName,
           product_id: product._id,
-          product_name: product.product_name,
+          product_name: doCombo ? comboNames.join(' + ') : product.product_name,
           image_base64: imageBase64,
           scene,
           scene_short: sceneShort,
