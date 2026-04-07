@@ -7,6 +7,8 @@ const ActionLog = require('../../db/models/ActionLog');
 const BrainMemory = require('../../db/models/BrainMemory');
 const ZeusDirective = require('../../db/models/ZeusDirective');
 const MetricSnapshot = require('../../db/models/MetricSnapshot');
+const BrainInsight = require('../../db/models/BrainInsight');
+const SystemConfig = require('../../db/models/SystemConfig');
 
 const claude = new Anthropic({ apiKey: config.claude.apiKey });
 
@@ -127,6 +129,69 @@ async function learnTestSignals() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// FASE 2.5: APRENDER DE CREATIVOS UPLOADED (legacy, con metricas reales)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function learnFromUploadedCreatives() {
+  // Creativos subidos directamente (antes del Testing Agent) que tienen performance
+  const uploaded = await CreativeProposal.find({
+    status: 'uploaded',
+    'performance.measured_at': { $ne: null },
+    'performance.spend_7d': { $gt: 0 }
+  }).lean();
+
+  if (uploaded.length === 0) return { total: 0, performers: [] };
+
+  const scenePerf = {};
+  for (const p of uploaded) {
+    const scene = p.scene_short || 'unknown';
+    if (!scenePerf[scene]) scenePerf[scene] = { total_roas: 0, total_spend: 0, purchases: 0, count: 0 };
+    scenePerf[scene].total_roas += (p.performance.roas_7d || 0);
+    scenePerf[scene].total_spend += (p.performance.spend_7d || 0);
+    scenePerf[scene].purchases += (p.performance.purchases_7d || 0);
+    scenePerf[scene].count++;
+  }
+
+  const performers = Object.entries(scenePerf)
+    .map(([scene, s]) => ({
+      scene,
+      avg_roas: s.count > 0 ? Math.round((s.total_roas / s.count) * 100) / 100 : 0,
+      total_spend: Math.round(s.total_spend),
+      purchases: s.purchases,
+      count: s.count
+    }))
+    .sort((a, b) => b.avg_roas - a.avg_roas);
+
+  return { total: uploaded.length, performers };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FASE 2.6: DATOS DE ATHENA (acciones con impacto medido)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function learnFromAthenaActions() {
+  const measuredActions = await ActionLog.find({
+    success: true,
+    impact_measured: true,
+    follow_up_deltas: { $exists: true, $ne: null }
+  }).sort({ executed_at: -1 }).limit(100).lean();
+
+  if (measuredActions.length === 0) return { total: 0, action_outcomes: {} };
+
+  const actionOutcomes = {};
+  for (const a of measuredActions) {
+    if (!actionOutcomes[a.action]) actionOutcomes[a.action] = { positive: 0, negative: 0, neutral: 0, count: 0 };
+    actionOutcomes[a.action].count++;
+    const verdict = a.follow_up_verdict || 'neutral';
+    if (verdict === 'positive' || verdict === 'improved') actionOutcomes[a.action].positive++;
+    else if (verdict === 'negative' || verdict === 'worsened') actionOutcomes[a.action].negative++;
+    else actionOutcomes[a.action].neutral++;
+  }
+
+  return { total: measuredActions.length, action_outcomes: actionOutcomes };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // FASE 3: AGREGAR DATOS DE CUENTA
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -164,7 +229,7 @@ async function gatherAccountIntelligence() {
 // FASE 4: GENERAR DIRECTIVAS CON CLAUDE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function generateDirectives(patterns, signals, accountData) {
+async function generateDirectives(patterns, signals, accountData, uploadedData, athenaData) {
   // Desactivar directivas viejas (se reemplazan cada ciclo)
   await ZeusDirective.updateMany(
     { active: true, created_at: { $lt: new Date(Date.now() - 48 * 3600000) } },
@@ -178,14 +243,30 @@ async function generateDirectives(patterns, signals, accountData) {
     return 0;
   }
 
+  // Datos de uploaded creativos (legacy con metricas reales)
+  const uploadedSection = uploadedData.performers?.length > 0
+    ? uploadedData.performers.map(p => `- ${p.scene}: ROAS ${p.avg_roas}x, $${p.total_spend} spend, ${p.purchases} compras, ${p.count} ads`).join('\n')
+    : 'Sin datos de uploaded';
+
+  // Datos de acciones de Athena con impacto medido
+  const athenaSection = Object.entries(athenaData.action_outcomes || {})
+    .map(([action, o]) => `- ${action}: ${o.positive} positivas, ${o.negative} negativas, ${o.neutral} neutral (${o.count} total)`)
+    .join('\n') || 'Sin datos medidos';
+
   const context = `
 ## DATOS DE APRENDIZAJE DEL SISTEMA
 
-### Patrones Creativos (escenas)
-${patterns.patterns.length > 0 ? patterns.patterns.map(p => `- ${p.scene}: ${p.win_rate}% win rate (${p.wins}W/${p.losses}L), ROAS prom: ${p.avg_roas}x, ${p.samples} tests`).join('\n') : 'Sin datos suficientes'}
+### Patrones Creativos de Tests (Prometheus)
+${patterns.patterns?.length > 0 ? patterns.patterns.map(p => `- ${p.scene}: ${p.win_rate}% win rate (${p.wins}W/${p.losses}L), ROAS prom: ${p.avg_roas}x, ${p.samples} tests`).join('\n') : 'Sin datos de tests aun'}
 
-### Senales de Tests
-${signals.signals.length > 0 ? signals.signals.map(s => `- ${s.description} (${s.samples} muestras)`).join('\n') : 'Sin datos suficientes'}
+### Performance de Creativos Uploaded (historico, datos reales)
+${uploadedSection}
+
+### Senales Predictivas de Tests
+${signals.signals.length > 0 ? signals.signals.map(s => `- ${s.description} (${s.samples} muestras)`).join('\n') : 'Insuficientes datos'}
+
+### Acciones de Athena con Impacto Medido
+${athenaSection}
 
 ### Estado de Agentes (ultimos 7 dias)
 - Athena: ${accountData.athena.actions_7d} acciones ejecutadas
@@ -193,6 +274,8 @@ ${signals.signals.length > 0 ? signals.signals.map(s => `- ${s.description} (${s
 - Apollo: ${accountData.apollo.ready_pool} creativos en pool
 
 ### Tests totales finalizados: ${totalTests}
+### Creativos uploaded con metricas: ${uploadedData.total}
+### Acciones de Athena medidas: ${athenaData.total}
 `;
 
   try {
@@ -222,6 +305,11 @@ Responde SOLO en JSON:
       "data": {}
     }
   ],
+  "thoughts": [
+    "Pensamiento 1 — algo que descubriste analizando los datos",
+    "Pensamiento 2 — un patron interesante que notaste",
+    "Pensamiento 3 — una hipotesis que quieres validar"
+  ],
   "intelligence_summary": "resumen de 2-3 lineas de lo que aprendiste"
 }
 
@@ -230,7 +318,9 @@ Reglas:
 - Solo genera directivas con confianza > 0.4
 - Basate en datos reales, no inventes
 - Si no hay datos suficientes para una directiva, no la generes
-- Prioriza directivas accionables`
+- Prioriza directivas accionables
+- En "thoughts": habla en primera persona como Zeus. Ej: "Noto que las escenas outdoor tienen 3x mas graduaciones que indoor", "Los tests que convierten en 48h casi siempre graduan", "Athena escalo 3 ad sets esta semana y 2 mejoraron"
+- Max 5 thoughts, sé especifico con datos reales`
       }]
     });
 
@@ -258,16 +348,31 @@ Reglas:
       created++;
     }
 
-    // Guardar summary en SystemConfig
-    if (result.intelligence_summary) {
-      const SystemConfig = require('../../db/models/SystemConfig');
-      await SystemConfig.set('zeus_intelligence_summary', {
-        summary: result.intelligence_summary,
-        updated_at: new Date(),
-        patterns_count: patterns.patterns?.length || 0,
-        total_tests: totalTests
+    // Guardar pensamientos como BrainInsights (stream de consciencia de Zeus)
+    const thoughts = result.thoughts || [];
+    for (const thought of thoughts) {
+      await BrainInsight.create({
+        insight_type: 'brain_thinking',
+        severity: 'info',
+        title: `⚡ Zeus: ${thought.substring(0, 80)}${thought.length > 80 ? '...' : ''}`,
+        body: thought,
+        generated_by: 'zeus',
+        entities: [],
+        data_points: { source: 'zeus_learner', directives_created: created, total_tests: totalTests }
       });
     }
+    if (thoughts.length > 0) {
+      logger.info(`[ZEUS] ${thoughts.length} pensamientos guardados`);
+    }
+
+    // Guardar summary en SystemConfig
+    await SystemConfig.set('zeus_intelligence_summary', {
+      summary: result.intelligence_summary || '',
+      updated_at: new Date(),
+      patterns_count: patterns.patterns?.length || 0,
+      total_tests: totalTests,
+      thoughts_count: thoughts.length
+    });
 
     return created;
 
@@ -286,19 +391,27 @@ async function runZeusLearner() {
   const cycleId = `zeus_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   logger.info(`═══ Iniciando Zeus Learner [${cycleId}] ═══`);
 
-  // Fase 1: Aprender patrones creativos
+  // Fase 1: Aprender patrones creativos (de tests de Prometheus)
   const patterns = await learnCreativePatterns();
-  logger.info(`[ZEUS] Patrones creativos: ${patterns.tests_processed} tests procesados`);
+  logger.info(`[ZEUS] Patrones de tests: ${patterns.tests_processed} tests procesados`);
 
   // Fase 2: Aprender senales de tests
   const signals = await learnTestSignals();
   logger.info(`[ZEUS] Senales de test: ${signals.signals.length} senales, ${signals.total_tests} tests analizados`);
 
+  // Fase 2.5: Aprender de creativos uploaded (legacy con metricas reales)
+  const uploadedData = await learnFromUploadedCreatives();
+  logger.info(`[ZEUS] Creativos uploaded: ${uploadedData.total} con metricas, ${uploadedData.performers?.length || 0} escenas`);
+
+  // Fase 2.6: Aprender de acciones de Athena
+  const athenaData = await learnFromAthenaActions();
+  logger.info(`[ZEUS] Acciones de Athena: ${athenaData.total} medidas`);
+
   // Fase 3: Datos de cuenta
   const accountData = await gatherAccountIntelligence();
 
-  // Fase 4: Generar directivas
-  const directivesCreated = await generateDirectives(patterns, signals, accountData);
+  // Fase 4: Generar directivas + pensamientos (Claude)
+  const directivesCreated = await generateDirectives(patterns, signals, accountData, uploadedData, athenaData);
   logger.info(`[ZEUS] Directivas generadas: ${directivesCreated}`);
 
   const elapsed = `${((Date.now() - startTime) / 1000).toFixed(1)}s`;

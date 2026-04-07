@@ -353,6 +353,11 @@ export const getZeusStats = async () => {
   return response.data;
 };
 
+export const getZeusThoughts = async () => {
+  const response = await api.get('/api/zeus/thoughts');
+  return response.data;
+};
+
 // ═══ TESTING AGENT ═══
 
 export const runTestingAgentApi = async () => {

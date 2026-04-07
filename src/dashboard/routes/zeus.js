@@ -143,4 +143,18 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+// ═══ GET /thoughts — Stream de consciencia de Zeus ═══
+router.get('/thoughts', async (req, res) => {
+  try {
+    const BrainInsight = require('../../db/models/BrainInsight');
+    const thoughts = await BrainInsight.find({
+      generated_by: 'zeus'
+    }).sort({ created_at: -1 }).limit(30).lean();
+
+    res.json({ thoughts, count: thoughts.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

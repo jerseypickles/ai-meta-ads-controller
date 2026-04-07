@@ -15,7 +15,7 @@ import {
   getProducts, createProduct, deleteProduct, getProductImageUrl, runCreativeAgentApi,
   getCreativeProposals, approveCreativeProposal, rejectCreativeProposal, getProposalImageUrl,
   getTestRuns, killTestRun, runTestingAgentApi, getTestImageUrl,
-  getZeusIntelligence, runZeusApi
+  getZeusIntelligence, runZeusApi, getZeusThoughts
 } from '../api';
 
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
@@ -212,8 +212,11 @@ export default function BrainIntelligence() {
   const loadZeusData = useCallback(async () => {
     setZeusLoading(true);
     try {
-      const data = await getZeusIntelligence();
-      setZeusData(data);
+      const [intel, thoughtsData] = await Promise.all([
+        getZeusIntelligence(),
+        getZeusThoughts()
+      ]);
+      setZeusData({ ...intel, thoughts: thoughtsData.thoughts || [] });
     } catch (err) { console.error('Error loading Zeus data:', err); }
     finally { setZeusLoading(false); }
   }, []);
@@ -987,6 +990,28 @@ function ZeusPanel({ data, loading, running, onRun, agentStats }) {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Stream de Consciencia — Zeus habla */}
+      {(data?.thoughts || []).length > 0 && (
+        <div style={{ marginTop: 20 }}>
+          <h4 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 10 }}>Stream de Consciencia</h4>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {(data.thoughts || []).slice(0, 15).map((t, i) => {
+              const date = new Date(t.created_at);
+              const timeStr = `${date.getDate()}/${date.getMonth() + 1} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+              return (
+                <div key={i} style={{
+                  background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '8px 12px',
+                  borderLeft: '2px solid #fbbf2440', fontSize: '0.8rem'
+                }}>
+                  <div style={{ color: 'var(--text-primary)', lineHeight: 1.4 }}>{t.body || t.title}</div>
+                  <div style={{ color: 'var(--text-muted)', fontSize: '0.65rem', marginTop: 3 }}>{timeStr}</div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
