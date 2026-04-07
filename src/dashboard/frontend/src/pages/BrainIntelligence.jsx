@@ -214,12 +214,6 @@ export default function BrainIntelligence() {
     }
   }, [activeTab, loadRecommendations]);
 
-  useEffect(() => {
-    if (chatEndRef.current) {
-      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [chatMessages, streamingText, chatThinking]);
-
   // ═══ ACCIONES ═══
 
   const handleAnalyze = async () => {
