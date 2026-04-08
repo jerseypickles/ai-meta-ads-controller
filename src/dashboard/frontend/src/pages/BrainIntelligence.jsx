@@ -351,24 +351,28 @@ export default function BrainIntelligence() {
           <p className="brain-subtitle">Análisis proactivo y chat con tus campañas</p>
         </div>
         <div className="brain-header-right">
-          {stats && (
+          {(
             <div className="brain-stats-bar">
               <div className="brain-stat-chip">
-                <span className="stat-number">{stats.entities_tracked}</span>
-                <span className="stat-label">Entidades</span>
+                <span className="stat-number" style={{ color: '#fbbf24' }}>{zeusData?.directives?.active?.length || 0}</span>
+                <span className="stat-label">Directivas</span>
               </div>
               <div className="brain-stat-chip">
-                <span className="stat-number">{stats.total_insights}</span>
-                <span className="stat-label">Insights</span>
+                <span className="stat-number" style={{ color: '#60a5fa' }}>{agentData?.global?.total_adsets || 0}</span>
+                <span className="stat-label">Ad Sets</span>
               </div>
               <div className="brain-stat-chip">
-                <span className="stat-number">{stats.today_insights}</span>
-                <span className="stat-label">Hoy</span>
+                <span className="stat-number" style={{ color: '#fb923c' }}>{sharedActiveTests.length}</span>
+                <span className="stat-label">Tests</span>
               </div>
-              {unreadCount > 0 && (
+              <div className="brain-stat-chip">
+                <span className="stat-number" style={{ color: '#fbbf24' }}>{sharedReadyProposals.length}</span>
+                <span className="stat-label">Pool</span>
+              </div>
+              {(zeusData?.conversations || []).length > 0 && (
                 <div className="brain-stat-chip unread">
-                  <span className="stat-number">{unreadCount}</span>
-                  <span className="stat-label">Sin leer</span>
+                  <span className="stat-number">{zeusData.conversations.length}</span>
+                  <span className="stat-label">Mensajes</span>
                 </div>
               )}
             </div>
