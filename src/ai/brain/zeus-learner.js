@@ -434,41 +434,33 @@ Basado en los datos, genera directivas para los agentes.
 
 ${context}
 
-Responde SOLO en JSON:
+Return ONLY valid JSON. Keep ALL strings SHORT (max 80 chars). Use English only. No special characters. No quotes inside strings.
+
 {
   "directives": [
     {
-      "target_agent": "apollo|prometheus|athena|all",
-      "directive_type": "prioritize|avoid|adjust|alert",
-      "directive": "texto corto y accionable",
-      "category": "creative_pattern|test_signal|account_pattern|cross_agent",
-      "confidence": 0.0-1.0,
-      "data": {
-        "scenes": ["first 40 chars of scene text that should be boosted/avoided"],
-        "styles": ["ugly-ad|pov-selfie|overhead-flat|close-up-texture|action-shot"],
-        "angles": ["casual-fun|curiosity|social-proof|urgency|humor|controversy|sensory"]
-      }
+      "target_agent": "athena",
+      "directive_type": "prioritize",
+      "directive": "short action max 80 chars",
+      "category": "account_pattern",
+      "confidence": 0.8,
+      "data": {}
     }
   ],
   "thoughts": [
-    "Pensamiento 1 — algo que descubriste analizando los datos",
-    "Pensamiento 2 — un patron interesante que notaste",
-    "Pensamiento 3 — una hipotesis que quieres validar"
+    "short thought max 80 chars",
+    "another thought max 80 chars"
   ],
-  "intelligence_summary": "resumen de 2-3 lineas de lo que aprendiste"
+  "intelligence_summary": "2 sentence summary max 150 chars"
 }
 
-Reglas:
-- Max 5 directivas por ciclo
-- Solo genera directivas con confianza > 0.4
-- Basate en datos reales, no inventes
-- Si no hay datos suficientes para una directiva, no la generes
-- Prioriza directivas accionables
-- IMPORTANTE para Apollo: en "data" incluye los keys exactos. Para scenes usa los primeros 40 chars del texto de la escena. Para styles usa: ugly-ad, pov-selfie, overhead-flat, close-up-texture, action-shot. Para angles usa: casual-fun, curiosity, social-proof, urgency, humor, controversy, sensory.
-- Si no tienes datos para "scenes", "styles" o "angles", omite esos campos de data
-- En "thoughts": habla en primera persona como Zeus. Ej: "Noto que las escenas outdoor tienen 3x mas graduaciones que indoor", "Los tests que convierten en 48h casi siempre graduan", "Athena escalo 3 ad sets esta semana y 2 mejoraron"
-- Max 5 thoughts, sé especifico con datos reales
-- CRITICO: No uses comillas dobles dentro de strings. Usa comillas simples si necesitas citar algo. Tu JSON DEBE ser parseable.`
+Rules:
+- Max 5 directives. Only confidence > 0.4.
+- target_agent: athena, apollo, prometheus, or all
+- directive_type: prioritize, avoid, adjust, or alert
+- For Apollo data field, include: scenes (first 40 chars), styles (ugly-ad/pov-selfie/overhead-flat/close-up-texture/action-shot), angles (casual-fun/curiosity/social-proof/urgency/humor/controversy/sensory)
+- Max 5 thoughts. First person. Specific with real numbers.
+- ALL strings must be short. No line breaks inside strings. No double quotes inside strings.`
       }]
     });
 
