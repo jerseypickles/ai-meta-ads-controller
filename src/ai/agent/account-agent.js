@@ -1125,7 +1125,15 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
   const pendingPlan = memory?.agent_pending_plan || '';
   const nextReview = memory?.agent_next_review_at;
 
-  if (mode === 'full' && nextReview && new Date(nextReview) > new Date() && !pendingPlan) {
+  // Si Zeus tiene directivas activas, no skipear — las directivas son urgentes
+  let zeusHasDirectives = false;
+  try {
+    const ZeusDirective = require('../../db/models/ZeusDirective');
+    const zeusCount = await ZeusDirective.countDocuments({ target_agent: { $in: ['athena', 'all'] }, active: true });
+    zeusHasDirectives = zeusCount > 0;
+  } catch (_) {}
+
+  if (mode === 'full' && nextReview && new Date(nextReview) > new Date() && !pendingPlan && !zeusHasDirectives) {
     const hoursLeft = Math.round((new Date(nextReview) - new Date()) / 3600000);
     logger.debug(`[ACCOUNT-AGENT] ${adSetName}: next review in ${hoursLeft}h — skip`);
     return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Next review in ${hoursLeft}h` };
@@ -1149,9 +1157,11 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
       active: true
     }).lean();
     if (directives.length > 0) {
-      zeusContext = '\n\n## ZEUS DIRECTIVES (from the central brain — follow these)\n' +
+      zeusContext = '\n\n## ZEUS DIRECTIVES (from the CEO brain — ACT ON THESE NOW)\n' +
         directives.map(d => `- [${d.directive_type.toUpperCase()}] ${d.directive}`).join('\n') +
-        '\nThese directives come from Zeus analyzing the full account. Incorporate them into your decisions.';
+        '\nThese directives are TIME-SENSITIVE. Zeus analyzed the full account and needs you to act THIS CYCLE, not schedule for later. ' +
+        'If a directive says PRIORITIZE scaling, execute scale_budget now if safety gates allow (>5 days old, max +15-20%). ' +
+        'Do NOT delay Zeus directives by setting next_review_at days in the future. Act now, review later.';
     }
   } catch (_) {}
 
