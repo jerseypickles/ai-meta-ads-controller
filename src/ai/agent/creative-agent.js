@@ -324,28 +324,25 @@ async function runCreativeAgent() {
     logger.error(`[CREATIVE-AGENT] Pre-scan error (continuing anyway): ${err.message}`);
   }
 
-  // 3. Check pool size — si ya hay suficientes, no generar mas
+  // 3. Check pool size — si ya hay suficientes reactivos, saltar esa parte (pero proactivos siempre)
   const MAX_POOL_SIZE = 30;
   const currentPool = await CreativeProposal.countDocuments({ status: 'ready' });
-  if (currentPool >= MAX_POOL_SIZE) {
-    logger.info(`[CREATIVE-AGENT] Pool lleno (${currentPool} ready, max ${MAX_POOL_SIZE}) — saltando generacion`);
-    return { generated: 0, elapsed: '0s', cycle_id: cycleId, pool: currentPool };
+  const skipReactive = currentPool >= MAX_POOL_SIZE;
+  if (skipReactive) {
+    logger.info(`[CREATIVE-AGENT] Pool lleno (${currentPool} ready, max ${MAX_POOL_SIZE}) — saltando generacion reactiva, pero generando proactivos`);
   }
 
   // 4. Check for ad sets needing creatives
-  const needCreatives = await BrainMemory.find({
+  const needCreatives = skipReactive ? [] : await BrainMemory.find({
     agent_needs_new_creatives: true,
     entity_type: 'adset'
   }).lean();
 
   const filtered = needCreatives;
 
-  if (filtered.length === 0 && currentPool >= 10) {
-    logger.info(`[CREATIVE-AGENT] No ad sets necesitan creativos y pool OK (${currentPool}) — saltando`);
-    return { generated: 0, elapsed: '0s', cycle_id: cycleId, pool: currentPool };
+  if (!skipReactive) {
+    logger.info(`[CREATIVE-AGENT] ${filtered.length} ad sets need creatives`);
   }
-
-  logger.info(`[CREATIVE-AGENT] ${filtered.length} ad sets need creatives`);
 
   // 2. Get available products
   const products = await ProductBank.find({ active: true }).lean();
@@ -550,10 +547,12 @@ async function runCreativeAgent() {
     }
   }
 
-  // ═══ GENERACION PROACTIVA — mantener pool lleno para Prometheus ═══
+  // ═══ GENERACION PROACTIVA — siempre generar algunos para ad sets nuevos ═══
+  const MIN_PROACTIVE_PER_CYCLE = 3; // siempre generar al menos 3 proactivos para escalar
   const MIN_POOL_SIZE = 10;
   const readyCount = await CreativeProposal.countDocuments({ status: 'ready' });
-  const proactiveNeeded = Math.max(0, MIN_POOL_SIZE - readyCount - generated);
+  const poolNeeded = Math.max(0, MIN_POOL_SIZE - readyCount - generated);
+  const proactiveNeeded = Math.max(MIN_PROACTIVE_PER_CYCLE, poolNeeded);
 
   if (proactiveNeeded > 0 && rankedProducts.length > 0 && rankedScenes.length > 0) {
     logger.info(`[CREATIVE-AGENT] Pool bajo (${readyCount} + ${generated} generados). Generando ${proactiveNeeded} proactivos para escalar.`);
