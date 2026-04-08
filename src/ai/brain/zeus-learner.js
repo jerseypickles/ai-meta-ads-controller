@@ -325,9 +325,9 @@ async function gatherAccountIntelligence() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function generateDirectives(patterns, signals, accountData, uploadedData, athenaData) {
-  // Desactivar directivas viejas (se reemplazan cada ciclo)
+  // Desactivar TODAS las directivas anteriores — cada ciclo reemplaza completamente
   await ZeusDirective.updateMany(
-    { active: true, created_at: { $lt: new Date(Date.now() - 48 * 3600000) } },
+    { active: true },
     { $set: { active: false } }
   );
 
