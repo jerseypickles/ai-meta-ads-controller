@@ -382,18 +382,28 @@ async function runCreativeAgent() {
       active: true
     }).lean();
 
+    // Helper: convierte string a array (Zeus a veces devuelve string en vez de array)
+    const toArray = (val) => {
+      if (!val) return [];
+      if (Array.isArray(val)) return val;
+      if (typeof val === 'string') return val.split(',').map(s => s.trim()).filter(Boolean);
+      return [];
+    };
+
     for (const d of directives) {
       const data = d.data || {};
+      const scenes = toArray(data.scenes);
+      const styles = toArray(data.styles);
+      const angles = toArray(data.angles);
+
       if (d.directive_type === 'prioritize') {
-        // Boost escenas/estilos/angulos que Zeus recomienda
-        if (data.scenes) for (const s of data.scenes) zeusSceneBoosts[s] = (zeusSceneBoosts[s] || 0) + 5;
-        if (data.styles) for (const s of data.styles) zeusStyleBoosts[s] = (zeusStyleBoosts[s] || 0) + 3;
-        if (data.angles) for (const a of data.angles) zeusAngleBoosts[a] = (zeusAngleBoosts[a] || 0) + 2;
+        for (const s of scenes) zeusSceneBoosts[s] = (zeusSceneBoosts[s] || 0) + 5;
+        for (const s of styles) zeusStyleBoosts[s] = (zeusStyleBoosts[s] || 0) + 3;
+        for (const a of angles) zeusAngleBoosts[a] = (zeusAngleBoosts[a] || 0) + 2;
       } else if (d.directive_type === 'avoid') {
-        // Penalizar escenas/estilos que Zeus dice evitar
-        if (data.scenes) for (const s of data.scenes) zeusSceneBoosts[s] = (zeusSceneBoosts[s] || 0) - 10;
-        if (data.styles) for (const s of data.styles) zeusStyleBoosts[s] = (zeusStyleBoosts[s] || 0) - 5;
-        if (data.angles) for (const a of data.angles) zeusAngleBoosts[a] = (zeusAngleBoosts[a] || 0) - 3;
+        for (const s of scenes) zeusSceneBoosts[s] = (zeusSceneBoosts[s] || 0) - 10;
+        for (const s of styles) zeusStyleBoosts[s] = (zeusStyleBoosts[s] || 0) - 5;
+        for (const a of angles) zeusAngleBoosts[a] = (zeusAngleBoosts[a] || 0) - 3;
       }
     }
 
