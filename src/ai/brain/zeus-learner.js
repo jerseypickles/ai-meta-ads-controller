@@ -258,6 +258,15 @@ async function gatherAccountIntelligence() {
   // Total budget diario
   const totalDailyBudget = activeAdsets.reduce((s, a) => s + (a.daily_budget || 0), 0);
 
+  // Funnel data global
+  let totalAtc = 0, totalIc = 0;
+  for (const as of activeAdsets) {
+    totalAtc += as.metrics?.last_7d?.add_to_cart || 0;
+    totalIc += as.metrics?.last_7d?.initiate_checkout || 0;
+  }
+  const clickToAtc = g7d.clicks > 0 ? ((totalAtc / g7d.clicks) * 100).toFixed(1) : '0';
+  const atcToPurchase = totalAtc > 0 ? ((g7d.purchases / totalAtc) * 100).toFixed(1) : '0';
+
   // Resumen de acciones de Athena
   const recentActions = await ActionLog.find({
     success: true,
@@ -299,7 +308,11 @@ async function gatherAccountIntelligence() {
       top_performers: top5,
       underperformers: bottom5,
       high_frequency: highFreq,
-      low_ctr: lowCtr
+      low_ctr: lowCtr,
+      atc_7d: totalAtc,
+      ic_7d: totalIc,
+      click_to_atc: clickToAtc,
+      atc_to_purchase: atcToPurchase
     },
     athena: { actions_7d: recentActions.length, action_types: actionSummary },
     prometheus: { graduated: testMap.graduated || 0, killed: testMap.killed || 0, expired: testMap.expired || 0, active: (testMap.learning || 0) + (testMap.evaluating || 0) },
@@ -359,6 +372,10 @@ async function generateDirectives(patterns, signals, accountData, uploadedData, 
 | CPM | $${acct.cpm || 0} | — | — |
 | Frequency | ${acct.frequency || 0} | — | Warning: 2.5, Critico: 4.0 |
 | Reach 7d | ${acct.reach_7d || 0} | — | — |
+| Add to Cart 7d | ${acct.atc_7d || 0} | — | — |
+| Initiate Checkout 7d | ${acct.ic_7d || 0} | — | — |
+| Click→ATC rate | ${acct.click_to_atc || 0}% | — | — |
+| ATC→Purchase rate | ${acct.atc_to_purchase || 0}% | — | — |
 | Ad sets activos | ${acct.active_adsets || 0} | — | — |
 | Budget diario total | $${acct.total_daily_budget || 0}/dia | — | — |
 

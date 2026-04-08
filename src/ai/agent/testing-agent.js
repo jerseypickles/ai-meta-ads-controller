@@ -93,8 +93,13 @@ async function getTestMetrics(testAdsetId) {
     roas: m.roas || 0,
     cpa: m.cpa || 0,
     ctr: m.ctr || 0,
+    cpm: m.cpm || 0,
     impressions: m.impressions || 0,
-    frequency: snapshot.metrics?.last_7d?.frequency || snapshot.metrics?.last_3d?.frequency || 0
+    clicks: m.clicks || 0,
+    reach: m.reach || 0,
+    frequency: snapshot.metrics?.last_7d?.frequency || snapshot.metrics?.last_3d?.frequency || m.frequency || 0,
+    add_to_cart: m.add_to_cart || 0,
+    initiate_checkout: m.initiate_checkout || 0
   };
 }
 
@@ -270,7 +275,7 @@ async function monitorTests() {
 
       // ── Dia 0-2: Learning — solo observar ──
       if (daysActive <= 2) {
-        const assessment = `Dia ${daysActive}: $${metrics.spend.toFixed(2)} spend, ${metrics.purchases} compras, ROAS ${metrics.roas.toFixed(2)}x. Learning phase.`;
+        const assessment = `Dia ${daysActive}: $${metrics.spend.toFixed(2)} spend, ${metrics.purchases} compras, ROAS ${metrics.roas.toFixed(2)}x, ${metrics.clicks || 0} clicks, CTR ${metrics.ctr.toFixed(1)}%, ${metrics.add_to_cart || 0} ATC. Learning.`;
         await TestRun.findByIdAndUpdate(test._id, {
           $push: { assessments: { day_number: daysActive, phase: 'learning', assessment, metrics_snapshot: metrics } }
         });
@@ -285,7 +290,14 @@ async function monitorTests() {
 
       // KILL: 0 compras + gasto suficiente
       if (metrics.purchases === 0 && metrics.spend >= KILL_MIN_SPEND) {
-        await killOrExpireTest(test, `0 compras con $${metrics.spend.toFixed(2)} spend`, 'killed');
+        await killOrExpireTest(test, `0 compras con $${metrics.spend.toFixed(2)} spend, ${metrics.clicks || 0} clicks, ${metrics.add_to_cart || 0} ATC`, 'killed');
+        killed++;
+        continue;
+      }
+
+      // KILL TEMPRANO: alto spend + clicks pero 0 ATC (funnel roto — el creativo atrae pero no convierte)
+      if (metrics.spend >= 15 && metrics.clicks >= 20 && metrics.add_to_cart === 0 && metrics.purchases === 0 && daysActive >= 3) {
+        await killOrExpireTest(test, `Funnel roto: $${metrics.spend.toFixed(2)} spend, ${metrics.clicks} clicks, 0 ATC — creativo atrae pero no convierte`, 'killed');
         killed++;
         continue;
       }
@@ -313,7 +325,7 @@ async function monitorTests() {
       }
 
       // Dia 3-5: Esperar — guardar assessment
-      const assessment = `Dia ${daysActive}: $${metrics.spend.toFixed(2)} spend, ${metrics.purchases} compras, ROAS ${metrics.roas.toFixed(2)}x. Evaluando.`;
+      const assessment = `Dia ${daysActive}: $${metrics.spend.toFixed(2)} spend, ${metrics.purchases} compras, ROAS ${metrics.roas.toFixed(2)}x, CTR ${metrics.ctr.toFixed(1)}%, ${metrics.add_to_cart || 0} ATC, freq ${metrics.frequency.toFixed(1)}. Evaluando.`;
       await TestRun.findByIdAndUpdate(test._id, {
         $set: { phase: 'evaluating' },
         $push: { assessments: { day_number: daysActive, phase: 'evaluating', assessment, metrics_snapshot: metrics } }
