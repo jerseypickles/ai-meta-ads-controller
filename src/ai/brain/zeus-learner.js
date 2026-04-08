@@ -512,20 +512,29 @@ Rules:
     }
     let created = 0;
 
+    const VALID_CATEGORIES = ['creative_pattern', 'test_signal', 'account_pattern', 'cross_agent', 'general'];
+    const VALID_TARGETS = ['apollo', 'prometheus', 'athena', 'all'];
+    const VALID_TYPES = ['prioritize', 'avoid', 'adjust', 'alert', 'insight'];
+
     for (const d of (result.directives || [])) {
       if (d.confidence < 0.4) continue;
 
-      await ZeusDirective.create({
-        target_agent: d.target_agent,
-        directive_type: d.directive_type,
-        directive: d.directive,
-        data: d.data || {},
-        confidence: d.confidence,
-        based_on_samples: totalDataPoints,
-        category: d.category || 'general',
-        active: true,
-        expires_at: new Date(Date.now() + 72 * 3600000) // expira en 72h
-      });
+      try {
+        await ZeusDirective.create({
+          target_agent: VALID_TARGETS.includes(d.target_agent) ? d.target_agent : 'all',
+          directive_type: VALID_TYPES.includes(d.directive_type) ? d.directive_type : 'alert',
+          directive: (d.directive || '').substring(0, 200),
+          data: d.data || {},
+          confidence: Math.min(1, Math.max(0, d.confidence || 0.5)),
+          based_on_samples: totalDataPoints,
+          category: VALID_CATEGORIES.includes(d.category) ? d.category : 'general',
+          active: true,
+          expires_at: new Date(Date.now() + 72 * 3600000)
+        });
+      } catch (createErr) {
+        logger.warn(`[ZEUS] Error guardando directiva: ${createErr.message}. Saltando.`);
+        continue;
+      }
       created++;
     }
 
