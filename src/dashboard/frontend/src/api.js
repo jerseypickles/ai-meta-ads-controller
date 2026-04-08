@@ -324,6 +324,16 @@ export const rejectCreativeProposal = async (id, reason = '') => {
   return response.data;
 };
 
+export const sendProposalFeedback = async (id, rating, reason = '', note = '') => {
+  const response = await api.post(`/api/creative-agent/proposals/${id}/feedback`, { rating, reason, note });
+  return response.data;
+};
+
+export const getApolloIntelligence = async () => {
+  const response = await api.get('/api/creative-agent/intelligence');
+  return response.data;
+};
+
 export const getProposalImageUrl = (id) => {
   const BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
   const token = localStorage.getItem('auth_token');

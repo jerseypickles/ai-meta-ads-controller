@@ -41,6 +41,14 @@ const creativeProposalSchema = new mongoose.Schema({
   meta_creative_id: { type: String, default: null },
   meta_ad_name: { type: String, default: '' },
 
+  // Feedback humano sobre calidad del creativo
+  human_feedback: {
+    rating: { type: String, enum: ['good', 'bad', null], default: null },
+    reason: { type: String, enum: ['wrong_product', 'bad_image', 'bad_copy', 'wrong_colors', 'not_realistic', 'other', null], default: null },
+    note: { type: String, default: '' },
+    rated_at: { type: Date, default: null }
+  },
+
   // Performance tracking (filled by impact measurement)
   performance: {
     roas_7d: { type: Number, default: null },

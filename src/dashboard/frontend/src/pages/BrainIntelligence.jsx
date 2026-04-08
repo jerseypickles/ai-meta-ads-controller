@@ -12,7 +12,7 @@ import {
   getAgentActivity, runAccountAgent, getAgentAdsetDetail, getAgentThoughts, getAgentPerformance,
   generateCopyForUpload, uploadAndCreateAd,
   getProducts, createProduct, deleteProduct, addProductImages, getProductImageUrl, runCreativeAgentApi,
-  getCreativeProposals, approveCreativeProposal, rejectCreativeProposal, getProposalImageUrl,
+  getCreativeProposals, approveCreativeProposal, rejectCreativeProposal, getProposalImageUrl, sendProposalFeedback, getApolloIntelligence,
   getTestRuns, killTestRun, runTestingAgentApi, getTestImageUrl,
   getZeusIntelligence, runZeusApi, getZeusThoughts, getZeusConversations
 } from '../api';
@@ -987,7 +987,14 @@ function ApolloPanel({ products, proposals, readyProposals, historyProposals, lo
   const [formFiles, setFormFiles] = useState(null);
   const [creating, setCreating] = useState(false);
   const [runningCreative, setRunningCreative] = useState(false);
+  const [apolloIntel, setApolloIntel] = useState(null);
+  const [feedbackModal, setFeedbackModal] = useState(null); // { id, headline }
   const fileRef = useRef(null);
+
+  // Cargar inteligencia de Apollo
+  useEffect(() => {
+    getApolloIntelligence().then(setApolloIntel).catch(() => {});
+  }, []);
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -1038,8 +1045,8 @@ function ApolloPanel({ products, proposals, readyProposals, historyProposals, lo
         <button className={`sub-tab ${apolloSubTab === 'pipeline' ? 'active' : ''}`} onClick={() => setApolloSubTab('pipeline')}>
           Pipeline {readyProposals.length > 0 && <span className="tab-badge" style={{ background: 'var(--apollo-color)' }}>{readyProposals.length}</span>}
         </button>
-        <button className={`sub-tab ${apolloSubTab === 'history' ? 'active' : ''}`} onClick={() => setApolloSubTab('history')}>
-          Subidos a Meta
+        <button className={`sub-tab ${apolloSubTab === 'intelligence' ? 'active' : ''}`} onClick={() => setApolloSubTab('intelligence')}>
+          Inteligencia
         </button>
         <button className={`sub-tab ${apolloSubTab === 'products' ? 'active' : ''}`} onClick={() => setApolloSubTab('products')}>
           Productos ({products.length})
@@ -1072,7 +1079,21 @@ function ApolloPanel({ products, proposals, readyProposals, historyProposals, lo
                       <span className="creative-target-label">Para</span>
                       <span className="creative-target-name">{p.adset_name}</span>
                     </div>
-                    <div className="creative-proposal-date">{fmtDate(p.created_at)}</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 6 }}>
+                      <span className="creative-proposal-date">{fmtDate(p.created_at)}</span>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        {p.human_feedback?.rating === 'bad' ? (
+                          <span style={{ fontSize: '0.65rem', color: '#ef4444', background: 'rgba(239,68,68,0.1)', padding: '2px 8px', borderRadius: 4 }}>
+                            {p.human_feedback.reason || 'Marcado'}
+                          </span>
+                        ) : (
+                          <button onClick={(e) => { e.stopPropagation(); setFeedbackModal({ id: p._id, headline: p.headline }); }}
+                            style={{ background: 'none', border: '1px solid var(--border-color)', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                            👎 Reportar
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -1081,37 +1102,84 @@ function ApolloPanel({ products, proposals, readyProposals, historyProposals, lo
         </div>
       )}
 
-      {apolloSubTab === 'history' && (
-        <div className="creative-history-section">
-          {historyProposals.length === 0 ? (
-            <div className="creative-empty-state"><span className="creative-empty-icon">📋</span><p>Sin historial</p></div>
-          ) : (
-            <div className="creative-history-grid">
-              {historyProposals.map(p => (
-                <div key={p._id} className="creative-history-card uploaded">
-                  <div className="creative-history-img-wrap" onClick={() => setLightboxImg(getProposalImageUrl(p._id))}>
-                    <img src={getProposalImageUrl(p._id)} alt={p.headline} className="creative-history-img" />
-                    <span className="creative-history-badge uploaded">Activo</span>
-                  </div>
-                  <div className="creative-history-body">
-                    <h5 className="creative-history-headline">{p.headline}</h5>
-                    <div className="creative-history-meta">
-                      <span className="creative-tag product">{p.product_name}</span>
-                      <span className="creative-tag scene">{p.scene_short}</span>
-                    </div>
-                    <div className="creative-history-target">{p.adset_name}</div>
-                    {p.performance?.roas_7d > 0 ? (
-                      <div className="creative-history-perf">
-                        <div className="creative-perf-metric"><span className="creative-perf-val" style={{ color: p.performance.roas_7d >= 3 ? '#10b981' : p.performance.roas_7d >= 1.5 ? '#f59e0b' : '#ef4444' }}>{p.performance.roas_7d.toFixed(2)}x</span><span className="creative-perf-lbl">ROAS</span></div>
-                        <div className="creative-perf-metric"><span className="creative-perf-val">${(p.performance.spend_7d || 0).toFixed(0)}</span><span className="creative-perf-lbl">Spend</span></div>
-                        {p.performance.purchases_7d > 0 && <div className="creative-perf-metric"><span className="creative-perf-val">{p.performance.purchases_7d}</span><span className="creative-perf-lbl">Compras</span></div>}
-                      </div>
-                    ) : <span className="creative-perf-pending">Esperando metricas...</span>}
-                  </div>
+      {apolloSubTab === 'intelligence' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Production Stats */}
+          {apolloIntel?.production && (
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              {[
+                { label: 'Generados', value: apolloIntel.production.total_generated, color: 'var(--text-secondary)' },
+                { label: 'Ready', value: apolloIntel.production.ready, color: '#fbbf24' },
+                { label: 'Testing', value: apolloIntel.production.testing, color: '#f97316' },
+                { label: 'Graduados', value: apolloIntel.production.graduated, color: '#10b981' },
+                { label: 'Killed', value: apolloIntel.production.killed, color: '#ef4444' },
+              ].map((s, i) => (
+                <div key={i} style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '10px 16px', minWidth: 80, textAlign: 'center' }}>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: s.color }}>{s.value}</div>
+                  <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 2 }}>{s.label}</div>
+                </div>
+              ))}
+              {apolloIntel.feedback?.bad > 0 && (
+                <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '10px 16px', minWidth: 80, textAlign: 'center' }}>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 700, color: '#ef4444' }}>{apolloIntel.feedback.bad}</div>
+                  <div style={{ fontSize: '0.68rem', color: '#ef4444', marginTop: 2 }}>Reportados</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Zeus Directives for Apollo */}
+          {apolloIntel?.zeus_directives?.length > 0 && (
+            <div style={{ background: 'var(--bg-secondary)', borderRadius: 8, padding: 16, borderLeft: '3px solid var(--apollo-color)' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--apollo-color)', fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Directivas de Zeus para Apollo</div>
+              {apolloIntel.zeus_directives.map((d, i) => (
+                <div key={i} style={{ fontSize: '0.8rem', color: 'var(--text-primary)', marginBottom: 4 }}>
+                  <span style={{ fontSize: '0.6rem', fontWeight: 600, padding: '1px 5px', borderRadius: 3, marginRight: 6, background: d.directive_type === 'prioritize' ? '#10b98120' : d.directive_type === 'avoid' ? '#ef444420' : '#3b82f620', color: d.directive_type === 'prioritize' ? '#10b981' : d.directive_type === 'avoid' ? '#ef4444' : '#3b82f6' }}>
+                    {d.directive_type.toUpperCase()}
+                  </span>
+                  {d.directive}
                 </div>
               ))}
             </div>
           )}
+
+          {/* Scene Performance */}
+          {apolloIntel?.scenes?.length > 0 && (
+            <div>
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 8 }}>Rendimiento por Escena (datos de tests)</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
+                {apolloIntel.scenes.map((s, i) => (
+                  <div key={i} style={{
+                    background: 'var(--bg-secondary)', borderRadius: 8, padding: '10px 12px',
+                    border: `1px solid ${s.win_rate >= 50 ? '#10b98130' : s.win_rate > 0 ? '#f59e0b30' : '#ef444430'}`
+                  }}>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-primary)', marginBottom: 4 }}>{(s.scene || '').substring(0, 35)}...</div>
+                    <div style={{ display: 'flex', gap: 12, fontSize: '0.7rem' }}>
+                      <span style={{ color: s.win_rate >= 50 ? '#10b981' : s.win_rate > 0 ? '#f59e0b' : '#ef4444', fontWeight: 600 }}>{s.win_rate}% win</span>
+                      <span style={{ color: 'var(--text-muted)' }}>{s.wins}W/{s.total - s.wins}L</span>
+                      <span style={{ color: 'var(--text-muted)' }}>{s.avg_roas}x</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Feedback Reasons */}
+          {apolloIntel?.feedback?.reasons?.length > 0 && (
+            <div>
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 8 }}>Problemas Reportados</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {apolloIntel.feedback.reasons.map((r, i) => (
+                  <span key={i} style={{ fontSize: '0.72rem', padding: '4px 10px', borderRadius: 6, background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.2)' }}>
+                    {r._id}: {r.count}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!apolloIntel && <div className="brain-loading">Cargando inteligencia...</div>}
         </div>
       )}
 
@@ -1296,6 +1364,38 @@ function ApolloPanel({ products, proposals, readyProposals, historyProposals, lo
                 </button>
               </form>
             )}
+          </div>
+        </div>
+      )}
+      {/* Feedback Modal */}
+      {feedbackModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setFeedbackModal(null)}>
+          <div style={{ background: 'var(--bg-secondary)', borderRadius: 12, padding: 24, maxWidth: 400, width: '90%' }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: '1rem', fontWeight: 600, marginBottom: 4 }}>Reportar Creativo</div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 16 }}>{feedbackModal.headline}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {[
+                { key: 'wrong_product', label: 'Producto incorrecto', desc: 'No se parece al producto real' },
+                { key: 'wrong_colors', label: 'Colores incorrectos', desc: 'El color del producto es diferente' },
+                { key: 'not_realistic', label: 'No realista', desc: 'La imagen se ve artificial/generada' },
+                { key: 'bad_image', label: 'Imagen mala', desc: 'Composicion, iluminacion, o calidad' },
+                { key: 'bad_copy', label: 'Copy malo', desc: 'El texto/headline no funciona' },
+                { key: 'other', label: 'Otro', desc: 'Otro problema' },
+              ].map(r => (
+                <button key={r.key} onClick={async () => {
+                  await sendProposalFeedback(feedbackModal.id, 'bad', r.key);
+                  setFeedbackModal(null);
+                  await onRefresh();
+                }} style={{
+                  background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', borderRadius: 8,
+                  padding: '10px 14px', cursor: 'pointer', textAlign: 'left', color: 'var(--text-primary)'
+                }}>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 500 }}>{r.label}</div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{r.desc}</div>
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setFeedbackModal(null)} style={{ marginTop: 12, width: '100%', padding: 8, background: 'transparent', border: '1px solid var(--border-color)', borderRadius: 8, color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.8rem' }}>Cancelar</button>
           </div>
         </div>
       )}

@@ -203,6 +203,106 @@ router.get('/proposals', async (req, res) => {
 });
 
 /**
+ * POST /api/creative-agent/proposals/:id/feedback — Human feedback on creative quality
+ */
+router.post('/proposals/:id/feedback', async (req, res) => {
+  try {
+    const { rating, reason, note } = req.body;
+    const proposal = await CreativeProposal.findByIdAndUpdate(req.params.id, {
+      $set: {
+        'human_feedback.rating': rating,
+        'human_feedback.reason': reason || null,
+        'human_feedback.note': note || '',
+        'human_feedback.rated_at': new Date()
+      }
+    }, { new: true });
+    if (!proposal) return res.status(404).json({ error: 'Not found' });
+    logger.info(`[CREATIVE-AGENT] Feedback: ${proposal.headline} → ${rating}${reason ? ' (' + reason + ')' : ''}`);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/creative-agent/intelligence — Apollo creative intelligence stats
+ */
+router.get('/intelligence', async (req, res) => {
+  try {
+    const TestRun = require('../../db/models/TestRun');
+
+    // Feedback stats
+    const feedbackStats = await CreativeProposal.aggregate([
+      { $match: { 'human_feedback.rating': { $ne: null } } },
+      { $group: {
+        _id: '$human_feedback.rating',
+        count: { $sum: 1 }
+      }}
+    ]);
+    const feedbackByReason = await CreativeProposal.aggregate([
+      { $match: { 'human_feedback.reason': { $ne: null } } },
+      { $group: {
+        _id: '$human_feedback.reason',
+        count: { $sum: 1 }
+      }},
+      { $sort: { count: -1 } }
+    ]);
+
+    // Scene performance (from tests)
+    const sceneStats = await TestRun.aggregate([
+      { $match: { phase: { $in: ['graduated', 'killed', 'expired'] } } },
+      { $lookup: { from: 'creativeproposals', localField: 'proposal_id', foreignField: '_id', as: 'proposal' } },
+      { $unwind: { path: '$proposal', preserveNullAndEmptyArrays: true } },
+      { $group: {
+        _id: '$proposal.scene_short',
+        total: { $sum: 1 },
+        wins: { $sum: { $cond: [{ $eq: ['$phase', 'graduated'] }, 1, 0] } },
+        avg_roas: { $avg: '$metrics.roas' },
+        total_spend: { $sum: '$metrics.spend' }
+      }},
+      { $match: { _id: { $ne: null } } },
+      { $sort: { wins: -1 } }
+    ]);
+
+    // Production stats
+    const totalGenerated = await CreativeProposal.countDocuments();
+    const totalReady = await CreativeProposal.countDocuments({ status: 'ready' });
+    const totalTesting = await CreativeProposal.countDocuments({ status: 'testing' });
+    const totalGraduated = await CreativeProposal.countDocuments({ status: 'graduated' });
+    const totalKilled = await CreativeProposal.countDocuments({ status: 'killed' });
+    const badFeedback = await CreativeProposal.countDocuments({ 'human_feedback.rating': 'bad' });
+
+    // Zeus directives for Apollo
+    const ZeusDirective = require('../../db/models/ZeusDirective');
+    const directives = await ZeusDirective.find({
+      target_agent: { $in: ['apollo', 'all'] },
+      active: true
+    }).select('directive directive_type').lean();
+
+    res.json({
+      production: { total_generated: totalGenerated, ready: totalReady, testing: totalTesting, graduated: totalGraduated, killed: totalKilled },
+      feedback: {
+        total: feedbackStats.reduce((s, f) => s + f.count, 0),
+        good: feedbackStats.find(f => f._id === 'good')?.count || 0,
+        bad: feedbackStats.find(f => f._id === 'bad')?.count || 0,
+        reasons: feedbackByReason
+      },
+      scenes: sceneStats.map(s => ({
+        scene: s._id,
+        win_rate: s.total > 0 ? Math.round((s.wins / s.total) * 100) : 0,
+        wins: s.wins,
+        total: s.total,
+        avg_roas: Math.round((s.avg_roas || 0) * 100) / 100,
+        spend: Math.round(s.total_spend || 0)
+      })),
+      zeus_directives: directives
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
  * POST /api/creative-agent/proposals/:id/approve — Approve and upload to Meta
  */
 router.post('/proposals/:id/approve', async (req, res) => {
