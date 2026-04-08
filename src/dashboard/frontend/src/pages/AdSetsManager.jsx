@@ -1504,13 +1504,29 @@ export default function AdSetsManager() {
           </div>
         </div>
 
-        {/* Toolbar: Search + Type Filter + Status Filter */}
-        <div className="toolbar">
-          <div className="search-box">
-            <Search size={14} />
-            <input type="text" placeholder="Search ad sets or campaigns..." value={search} onChange={e => setSearch(e.target.value)} />
+        {/* Toolbar: Search + Filters on two rows */}
+        <div className="toolbar" style={{ flexDirection: 'column', gap: 10, alignItems: 'stretch' }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <div className="search-box" style={{ flex: 1 }}>
+              <Search size={14} />
+              <input type="text" placeholder="Search ad sets or campaigns..." value={search} onChange={e => setSearch(e.target.value)} />
+            </div>
+            <div className="d-flex gap-1">
+              {[
+                { v: 'active', l: 'Active', c: counts.active },
+                { v: 'all', l: 'All', c: counts.total },
+                { v: 'paused', l: 'Paused', c: counts.paused },
+                { v: 'off', l: 'Off', c: counts.other },
+              ].map(f => (
+                <button key={f.v} onClick={() => setFilter(f.v)}
+                className={`btn btn-sm ${filter === f.v ? 'btn-primary' : 'btn-ghost'}`}>
+                {f.l} ({f.c})
+              </button>
+            ))}
+            </div>
           </div>
-          <div className="d-flex gap-1">
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginRight: 4 }}>Tipo:</span>
             {[
               { v: 'production', l: 'Produccion', icon: '🦉', color: '#3b82f6' },
               { v: 'testing', l: 'Testing', icon: '🔥', color: '#f97316' },
@@ -1518,21 +1534,13 @@ export default function AdSetsManager() {
               { v: 'all', l: 'Todos', icon: '', color: '' },
             ].map(f => (
               <button key={f.v} onClick={() => setTypeFilter(f.v)}
-                className={`btn btn-sm ${typeFilter === f.v ? 'btn-primary' : 'btn-ghost'}`}
-                style={typeFilter === f.v && f.color ? { background: f.color, borderColor: f.color } : {}}>
+                style={{
+                  padding: '4px 12px', borderRadius: 6, cursor: 'pointer', fontSize: '0.75rem', fontWeight: 500,
+                  border: typeFilter === f.v ? 'none' : '1px solid var(--border-color)',
+                  background: typeFilter === f.v ? (f.color || 'var(--bg-active)') : 'transparent',
+                  color: typeFilter === f.v ? '#fff' : 'var(--text-tertiary)'
+                }}>
                 {f.icon} {f.l}
-              </button>
-            ))}
-            <span style={{ width: 1, background: 'var(--border-color)', margin: '0 4px' }} />
-            {[
-              { v: 'active', l: 'Active', c: counts.active },
-              { v: 'all', l: 'All', c: counts.total },
-              { v: 'paused', l: 'Paused', c: counts.paused },
-              { v: 'off', l: 'Off', c: counts.other },
-            ].map(f => (
-              <button key={f.v} onClick={() => setFilter(f.v)}
-                className={`btn btn-sm ${filter === f.v ? 'btn-primary' : 'btn-ghost'}`}>
-                {f.l} ({f.c})
               </button>
             ))}
           </div>
