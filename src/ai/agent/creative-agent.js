@@ -323,7 +323,15 @@ async function runCreativeAgent() {
     logger.error(`[CREATIVE-AGENT] Pre-scan error (continuing anyway): ${err.message}`);
   }
 
-  // 3. Check for ad sets needing creatives
+  // 3. Check pool size — si ya hay suficientes, no generar mas
+  const MAX_POOL_SIZE = 30;
+  const currentPool = await CreativeProposal.countDocuments({ status: 'ready' });
+  if (currentPool >= MAX_POOL_SIZE) {
+    logger.info(`[CREATIVE-AGENT] Pool lleno (${currentPool} ready, max ${MAX_POOL_SIZE}) — saltando generacion`);
+    return { generated: 0, elapsed: '0s', cycle_id: cycleId, pool: currentPool };
+  }
+
+  // 4. Check for ad sets needing creatives
   const needCreatives = await BrainMemory.find({
     agent_needs_new_creatives: true,
     entity_type: 'adset'
@@ -331,9 +339,9 @@ async function runCreativeAgent() {
 
   const filtered = needCreatives;
 
-  if (filtered.length === 0) {
-    logger.info('[CREATIVE-AGENT] No ad sets need creatives (or already have pending proposals)');
-    return { generated: 0, elapsed: '0s', cycle_id: cycleId };
+  if (filtered.length === 0 && currentPool >= 10) {
+    logger.info(`[CREATIVE-AGENT] No ad sets necesitan creativos y pool OK (${currentPool}) — saltando`);
+    return { generated: 0, elapsed: '0s', cycle_id: cycleId, pool: currentPool };
   }
 
   logger.info(`[CREATIVE-AGENT] ${filtered.length} ad sets need creatives`);
