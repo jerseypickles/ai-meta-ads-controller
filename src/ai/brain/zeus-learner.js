@@ -458,6 +458,9 @@ Rules:
 - Max 5 directives. Only confidence > 0.4.
 - target_agent: athena, apollo, prometheus, or all
 - directive_type: prioritize, avoid, adjust, or alert
+- CRITICAL SAFETY: NEVER recommend pausing/killing an ad set unless it has $200+ spend 7d AND ROAS < 1.0x across ALL windows (today, 3d, 7d). If today ROAS is improving, recommend HOLD not pause. Low data = hold, not kill.
+- NEVER make aggressive decisions based on 1-3 days of data alone. Always check 7d AND 14d trends.
+- If 3d ROAS is better than 7d, the ad set is IMPROVING — do not pause it.
 - For Apollo data field, include: scenes (first 40 chars), styles (ugly-ad/pov-selfie/overhead-flat/close-up-texture/action-shot), angles (casual-fun/curiosity/social-proof/urgency/humor/controversy/sensory)
 - Max 5 thoughts. First person. Specific with real numbers.
 - ALL strings must be short. No line breaks inside strings. No double quotes inside strings.`
