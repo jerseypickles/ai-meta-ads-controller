@@ -147,12 +147,23 @@ async function launchTests() {
     return 0;
   }
 
-  // Priorizar: ad sets con menos ads activos primero
+  // Contar tests activos por ad set destino
+  const testCountByAdset = {};
+  const existingTests = await TestRun.find({ phase: { $in: ['learning', 'evaluating'] } }).select('source_adset_id').lean();
+  for (const t of existingTests) testCountByAdset[t.source_adset_id] = (testCountByAdset[t.source_adset_id] || 0) + 1;
+
+  const MAX_TESTS_PER_ADSET = 2; // max 2 tests por ad set destino
+
+  // Priorizar: ad sets con menos tests activos primero, skip si ya tiene 2+
   const prioritized = [];
   for (const proposal of readyProposals) {
+    const currentTests = testCountByAdset[proposal.adset_id] || 0;
+    if (proposal.adset_id !== 'proactive' && currentTests >= MAX_TESTS_PER_ADSET) {
+      continue; // ya tiene suficientes tests
+    }
     const ads = await getAdsForAdSet(proposal.adset_id);
     const activeAds = ads.filter(a => a.status === 'ACTIVE').length;
-    prioritized.push({ proposal, activeAds });
+    prioritized.push({ proposal, activeAds, currentTests });
   }
   prioritized.sort((a, b) => a.activeAds - b.activeAds);
 

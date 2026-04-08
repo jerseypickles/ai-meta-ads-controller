@@ -455,9 +455,27 @@ async function runCreativeAgent() {
   const PROPOSALS_PER_ADSET = 2;
   let globalSceneIndex = 0; // rotates across ad sets so each gets different scenes
 
+  // Pre-cargar conteo de material existente por ad set (tests activos + proposals ready)
+  const TestRun = require('../../db/models/TestRun');
+  const activeTestCounts = {};
+  const activeTests = await TestRun.find({ phase: { $in: ['learning', 'evaluating'] } }).select('source_adset_id').lean();
+  for (const t of activeTests) activeTestCounts[t.source_adset_id] = (activeTestCounts[t.source_adset_id] || 0) + 1;
+  const readyProposalCounts = {};
+  const readyProps = await CreativeProposal.find({ status: 'ready', adset_id: { $ne: 'proactive' } }).select('adset_id').lean();
+  for (const p of readyProps) readyProposalCounts[p.adset_id] = (readyProposalCounts[p.adset_id] || 0) + 1;
+
+  const MAX_MATERIAL_PER_ADSET = 2; // max 2 entre tests + ready por ad set
+
   for (const memory of filtered) {
     const adsetId = memory.entity_id;
     const adsetName = memory.entity_name;
+
+    // Skip si ya tiene suficiente material en pipeline
+    const existingMaterial = (activeTestCounts[adsetId] || 0) + (readyProposalCounts[adsetId] || 0);
+    if (existingMaterial >= MAX_MATERIAL_PER_ADSET) {
+      logger.debug(`[CREATIVE-AGENT] ${adsetName}: ya tiene ${existingMaterial} en pipeline — skip`);
+      continue;
+    }
 
     try {
       // Pick product — match by name first, fallback to best ROAS
@@ -539,6 +557,13 @@ async function runCreativeAgent() {
         });
 
         generated++;
+
+        // Limpiar flag — ya tiene material en pipeline
+        await BrainMemory.findOneAndUpdate(
+          { entity_id: adsetId },
+          { $set: { agent_needs_new_creatives: false } }
+        );
+
         results.push({
           adset_id: adsetId,
           adset_name: adsetName,
