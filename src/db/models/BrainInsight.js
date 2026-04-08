@@ -60,7 +60,7 @@ const brainInsightSchema = new mongoose.Schema({
   // Metadata de generación
   generated_by: {
     type: String,
-    enum: ['math', 'ai', 'hybrid', 'brain'],        // Quién generó: detección matemática, IA, ambos, o sistema Brain
+    enum: ['math', 'ai', 'hybrid', 'brain', 'zeus'],  // Quién generó: math, IA, hybrid, Brain, o Zeus learner
     default: 'hybrid'
   },
   ai_model: { type: String, default: null },        // Modelo usado si fue IA
