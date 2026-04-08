@@ -104,7 +104,7 @@ function weightedPick(items) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // PROMPT TEMPLATE — soporta single product y combo (multi-product)
 // ═══════════════════════════════════════════════════════════════════════════════
-function buildImagePrompt(productName, scene, refTypes, style, isCombo = false, comboProductNames = []) {
+function buildImagePrompt(productName, scene, refTypes, style, isCombo = false, comboProductNames = [], productDescription = '') {
   let prompt = '';
 
   // Describe references based on what was provided
@@ -112,14 +112,11 @@ function buildImagePrompt(productName, scene, refTypes, style, isCombo = false, 
     prompt += `Use the uploaded product container images as mandatory references for: ${comboProductNames.join(', ')}. `;
     prompt += 'Show ALL these containers together in the same scene — this is a product family/variety shot. ';
   } else {
-    prompt += `CRITICAL: Use the uploaded reference image(s) of "${productName}" as the EXACT product to show. `;
-    prompt += 'The container in the final image MUST match the reference EXACTLY — same label text, same colors, same proportions, same brand design. ';
-    prompt += 'Do NOT invent, modify, or show any other product containers that are not in the reference images. ';
-    prompt += `Only show "${productName}" — no other Jersey Pickles varieties unless they appear in the references. `;
-
-    if (refTypes.length > 1) {
-      prompt += `You have ${refTypes.length} reference views (${refTypes.join(', ')}) — use ALL of them to understand the complete product appearance. `;
-    }
+    prompt += `CRITICAL: The uploaded ${refTypes.length} image(s) show the EXACT product "${productName}" from different angles. `;
+    prompt += 'Study EVERY uploaded reference carefully — the container shape, label design, text, colors, proportions, and contents are ALL visible in the references. ';
+    prompt += 'The product in the generated image MUST be a pixel-perfect match to the references. Same label, same text, same colors, same container type. ';
+    prompt += 'Do NOT change, invent, or modify ANY aspect of the product. Do NOT add other products not shown in references. ';
+    prompt += 'If the product contains RED tomatoes, show RED tomatoes — not green, not yellow. Match the EXACT color from references. ';
   }
 
   prompt += `Scene: ${scene}. `;

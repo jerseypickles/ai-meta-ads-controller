@@ -10,6 +10,9 @@ const productBankSchema = new mongoose.Schema({
   product_slug: { type: String, required: true, unique: true, index: true },
   link_url: { type: String, default: 'https://jerseypickles.com' },
 
+  // Descripcion detallada del producto para Gemini (apariencia fisica, colores, contenido)
+  product_description: { type: String, default: '' },
+
   // PNGs de referencia subidos por el usuario
   png_references: [{
     filename: { type: String, required: true },
