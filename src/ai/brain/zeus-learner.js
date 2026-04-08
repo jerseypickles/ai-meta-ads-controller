@@ -200,7 +200,8 @@ async function gatherAccountIntelligence() {
 
   // ═══ DATOS GLOBALES DE LA CUENTA — TODAS LAS METRICAS ═══
   const allAdsets = await getLatestSnapshots('adset');
-  const activeAdsets = allAdsets.filter(s => s.status === 'ACTIVE' && !(s.entity_name || '').startsWith('[TEST]'));
+  const excludeNames = ['[TEST]', 'AI -', 'AMAZON', 'DONT TOUCH', 'DONT_TOUCH', 'EXCLUDE', 'MANUAL ONLY'];
+  const activeAdsets = allAdsets.filter(s => s.status === 'ACTIVE' && !excludeNames.some(ex => (s.entity_name || '').toUpperCase().includes(ex.toUpperCase())));
 
   // Agregar metricas globales por ventana (7d y 3d para tendencia)
   let g7d = { spend: 0, revenue: 0, purchases: 0, impressions: 0, clicks: 0, reach: 0 };
