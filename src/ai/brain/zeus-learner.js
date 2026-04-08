@@ -467,7 +467,8 @@ Reglas:
 - IMPORTANTE para Apollo: en "data" incluye los keys exactos. Para scenes usa los primeros 40 chars del texto de la escena. Para styles usa: ugly-ad, pov-selfie, overhead-flat, close-up-texture, action-shot. Para angles usa: casual-fun, curiosity, social-proof, urgency, humor, controversy, sensory.
 - Si no tienes datos para "scenes", "styles" o "angles", omite esos campos de data
 - En "thoughts": habla en primera persona como Zeus. Ej: "Noto que las escenas outdoor tienen 3x mas graduaciones que indoor", "Los tests que convierten en 48h casi siempre graduan", "Athena escalo 3 ad sets esta semana y 2 mejoraron"
-- Max 5 thoughts, sé especifico con datos reales`
+- Max 5 thoughts, sé especifico con datos reales
+- CRITICO: No uses comillas dobles dentro de strings. Usa comillas simples si necesitas citar algo. Tu JSON DEBE ser parseable.`
       }]
     });
 
@@ -479,18 +480,42 @@ Reglas:
     }
 
     let result;
-    try {
-      result = JSON.parse(jsonMatch[0]);
-    } catch (parseErr) {
-      // Intentar limpiar JSON malformado (comillas sin escapar, trailing commas)
-      let cleaned = jsonMatch[0]
-        .replace(/,\s*([}\]])/g, '$1')  // trailing commas
-        .replace(/[\x00-\x1f]/g, ' '); // control chars
+    const rawJson = jsonMatch[0];
+
+    // Intentar parsear con multiples estrategias de limpieza
+    const cleanStrategies = [
+      (s) => s, // sin cambios
+      (s) => s.replace(/,\s*([}\]])/g, '$1').replace(/[\x00-\x1f]/g, ' '), // trailing commas + control chars
+      (s) => s.replace(/,\s*([}\]])/g, '$1').replace(/[\x00-\x1f]/g, ' ').replace(/(?<!\\)"/g, (m, offset, str) => {
+        // Solo reemplazar comillas problemáticas dentro de strings (no las estructurales)
+        return m;
+      }),
+      (s) => {
+        // Estrategia agresiva: extraer arrays de directives y thoughts por separado
+        try {
+          const directivesMatch = s.match(/"directives"\s*:\s*\[([\s\S]*?)\]/);
+          const thoughtsMatch = s.match(/"thoughts"\s*:\s*\[([\s\S]*?)\]/);
+          const summaryMatch = s.match(/"intelligence_summary"\s*:\s*"([\s\S]*?)"/);
+          return JSON.stringify({
+            directives: directivesMatch ? JSON.parse('[' + directivesMatch[1] + ']') : [],
+            thoughts: thoughtsMatch ? thoughtsMatch[1].split(/",\s*"/).map(t => t.replace(/^"|"$/g, '').trim()).filter(Boolean) : [],
+            intelligence_summary: summaryMatch ? summaryMatch[1] : ''
+          });
+        } catch (_) { return s; }
+      }
+    ];
+
+    for (let i = 0; i < cleanStrategies.length; i++) {
       try {
+        const cleaned = cleanStrategies[i](rawJson);
         result = JSON.parse(cleaned);
-      } catch (_) {
-        logger.error(`[ZEUS] JSON parse error: ${parseErr.message}. Raw: ${jsonMatch[0].substring(0, 200)}...`);
-        return 0;
+        if (i > 0) logger.info(`[ZEUS] JSON parseado con estrategia ${i + 1}`);
+        break;
+      } catch (e) {
+        if (i === cleanStrategies.length - 1) {
+          logger.error(`[ZEUS] JSON parse error tras ${cleanStrategies.length} estrategias: ${e.message}. Raw: ${rawJson.substring(0, 300)}...`);
+          return 0;
+        }
       }
     }
     let created = 0;
