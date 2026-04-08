@@ -11336,11 +11336,8 @@ a:hover {
 }
 
 .adsets-table {
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
+  width: 100%;
+  border-collapse: collapse;
 }
 
 .adsets-table-header {
