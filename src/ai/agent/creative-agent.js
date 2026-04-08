@@ -348,22 +348,42 @@ async function runCreativeAgent() {
     return { generated: 0, elapsed: '0s', cycle_id: cycleId, error: 'No products in bank' };
   }
 
-  // 3. Learn from test results (graduated = winner, killed = loser)
+  // 3. Learn from test results + human feedback
   const testResults = await CreativeProposal.find({
-    status: { $in: ['graduated', 'killed', 'expired', 'approved', 'rejected'] }
-  }).sort({ created_at: -1 }).limit(100).lean();
+    $or: [
+      { status: { $in: ['graduated', 'killed', 'expired', 'approved', 'rejected'] } },
+      { 'human_feedback.rating': { $ne: null } }
+    ]
+  }).sort({ created_at: -1 }).limit(150).lean();
 
   const approvedScenes = {};
   const rejectedScenes = {};
+  const badSceneReasons = {}; // track why scenes fail (human feedback)
+
   for (const p of testResults) {
     const s = p.scene_short || 'unknown';
-    // Graduados cuentan como aprobados (con peso extra — dato real del mercado)
+
+    // Human feedback tiene peso alto — es juicio directo del usuario
+    if (p.human_feedback?.rating === 'bad') {
+      rejectedScenes[s] = (rejectedScenes[s] || 0) + 3; // peso alto
+      const reason = p.human_feedback.reason || 'other';
+      if (!badSceneReasons[s]) badSceneReasons[s] = {};
+      badSceneReasons[s][reason] = (badSceneReasons[s][reason] || 0) + 1;
+    }
+    if (p.human_feedback?.rating === 'good') {
+      approvedScenes[s] = (approvedScenes[s] || 0) + 2;
+    }
+
+    // Test results
     if (p.status === 'graduated') approvedScenes[s] = (approvedScenes[s] || 0) + 3;
     if (p.status === 'approved') approvedScenes[s] = (approvedScenes[s] || 0) + 1;
-    // Killed/rejected cuentan como rechazados
     if (p.status === 'killed') rejectedScenes[s] = (rejectedScenes[s] || 0) + 2;
     if (p.status === 'rejected') rejectedScenes[s] = (rejectedScenes[s] || 0) + 1;
-    // Expired = dato neutral, no se cuenta
+    // Expired = dato neutral
+
+  if (Object.keys(badSceneReasons).length > 0) {
+    logger.info(`[CREATIVE-AGENT] Human feedback: ${Object.entries(badSceneReasons).map(([s, r]) => `${s.substring(0,20)}: ${JSON.stringify(r)}`).join(', ')}`);
+  }
   }
 
   let generated = 0;
