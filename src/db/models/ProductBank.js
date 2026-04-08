@@ -13,6 +13,13 @@ const productBankSchema = new mongoose.Schema({
   // Descripcion detallada del producto para Gemini (apariencia fisica, colores, contenido)
   product_description: { type: String, default: '' },
 
+  // Prompt type: 'standard' usa escenas genericas, 'custom' usa custom_prompt_template
+  prompt_type: { type: String, enum: ['standard', 'custom'], default: 'standard' },
+
+  // Template de prompt custom para productos especiales (ej: Build Your Box)
+  // Usa {SCENE} como placeholder donde Apollo inserta la escena
+  custom_prompt_template: { type: String, default: '' },
+
   // PNGs de referencia subidos por el usuario
   png_references: [{
     filename: { type: String, required: true },

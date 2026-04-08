@@ -36,7 +36,7 @@ router.get('/products', async (req, res) => {
  */
 router.post('/products', productUpload.array('images', 5), async (req, res) => {
   try {
-    const { product_name, product_slug, link_url } = req.body;
+    const { product_name, product_slug, link_url, prompt_type, custom_prompt_template } = req.body;
     if (!product_name || !product_slug) {
       return res.status(400).json({ error: 'product_name and product_slug required' });
     }
@@ -53,6 +53,8 @@ router.post('/products', productUpload.array('images', 5), async (req, res) => {
       product_name,
       product_slug,
       link_url: link_url || 'https://jerseypickles.com',
+      prompt_type: prompt_type || 'standard',
+      custom_prompt_template: custom_prompt_template || '',
       png_references
     });
 
@@ -84,6 +86,26 @@ router.post('/products/:id/images', productUpload.array('images', 5), async (req
     await product.save();
 
     logger.info(`[CREATIVE-AGENT] Added ${newRefs.length} PNGs to ${product.product_name}`);
+    res.json({ success: true, product });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * PATCH /api/creative-agent/products/:id — Update product (prompt, description)
+ */
+router.patch('/products/:id', async (req, res) => {
+  try {
+    const { prompt_type, custom_prompt_template, product_description } = req.body;
+    const update = {};
+    if (prompt_type !== undefined) update.prompt_type = prompt_type;
+    if (custom_prompt_template !== undefined) update.custom_prompt_template = custom_prompt_template;
+    if (product_description !== undefined) update.product_description = product_description;
+    update.updated_at = new Date();
+
+    const product = await ProductBank.findByIdAndUpdate(req.params.id, { $set: update }, { new: true });
+    if (!product) return res.status(404).json({ error: 'Product not found' });
     res.json({ success: true, product });
   } catch (error) {
     res.status(500).json({ error: error.message });

@@ -12,7 +12,7 @@ import {
   getAgentActivity, runAccountAgent, getAgentAdsetDetail, getAgentThoughts, getAgentPerformance,
   generateCopyForUpload, uploadAndCreateAd,
   getProducts, createProduct, deleteProduct, addProductImages, getProductImageUrl, runCreativeAgentApi,
-  getCreativeProposals, approveCreativeProposal, rejectCreativeProposal, getProposalImageUrl, sendProposalFeedback, getApolloIntelligence,
+  getCreativeProposals, approveCreativeProposal, rejectCreativeProposal, getProposalImageUrl, sendProposalFeedback, getApolloIntelligence, updateProduct,
   getTestRuns, killTestRun, runTestingAgentApi, getTestImageUrl,
   getZeusIntelligence, runZeusApi, getZeusThoughts, getZeusConversations
 } from '../api';
@@ -1261,6 +1261,41 @@ function ApolloPanel({ products, proposals, readyProposals, historyProposals, lo
                     />
                   </label>
                 </div>
+              </div>
+
+              {/* Prompt type + custom template */}
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Tipo de prompt</span>
+                  <span style={{
+                    fontSize: '0.65rem', fontWeight: 600, padding: '2px 8px', borderRadius: 4,
+                    background: p.prompt_type === 'custom' ? 'rgba(249,115,22,0.15)' : 'rgba(59,130,246,0.15)',
+                    color: p.prompt_type === 'custom' ? '#f97316' : '#3b82f6'
+                  }}>{p.prompt_type === 'custom' ? 'CUSTOM' : 'STANDARD'}</span>
+                  {p.prompt_type !== 'custom' && (
+                    <button onClick={async () => {
+                      const tpl = prompt('Escribe el custom prompt template (usa {SCENE} como placeholder de escena):');
+                      if (tpl) {
+                        await updateProduct(p._id, { prompt_type: 'custom', custom_prompt_template: tpl });
+                        await onRefresh();
+                      }
+                    }} style={{ fontSize: '0.65rem', background: 'none', border: '1px solid var(--border-color)', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                      Cambiar a Custom
+                    </button>
+                  )}
+                </div>
+                {p.prompt_type === 'custom' && p.custom_prompt_template && (
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', background: 'var(--bg-tertiary)', borderRadius: 6, padding: 8, maxHeight: 60, overflow: 'hidden', cursor: 'pointer' }}
+                    onClick={async () => {
+                      const tpl = prompt('Editar custom prompt template:', p.custom_prompt_template);
+                      if (tpl !== null) {
+                        await updateProduct(p._id, { custom_prompt_template: tpl });
+                        await onRefresh();
+                      }
+                    }}>
+                    {p.custom_prompt_template.substring(0, 150)}...
+                  </div>
+                )}
               </div>
 
               {/* Scene performance */}

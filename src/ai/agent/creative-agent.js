@@ -544,14 +544,21 @@ async function runCreativeAgent() {
         const style = weightedPick(adjustedStyles);
         const copyAngle = weightedPick(adjustedAngles);
 
-        // Build prompt with style + combo support
-        const prompt = buildImagePrompt(
-          product.product_name, scene, refTypes, style,
-          doCombo, comboNames
-        );
-
-        // Generate image — returns base64 directly, no filesystem needed
-        logger.info(`[CREATIVE-AGENT] Generating for ${adsetName} — ${sceneShort} [${style.key}/${copyAngle.key}]${doCombo ? ' COMBO' : ''}...`);
+        // Build prompt — custom template o generico
+        let prompt;
+        if (product.prompt_type === 'custom' && product.custom_prompt_template) {
+          // Producto con prompt custom (ej: Build Your Box)
+          prompt = product.custom_prompt_template.replace(/\{SCENE\}/g, scene);
+          prompt += ' ' + style.prompt;
+          logger.info(`[CREATIVE-AGENT] CUSTOM prompt for ${adsetName} — ${sceneShort} [${style.key}]`);
+        } else {
+          // Producto standard — prompt generico
+          prompt = buildImagePrompt(
+            product.product_name, scene, refTypes, style,
+            doCombo, comboNames
+          );
+          logger.info(`[CREATIVE-AGENT] Generating for ${adsetName} — ${sceneShort} [${style.key}/${copyAngle.key}]${doCombo ? ' COMBO' : ''}...`);
+        }
         const imageBase64 = await generateImage(prompt, refImages);
 
         // Generate copy with angle
@@ -625,9 +632,14 @@ async function runCreativeAgent() {
         }));
         const refTypes = product.png_references.map(ref => ref.type);
 
-        const prompt = buildImagePrompt(product.product_name, scenePick.scene, refTypes, style, false, []);
+        let prompt;
+        if (product.prompt_type === 'custom' && product.custom_prompt_template) {
+          prompt = product.custom_prompt_template.replace(/\{SCENE\}/g, scenePick.scene) + ' ' + style.prompt;
+        } else {
+          prompt = buildImagePrompt(product.product_name, scenePick.scene, refTypes, style, false, []);
+        }
 
-        logger.info(`[CREATIVE-AGENT] Proactivo ${p + 1}/${proactiveNeeded}: ${scenePick.short} [${style.key}/${copyAngle.key}]`);
+        logger.info(`[CREATIVE-AGENT] Proactivo ${p + 1}/${proactiveNeeded}: ${scenePick.short} [${style.key}/${copyAngle.key}]${product.prompt_type === 'custom' ? ' CUSTOM' : ''}`);
         const imageBase64 = await generateImage(prompt, refImages);
         const copy = await generateCopy(product.product_name, scenePick.short, copyAngle, false, []);
 

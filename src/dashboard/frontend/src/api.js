@@ -334,6 +334,11 @@ export const getApolloIntelligence = async () => {
   return response.data;
 };
 
+export const updateProduct = async (productId, data) => {
+  const response = await api.patch(`/api/creative-agent/products/${productId}`, data);
+  return response.data;
+};
+
 export const getProposalImageUrl = (id) => {
   const BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
   const token = localStorage.getItem('auth_token');
