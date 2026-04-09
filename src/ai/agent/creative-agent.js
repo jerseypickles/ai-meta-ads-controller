@@ -329,13 +329,14 @@ async function runCreativeAgent() {
     logger.info(`[CREATIVE-AGENT] Pool lleno (${currentPool} ready, max ${MAX_POOL_SIZE}) — saltando generacion reactiva, pero generando proactivos`);
   }
 
-  // 4. Check for ad sets needing creatives
+  // 4. Check for ad sets needing creatives (excluir legacy/AMAZON/TEST)
+  const excludeRegex = /\[TEST\]|^AI -|AMAZON|DONT TOUCH|DONT_TOUCH|EXCLUDE|MANUAL ONLY/i;
   const needCreatives = skipReactive ? [] : await BrainMemory.find({
     agent_needs_new_creatives: true,
     entity_type: 'adset'
   }).lean();
 
-  const filtered = needCreatives;
+  const filtered = needCreatives.filter(m => !excludeRegex.test(m.entity_name || ''));
 
   if (!skipReactive) {
     logger.info(`[CREATIVE-AGENT] ${filtered.length} ad sets need creatives`);
