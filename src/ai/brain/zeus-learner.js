@@ -417,7 +417,7 @@ ${athenaSection}
 
   try {
     const response = await claude.messages.create({
-      model: config.claude.model,
+      model: 'claude-opus-4-6',
       max_tokens: 1500,
       messages: [{
         role: 'user',
