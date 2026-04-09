@@ -417,8 +417,8 @@ ${athenaSection}
 
   try {
     const response = await claude.messages.create({
-      model: config.claude.model,
-      max_tokens: 1000,
+      model: 'claude-opus-4-6-20250514', // Zeus usa Opus para razonamiento estrategico profundo
+      max_tokens: 1500,
       messages: [{
         role: 'user',
         content: `Eres Zeus, el cerebro central de un sistema autonomo de Meta Ads para Jersey Pickles (ecommerce food, mercado US, ~$3K/dia).
