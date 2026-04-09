@@ -575,7 +575,7 @@ async function runCreativeAgent() {
           scene_short: sceneShort,
           headline: copy.headline,
           primary_text: copy.primary_text,
-          link_url: product.link_url || 'https://jerseypickles.com',
+          link_url: doCombo ? 'https://jerseypickles.com/pages/build-you-box' : (product.link_url || 'https://jerseypickles.com'),
           prompt_used: prompt,
           status: 'ready'
         });
@@ -654,7 +654,7 @@ async function runCreativeAgent() {
           scene_short: scenePick.short,
           headline: copy.headline,
           primary_text: copy.primary_text,
-          link_url: product.link_url || 'https://jerseypickles.com',
+          link_url: doCombo ? 'https://jerseypickles.com/pages/build-you-box' : (product.link_url || 'https://jerseypickles.com'),
           prompt_used: prompt,
           status: 'ready'
         });
