@@ -360,21 +360,15 @@ async function graduateTest(test, metrics) {
   const adName = `${proposal?.headline || 'Graduated'} [AI Creative Agent]`;
   const daysActive = getDaysActive(test.launched_at);
 
-  // ═══ OPCION C: Ad en ad set original + promover test ad set ═══
-  const isProactive = test.source_adset_id === 'proactive';
+  // ═══ GRADUACION: Solo promover test ad set como ad set nuevo de produccion ═══
+  // NO crear ad en ad set original (Meta ignora ads nuevos en ad sets con ad viejo dominante)
 
-  // 1. Crear ad en el ad set ORIGINAL (solo si no es proactivo)
-  let ad = null;
-  if (!isProactive) {
-    ad = await meta.createAd(test.source_adset_id, test.test_creative_id, adName, 'ACTIVE');
-  }
-
-  // 2. Promover test ad set: renombrar + subir budget (NO pausar)
+  // 1. Promover test ad set: renombrar + subir budget
   const promotedName = `${proposal?.headline || 'Graduated'} [Prometheus]`;
   try {
     await meta.post(`/${test.test_adset_id}`, {
       name: promotedName,
-      daily_budget: Math.round(GRADUATED_BUDGET * 100) // centavos
+      daily_budget: Math.round(GRADUATED_BUDGET * 100)
     });
     logger.info(`[TESTING-AGENT] Test ad set promovido: "${promotedName}" → $${GRADUATED_BUDGET}/dia`);
   } catch (err) {
@@ -382,31 +376,21 @@ async function graduateTest(test, metrics) {
     await meta.updateStatus(test.test_adset_id, 'PAUSED');
   }
 
-  // 3. Limpiar flag needs_new_creatives (solo si no es proactivo)
-  if (!isProactive) {
-    await BrainMemory.findOneAndUpdate(
-      { entity_id: test.source_adset_id },
-      { $set: { agent_needs_new_creatives: false, last_updated_at: new Date() } }
-    );
-  }
-
-  // 4. Actualizar proposal
+  // 2. Actualizar proposal
   await CreativeProposal.findByIdAndUpdate(test.proposal_id, {
     $set: {
       status: 'graduated',
-      meta_ad_id: ad?.ad_id || null,
       meta_creative_id: test.test_creative_id,
-      meta_ad_name: adName,
+      meta_ad_name: promotedName,
       decided_at: new Date()
     }
   });
 
-  // 5. Actualizar TestRun
+  // 3. Actualizar TestRun
   await TestRun.findByIdAndUpdate(test._id, {
     $set: {
       phase: 'graduated',
       graduated_at: new Date(),
-      graduation_target_ad_id: ad?.ad_id || null,
       test_adset_name: promotedName,
       metrics: { ...metrics, updated_at: new Date() }
     },
@@ -414,31 +398,27 @@ async function graduateTest(test, metrics) {
       assessments: {
         day_number: daysActive,
         phase: 'graduated',
-        assessment: isProactive
-          ? `GRADUADO (proactivo): ROAS ${metrics.roas.toFixed(2)}x, ${metrics.purchases} compras, $${metrics.spend.toFixed(2)} spend. Ad set promovido a $${GRADUATED_BUDGET}/dia como nuevo ad set de produccion.`
-          : `GRADUADO: ROAS ${metrics.roas.toFixed(2)}x, ${metrics.purchases} compras, $${metrics.spend.toFixed(2)} spend. Ad en ${test.source_adset_name} + test promovido a $${GRADUATED_BUDGET}/dia.`,
+        assessment: `GRADUADO: ROAS ${metrics.roas.toFixed(2)}x, ${metrics.purchases} compras, $${metrics.spend.toFixed(2)} spend. Promovido como ad set de produccion "${promotedName}" a $${GRADUATED_BUDGET}/dia.`,
         metrics_snapshot: metrics
       }
     }
   });
 
-  // 6. ActionLog
+  // 4. ActionLog
   await ActionLog.create({
     entity_type: 'adset',
-    entity_id: isProactive ? test.test_adset_id : test.source_adset_id,
-    entity_name: isProactive ? promotedName : test.source_adset_name,
-    action: isProactive ? 'create_adset' : 'create_ad',
-    after_value: isProactive ? promotedName : adName,
-    reasoning: isProactive
-      ? `[TESTING-AGENT] Graduado proactivo: "${proposal?.headline}" — ROAS ${metrics.roas.toFixed(2)}x, ${metrics.purchases} compras en ${daysActive}d. Nuevo ad set de produccion a $${GRADUATED_BUDGET}/dia.`
-      : `[TESTING-AGENT] Graduado: "${proposal?.headline}" — ROAS ${metrics.roas.toFixed(2)}x, ${metrics.purchases} compras en ${daysActive}d. Ad en original + test promovido a $${GRADUATED_BUDGET}/dia.`,
+    entity_id: test.test_adset_id,
+    entity_name: promotedName,
+    action: 'create_adset',
+    after_value: promotedName,
+    reasoning: `[TESTING-AGENT] Graduado: "${proposal?.headline}" — ROAS ${metrics.roas.toFixed(2)}x, ${metrics.purchases} compras en ${daysActive}d. Promovido como ad set nuevo a $${GRADUATED_BUDGET}/dia.`,
     confidence: 'high',
     agent_type: 'testing_agent',
     success: true,
-    new_entity_id: ad?.ad_id || test.test_adset_id
+    new_entity_id: test.test_adset_id
   });
 
-  logger.info(`[TESTING-AGENT] GRADUADO${isProactive ? ' (proactivo)' : ''}: "${proposal?.headline}" → ${isProactive ? 'nuevo ad set' : 'ad en ' + test.source_adset_name} + "${promotedName}" a $${GRADUATED_BUDGET}/dia`);
+  logger.info(`[TESTING-AGENT] GRADUADO: "${proposal?.headline}" → "${promotedName}" a $${GRADUATED_BUDGET}/dia`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -105,6 +105,12 @@ Then: pause old ad, set next_review_hours: 120.
 - Ad set in learning (<5 days old) -> HOLD. Gates will block you anyway.
 - Budget changed externally -> HOLD 5 days. Learning reset.
 
+## KILLING FATIGUED ADS (critical safety)
+- Before pausing the LAST active ad in an ad set, check: does the account have 10+ other active ad sets with ROAS > 2x?
+- If YES: pause the ad, then pause the entire ad set. Zeus will plan budget redistribution to [Prometheus] graduated ad sets.
+- If NO: HOLD. Do not kill — the account needs every ad set running. Wait for more [Prometheus] graduations.
+- NEVER leave an ad set with 0 active ads and budget still running. If you pause last ad, pause the ad set too.
+
 ## METRICS
 You get 4 windows: today, 3d, 7d, 14d. Decision windows:
 - **7d vs 14d** = your PRIMARY decision signal. Sustained trends only.
