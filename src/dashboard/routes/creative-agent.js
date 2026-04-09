@@ -126,6 +126,25 @@ router.delete('/products/:id', async (req, res) => {
 });
 
 /**
+ * DELETE /api/creative-agent/products/:id/image/:filename — Delete a specific image from product
+ */
+router.delete('/products/:id/image/:filename', async (req, res) => {
+  try {
+    const product = await ProductBank.findById(req.params.id);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+
+    product.png_references = product.png_references.filter(r => r.filename !== req.params.filename);
+    product.updated_at = new Date();
+    await product.save();
+
+    logger.info(`[CREATIVE-AGENT] Deleted image ${req.params.filename} from ${product.product_name}`);
+    res.json({ success: true, remaining: product.png_references.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
  * GET /api/creative-agent/products/:id/image/:filename — Serve product PNG from DB
  */
 router.get('/products/:id/image/:filename', async (req, res) => {

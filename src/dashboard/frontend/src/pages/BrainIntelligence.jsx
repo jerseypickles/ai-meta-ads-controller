@@ -12,7 +12,7 @@ import {
   getAgentActivity, runAccountAgent, getAgentAdsetDetail, getAgentThoughts, getAgentPerformance,
   generateCopyForUpload, uploadAndCreateAd,
   getProducts, createProduct, deleteProduct, addProductImages, getProductImageUrl, runCreativeAgentApi,
-  getCreativeProposals, approveCreativeProposal, rejectCreativeProposal, getProposalImageUrl, sendProposalFeedback, getApolloIntelligence, updateProduct,
+  getCreativeProposals, approveCreativeProposal, rejectCreativeProposal, getProposalImageUrl, sendProposalFeedback, getApolloIntelligence, updateProduct, deleteProductImage,
   getTestRuns, killTestRun, runTestingAgentApi, getTestImageUrl,
   getZeusIntelligence, runZeusApi, getZeusThoughts, getZeusConversations
 } from '../api';
@@ -1235,6 +1235,17 @@ function ApolloPanel({ products, proposals, readyProposals, historyProposals, lo
                         background: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: '0.6rem',
                         padding: '2px 6px', borderRadius: 4, textAlign: 'center'
                       }}>{ref.type}</span>
+                      <button onClick={async (e) => {
+                        e.stopPropagation();
+                        if (!window.confirm('Borrar esta imagen?')) return;
+                        await deleteProductImage(p._id, ref.filename);
+                        await onRefresh();
+                      }} style={{
+                        position: 'absolute', top: 4, right: 4, width: 20, height: 20,
+                        borderRadius: '50%', background: 'rgba(239,68,68,0.9)', border: 'none',
+                        color: '#fff', fontSize: '0.65rem', cursor: 'pointer', display: 'flex',
+                        alignItems: 'center', justifyContent: 'center', lineHeight: 1
+                      }}>×</button>
                     </div>
                   ))}
                   {/* Boton para agregar mas fotos */}

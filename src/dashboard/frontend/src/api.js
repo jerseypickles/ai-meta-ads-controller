@@ -290,6 +290,11 @@ export const addProductImages = async (productId, formData) => {
   return response.data;
 };
 
+export const deleteProductImage = async (productId, filename) => {
+  const response = await api.delete(`/api/creative-agent/products/${productId}/image/${filename}`);
+  return response.data;
+};
+
 export const deleteProduct = async (productId) => {
   const response = await api.delete(`/api/creative-agent/products/${productId}`);
   return response.data;
