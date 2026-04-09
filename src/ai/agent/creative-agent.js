@@ -510,13 +510,14 @@ async function runCreativeAgent() {
       }
       globalSceneIndex = (globalSceneIndex + PROPOSALS_PER_ADSET) % rankedScenes.length;
 
-      // Decidir si hacer combo (multi-product) — solo si hay 2+ productos con PNGs
-      const doCombo = rankedProducts.length >= 2 && Math.random() < 0.3; // 30% chance de combo
+      // Decidir si hacer combo — solo productos standard (excluir custom/BYB)
+      const standardProducts = rankedProducts.filter(p => p.prompt_type !== 'custom');
+      const doCombo = standardProducts.length >= 2 && product.prompt_type !== 'custom' && Math.random() < 0.3;
       let refImages, refTypes, comboNames = [];
 
       if (doCombo) {
-        // Combo: usar PNGs de todos los productos (max 3)
-        const comboProducts = rankedProducts.slice(0, Math.min(3, rankedProducts.length));
+        // Combo: solo productos standard (no BYB)
+        const comboProducts = standardProducts.slice(0, Math.min(3, standardProducts.length));
         refImages = comboProducts.flatMap(p =>
           p.png_references.map(ref => ({
             image_base64: ref.image_base64,
@@ -526,7 +527,7 @@ async function runCreativeAgent() {
         );
         refTypes = comboProducts.flatMap(p => p.png_references.map(ref => ref.type));
         comboNames = comboProducts.map(p => p.product_name);
-        logger.info(`[CREATIVE-AGENT] Modo COMBO: ${comboNames.join(' + ')}`);
+        logger.info(`[CREATIVE-AGENT] Modo COMBO (solo standard): ${comboNames.join(' + ')}`);
       } else {
         // Single product
         refImages = product.png_references.map(ref => ({
@@ -576,7 +577,7 @@ async function runCreativeAgent() {
           scene_short: sceneShort,
           headline: copy.headline,
           primary_text: copy.primary_text,
-          link_url: doCombo ? 'https://jerseypickles.com/pages/build-you-box' : (product.link_url || 'https://jerseypickles.com'),
+          link_url: product.link_url || 'https://jerseypickles.com',
           prompt_used: prompt,
           status: 'ready'
         });
@@ -655,7 +656,7 @@ async function runCreativeAgent() {
           scene_short: scenePick.short,
           headline: copy.headline,
           primary_text: copy.primary_text,
-          link_url: doCombo ? 'https://jerseypickles.com/pages/build-you-box' : (product.link_url || 'https://jerseypickles.com'),
+          link_url: product.link_url || 'https://jerseypickles.com',
           prompt_used: prompt,
           status: 'ready'
         });
