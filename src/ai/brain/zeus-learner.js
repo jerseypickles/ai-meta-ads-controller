@@ -417,7 +417,7 @@ ${athenaSection}
 
   try {
     const response = await claude.messages.create({
-      model: 'claude-opus-4-6-20250514', // Zeus usa Opus para razonamiento estrategico profundo
+      model: 'claude-opus-4-6-20250115', // Zeus usa Opus para razonamiento estrategico profundo
       max_tokens: 1500,
       messages: [{
         role: 'user',
