@@ -1120,12 +1120,14 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
     return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: 'Low spend < $5/7d' };
   }
 
-  // ═══ PRE-CHECK: Next review not due yet (agent set its own schedule) ═══
+  // ═══ PRE-CHECK: Smart skip — ad sets estables no necesitan evaluacion cada 2h ═══
   const memory = await BrainMemory.findOne({ entity_id: adSetId }).lean();
   const pendingPlan = memory?.agent_pending_plan || '';
   const nextReview = memory?.agent_next_review_at;
+  const lastCheck = memory?.agent_last_check;
+  const trend = memory?.agent_performance_trend;
 
-  // Si Zeus tiene directivas activas, no skipear — las directivas son urgentes
+  // Si Zeus tiene directivas activas, no skipear
   let zeusHasDirectives = false;
   try {
     const ZeusDirective = require('../../db/models/ZeusDirective');
@@ -1133,6 +1135,18 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
     zeusHasDirectives = zeusCount > 0;
   } catch (_) {}
 
+  // Smart skip: si ad set esta estable/improving Y fue checkeado hace < 12h Y no hay plan pendiente urgente
+  if (mode === 'full' && !zeusHasDirectives && lastCheck) {
+    const hoursSinceCheck = (Date.now() - new Date(lastCheck).getTime()) / 3600000;
+    const isHealthy = (trend === 'stable' || trend === 'improving') && adSetRoas >= 2.0 && adSetFrequency < 2.5;
+
+    if (isHealthy && hoursSinceCheck < 12 && !pendingPlan) {
+      logger.debug(`[ACCOUNT-AGENT] ${adSetName}: healthy (${trend}, ROAS ${adSetRoas.toFixed(1)}x), checked ${hoursSinceCheck.toFixed(0)}h ago — smart skip`);
+      return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Smart skip: healthy, ${hoursSinceCheck.toFixed(0)}h ago` };
+    }
+  }
+
+  // Next review schedule skip (respeta el programa de Athena)
   if (mode === 'full' && nextReview && new Date(nextReview) > new Date() && !pendingPlan && !zeusHasDirectives) {
     const hoursLeft = Math.round((new Date(nextReview) - new Date()) / 3600000);
     logger.debug(`[ACCOUNT-AGENT] ${adSetName}: next review in ${hoursLeft}h — skip`);

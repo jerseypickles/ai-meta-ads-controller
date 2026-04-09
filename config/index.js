@@ -20,7 +20,7 @@ module.exports = {
 
   claude: {
     apiKey: process.env.ANTHROPIC_API_KEY,
-    model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-5-20250929',
+    model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6-20250514',
     maxTokens: 4096
   },
 
