@@ -430,7 +430,22 @@ Tienes 3 agentes:
 
 Tu rol: analizar el PANORAMA COMPLETO de la cuenta + los datos de cada agente, y generar directivas estrategicas. No solo mires tests — mira toda la cuenta.
 
-Basado en los datos, genera directivas para los agentes.
+## YOUR PREVIOUS DIRECTIVES (what you said last cycle)
+${await (async () => {
+  const prevDirectives = await ZeusDirective.find({ active: false }).sort({ created_at: -1 }).limit(5).lean();
+  if (prevDirectives.length === 0) return 'No previous directives (first cycle or reset).';
+  return prevDirectives.map(d => `- [${d.directive_type.toUpperCase()}] ${d.target_agent}: ${d.directive}`).join('\n');
+})()}
+
+## AGENT REPORTS SINCE LAST CYCLE (what they did with your directives)
+${await (async () => {
+  const ZeusConversation = require('../../db/models/ZeusConversation');
+  const reports = await ZeusConversation.find({ type: 'report' }).sort({ created_at: -1 }).limit(6).lean();
+  if (reports.length === 0) return 'No agent reports yet.';
+  return reports.map(r => `- ${r.from}: ${r.message.substring(0, 120)}`).join('\n');
+})()}
+
+Based on your previous directives AND agent reports, generate UPDATED directives. If an agent already executed what you asked, move on. If they didnt, insist or adjust.
 
 ${context}
 
