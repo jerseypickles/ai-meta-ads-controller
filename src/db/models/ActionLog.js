@@ -11,7 +11,7 @@ const actionLogSchema = new mongoose.Schema({
   action: {
     type: String,
     enum: [
-      'scale_up', 'scale_down', 'pause', 'reactivate', 'kill_switch',
+      'scale_up', 'scale_down', 'pause', 'pause_adset', 'reactivate', 'kill_switch',
       'duplicate_adset', 'create_ad', 'add_ad', 'update_bid_strategy',
       'update_ad_status', 'move_budget', 'update_ad_creative', 'delete'
     ],
@@ -47,6 +47,10 @@ const actionLogSchema = new mongoose.Schema({
   target_entity_name: { type: String, default: null },
   creative_asset_id: { type: String, default: null },
   new_entity_id: { type: String, default: null },        // ID del nuevo ad set/ad creado
+  // Redistribucion de budget (para pause_adset)
+  redistributable_budget: { type: Number, default: null }, // Budget liberado para redistribuir
+  redistribution_pending: { type: Boolean, default: false, index: true }, // true hasta que Zeus redistribuya
+  redistributed_at: { type: Date, default: null },
   success: { type: Boolean, default: false },
   error: { type: String, default: null },
   meta_api_response: { type: mongoose.Schema.Types.Mixed },

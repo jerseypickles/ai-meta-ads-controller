@@ -94,6 +94,14 @@ Then: scale -20-25%. Set next_review_hours: 168 (7 days).
 - Max 1 pause per ad set per cycle
 Then: set next_review_hours: 120 (5 days).
 
+### PAUSE ENTIRE AD SET (only when Zeus orders it OR sustained loser)
+Use pause_adset tool ONLY when:
+- Zeus has an ALERT/PRIORITIZE directive saying PAUSE this ad set, OR
+- Ad set has ROAS 7d < 1.0x AND $200+ spend 7d AND 14+ days old (sustained loser)
+- Budget must be <$200/day (larger budgets: use scale_down -50% first)
+Safety: requires account coverage (10+ other healthy ad sets with ROAS > 2x) — the tool will block if not.
+The budget freed will be redistributed by Zeus in its next cycle via new scale_up directives.
+
 ### CREATIVE FLAGGING (critical — always check)
 After calling get_ad_performance, count ACTIVE ads:
 - 0 or 1 active ads -> ALWAYS set needs_new_creatives: true in save_assessment
@@ -244,6 +252,18 @@ const TOOLS = [
         reason: { type: 'string', description: 'Why you are reactivating this ad' }
       },
       required: ['ad_id', 'adset_id', 'reason']
+    }
+  },
+  {
+    name: 'pause_adset',
+    description: 'Pause an entire ad set. Use only when Zeus orders it (ALERT directive) OR when the ad set has been a clear loser for 14+ days (ROAS < 1.0x with $200+ spend). Frees up the ad set budget which Zeus will redistribute in its next cycle. Gated: requires account coverage (10+ other healthy ad sets with ROAS > 2x) to prevent killing the account.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        adset_id: { type: 'string', description: 'The Meta ad set ID to pause entirely' },
+        reason: { type: 'string', description: 'Why you are pausing this ad set. Must reference Zeus directive or sustained 14+ day data.' }
+      },
+      required: ['adset_id', 'reason']
     }
   },
   {
@@ -830,6 +850,94 @@ async function handleReactivateAd(input, ctx) {
   return { success: true, ad_id, status: 'ACTIVE' };
 }
 
+async function handlePauseAdSet(input, ctx) {
+  const { adset_id, reason } = input;
+  const meta = getMetaClient();
+
+  // Get current snapshot
+  const allSnapshots = await getLatestSnapshots('adset');
+  const snap = allSnapshots.find(s => s.entity_id === adset_id);
+  if (!snap) return { blocked: true, reason: 'No snapshot found for this ad set' };
+
+  const prevBudget = snap.daily_budget || 0;
+  const adSetName = snap.entity_name || adset_id;
+
+  // ── GATE: Coverage — cuenta debe tener 10+ ad sets sanos con ROAS > 2x
+  const healthyAdSets = allSnapshots.filter(s =>
+    s.status === 'ACTIVE'
+    && s.entity_id !== adset_id
+    && !['[TEST]', 'AI -', 'AMAZON'].some(ex => (s.entity_name || '').toUpperCase().includes(ex.toUpperCase()))
+    && (s.metrics?.last_7d?.roas || 0) >= 2.0
+  );
+  if (healthyAdSets.length < 10) {
+    return { blocked: true, reason: `Coverage insufficient: only ${healthyAdSets.length} healthy ad sets (need 10+). Not safe to pause — account needs every ad set running.` };
+  }
+
+  // ── GATE: Cooldown (bypassed si Zeus tiene directiva PAUSE/ALERT para este ad set)
+  const cooldown = await _isOnAgentCooldown(adset_id);
+  if (cooldown.onCooldown && !ctx.hasZeusScaleDirective) {
+    return { blocked: true, reason: `Cooldown: ${cooldown.minutesLeft} minutes remaining.` };
+  }
+
+  // ── GATE: Budget mínimo antes de pausar — prevenir pausa accidental de ad sets grandes
+  // (scale_down agresivo es mejor si es muy grande)
+  if (prevBudget >= 200) {
+    return { blocked: true, reason: `Budget too large to pause outright ($${prevBudget}/day). Use scale_down to -50% first, then pause next cycle if still underperforming.` };
+  }
+
+  // Metricas al momento de pausar
+  const m7d = snap.metrics?.last_7d || {};
+  const metricsAtExecution = {
+    roas_7d: Math.round((m7d.roas || 0) * 100) / 100,
+    cpa_7d: m7d.spend > 0 && m7d.purchases > 0 ? Math.round(m7d.spend / m7d.purchases * 100) / 100 : 0,
+    spend_7d: m7d.spend || 0,
+    daily_budget: prevBudget,
+    purchases_7d: m7d.purchases || 0,
+    frequency: m7d.frequency || 0,
+    ctr: m7d.ctr || 0
+  };
+
+  // Ejecutar pause
+  try {
+    await meta.updateStatus(adset_id, 'PAUSED');
+  } catch (err) {
+    return { blocked: true, reason: `Meta API error: ${err.message}` };
+  }
+
+  // Registrar en ActionLog con flag de redistribucion pendiente
+  await ActionLog.create({
+    entity_type: 'adset',
+    entity_id: adset_id,
+    entity_name: adSetName,
+    action: 'pause_adset',
+    before_value: prevBudget,
+    after_value: 0,
+    reasoning: reason,
+    confidence: 'high',
+    agent_type: 'unified_agent',
+    success: true,
+    executed_at: new Date(),
+    metrics_at_execution: metricsAtExecution,
+    // Campo que Zeus va a leer para redistribuir
+    redistributable_budget: prevBudget,
+    redistribution_pending: true
+  });
+
+  ctx.actionsExecuted++;
+  if (ctx.actionTypes) ctx.actionTypes.push('pause_adset');
+  await _recordActionInMemory(adset_id, adSetName, 'pause_adset', reason.substring(0, 100));
+  logger.info(`[ACCOUNT-AGENT] ${adset_id} (${adSetName}): Ad set pausado — liberado $${prevBudget}/dia — ${reason}`);
+
+  return {
+    success: true,
+    adset_id,
+    adset_name: adSetName,
+    status: 'PAUSED',
+    budget_freed: prevBudget,
+    note: `$${prevBudget}/dia liberado. Zeus redistribuira en su proximo ciclo.`
+  };
+}
+
 async function handleSaveObservation(input) {
   await BrainInsight.create({
     insight_type: input.type,
@@ -896,6 +1004,7 @@ const TOOL_HANDLERS = {
   scale_budget: handleScaleBudget,
   pause_ad: handlePauseAd,
   reactivate_ad: handleReactivateAd,
+  pause_adset: handlePauseAdSet,
   save_observation: (input, _ctx) => handleSaveObservation(input),
   save_assessment: handleSaveAssessment,
   log_reasoning: (input, _ctx) => handleLogReasoning(input)
@@ -906,7 +1015,7 @@ const TOOL_HANDLERS = {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const MAX_TURNS = 10;
-const OBSERVER_TOOLS = TOOLS.filter(t => !['scale_budget', 'pause_ad', 'reactivate_ad'].includes(t.name));
+const OBSERVER_TOOLS = TOOLS.filter(t => !['scale_budget', 'pause_ad', 'reactivate_ad', 'pause_adset'].includes(t.name));
 
 /**
  * Detect if we're in active hours (6am-10pm ET) or observer mode.

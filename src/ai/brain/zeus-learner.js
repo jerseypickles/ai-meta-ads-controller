@@ -289,6 +289,14 @@ async function gatherAccountIntelligence() {
   // Pool de Apollo
   const readyCount = await CreativeProposal.countDocuments({ status: 'ready' });
 
+  // Budgets pendientes de redistribuir (ad sets pausados por Athena)
+  const pendingRedistributions = await ActionLog.find({
+    action: 'pause_adset',
+    redistribution_pending: true,
+    success: true
+  }).sort({ executed_at: -1 }).lean();
+  const totalPendingBudget = pendingRedistributions.reduce((sum, a) => sum + (a.redistributable_budget || 0), 0);
+
   return {
     account: {
       active_adsets: activeAdsets.length,
@@ -314,7 +322,17 @@ async function gatherAccountIntelligence() {
       click_to_atc: clickToAtc,
       atc_to_purchase: atcToPurchase
     },
-    athena: { actions_7d: recentActions.length, action_types: actionSummary },
+    athena: {
+      actions_7d: recentActions.length,
+      action_types: actionSummary,
+      pending_redistributions: pendingRedistributions.map(a => ({
+        adset_name: a.entity_name,
+        budget_freed: a.redistributable_budget,
+        paused_at: a.executed_at,
+        reason: (a.reasoning || '').substring(0, 100)
+      })),
+      total_pending_budget: Math.round(totalPendingBudget)
+    },
     prometheus: { graduated: testMap.graduated || 0, killed: testMap.killed || 0, expired: testMap.expired || 0, active: (testMap.learning || 0) + (testMap.evaluating || 0) },
     apollo: { ready_pool: readyCount }
   };
@@ -478,6 +496,7 @@ Rules:
 - If 3d ROAS is better than 7d, the ad set is IMPROVING — do not pause it.
 - SCALING SAFETY: Meta resets learning phase when budget changes >20%. NEVER say scale aggressively. Max recommend is +15% per action. Multiple small increases over days is better than one big jump.
 - REDISTRIBUTION: When an old ad set dies (fatigued ad paused), its budget is NOT auto-redistributed (ABO not CBO). You must plan gradual scaling of [Prometheus] graduated ad sets to absorb the lost budget. Example: old ad set had $100/d → scale 3 [Prometheus] by +15% each over 2 weeks. Never dump budget all at once.
+- PENDING REDISTRIBUTIONS: Check athena.pending_redistributions in context. These are ad sets Athena recently paused with budget freed waiting for you to redistribute. For each pending redistribution, issue scale_up directives to 2-3 top performers splitting the freed budget proportionally (max +15% per target). After you issue these scale directives, the pending_redistributions will be cleared automatically.
 - KILL SAFETY: Athena should only kill a fatigued ad if the account has 10+ active ad sets with ROAS > 2x. Never leave the account short on capacity.
 - For Apollo data field, include: scenes (first 40 chars), styles (ugly-ad/pov-selfie/overhead-flat/close-up-texture/action-shot), angles (casual-fun/curiosity/social-proof/urgency/humor/controversy/sensory)
 - Max 5 thoughts. First person. Specific with real numbers.
@@ -590,6 +609,22 @@ Rules:
 
     if (thoughts.length > 0) {
       logger.info(`[ZEUS] ${thoughts.length} pensamientos guardados`);
+    }
+
+    // Si Zeus genero directivas de scale_up Y habia redistribuciones pendientes,
+    // marcar esas redistribuciones como done (asumiendo que Zeus las contemplo)
+    const scaleDirectives = (result.directives || []).filter(d =>
+      d.directive_type === 'prioritize' &&
+      (d.data?.action === 'scale_up' || (d.directive || '').toLowerCase().includes('scale'))
+    );
+    if (scaleDirectives.length > 0) {
+      const updated = await ActionLog.updateMany(
+        { action: 'pause_adset', redistribution_pending: true, success: true },
+        { $set: { redistribution_pending: false, redistributed_at: new Date() } }
+      );
+      if (updated.modifiedCount > 0) {
+        logger.info(`[ZEUS] Marcadas ${updated.modifiedCount} redistribuciones como completadas (Zeus genero ${scaleDirectives.length} scale directives)`);
+      }
     }
 
     // Guardar summary en SystemConfig
