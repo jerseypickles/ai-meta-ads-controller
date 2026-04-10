@@ -73,6 +73,15 @@ ALL of these must be true:
 - Bandit signal not negative for scale_up
 Then: scale +15-20% max. Set next_review_hours: 168 (7 days).
 
+### ZEUS OVERRIDE — when Zeus orders a scale
+Zeus is the CEO brain. He analyzes the FULL account twice daily with all data you don't see.
+When Zeus sends a PRIORITIZE directive for scaling a specific ad set, the standard scale_up criteria above are RELAXED:
+- You only need: ad set > 5 days old, frequency < 3.0, max +15% increase
+- You do NOT need 7d vs 14d improvement >25%, or ROAS > account average, or bandit signal
+- Execute the scale THIS CYCLE. Do not HOLD, do not delay, do not set next_review for later
+- Zeus already validated the data. Trust his judgment and act.
+If Zeus says HOLD or ALERT for an ad set, respect that too — do not scale what Zeus says to hold.
+
 ### SCALE DOWN (only emergencies)
 - ROAS 7d < 1.5x (below minimum KPI) with $100+ spend 7d
 - 7d vs 14d confirms decline (not just 3d noise)
@@ -97,13 +106,14 @@ This triggers the Creative Agent to generate new ads automatically.
 - Old ad healthy with freq < 2.0 -> DO NOT rotate
 Then: pause old ad, set next_review_hours: 120.
 
-## WHEN NOT TO ACT (critical)
+## WHEN NOT TO ACT (critical — unless Zeus overrides)
 - 3d dip without 7d confirmation -> HOLD. It is noise.
 - ROAS dropped 10-20% -> HOLD. Normal volatility.
 - Ad with <$30 spend and 0 purchases -> HOLD. Not enough data.
 - Any ad set touched in last 5 days -> HOLD. Let Meta stabilize.
 - Ad set in learning (<5 days old) -> HOLD. Gates will block you anyway.
 - Budget changed externally -> HOLD 5 days. Learning reset.
+NOTE: If Zeus has a PRIORITIZE directive for an ad set, these HOLD rules do NOT apply to that ad set (except learning phase <5 days).
 
 ## KILLING FATIGUED ADS (critical safety)
 - Before pausing the LAST active ad in an ad set, check: does the account have 10+ other active ad sets with ROAS > 2x?
@@ -592,10 +602,13 @@ async function handleScaleBudget(input, ctx) {
     return { blocked: true, reason: `Budget cannot go below $${minBudget}. Requested: $${new_budget}.` };
   }
 
-  // ── GATE: Cooldown (unified_agent only — ignores legacy cooldowns)
+  // ── GATE: Cooldown (unified_agent only — bypassed if Zeus PRIORITIZE active)
   const cooldown = await _isOnAgentCooldown(adset_id);
-  if (cooldown.onCooldown) {
+  if (cooldown.onCooldown && !ctx.hasZeusScaleDirective) {
     return { blocked: true, reason: `Cooldown: ${cooldown.minutesLeft} minutes remaining (last: ${cooldown.lastAction}).` };
+  }
+  if (cooldown.onCooldown && ctx.hasZeusScaleDirective) {
+    logger.info(`[ACCOUNT-AGENT] scale_budget: cooldown bypassed for ${adset_id} — Zeus PRIORITIZE directive`);
   }
 
   // ── GATE: Max 25% increase
@@ -1091,11 +1104,33 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
   }
 
   // ═══ PRE-CHECK: Cooldown + Pending (only in full mode — observer always examines) ═══
+  // Zeus PRIORITIZE directives bypass cooldown/pending — let Claude evaluate and decide
+  let hasZeusScaleDirective = false;
+  try {
+    const ZeusDirectiveModel = require('../../db/models/ZeusDirective');
+    const zeusScaleDirs = await ZeusDirectiveModel.find({
+      target_agent: { $in: ['athena', 'all'] },
+      active: true,
+      directive_type: 'prioritize'
+    }).lean();
+    // Matchear por nombre del ad set en el texto de la directiva
+    const nameWords = adSetName.toLowerCase().split(/\s+/);
+    hasZeusScaleDirective = zeusScaleDirs.some(d => {
+      const dirText = (d.directive || '').toLowerCase();
+      // Tambien checar data.action === 'scale_up' si tiene entity reference
+      return nameWords.some(w => w.length > 3 && dirText.includes(w)) ||
+        (d.data?.action === 'scale_up' && dirText.includes('scale'));
+    });
+  } catch (_) {}
+
   if (mode === 'full') {
     const cooldown = await _isOnAgentCooldown(adSetId);
-    if (cooldown.onCooldown) {
+    if (cooldown.onCooldown && !hasZeusScaleDirective) {
       logger.debug(`[ACCOUNT-AGENT] ${adSetName}: cooldown (${cooldown.minutesLeft} min remaining)`);
       return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Cooldown: ${cooldown.minutesLeft} min` };
+    }
+    if (cooldown.onCooldown && hasZeusScaleDirective) {
+      logger.info(`[ACCOUNT-AGENT] ${adSetName}: cooldown bypassed — Zeus PRIORITIZE directive active`);
     }
 
     const pendingActions = await ActionLog.find({
@@ -1106,7 +1141,7 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
       executed_at: { $gte: new Date(Date.now() - 24 * 3600000) }
     }).sort({ executed_at: -1 }).limit(1).lean();
 
-    if (pendingActions.length > 0) {
+    if (pendingActions.length > 0 && !hasZeusScaleDirective) {
       const hoursAgo = Math.round((Date.now() - new Date(pendingActions[0].executed_at).getTime()) / 3600000);
       logger.debug(`[ACCOUNT-AGENT] ${adSetName}: pending impact ("${pendingActions[0].action}" ${hoursAgo}h ago)`);
       return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Pending impact: ${hoursAgo}h` };
@@ -1162,7 +1197,8 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
   // ═══ AGENTIC LOOP ═══
   const ctx = {
     actionsExecuted: 0,
-    assessmentsSaved: 0
+    assessmentsSaved: 0,
+    hasZeusScaleDirective
   };
 
   const isObserver = mode === 'observer';
@@ -1178,10 +1214,10 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
     }).lean();
     if (directives.length > 0) {
       zeusContext = '\n\n## ZEUS DIRECTIVES (from the CEO brain — ACT ON THESE NOW)\n' +
-        directives.map(d => `- [${d.directive_type.toUpperCase()}] ${d.directive}`).join('\n') +
-        '\nThese directives are TIME-SENSITIVE. Zeus analyzed the full account and needs you to act THIS CYCLE, not schedule for later. ' +
-        'If a directive says PRIORITIZE scaling, execute scale_budget now if safety gates allow (>5 days old, max +15-20%). ' +
-        'Do NOT delay Zeus directives by setting next_review_at days in the future. Act now, review later.';
+        directives.map(d => `- [${d.directive_type.toUpperCase()}] (confidence: ${d.confidence}) ${d.directive}`).join('\n') +
+        '\nThese directives are ORDERS from Zeus, not suggestions. Zeus analyzed the full account with all data and is telling you to act.' +
+        '\nFor PRIORITIZE scale directives: execute scale_budget NOW using the ZEUS OVERRIDE rules (ad set >5 days, freq <3.0, max +15%). ' +
+        'Do NOT apply the standard conservative scale_up criteria. Do NOT HOLD what Zeus says to scale. Act this cycle.';
     }
   } catch (_) {}
 
