@@ -537,20 +537,109 @@ async function runTestingAgent() {
 
   logger.info(`═══ Testing Agent completado [${cycleId}]: ${launched} lanzados, ${monitored} monitoreados (${graduated} graduados, ${killed} killed, ${expired} expired), pool: ${readyPool} ready — ${elapsed} ═══`);
 
-  // Reportar a Zeus
+  // Reportar a Zeus con inteligencia real
   try {
     const ZeusConversation = require('../../db/models/ZeusConversation');
-    let msg = `Ciclo completado: ${launched} tests lanzados, ${monitored} monitoreados.`;
-    if (graduated > 0) msg += ` ${graduated} GRADUADOS — creativos ganadores enviados a produccion.`;
-    if (killed > 0) msg += ` ${killed} killed (sin conversiones).`;
+
+    // Analizar tests activos: top performers, en peligro, patrones
+    const activeTests = await TestRun.find({ phase: { $in: ['learning', 'evaluating'] } })
+      .populate('proposal_id', 'scene_short headline')
+      .lean();
+
+    // Top performers: ≥1 purchase, ordenados por ROAS
+    const topPerformers = activeTests
+      .filter(t => (t.metrics?.purchases || 0) >= 1)
+      .sort((a, b) => (b.metrics?.roas || 0) - (a.metrics?.roas || 0))
+      .slice(0, 5);
+
+    // Tests en peligro: funnel roto (spend pero 0 ATC)
+    const funnelBroken = activeTests.filter(t => {
+      const m = t.metrics || {};
+      return (m.spend || 0) >= 10 && (m.add_to_cart || 0) === 0 && (m.purchases || 0) === 0;
+    });
+
+    // Tests cerca de graduarse (ROAS alto + purchases)
+    const almostGrads = activeTests.filter(t => {
+      const m = t.metrics || {};
+      return (m.roas || 0) >= 3.0 && (m.purchases || 0) >= 2;
+    });
+
+    // Patrones por escena
+    const byScene = {};
+    activeTests.forEach(t => {
+      const scene = t.proposal_id?.scene_short || 'unknown';
+      if (!byScene[scene]) byScene[scene] = { count: 0, purchases: 0, spend: 0, revenue: 0 };
+      byScene[scene].count++;
+      byScene[scene].purchases += t.metrics?.purchases || 0;
+      byScene[scene].spend += t.metrics?.spend || 0;
+      byScene[scene].revenue += (t.metrics?.roas || 0) * (t.metrics?.spend || 0);
+    });
+    const scenePatterns = Object.entries(byScene)
+      .filter(([_, d]) => d.count >= 2)
+      .map(([scene, d]) => ({
+        scene,
+        count: d.count,
+        purchases: d.purchases,
+        spend: Math.round(d.spend),
+        avg_roas: d.spend > 0 ? +(d.revenue / d.spend).toFixed(2) : 0
+      }))
+      .sort((a, b) => b.avg_roas - a.avg_roas);
+
+    // Construir mensaje
+    let msg = `Ciclo completado: ${launched} lanzados, ${monitored} monitoreados.`;
+    if (graduated > 0) msg += ` ${graduated} GRADUADOS.`;
+    if (killed > 0) msg += ` ${killed} killed.`;
     if (expired > 0) msg += ` ${expired} expirados.`;
-    msg += ` Pool: ${readyPool} propuestas ready.`;
-    if (readyPool < MIN_READY_POOL) msg += ' Pool bajo — necesito que Apollo genere mas.';
+    msg += ` Pool: ${readyPool} ready.`;
+
+    if (topPerformers.length > 0) {
+      msg += '\n\nTOP PERFORMERS (con compras):';
+      topPerformers.forEach(t => {
+        const m = t.metrics || {};
+        const name = (t.test_adset_name || '').replace('[TEST] ', '').substring(0, 40);
+        msg += `\n  - "${name}" ROAS ${(m.roas || 0).toFixed(2)}x, ${m.purchases || 0} compras, $${(m.spend || 0).toFixed(0)} spend`;
+      });
+    }
+
+    if (almostGrads.length > 0) {
+      msg += `\n\nCERCA DE GRADUAR: ${almostGrads.length} tests con ROAS >= 3x y 2+ compras.`;
+    }
+
+    if (funnelBroken.length > 0) {
+      msg += `\n\nFUNNEL ROTO: ${funnelBroken.length} tests con $10+ spend y 0 ATC (posible problema de landing o product-market fit).`;
+    }
+
+    if (scenePatterns.length > 0) {
+      const topScenes = scenePatterns.slice(0, 3);
+      const bottomScenes = scenePatterns.filter(s => s.spend >= 15 && s.purchases === 0).slice(0, 3);
+      if (topScenes.length > 0 && topScenes[0].avg_roas > 0) {
+        msg += '\n\nESCENAS GANADORAS: ' + topScenes.map(s => `${s.scene} (${s.avg_roas}x, ${s.purchases}pur)`).join(', ');
+      }
+      if (bottomScenes.length > 0) {
+        msg += '\nESCENAS PERDEDORAS: ' + bottomScenes.map(s => `${s.scene} ($${s.spend} spend, 0 purchases)`).join(', ');
+      }
+    }
+
+    if (readyPool < MIN_READY_POOL) msg += '\n\nPool bajo — Apollo debe generar mas.';
+
     await ZeusConversation.create({
       from: 'prometheus', to: 'zeus', type: 'report', message: msg, cycle_id: cycleId,
-      context: { launched, monitored, graduated, killed, expired, pool: readyPool }
+      context: {
+        launched, monitored, graduated, killed, expired, pool: readyPool,
+        top_performers: topPerformers.map(t => ({
+          name: t.test_adset_name,
+          roas: t.metrics?.roas || 0,
+          purchases: t.metrics?.purchases || 0,
+          spend: t.metrics?.spend || 0
+        })),
+        almost_grads_count: almostGrads.length,
+        funnel_broken_count: funnelBroken.length,
+        scene_patterns: scenePatterns.slice(0, 5)
+      }
     });
-  } catch (_) {}
+  } catch (err) {
+    logger.warn(`[TESTING-AGENT] Error reportando a Zeus: ${err.message}`);
+  }
 
   return {
     launched,
