@@ -604,8 +604,9 @@ async function runTestingAgent() {
     if (expired > 0) msg += ` ${expired} expirados.`;
     msg += ` Pool: ${readyPool} ready.`;
 
-    // Contexto sobre BYB validado (ad sets 39/40) — recordatorio al Brain
-    msg += `\n\nRECORDATORIO: BYB (ad sets 39/40) sigue siendo el ganador VALIDADO en cuenta — any new signal should be compared against BYB baseline.`;
+    // Contexto: la cuenta tiene 37 ad sets, varios con data historica larga.
+    // BYB (39/40) son ejemplos recientes prometedores pero NO son "el ganador" unico.
+    msg += `\n\nCONTEXTO: La cuenta tiene multiples ad sets con data historica. BYB (39/40) son ejemplos recientes del camino BYB con buen ROAS temprano — prometedores pero no son la unica verdad. Los ad sets viejos (dias 70+) tienen muestras mas grandes y representan la base real de la cuenta. No sesgar decisiones hacia 39/40 solo porque son visibles.`;
 
     if (validatedWinners.length > 0) {
       msg += `\n\nVALIDATED WINNERS (≥$${VALIDATED_MIN_SPEND} spend, ≥${VALIDATED_MIN_PURCHASES} compras, ≥${VALIDATED_MIN_DAYS}d):`;
@@ -636,7 +637,7 @@ async function runTestingAgent() {
     if (scenePatterns.length > 0) {
       const topScene = scenePatterns[0];
       if (topScene.avg_roas >= 3.0 && topScene.purchases >= 2) {
-        msg += `\n\nPATRON EMERGENTE (no validado aun): escena "${topScene.scene}" con ${topScene.count} tests, ${topScene.avg_roas}x avg ROAS, ${topScene.purchases} compras combinadas. Comparar contra BYB antes de replicar.`;
+        msg += `\n\nPATRON EMERGENTE (no validado aun): escena "${topScene.scene}" con ${topScene.count} tests, ${topScene.avg_roas}x avg ROAS, ${topScene.purchases} compras combinadas. Senal interesante pero muestra pequena — esperar mas data antes de replicar.`;
       }
       const losers = scenePatterns.filter(s => s.spend >= 20 && s.purchases === 0);
       if (losers.length > 0) {
