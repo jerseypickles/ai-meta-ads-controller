@@ -670,6 +670,7 @@ async function handleScaleBudget(input, ctx) {
   });
 
   ctx.actionsExecuted++;
+  if (ctx.actionTypes) ctx.actionTypes.push(isScaleUp ? 'scale_up' : 'scale_down');
   await _recordActionInMemory(adset_id, snap.entity_name, isScaleUp ? 'scale_up' : 'scale_down', reason.substring(0, 100));
   logger.info(`[ACCOUNT-AGENT] ${adset_id}: Budget $${prevBudget} → $${finalBudget} — ${reason}`);
 
@@ -763,6 +764,7 @@ async function handlePauseAd(input, ctx) {
   });
 
   ctx.actionsExecuted++;
+  if (ctx.actionTypes) ctx.actionTypes.push('pause');
   if (!ctx._pausedAdsThisCycle) ctx._pausedAdsThisCycle = new Set();
   ctx._pausedAdsThisCycle.add(ad_id);
   await _recordActionInMemory(adset_id, adSnap?.entity_name || adset_id, 'pause', `ad:${ad_id} ${reason.substring(0, 80)}`);
@@ -821,6 +823,7 @@ async function handleReactivateAd(input, ctx) {
   });
 
   ctx.actionsExecuted++;
+  if (ctx.actionTypes) ctx.actionTypes.push('reactivate');
   await _recordActionInMemory(adset_id, adset_id, 'reactivate', `ad:${ad_id} ${reason.substring(0, 80)}`);
   logger.info(`[ACCOUNT-AGENT] ${adset_id}: Reactivated ad ${ad_id} — ${reason}`);
 
@@ -961,6 +964,7 @@ async function runAccountAgent() {
         adset_id: adSetId,
         adset_name: adSetSnap.entity_name,
         actions_executed: result.actionsExecuted,
+        action_types: result.actionTypes || [],
         assessment_saved: result.assessmentSaved,
         skipped: result.skipped || false,
         skip_reason: result.skipReason || null
@@ -983,9 +987,12 @@ async function runAccountAgent() {
     const ZeusConversation = require('../../db/models/ZeusConversation');
     const ZeusDirective = require('../../db/models/ZeusDirective');
     const activeDirectives = await ZeusDirective.find({ target_agent: { $in: ['athena', 'all'] }, active: true }).lean();
-    const scales = results.filter(r => r.actions?.includes('scale'));
-    const pauses = results.filter(r => r.actions?.includes('pause'));
-    const holds = results.filter(r => !r.actions || r.actions.length === 0);
+    // Contar por tipo de accion (un ad set puede tener multiples acciones)
+    const scaleUps = results.reduce((n, r) => n + (r.action_types || []).filter(t => t === 'scale_up').length, 0);
+    const scaleDowns = results.reduce((n, r) => n + (r.action_types || []).filter(t => t === 'scale_down').length, 0);
+    const scales = { length: scaleUps + scaleDowns };
+    const pauses = { length: results.reduce((n, r) => n + (r.action_types || []).filter(t => t === 'pause').length, 0) };
+    const holds = { length: results.filter(r => !r.action_types || r.action_types.length === 0).length };
 
     let msg = `Ciclo completado (${mode}): ${activeAdSets.length} ad sets evaluados, ${totalActions} acciones en ${elapsed}.`;
     msg += ` Escalé ${scales.length}, pausé ${pauses.length}, holdé ${holds.length}.`;
@@ -1198,6 +1205,7 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
   const ctx = {
     actionsExecuted: 0,
     assessmentsSaved: 0,
+    actionTypes: [],
     hasZeusScaleDirective
   };
 
@@ -1331,7 +1339,7 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
     );
   }
 
-  return { actionsExecuted: ctx.actionsExecuted, assessmentSaved: ctx.assessmentsSaved > 0 };
+  return { actionsExecuted: ctx.actionsExecuted, assessmentSaved: ctx.assessmentsSaved > 0, actionTypes: ctx.actionTypes || [] };
 }
 
 module.exports = { runAccountAgent };
