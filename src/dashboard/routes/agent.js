@@ -10,12 +10,21 @@ const { getLatestSnapshots, getAdsForAdSet } = require('../../db/queries');
 // ═══ In-memory job tracking for async agent runs ═══
 const _agentJobs = {};
 
+// ═══ Cache for /activity endpoint (60s TTL — active ad counts don't change frequently) ═══
+const _activityCache = { data: null, timestamp: 0, ttl: 60000 };
+
 /**
  * GET /api/agent/activity — Main data for the "Agente" tab.
  * Returns all active ad sets with their latest agent assessment, recent actions, and metrics.
  */
 router.get('/activity', async (req, res) => {
   try {
+    // Cache check — respond from memory if fresh
+    const now = Date.now();
+    if (_activityCache.data && (now - _activityCache.timestamp) < _activityCache.ttl) {
+      return res.json(_activityCache.data);
+    }
+
     // 1. Get all active ad set snapshots
     const allSnapshots = await getLatestSnapshots('adset');
     const excludeNames = ['[TEST]', 'AI -', 'AMAZON', 'DONT TOUCH', 'DONT_TOUCH', 'EXCLUDE', 'MANUAL ONLY'];
@@ -49,9 +58,15 @@ router.get('/activity', async (req, res) => {
       actionsByEntity[key].push(a);
     }
 
-    // 3.5. Count active ads per ad set (optimized — count only, no full doc load)
+    // 3.5. Count active ads per ad set — limitado a ultimos 2 dias (snapshots viejos no importan)
+    // El indice (entity_type, parent_id, snapshot_at) se usa para el match inicial
+    const twoDaysAgo = new Date(Date.now() - 2 * 86400000);
     const activeAdCounts = await MetricSnapshot.aggregate([
-      { $match: { entity_type: 'ad', parent_id: { $in: entityIds } } },
+      { $match: {
+        entity_type: 'ad',
+        parent_id: { $in: entityIds },
+        snapshot_at: { $gte: twoDaysAgo }
+      }},
       { $sort: { snapshot_at: -1 } },
       { $group: { _id: '$entity_id', status: { $first: '$status' }, parent_id: { $first: '$parent_id' } } },
       { $match: { status: 'ACTIVE' } },
@@ -164,7 +179,7 @@ router.get('/activity', async (req, res) => {
       success: true
     }).sort({ executed_at: -1 }).lean();
 
-    res.json({
+    const responseData = {
       adsets: adsets.sort((a, b) => (b.metrics_7d.spend || 0) - (a.metrics_7d.spend || 0)),
       global: {
         total_adsets: activeAdSets.length,
@@ -172,7 +187,13 @@ router.get('/activity', async (req, res) => {
         total_measured: allAgentActions.length,
         last_cycle: lastAction?.executed_at || null
       }
-    });
+    };
+
+    // Store in cache
+    _activityCache.data = responseData;
+    _activityCache.timestamp = Date.now();
+
+    res.json(responseData);
   } catch (error) {
     logger.error(`[AGENT-API] Error en /activity: ${error.message}`);
     res.status(500).json({ error: error.message });
