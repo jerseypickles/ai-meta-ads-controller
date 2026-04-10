@@ -71,13 +71,25 @@ function getDaysActive(launchedAt) {
  * Obtener metricas de un test ad set desde MetricSnapshot.
  */
 async function getTestMetrics(testAdsetId) {
-  // Buscar snapshot del ad set de test
-  const snapshot = await MetricSnapshot.findOne({
+  // Buscar los ultimos 5 snapshots y elegir el mejor (mas reciente con data real)
+  // Meta API ocasionalmente devuelve ceros transitorios — no debemos confiar en 1 solo snapshot
+  const snapshots = await MetricSnapshot.find({
     entity_type: 'adset',
     entity_id: testAdsetId
-  }).sort({ snapshot_at: -1 }).lean();
+  }).sort({ snapshot_at: -1 }).limit(5).lean();
 
-  if (!snapshot) return null;
+  if (!snapshots || snapshots.length === 0) return null;
+
+  // Helper: detectar si un snapshot tiene data real (no ceros transitorios)
+  const hasRealData = (snap) => {
+    const m7 = snap.metrics?.last_7d || {};
+    const m3 = snap.metrics?.last_3d || {};
+    const mt = snap.metrics?.today || {};
+    return (m7.spend || 0) > 0 || (m3.spend || 0) > 0 || (mt.spend || 0) > 0 || (m7.impressions || 0) > 0;
+  };
+
+  // Preferir el mas reciente con data real; fallback al mas reciente absoluto
+  const snapshot = snapshots.find(hasRealData) || snapshots[0];
 
   // Usar la mejor ventana disponible
   const m = (snapshot.metrics?.last_7d?.spend > 0 && snapshot.metrics.last_7d)
@@ -276,6 +288,16 @@ async function monitorTests() {
 
       if (!metrics) {
         logger.debug(`[TESTING-AGENT] ${test.test_adset_name}: sin snapshots aun (dia ${daysActive})`);
+        continue;
+      }
+
+      // PROTECCION: si las metricas nuevas vienen en ceros pero el TestRun ya tenia
+      // data real, NO sobrescribir — Meta API ocasionalmente devuelve zeros transitorios
+      const oldMetrics = test.metrics || {};
+      const newIsZero = (metrics.spend || 0) === 0 && (metrics.impressions || 0) === 0;
+      const oldHadData = (oldMetrics.spend || 0) > 0 || (oldMetrics.impressions || 0) > 0;
+      if (newIsZero && oldHadData) {
+        logger.warn(`[TESTING-AGENT] ${test.test_adset_name}: nuevas metricas en cero, manteniendo data previa ($${(oldMetrics.spend || 0).toFixed(2)} spend, ${oldMetrics.purchases || 0} compras)`);
         continue;
       }
 
