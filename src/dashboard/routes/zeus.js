@@ -73,21 +73,49 @@ router.get('/intelligence', async (req, res) => {
     const totalFinished = graduated + killed + expired;
     const graduationRate = totalFinished > 0 ? Math.round((graduated / totalFinished) * 100) : 0;
 
-    // Patrones por escena (top 10)
+    // Patrones por escena — incluye tests activos, excluye kills insignificantes
+    // Ganadores = tests con compras (sea graduated o activo con purchases)
+    // ROAS = ponderado por spend (no promedio simple)
     const scenePatterns = await TestRun.aggregate([
-      { $match: { phase: { $in: ['graduated', 'killed', 'expired'] } } },
+      // Incluir todas las fases pero excluir kills con spend <$10 (muestra insuficiente)
+      { $match: {
+        $or: [
+          { phase: { $in: ['learning', 'evaluating', 'graduated', 'expired'] } },
+          { phase: 'killed', 'metrics.spend': { $gte: 10 } }
+        ]
+      }},
       { $lookup: { from: 'creativeproposals', localField: 'proposal_id', foreignField: '_id', as: 'proposal' } },
       { $unwind: { path: '$proposal', preserveNullAndEmptyArrays: true } },
       { $group: {
         _id: '$proposal.scene_short',
         total: { $sum: 1 },
-        wins: { $sum: { $cond: [{ $eq: ['$phase', 'graduated'] }, 1, 0] } },
-        avg_roas: { $avg: '$metrics.roas' },
-        total_spend: { $sum: '$metrics.spend' }
+        // Wins: graduated O tests con compras (señal positiva)
+        wins: { $sum: { $cond: [
+          { $or: [
+            { $eq: ['$phase', 'graduated'] },
+            { $gt: ['$metrics.purchases', 0] }
+          ]},
+          1, 0
+        ]} },
+        total_spend: { $sum: '$metrics.spend' },
+        total_purchases: { $sum: '$metrics.purchases' },
+        // Revenue = roas * spend por test
+        total_revenue: { $sum: { $multiply: ['$metrics.roas', '$metrics.spend'] } },
+        active_count: { $sum: { $cond: [
+          { $in: ['$phase', ['learning', 'evaluating']] }, 1, 0
+        ]}}
       }},
       { $match: { _id: { $ne: null } } },
-      { $sort: { wins: -1 } },
-      { $limit: 10 }
+      // Calcular ROAS ponderado
+      { $addFields: {
+        weighted_roas: { $cond: [
+          { $gt: ['$total_spend', 0] },
+          { $divide: ['$total_revenue', '$total_spend'] },
+          0
+        ]}
+      }},
+      { $sort: { total_purchases: -1, weighted_roas: -1 } },
+      { $limit: 15 }
     ]);
 
     // Intelligence score (0-100 basado en datos disponibles)
@@ -113,8 +141,10 @@ router.get('/intelligence', async (req, res) => {
         win_rate: s.total > 0 ? Math.round((s.wins / s.total) * 100) : 0,
         wins: s.wins,
         total: s.total,
-        avg_roas: Math.round((s.avg_roas || 0) * 100) / 100,
-        spend: Math.round(s.total_spend || 0)
+        avg_roas: Math.round((s.weighted_roas || 0) * 100) / 100,
+        spend: Math.round(s.total_spend || 0),
+        purchases: s.total_purchases || 0,
+        active: s.active_count || 0
       })),
       last_learning: summary?.updated_at || null
     });

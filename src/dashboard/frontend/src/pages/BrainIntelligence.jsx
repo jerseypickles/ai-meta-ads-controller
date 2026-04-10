@@ -816,21 +816,26 @@ function ZeusPanel({ data, loading, running, onRun, agentStats }) {
       {/* Scene Patterns */}
       {scenePatterns.length > 0 && (
         <div>
-          <h4 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 10 }}>Patrones de Escenas (datos reales)</h4>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
-            {scenePatterns.map((p, i) => (
-              <div key={i} style={{
-                background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '10px 12px',
-                border: `1px solid ${p.win_rate >= 50 ? '#10b98130' : p.win_rate > 0 ? '#f59e0b30' : '#ef444430'}`
-              }}>
-                <div style={{ fontSize: '0.78rem', color: 'var(--text-primary)', marginBottom: 4 }}>{(p.scene || '').substring(0, 35)}...</div>
-                <div style={{ display: 'flex', gap: 12, fontSize: '0.7rem' }}>
-                  <span style={{ color: p.win_rate >= 50 ? '#10b981' : p.win_rate > 0 ? '#f59e0b' : '#ef4444', fontWeight: 600 }}>{p.win_rate}% win</span>
-                  <span style={{ color: 'var(--text-muted)' }}>{p.wins}W/{p.total - p.wins}L</span>
-                  <span style={{ color: 'var(--text-muted)' }}>{p.avg_roas}x ROAS</span>
+          <h4 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 10 }}>Patrones de Escenas (tests activos + finalizados)</h4>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
+            {scenePatterns.map((p, i) => {
+              const hasPurchases = (p.purchases || 0) > 0;
+              const color = hasPurchases ? '#10b981' : (p.spend >= 20 ? '#ef4444' : '#f59e0b');
+              return (
+                <div key={i} style={{
+                  background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '10px 12px',
+                  border: `1px solid ${color}30`
+                }}>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-primary)', marginBottom: 4 }}>{(p.scene || '').substring(0, 35)}...</div>
+                  <div style={{ display: 'flex', gap: 10, fontSize: '0.7rem', flexWrap: 'wrap' }}>
+                    <span style={{ color, fontWeight: 600 }}>{p.purchases || 0} compras</span>
+                    <span style={{ color: 'var(--text-muted)' }}>{p.avg_roas}x ROAS</span>
+                    <span style={{ color: 'var(--text-muted)' }}>${p.spend}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>{p.total} tests{p.active > 0 ? ` (${p.active} activos)` : ''}</span>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
