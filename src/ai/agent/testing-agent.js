@@ -537,34 +537,45 @@ async function runTestingAgent() {
 
   logger.info(`═══ Testing Agent completado [${cycleId}]: ${launched} lanzados, ${monitored} monitoreados (${graduated} graduados, ${killed} killed, ${expired} expired), pool: ${readyPool} ready — ${elapsed} ═══`);
 
-  // Reportar a Zeus con inteligencia real
+  // Reportar a Zeus con inteligencia real — clasificando por nivel de evidencia
   try {
     const ZeusConversation = require('../../db/models/ZeusConversation');
 
-    // Analizar tests activos: top performers, en peligro, patrones
+    // Analizar tests activos
     const activeTests = await TestRun.find({ phase: { $in: ['learning', 'evaluating'] } })
       .populate('proposal_id', 'scene_short headline')
       .lean();
 
-    // Top performers: ≥1 purchase, ordenados por ROAS
-    const topPerformers = activeTests
-      .filter(t => (t.metrics?.purchases || 0) >= 1)
-      .sort((a, b) => (b.metrics?.roas || 0) - (a.metrics?.roas || 0))
-      .slice(0, 5);
+    // Helper: calcular dias activos
+    const ageInDays = (t) => (Date.now() - new Date(t.launched_at).getTime()) / 86400000;
 
-    // Tests en peligro: funnel roto (spend pero 0 ATC)
+    // Umbrales de confianza por tamano de muestra
+    const VALIDATED_MIN_SPEND = 25;
+    const VALIDATED_MIN_PURCHASES = 3;
+    const VALIDATED_MIN_DAYS = 3;
+
+    // Clasificar tests con compras en 2 niveles
+    const testsWithPurchases = activeTests
+      .filter(t => (t.metrics?.purchases || 0) >= 1)
+      .sort((a, b) => (b.metrics?.roas || 0) - (a.metrics?.roas || 0));
+
+    const validatedWinners = testsWithPurchases.filter(t => {
+      const m = t.metrics || {};
+      return (m.spend || 0) >= VALIDATED_MIN_SPEND
+        && (m.purchases || 0) >= VALIDATED_MIN_PURCHASES
+        && ageInDays(t) >= VALIDATED_MIN_DAYS
+        && (m.roas || 0) >= 2.0;
+    });
+
+    const earlySignals = testsWithPurchases.filter(t => !validatedWinners.includes(t)).slice(0, 5);
+
+    // Tests en peligro: funnel roto
     const funnelBroken = activeTests.filter(t => {
       const m = t.metrics || {};
       return (m.spend || 0) >= 10 && (m.add_to_cart || 0) === 0 && (m.purchases || 0) === 0;
     });
 
-    // Tests cerca de graduarse (ROAS alto + purchases)
-    const almostGrads = activeTests.filter(t => {
-      const m = t.metrics || {};
-      return (m.roas || 0) >= 3.0 && (m.purchases || 0) >= 2;
-    });
-
-    // Patrones por escena
+    // Patrones por escena — solo si hay muestra decente
     const byScene = {};
     activeTests.forEach(t => {
       const scene = t.proposal_id?.scene_short || 'unknown';
@@ -574,8 +585,9 @@ async function runTestingAgent() {
       byScene[scene].spend += t.metrics?.spend || 0;
       byScene[scene].revenue += (t.metrics?.roas || 0) * (t.metrics?.spend || 0);
     });
+    // Solo patrones con 2+ tests Y $20+ spend combinado (muestra minima)
     const scenePatterns = Object.entries(byScene)
-      .filter(([_, d]) => d.count >= 2)
+      .filter(([_, d]) => d.count >= 2 && d.spend >= 20)
       .map(([scene, d]) => ({
         scene,
         count: d.count,
@@ -592,17 +604,29 @@ async function runTestingAgent() {
     if (expired > 0) msg += ` ${expired} expirados.`;
     msg += ` Pool: ${readyPool} ready.`;
 
-    if (topPerformers.length > 0) {
-      msg += '\n\nTOP PERFORMERS (con compras):';
-      topPerformers.forEach(t => {
+    // Contexto sobre BYB validado (ad sets 39/40) — recordatorio al Brain
+    msg += `\n\nRECORDATORIO: BYB (ad sets 39/40) sigue siendo el ganador VALIDADO en cuenta — any new signal should be compared against BYB baseline.`;
+
+    if (validatedWinners.length > 0) {
+      msg += `\n\nVALIDATED WINNERS (≥$${VALIDATED_MIN_SPEND} spend, ≥${VALIDATED_MIN_PURCHASES} compras, ≥${VALIDATED_MIN_DAYS}d):`;
+      validatedWinners.forEach(t => {
         const m = t.metrics || {};
         const name = (t.test_adset_name || '').replace('[TEST] ', '').substring(0, 40);
-        msg += `\n  - "${name}" ROAS ${(m.roas || 0).toFixed(2)}x, ${m.purchases || 0} compras, $${(m.spend || 0).toFixed(0)} spend`;
+        const age = ageInDays(t).toFixed(1);
+        msg += `\n  - "${name}" ROAS ${(m.roas || 0).toFixed(2)}x, ${m.purchases || 0} compras, $${(m.spend || 0).toFixed(0)} spend, ${age}d`;
       });
+    } else {
+      msg += `\n\nNO hay tests validados aun (necesitan ≥$${VALIDATED_MIN_SPEND} spend + ≥${VALIDATED_MIN_PURCHASES} compras + ≥${VALIDATED_MIN_DAYS}d).`;
     }
 
-    if (almostGrads.length > 0) {
-      msg += `\n\nCERCA DE GRADUAR: ${almostGrads.length} tests con ROAS >= 3x y 2+ compras.`;
+    if (earlySignals.length > 0) {
+      msg += `\n\nSENALES TEMPRANAS (muestra pequena — NO accionar todavia, necesitan mas data):`;
+      earlySignals.forEach(t => {
+        const m = t.metrics || {};
+        const name = (t.test_adset_name || '').replace('[TEST] ', '').substring(0, 40);
+        const age = ageInDays(t).toFixed(1);
+        msg += `\n  - "${name}" ROAS ${(m.roas || 0).toFixed(2)}x, ${m.purchases || 0} compras, $${(m.spend || 0).toFixed(0)} spend, ${age}d (sample size bajo)`;
+      });
     }
 
     if (funnelBroken.length > 0) {
@@ -610,13 +634,13 @@ async function runTestingAgent() {
     }
 
     if (scenePatterns.length > 0) {
-      const topScenes = scenePatterns.slice(0, 3);
-      const bottomScenes = scenePatterns.filter(s => s.spend >= 15 && s.purchases === 0).slice(0, 3);
-      if (topScenes.length > 0 && topScenes[0].avg_roas > 0) {
-        msg += '\n\nESCENAS GANADORAS: ' + topScenes.map(s => `${s.scene} (${s.avg_roas}x, ${s.purchases}pur)`).join(', ');
+      const topScene = scenePatterns[0];
+      if (topScene.avg_roas >= 3.0 && topScene.purchases >= 2) {
+        msg += `\n\nPATRON EMERGENTE (no validado aun): escena "${topScene.scene}" con ${topScene.count} tests, ${topScene.avg_roas}x avg ROAS, ${topScene.purchases} compras combinadas. Comparar contra BYB antes de replicar.`;
       }
-      if (bottomScenes.length > 0) {
-        msg += '\nESCENAS PERDEDORAS: ' + bottomScenes.map(s => `${s.scene} ($${s.spend} spend, 0 purchases)`).join(', ');
+      const losers = scenePatterns.filter(s => s.spend >= 20 && s.purchases === 0);
+      if (losers.length > 0) {
+        msg += `\n\nESCENAS PERDEDORAS: ` + losers.slice(0, 3).map(s => `${s.scene} ($${s.spend}, 0 purchases)`).join(', ');
       }
     }
 
@@ -626,13 +650,20 @@ async function runTestingAgent() {
       from: 'prometheus', to: 'zeus', type: 'report', message: msg, cycle_id: cycleId,
       context: {
         launched, monitored, graduated, killed, expired, pool: readyPool,
-        top_performers: topPerformers.map(t => ({
+        validated_winners: validatedWinners.map(t => ({
           name: t.test_adset_name,
           roas: t.metrics?.roas || 0,
           purchases: t.metrics?.purchases || 0,
-          spend: t.metrics?.spend || 0
+          spend: t.metrics?.spend || 0,
+          days: +ageInDays(t).toFixed(1)
         })),
-        almost_grads_count: almostGrads.length,
+        early_signals: earlySignals.map(t => ({
+          name: t.test_adset_name,
+          roas: t.metrics?.roas || 0,
+          purchases: t.metrics?.purchases || 0,
+          spend: t.metrics?.spend || 0,
+          days: +ageInDays(t).toFixed(1)
+        })),
         funnel_broken_count: funnelBroken.length,
         scene_patterns: scenePatterns.slice(0, 5)
       }
