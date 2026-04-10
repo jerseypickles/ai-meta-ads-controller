@@ -436,16 +436,68 @@ async function runCreativeAgent() {
   const adjustedStyles = AD_STYLES.map(s => ({ ...s, weight: Math.max(0.1, (s.weight || 1) + (zeusStyleBoosts[s.key] || 0)) }));
   const adjustedAngles = COPY_ANGLES.map(a => ({ ...a, weight: Math.max(0.1, (a.weight || 1) + (zeusAngleBoosts[a.key] || 0)) }));
 
-  // ── Smart scene ranking: approved scenes first, Zeus boosts, skip over-rejected ──
+  // ── Leer señales tempranas de tests ACTIVOS de Prometheus (learning/evaluating) ──
+  // Esto permite a Apollo reaccionar a patrones emergentes sin esperar graduaciones
+  const liveSceneSignals = {}; // scene_short → { purchases, spend, roas, count }
+  try {
+    const TestRun = require('../../db/models/TestRun');
+    const activeTests = await TestRun.find({ phase: { $in: ['learning', 'evaluating'] } })
+      .populate('proposal_id', 'scene_short').lean();
+
+    for (const t of activeTests) {
+      const scene = t.proposal_id?.scene_short;
+      if (!scene) continue;
+      if (!liveSceneSignals[scene]) liveSceneSignals[scene] = { purchases: 0, spend: 0, revenue: 0, count: 0, clicks: 0, atc: 0 };
+      const m = t.metrics || {};
+      liveSceneSignals[scene].count++;
+      liveSceneSignals[scene].purchases += m.purchases || 0;
+      liveSceneSignals[scene].spend += m.spend || 0;
+      liveSceneSignals[scene].revenue += (m.roas || 0) * (m.spend || 0);
+      liveSceneSignals[scene].clicks += m.clicks || 0;
+      liveSceneSignals[scene].atc += m.add_to_cart || 0;
+    }
+
+    // Loggear patrones detectados
+    const signals = Object.entries(liveSceneSignals).filter(([_, d]) => d.spend >= 5);
+    if (signals.length > 0) {
+      const summary = signals
+        .map(([s, d]) => `${s.substring(0, 25)}: ${d.purchases}pur/$${Math.round(d.spend)}`)
+        .slice(0, 5).join(', ');
+      logger.info(`[CREATIVE-AGENT] Live test signals: ${summary}`);
+    }
+  } catch (err) {
+    logger.warn(`[CREATIVE-AGENT] Error leyendo live test signals: ${err.message}`);
+  }
+
+  // Helper: calcula bonus/penalty por señal temprana (conservador — no sobrepesar muestras pequeñas)
+  // Nota: ATC puede estar en 0 por problemas de tracking Meta — usamos purchases como señal real
+  const liveSignalScore = (sceneShort) => {
+    const d = liveSceneSignals[sceneShort];
+    if (!d) return 0;
+    const avgRoas = d.spend > 0 ? d.revenue / d.spend : 0;
+    // Si tiene compras, aplicar solo bonus — no penalty (las compras son la verdad final)
+    if (d.purchases > 0) {
+      if (d.count >= 2 && d.purchases >= 2 && avgRoas >= 3.0) return Math.min(4, Math.floor(avgRoas / 3));
+      if (d.count >= 1 && d.purchases >= 1 && avgRoas >= 5.0 && d.spend >= 5) return 2;
+      return 0; // tiene compras pero muestra muy pequeña — neutral
+    }
+    // Sin compras + spend significativo → penalty por muestra suficiente
+    if (d.count >= 2 && d.spend >= 25) return -3;
+    if (d.count >= 1 && d.spend >= 20) return -2;
+    return 0;
+  };
+
+  // ── Smart scene ranking: approved scenes + live signals + Zeus boosts ──
   const rankedScenes = SCENES
     .map(s => {
       const short = s.substring(0, 40);
       const app = approvedScenes[short] || 0;
       const rej = rejectedScenes[short] || 0;
       const zeusBoost = zeusSceneBoosts[short] || 0;
-      if (rej >= 3 && app <= rej && zeusBoost >= 0) return null; // blacklisted (unless Zeus says prioritize)
-      const score = (app * 3) - (rej * 2) + (app === 0 && rej === 0 ? 1 : 0) + zeusBoost;
-      return { scene: s, short, score };
+      const liveBoost = liveSignalScore(short);
+      if (rej >= 3 && app <= rej && zeusBoost >= 0 && liveBoost <= 0) return null; // blacklisted
+      const score = (app * 3) - (rej * 2) + (app === 0 && rej === 0 ? 1 : 0) + zeusBoost + liveBoost;
+      return { scene: s, short, score, liveBoost };
     })
     .filter(Boolean)
     .sort((a, b) => b.score - a.score);
