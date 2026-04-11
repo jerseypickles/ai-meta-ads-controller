@@ -286,8 +286,62 @@ async function gatherAccountIntelligence() {
   const testMap = {};
   for (const t of testStats) testMap[t._id] = t.count;
 
-  // Pool de Apollo
+  // ═══ ANTICIPACION: tests cerca de graduarse / morir / etc ═══
+  const PROMETHEUS_MAX = 45;
+  const activeTests = await TestRun.find({ phase: { $in: ['learning', 'evaluating'] } })
+    .populate('proposal_id', 'scene_short headline')
+    .lean();
+
+  const ageInDays = (t) => (Date.now() - new Date(t.launched_at).getTime()) / 86400000;
+
+  // Tests CERCA DE GRADUAR EARLY: ROAS >= 3 + 2+ compras (aplica si age >= 3, pero los preparamos)
+  const closeToEarlyGrad = activeTests
+    .filter(t => (t.metrics?.roas || 0) >= 3.0 && (t.metrics?.purchases || 0) >= 2)
+    .map(t => ({
+      name: (t.test_adset_name || '').replace('[TEST] ', '').substring(0, 40),
+      test_id: String(t._id),
+      adset_id: t.test_adset_id,
+      roas: +(t.metrics.roas || 0).toFixed(2),
+      purchases: t.metrics.purchases || 0,
+      spend: +(t.metrics.spend || 0).toFixed(0),
+      age: +ageInDays(t).toFixed(1),
+      ready_now: ageInDays(t) >= 3,
+      hours_to_grad: ageInDays(t) >= 3 ? 0 : Math.round((3 - ageInDays(t)) * 24)
+    }));
+
+  // Tests CERCA DE 2DA COMPRA (1 compra + ROAS alto): si pegan otra van a graduar
+  const closeToFirstGrad = activeTests
+    .filter(t => (t.metrics?.purchases || 0) === 1 && (t.metrics?.roas || 0) >= 4.0)
+    .map(t => ({
+      name: (t.test_adset_name || '').replace('[TEST] ', '').substring(0, 40),
+      adset_id: t.test_adset_id,
+      roas: +(t.metrics.roas || 0).toFixed(2),
+      spend: +(t.metrics.spend || 0).toFixed(0),
+      age: +ageInDays(t).toFixed(1)
+    }));
+
+  // Tests EN RIESGO DE KILL: 0 compras + alto spend acercandose a $25
+  const closeToKill = activeTests
+    .filter(t => (t.metrics?.purchases || 0) === 0 && (t.metrics?.spend || 0) >= 18 && ageInDays(t) >= 2)
+    .map(t => ({
+      name: (t.test_adset_name || '').replace('[TEST] ', '').substring(0, 40),
+      spend: +(t.metrics.spend || 0).toFixed(0),
+      age: +ageInDays(t).toFixed(1)
+    }));
+
+  // SLOTS PROYECTADOS: cuantos van a estar libres en 24h
+  const projectedDeaths = closeToKill.length;
+  const projectedGrads = closeToEarlyGrad.filter(t => t.hours_to_grad <= 24).length;
+  const currentActive = activeTests.length;
+  const slotsNow = Math.max(0, PROMETHEUS_MAX - currentActive);
+  const slots24h = Math.min(PROMETHEUS_MAX, slotsNow + projectedDeaths + projectedGrads);
+
+  // Pool de Apollo + aging
   const readyCount = await CreativeProposal.countDocuments({ status: 'ready' });
+  const oldProposals = await CreativeProposal.countDocuments({
+    status: 'ready',
+    created_at: { $lt: new Date(Date.now() - 24 * 3600000) }
+  });
 
   // Budgets pendientes de redistribuir (ad sets pausados por Athena)
   const pendingRedistributions = await ActionLog.find({
@@ -333,8 +387,23 @@ async function gatherAccountIntelligence() {
       })),
       total_pending_budget: Math.round(totalPendingBudget)
     },
-    prometheus: { graduated: testMap.graduated || 0, killed: testMap.killed || 0, expired: testMap.expired || 0, active: (testMap.learning || 0) + (testMap.evaluating || 0) },
-    apollo: { ready_pool: readyCount }
+    prometheus: {
+      graduated: testMap.graduated || 0,
+      killed: testMap.killed || 0,
+      expired: testMap.expired || 0,
+      active: (testMap.learning || 0) + (testMap.evaluating || 0),
+      max_concurrent: PROMETHEUS_MAX,
+      slots_available_now: slotsNow,
+      slots_available_24h: slots24h,
+      // ANTICIPACION
+      close_to_early_grad: closeToEarlyGrad,
+      close_to_first_grad: closeToFirstGrad,
+      close_to_kill: closeToKill
+    },
+    apollo: {
+      ready_pool: readyCount,
+      old_proposals_24h: oldProposals
+    }
   };
 }
 
@@ -425,8 +494,31 @@ ${athenaSection}
 
 ### Estado de Agentes
 - Athena: ${accountData.athena.actions_7d} acciones (7d)
-- Prometheus: ${accountData.prometheus.graduated} graduados, ${accountData.prometheus.killed} killed, ${accountData.prometheus.active} activos
-- Apollo: ${accountData.apollo.ready_pool} creativos en pool
+- Prometheus: ${accountData.prometheus.graduated} graduados, ${accountData.prometheus.killed} killed, ${accountData.prometheus.active} activos / ${accountData.prometheus.max_concurrent} max
+  - Slots disponibles AHORA: ${accountData.prometheus.slots_available_now}
+  - Slots proyectados en 24h: ${accountData.prometheus.slots_available_24h}
+- Apollo: ${accountData.apollo.ready_pool} creativos en pool (${accountData.apollo.old_proposals_24h} con +24h aging)
+
+### ANTICIPACION — Tests cerca de GRADUARSE EARLY (ROAS >= 3x + 2+ compras)
+${(accountData.prometheus.close_to_early_grad || []).length > 0
+  ? accountData.prometheus.close_to_early_grad.map(t =>
+      `- "${t.name}" ROAS ${t.roas}x, ${t.purchases} compras, $${t.spend} spend, ${t.age}d ${t.ready_now ? '✓ READY NOW (force_graduate available)' : `⏳ ${t.hours_to_grad}h to natural early grad`}`
+    ).join('\n')
+  : 'Ninguno todavia'}
+
+### ANTICIPACION — Tests cerca de su 2da compra (1 compra + ROAS >= 4x)
+${(accountData.prometheus.close_to_first_grad || []).length > 0
+  ? accountData.prometheus.close_to_first_grad.map(t =>
+      `- "${t.name}" ROAS ${t.roas}x, $${t.spend} spend, ${t.age}d (proxima compra los gradua)`
+    ).join('\n')
+  : 'Ninguno'}
+
+### ANTICIPACION — Tests cerca de KILL (0 compras + spend >= $18, day 2+)
+${(accountData.prometheus.close_to_kill || []).length > 0
+  ? accountData.prometheus.close_to_kill.map(t =>
+      `- "${t.name}" $${t.spend} spend, ${t.age}d (kill at $25 spend)`
+    ).join('\n')
+  : 'Ninguno'}
 
 ### Tests totales finalizados: ${totalTests}
 ### Creativos uploaded con metricas: ${uploadedData.total}
@@ -493,9 +585,14 @@ Return ONLY valid JSON. Keep ALL strings SHORT (max 80 chars). Use English only.
 }
 
 Rules:
-- Max 5 directives. Only confidence > 0.4.
+- Max 6 directives. Only confidence > 0.4.
 - target_agent: athena, apollo, prometheus, or all
-- directive_type: prioritize, avoid, adjust, or alert
+- directive_type: prioritize, avoid, adjust, alert, or force_graduate
+- ANTICIPATE — you are a CEO not a reactor. Look at the ANTICIPACION sections in context:
+  * If a test shows ✓ READY NOW in close_to_early_grad, issue a force_graduate directive to Prometheus with data.test_id to graduate it IMMEDIATELY (frees a slot, gets winner into production faster). Format: target_agent="prometheus", directive_type="force_graduate", data={test_id: "...", reason: "..."}
+  * If close_to_early_grad has tests with hours_to_grad <= 12, mention them in thoughts so we know what's coming
+  * If close_to_kill is large (5+), Apollo may need to slow down generation OR pool needs cleaning
+  * If slots_available_24h is high (8+), tell Prometheus to prepare next wave from ready pool
 - CRITICAL SAFETY: NEVER recommend pausing/killing an ad set unless it has $200+ spend 7d AND ROAS < 1.0x across ALL windows (today, 3d, 7d). If today ROAS is improving, recommend HOLD not pause. Low data = hold, not kill.
 - NEVER make aggressive decisions based on 1-3 days of data alone. Always check 7d AND 14d trends.
 - If 3d ROAS is better than 7d, the ad set is IMPROVING — do not pause it.
@@ -559,7 +656,7 @@ Rules:
 
     const VALID_CATEGORIES = ['creative_pattern', 'test_signal', 'account_pattern', 'cross_agent', 'general'];
     const VALID_TARGETS = ['apollo', 'prometheus', 'athena', 'all'];
-    const VALID_TYPES = ['prioritize', 'avoid', 'adjust', 'alert', 'insight'];
+    const VALID_TYPES = ['prioritize', 'avoid', 'adjust', 'alert', 'insight', 'force_graduate'];
 
     for (const d of (result.directives || [])) {
       if (d.confidence < 0.4) continue;

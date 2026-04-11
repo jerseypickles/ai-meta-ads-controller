@@ -14,10 +14,10 @@ const { getAdsForAdSet } = require('../../db/queries');
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURACION
 // ═══════════════════════════════════════════════════════════════════════════════
-const MAX_CONCURRENT_TESTS = 30;
+const MAX_CONCURRENT_TESTS = 45;
 const TEST_DAILY_BUDGET = 10; // $10/dia
-const MAX_DAILY_TESTING_BUDGET = 300; // Cap diario total: $300 max en testing
-const MAX_LAUNCHES_PER_CYCLE = 5; // Max tests nuevos por ciclo (evitar avalancha)
+const MAX_DAILY_TESTING_BUDGET = 450; // Cap diario total: $450 max en testing
+const MAX_LAUNCHES_PER_CYCLE = 7; // Max tests nuevos por ciclo (evitar avalancha)
 const TEST_MAX_DAYS = 7;
 const KILL_MIN_SPEND = 25;     // Kill si $25+ spend y 0 compras
 const GRADUATED_BUDGET = 20;   // Budget al promover test ad set graduado ($20/dia)
@@ -541,10 +541,71 @@ async function checkReadyPool() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN: RUN TESTING AGENT
 // ═══════════════════════════════════════════════════════════════════════════════
+async function processForceGraduateDirectives() {
+  const ZeusDirective = require('../../db/models/ZeusDirective');
+  const directives = await ZeusDirective.find({
+    target_agent: { $in: ['prometheus', 'all'] },
+    directive_type: 'force_graduate',
+    active: true,
+    executed: false
+  }).lean();
+
+  if (directives.length === 0) return 0;
+
+  let forced = 0;
+  for (const d of directives) {
+    try {
+      const data = d.data || {};
+      // Buscar el test por test_id (preferido) o por adset_id
+      let test = null;
+      if (data.test_id) {
+        test = await TestRun.findById(data.test_id).lean();
+      } else if (data.adset_id || data.test_adset_id) {
+        test = await TestRun.findOne({
+          test_adset_id: data.adset_id || data.test_adset_id,
+          phase: { $in: ['learning', 'evaluating'] }
+        }).lean();
+      }
+
+      if (!test) {
+        logger.warn(`[TESTING-AGENT] force_graduate: test no encontrado para directiva ${d._id}`);
+        continue;
+      }
+
+      // Validacion minima: debe tener al menos 1 compra y ROAS >= 2x
+      const m = test.metrics || {};
+      if ((m.purchases || 0) < 1 || (m.roas || 0) < 2.0) {
+        logger.warn(`[TESTING-AGENT] force_graduate denegado: ${test.test_adset_name} no cumple minimos (${m.purchases || 0} compras, ${(m.roas || 0).toFixed(2)}x ROAS)`);
+        continue;
+      }
+
+      logger.info(`[TESTING-AGENT] FORCE GRADUATE [Zeus]: ${test.test_adset_name} con ${m.purchases} compras y ${m.roas.toFixed(2)}x ROAS`);
+      await graduateTest(test, m);
+      forced++;
+
+      // Marcar directiva como executed
+      await ZeusDirective.updateOne(
+        { _id: d._id },
+        { $set: { executed: true, executed_at: new Date(), execution_result: `force graduated ${test.test_adset_name}` } }
+      );
+    } catch (err) {
+      logger.error(`[TESTING-AGENT] Error en force_graduate ${d._id}: ${err.message}`);
+    }
+  }
+
+  if (forced > 0) {
+    logger.info(`[TESTING-AGENT] Force graduations: ${forced} tests promovidos por orden de Zeus`);
+  }
+  return forced;
+}
+
 async function runTestingAgent() {
   const startTime = Date.now();
   const cycleId = `testing_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   logger.info(`═══ Iniciando Testing Agent [${cycleId}] ═══`);
+
+  // Fase 0: Procesar force_graduate directives de Zeus (orden directa del CEO)
+  const forceGraduated = await processForceGraduateDirectives();
 
   // Fase 1: Lanzar tests nuevos
   const launched = await launchTests();
@@ -621,6 +682,7 @@ async function runTestingAgent() {
 
     // Construir mensaje
     let msg = `Ciclo completado: ${launched} lanzados, ${monitored} monitoreados.`;
+    if (forceGraduated > 0) msg += ` ${forceGraduated} FORCE-GRADUATED por orden de Zeus.`;
     if (graduated > 0) msg += ` ${graduated} GRADUADOS.`;
     if (killed > 0) msg += ` ${killed} killed.`;
     if (expired > 0) msg += ` ${expired} expirados.`;
