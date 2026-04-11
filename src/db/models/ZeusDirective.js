@@ -42,6 +42,12 @@ const zeusDirectiveSchema = new mongoose.Schema({
   // Estado
   active: { type: Boolean, default: true, index: true },
 
+  // Tracking de ejecucion (problema 1: Zeus debe saber que sus directivas ya fueron cumplidas)
+  executed: { type: Boolean, default: false, index: true },
+  executed_at: { type: Date, default: null },
+  executed_by_action_id: { type: mongoose.Schema.Types.ObjectId, ref: 'ActionLog', default: null },
+  execution_result: { type: String, default: null }, // ej: "scaled 41.98 → 48.28"
+
   // Timestamps
   created_at: { type: Date, default: Date.now, index: true },
   expires_at: { type: Date, default: null }, // null = no expira

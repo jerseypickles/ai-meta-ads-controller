@@ -448,12 +448,17 @@ Tienes 3 agentes:
 
 Tu rol: analizar el PANORAMA COMPLETO de la cuenta + los datos de cada agente, y generar directivas estrategicas. No solo mires tests — mira toda la cuenta.
 
-## YOUR PREVIOUS DIRECTIVES (what you said last cycle)
+## YOUR PREVIOUS DIRECTIVES (what you said last cycle + execution status)
 ${await (async () => {
-  const prevDirectives = await ZeusDirective.find({ active: false }).sort({ created_at: -1 }).limit(5).lean();
+  const prevDirectives = await ZeusDirective.find({}).sort({ created_at: -1 }).limit(8).lean();
   if (prevDirectives.length === 0) return 'No previous directives (first cycle or reset).';
-  return prevDirectives.map(d => `- [${d.directive_type.toUpperCase()}] ${d.target_agent}: ${d.directive}`).join('\n');
+  return prevDirectives.map(d => {
+    const status = d.executed ? `✓ EXECUTED (${d.execution_result || 'done'})` : (d.active ? '⏳ ACTIVE pending' : '✗ inactive/expired');
+    return `- [${d.directive_type.toUpperCase()}] ${d.target_agent}: ${d.directive} → ${status}`;
+  }).join('\n');
 })()}
+
+IMPORTANT: If a directive shows ✓ EXECUTED, do NOT repeat it. Move on to new opportunities. The execution_result tells you exactly what changed (e.g. "41.98 → 48.28" means budget went from $42 to $48). If a directive shows ⏳ ACTIVE pending, evaluate: should you insist (still relevant) or drop it (already obsolete)?
 
 ## AGENT REPORTS SINCE LAST CYCLE (what they did with your directives)
 ${await (async () => {

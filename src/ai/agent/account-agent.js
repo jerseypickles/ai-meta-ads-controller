@@ -53,6 +53,75 @@ async function _isOnAgentCooldown(entityId) {
   return { onCooldown: false };
 }
 
+/**
+ * Marca directivas activas de Zeus como ejecutadas cuando Athena cumple una accion.
+ * Matchea por entity_id en data + tipo de accion.
+ */
+async function _markZeusDirectivesExecuted(adsetId, actionType, actionLogId, resultText) {
+  try {
+    const ZeusDirective = require('../../db/models/ZeusDirective');
+    // Buscar directivas activas, no ejecutadas, dirigidas a Athena
+    const activeDirectives = await ZeusDirective.find({
+      target_agent: { $in: ['athena', 'all'] },
+      active: true,
+      executed: false
+    }).lean();
+
+    // Matchear: data.ad_set_id coincide con el numero del ad set en el nombre,
+    // O data.adset_id es exactamente el meta_id, O el nombre del ad set en el texto
+    const adsetIdStr = String(adsetId);
+    // Buscar el snapshot para obtener el nombre del ad set
+    const allSnaps = await getLatestSnapshots('adset');
+    const snap = allSnaps.find(s => s.entity_id === adsetIdStr);
+    const adsetName = (snap?.entity_name || '').toLowerCase();
+    // Numero del ad set (suele ser solo digitos, ej "40")
+    const adsetNumber = adsetName.match(/^\d+$/) ? adsetName : null;
+
+    const matchedIds = [];
+    for (const d of activeDirectives) {
+      const data = d.data || {};
+      const dirText = (d.directive || '').toLowerCase();
+
+      // Match por entity_id estructurado
+      const dataAdsetId = String(data.ad_set_id || data.adset_id || '');
+      const matchById = dataAdsetId && (dataAdsetId === adsetIdStr || (adsetNumber && dataAdsetId === adsetNumber));
+
+      // Match por accion en el data
+      const dataAction = (data.action || '').toLowerCase();
+      const matchByAction = dataAction === actionType ||
+        (actionType.startsWith('scale') && dataAction.startsWith('scale'));
+
+      // Match por nombre/numero en el texto de la directiva
+      const matchByText = adsetNumber && dirText.includes(`ad set ${adsetNumber}`) && (
+        (actionType.startsWith('scale') && dirText.includes('scale')) ||
+        (actionType === 'pause' && (dirText.includes('pause') || dirText.includes('kill'))) ||
+        (actionType === 'pause_adset' && (dirText.includes('pause') || dirText.includes('kill')))
+      );
+
+      if ((matchById && matchByAction) || matchByText) {
+        matchedIds.push(d._id);
+      }
+    }
+
+    if (matchedIds.length > 0) {
+      await ZeusDirective.updateMany(
+        { _id: { $in: matchedIds } },
+        {
+          $set: {
+            executed: true,
+            executed_at: new Date(),
+            executed_by_action_id: actionLogId,
+            execution_result: resultText
+          }
+        }
+      );
+      logger.info(`[ACCOUNT-AGENT] ${matchedIds.length} directiva(s) de Zeus marcada(s) como executed para ${adsetId}`);
+    }
+  } catch (err) {
+    logger.warn(`[ACCOUNT-AGENT] Error marcando directivas Zeus: ${err.message}`);
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SYSTEM PROMPT — personalidad y reglas del agente unificado
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -673,7 +742,7 @@ async function handleScaleBudget(input, ctx) {
     ctr: m7d.ctr || 0
   };
 
-  await ActionLog.create({
+  const actionLog = await ActionLog.create({
     entity_type: 'adset',
     entity_id: adset_id,
     entity_name: snap.entity_name || adset_id,
@@ -688,6 +757,9 @@ async function handleScaleBudget(input, ctx) {
     executed_at: new Date(),
     metrics_at_execution: metricsAtExecution
   });
+
+  // Marcar directivas matching de Zeus como executed
+  await _markZeusDirectivesExecuted(adset_id, isScaleUp ? 'scale_up' : 'scale_down', actionLog._id, `${prevBudget} → ${finalBudget}`);
 
   ctx.actionsExecuted++;
   if (ctx.actionTypes) ctx.actionTypes.push(isScaleUp ? 'scale_up' : 'scale_down');
@@ -766,7 +838,7 @@ async function handlePauseAd(input, ctx) {
   const adSnaps = await getAdsForAdSet(adset_id);
   const adSnap = adSnaps.find(a => a.entity_id === ad_id);
 
-  await ActionLog.create({
+  const pauseAdLog = await ActionLog.create({
     entity_type: 'ad',
     entity_id: ad_id,
     entity_name: adSnap?.entity_name || ad_id,
@@ -782,6 +854,9 @@ async function handlePauseAd(input, ctx) {
     metrics_at_execution: metricsAtExecution,
     parent_metrics_at_execution: metricsAtExecution
   });
+
+  // Marcar directivas matching de Zeus (pause aplica al parent adset)
+  await _markZeusDirectivesExecuted(adset_id, 'pause', pauseAdLog._id, `ad ${ad_id} paused`);
 
   ctx.actionsExecuted++;
   if (ctx.actionTypes) ctx.actionTypes.push('pause');
@@ -905,7 +980,7 @@ async function handlePauseAdSet(input, ctx) {
   }
 
   // Registrar en ActionLog con flag de redistribucion pendiente
-  await ActionLog.create({
+  const pauseAdsetLog = await ActionLog.create({
     entity_type: 'adset',
     entity_id: adset_id,
     entity_name: adSetName,
@@ -922,6 +997,9 @@ async function handlePauseAdSet(input, ctx) {
     redistributable_budget: prevBudget,
     redistribution_pending: true
   });
+
+  // Marcar directivas matching de Zeus como executed
+  await _markZeusDirectivesExecuted(adset_id, 'pause_adset', pauseAdsetLog._id, `paused, $${prevBudget} freed`);
 
   ctx.actionsExecuted++;
   if (ctx.actionTypes) ctx.actionTypes.push('pause_adset');
