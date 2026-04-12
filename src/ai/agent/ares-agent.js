@@ -149,15 +149,28 @@ async function duplicateWinner(candidate, aresCampaignId) {
   logger.info(`[ARES] Duplicando "${candidate.entity_name}" (ROAS ${candidate.roas_7d.toFixed(2)}x) → "${cloneName}"`);
 
   // Duplicar ad set con deep_copy a campana CBO
+  // Paso 1: Crear como PAUSED (Meta requiere esto para copies)
   const result = await meta.duplicateAdSet(candidate.entity_id, {
     campaign_id: aresCampaignId,
     deep_copy: true,
     name: cloneName,
-    status: 'ACTIVE'
+    status: 'PAUSED'
   });
 
   if (!result.success || !result.new_adset_id) {
     throw new Error(`Meta API no devolvio new_adset_id: ${JSON.stringify(result)}`);
+  }
+
+  // Paso 2: Activar el clon. En CBO, Meta maneja el budget a nivel de campana.
+  // Si el clon heredo daily_budget del original, necesitamos quitarlo.
+  try {
+    // Primero intentar quitar daily_budget (poner en 0 o null para CBO)
+    await meta.post(`/${result.new_adset_id}`, { daily_budget: 0 }).catch(() => {});
+    // Activar
+    await meta.post(`/${result.new_adset_id}`, { status: 'ACTIVE' });
+    logger.info(`[ARES] Clon ${result.new_adset_id} activado exitosamente`);
+  } catch (activateErr) {
+    logger.warn(`[ARES] Clon creado (${result.new_adset_id}) pero error activando: ${activateErr.message}`);
   }
 
   // Registrar en ActionLog
