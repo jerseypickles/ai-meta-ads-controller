@@ -445,7 +445,8 @@ export default function BrainIntelligence() {
             agentStats={{
               athena: { adsets: agentData?.global?.total_adsets || 0, actions: agentData?.global?.total_actions || 0, active: (agentData?.global?.total_adsets || 0) > 0 },
               apollo: { ready: sharedReadyProposals.length, generated: sharedProposals.length, active: sharedReadyProposals.length > 0 },
-              prometheus: { tests: sharedActiveTests.length, graduated: sharedTestStats.graduated || 0, active: sharedActiveTests.length > 0 }
+              prometheus: { tests: sharedActiveTests.length, graduated: sharedTestStats.graduated || 0, active: sharedActiveTests.length > 0 },
+              ares: { duplicates: aresData?.active_duplicates || 0, roas: aresData?.avg_roas || 0, active: (aresData?.active_duplicates || 0) > 0 }
             }}
           />
         ) : activeTab === 'overview' ? (

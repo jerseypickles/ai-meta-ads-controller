@@ -11,11 +11,13 @@ const ZEUS_ACTIVE = new THREE.Color('#f97316');
 const ATHENA_COLOR = new THREE.Color('#3b82f6');
 const APOLLO_COLOR = new THREE.Color('#f59e0b');
 const PROMETHEUS_COLOR = new THREE.Color('#f97316');
+const ARES_COLOR = new THREE.Color('#ef4444');
 
 const AGENT_CONFIG = [
   { key: 'athena', name: 'Athena', color: ATHENA_COLOR, angle: 0, radius: 2.2, speed: 0.15 },
-  { key: 'apollo', name: 'Apollo', color: APOLLO_COLOR, angle: (Math.PI * 2) / 3, radius: 2.0, speed: 0.12 },
-  { key: 'prometheus', name: 'Prometheus', color: PROMETHEUS_COLOR, angle: (Math.PI * 4) / 3, radius: 2.4, speed: 0.18 }
+  { key: 'apollo', name: 'Apollo', color: APOLLO_COLOR, angle: Math.PI / 2, radius: 2.0, speed: 0.12 },
+  { key: 'prometheus', name: 'Prometheus', color: PROMETHEUS_COLOR, angle: Math.PI, radius: 2.4, speed: 0.18 },
+  { key: 'ares', name: 'Ares', color: ARES_COLOR, angle: (Math.PI * 3) / 2, radius: 2.1, speed: 0.14 }
 ];
 
 // ═══════════════════════════════════════════════════════════════════
@@ -205,7 +207,7 @@ function Synapses({ agentStats, directiveCount }) {
 // ═══════════════════════════════════════════════════════════════════
 function DataFlow({ learningActive }) {
   const pointsRef = useRef();
-  const PARTICLE_COUNT = 60;
+  const PARTICLE_COUNT = 80;
 
   const { positions, colors, phases } = useMemo(() => {
     const pos = new Float32Array(PARTICLE_COUNT * 3);
@@ -213,7 +215,7 @@ function DataFlow({ learningActive }) {
     const ph = new Float32Array(PARTICLE_COUNT);
 
     for (let i = 0; i < PARTICLE_COUNT; i++) {
-      const agentIdx = i % 3;
+      const agentIdx = i % AGENT_CONFIG.length;
       const agent = AGENT_CONFIG[agentIdx];
       ph[i] = Math.random(); // fase de viaje [0-1]
       // Color del agente
@@ -231,7 +233,7 @@ function DataFlow({ learningActive }) {
     const speed = learningActive ? 0.4 : 0.15;
 
     for (let i = 0; i < PARTICLE_COUNT; i++) {
-      const agentIdx = i % 3;
+      const agentIdx = i % AGENT_CONFIG.length;
       const agent = AGENT_CONFIG[agentIdx];
       const angle = agent.angle + t * agent.speed;
       const r = agent.radius;
@@ -375,6 +377,7 @@ export default function ZeusOrb({
         <pointLight position={[-4, -2, 3]} intensity={0.3} color="#3b82f6" />
         <pointLight position={[0, -3, 2]} intensity={0.2} color="#f97316" />
         <pointLight position={[2, 4, -2]} intensity={0.15} color="#8b5cf6" />
+        <pointLight position={[-2, 2, -3]} intensity={0.15} color="#ef4444" />
 
         <ZeusCore learningActive={learningActive} intelligence={intelligence} />
         <AgentNodes agentStats={agentStats} />
@@ -393,6 +396,7 @@ export default function ZeusOrb({
         <span style={{ color: '#60a5fa' }}>● Athena</span>
         <span style={{ color: '#fbbf24' }}>● Apollo</span>
         <span style={{ color: '#fb923c' }}>● Prometheus</span>
+        <span style={{ color: '#ef4444' }}>● Ares</span>
       </div>
     </div>
   );
