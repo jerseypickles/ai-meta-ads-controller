@@ -12,6 +12,14 @@ const SystemConfig = require('../../db/models/SystemConfig');
 
 const claude = new Anthropic({ apiKey: config.claude.apiKey });
 
+// Sanitizar strings para evitar surrogates rotos en JSON (emojis cortados por substring)
+function sanitizeForJson(str) {
+  if (typeof str !== 'string') return str;
+  // Eliminar lone surrogates (high sin low o low sin high)
+  return str.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+            .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // FASE 1: APRENDER PATRONES CREATIVOS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -732,7 +740,7 @@ ${await (async () => {
   const ZeusConversation = require('../../db/models/ZeusConversation');
   const reports = await ZeusConversation.find({ type: 'report' }).sort({ created_at: -1 }).limit(6).lean();
   if (reports.length === 0) return 'No agent reports yet.';
-  return reports.map(r => `- ${r.from}: ${r.message.substring(0, 120)}`).join('\n');
+  return reports.map(r => `- ${r.from}: ${sanitizeForJson(r.message.substring(0, 120))}`).join('\n');
 })()}
 
 Based on your previous directives AND agent reports, generate UPDATED directives. If an agent already executed what you asked, move on. If they didnt, insist or adjust.
@@ -785,7 +793,7 @@ Rules:
 - For Apollo data field, include: scenes (first 40 chars), styles (ugly-ad/pov-selfie/overhead-flat/close-up-texture/action-shot), angles (casual-fun/curiosity/social-proof/urgency/humor/controversy/sensory)
 - Max 5 thoughts. First person. Specific with real numbers.
 - ALL strings must be short. No line breaks inside strings. No double quotes inside strings.`
-      }]
+      }].map(m => ({ ...m, content: sanitizeForJson(m.content) }))
     });
 
     const text = response.content[0].text;
