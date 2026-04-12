@@ -14,7 +14,8 @@ import {
   getProducts, createProduct, deleteProduct, addProductImages, getProductImageUrl, runCreativeAgentApi,
   getCreativeProposals, approveCreativeProposal, rejectCreativeProposal, getProposalImageUrl, sendProposalFeedback, getApolloIntelligence, updateProduct, deleteProductImage,
   getTestRuns, killTestRun, runTestingAgentApi, getTestImageUrl,
-  getZeusIntelligence, runZeusApi, getZeusThoughts, getZeusConversations
+  getZeusIntelligence, runZeusApi, getZeusThoughts, getZeusConversations,
+  getAresIntelligence, runAresApi
 } from '../api';
 
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
@@ -89,6 +90,11 @@ export default function BrainIntelligence() {
   const [zeusData, setZeusData] = useState(null);
   const [zeusLoading, setZeusLoading] = useState(false);
   const [zeusRunning, setZeusRunning] = useState(false);
+
+  // Ares state
+  const [aresData, setAresData] = useState(null);
+  const [aresLoading, setAresLoading] = useState(false);
+  const [aresRunning, setAresRunning] = useState(false);
 
   // ═══ CARGA INICIAL ═══
 
@@ -195,13 +201,23 @@ export default function BrainIntelligence() {
     finally { setZeusLoading(false); }
   }, []);
 
+  const loadAresData = useCallback(async () => {
+    setAresLoading(true);
+    try {
+      const data = await getAresIntelligence();
+      setAresData(data);
+    } catch (err) { console.error('Error loading Ares data:', err); }
+    finally { setAresLoading(false); }
+  }, []);
+
   useEffect(() => {
     loadAgentData();
     loadInsights();
     loadStats();
     loadCreativeData();
     loadZeusData();
-  }, [loadAgentData, loadInsights, loadStats, loadCreativeData, loadZeusData]);
+    loadAresData();
+  }, [loadAgentData, loadInsights, loadStats, loadCreativeData, loadZeusData, loadAresData]);
 
 
   // Load recs on mount so chat picker has data even before visiting recs tab
@@ -400,6 +416,10 @@ export default function BrainIntelligence() {
           Prometheus
           {sharedActiveTests.length > 0 && <span className="tab-badge" style={{ background: 'var(--prometheus-color)' }}>{sharedActiveTests.length}</span>}
         </button>
+        <button className={`brain-tab ${activeTab === 'ares' ? 'active' : ''}`} data-agent="ares" onClick={() => setActiveTab('ares')}>
+          Ares
+          {(aresData?.active_duplicates || 0) > 0 && <span className="tab-badge" style={{ background: '#ef4444' }}>{aresData.active_duplicates}</span>}
+        </button>
       </div>
 
       {/* Lightbox global */}
@@ -435,6 +455,7 @@ export default function BrainIntelligence() {
             readyCount={sharedReadyProposals.length}
             activeTestCount={sharedActiveTests.length}
             onNavigate={setActiveTab}
+            aresData={aresData}
           />
         ) : activeTab === 'athena' ? (
           <>
@@ -469,6 +490,18 @@ export default function BrainIntelligence() {
             loading={sharedCreativeLoading}
             onRefresh={loadCreativeData}
             setLightboxImg={setLightboxImg}
+          />
+        ) : activeTab === 'ares' ? (
+          <AresPanel
+            data={aresData}
+            loading={aresLoading}
+            running={aresRunning}
+            onRun={async () => {
+              setAresRunning(true);
+              try { await runAresApi(); await loadAresData(); } catch (err) { console.error(err); }
+              finally { setAresRunning(false); }
+            }}
+            onRefresh={loadAresData}
           />
         ) : null}
       </div>
@@ -912,7 +945,133 @@ function ZeusPanel({ data, loading, running, onRun, agentStats }) {
 // OVERVIEW PANEL — Vista panoramica de los 3 agentes
 // ═══════════════════════════════════════════════════════════════════
 
-function OverviewPanel({ agentData, testStats, readyCount, activeTestCount, onNavigate }) {
+// ═══════════════════════════════════════════════════════════════════
+// ARES PANEL — Duplicador: CBO Campaign + Clones + Candidatos
+// ═══════════════════════════════════════════════════════════════════
+
+function AresPanel({ data, loading, running, onRun, onRefresh }) {
+  if (loading && !data) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Cargando Ares...</div>;
+  if (!data) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Sin datos de Ares — esperando primer ciclo</div>;
+
+  return (
+    <div className="agent-panel">
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: '1.5rem' }}>⚔️</span>
+          <div>
+            <div style={{ fontSize: '1.15rem', fontWeight: 600 }}>Ares — Duplicador</div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Duplica ganadores a campana CBO separada</div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="brain-action-btn" onClick={onRefresh} disabled={loading} style={{ fontSize: '0.75rem' }}>
+            {loading ? 'Cargando...' : 'Refrescar'}
+          </button>
+          <button className="brain-action-btn primary" onClick={onRun} disabled={running} style={{ fontSize: '0.75rem' }}>
+            {running ? 'Ejecutando...' : 'Ejecutar Ares'}
+          </button>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10, marginBottom: 20 }}>
+        {[
+          { value: data.active_duplicates || 0, label: 'Duplicados Activos' },
+          { value: data.total_duplicated || 0, label: 'Total Duplicados' },
+          { value: `${data.avg_roas || 0}x`, label: 'ROAS Promedio CBO' },
+          { value: `$${data.cbo_budget || 150}`, label: 'Budget CBO/dia' },
+          { value: `$${data.total_spend_7d || 0}`, label: 'Spend 7d CBO' },
+          { value: data.candidates?.length || 0, label: 'Candidatos' }
+        ].map((s, i) => (
+          <div key={i} style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '12px 14px', textAlign: 'center' }}>
+            <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-primary)' }}>{s.value}</div>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Duplicados Activos en CBO */}
+      {(data.adsets || []).length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <h4 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 10 }}>Duplicados Activos en CBO</h4>
+          <div style={{ display: 'grid', gap: 8 }}>
+            {data.adsets.map((a, i) => (
+              <div key={i} style={{
+                background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '12px 16px',
+                border: `1px solid ${a.roas_7d >= 4 ? '#10b98130' : a.roas_7d >= 2 ? '#f59e0b30' : '#ef444430'}`
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-primary)' }}>{a.adset_name}</div>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: a.roas_7d >= 4 ? '#10b981' : a.roas_7d >= 2 ? '#f59e0b' : '#ef4444' }}>
+                    {a.roas_7d}x ROAS
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: 16, fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 6 }}>
+                  <span>3d: {a.roas_3d}x</span>
+                  <span>${a.spend_7d} spend</span>
+                  <span>{a.purchases_7d} compras</span>
+                  <span>freq {a.frequency}</span>
+                  <span>CTR {a.ctr}%</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Candidatos para Duplicar */}
+      {(data.candidates || []).length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <h4 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 10 }}>Candidatos para Duplicar (ROAS &ge; 4x, 7d+, freq &lt; 2.0)</h4>
+          <div style={{ display: 'grid', gap: 6 }}>
+            {data.candidates.map((c, i) => (
+              <div key={i} style={{
+                background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '10px 14px',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+              }}>
+                <div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-primary)' }}>{c.entity_name}</div>
+                  <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>${c.spend_7d} spend | {c.purchases_7d} compras | freq {c.frequency}</div>
+                </div>
+                <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#10b981' }}>{c.roas_7d}x</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Historial de Duplicaciones */}
+      {(data.recent_duplications || []).length > 0 && (
+        <div>
+          <h4 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 10 }}>Historial de Duplicaciones</h4>
+          <div style={{ display: 'grid', gap: 6 }}>
+            {data.recent_duplications.map((d, i) => (
+              <div key={i} style={{
+                background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '10px 14px',
+                fontSize: '0.75rem'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{d.original_name} → {d.clone_name}</span>
+                  <span style={{ color: 'var(--text-muted)' }}>{new Date(d.executed_at).toLocaleDateString('es', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                </div>
+                <div style={{ color: 'var(--text-muted)' }}>ROAS al duplicar: {(d.roas_at_dup || 0).toFixed(2)}x</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {(data.adsets || []).length === 0 && (data.candidates || []).length === 0 && (
+        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+          Ares esta esperando ganadores. Necesita ad sets con ROAS &ge; 4x (7d), $100+ spend, freq &lt; 2.0, 7+ dias.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OverviewPanel({ agentData, testStats, readyCount, activeTestCount, onNavigate, aresData }) {
   const agents = [
     {
       key: 'athena', name: 'Athena', role: 'Estratega', icon: '🦉',
@@ -940,6 +1099,15 @@ function OverviewPanel({ agentData, testStats, readyCount, activeTestCount, onNa
       ],
       last: activeTestCount > 0 ? `${activeTestCount} tests activos — $${testStats?.daily_budget_exposure || 0}/dia` : 'Sin tests activos',
       status: activeTestCount > 0 ? 'active' : 'idle'
+    },
+    {
+      key: 'ares', name: 'Ares', role: 'Duplicador', icon: '⚔️',
+      metrics: [
+        { value: aresData?.active_duplicates || 0, label: 'Duplicados' },
+        { value: `${aresData?.avg_roas || 0}x`, label: 'ROAS CBO' }
+      ],
+      last: (aresData?.active_duplicates || 0) > 0 ? `${aresData.active_duplicates} clones activos — CBO $${aresData?.cbo_budget || 150}/dia` : 'Sin duplicados activos',
+      status: (aresData?.active_duplicates || 0) > 0 ? 'active' : 'idle'
     }
   ];
 

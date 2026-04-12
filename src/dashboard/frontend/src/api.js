@@ -414,6 +414,20 @@ export const getTestingStats = async () => {
   return response.data;
 };
 
+// ═══ ARES AGENT ═══
+
+export const runAresApi = async () => {
+  const response = await api.post('/api/ares/run', {}, { timeout: 30000 });
+  const data = response.data;
+  if (data.async && data.job_id) return pollForCompletion(`/api/ares/run-status/${data.job_id}`, 3000, 120000);
+  return data;
+};
+
+export const getAresIntelligence = async () => {
+  const response = await api.get('/api/ares/intelligence');
+  return response.data;
+};
+
 export const getTestImageUrl = (testId) => {
   const BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
   const token = localStorage.getItem('auth_token');
