@@ -176,6 +176,16 @@ async function duplicateWinner(candidate, aresCampaignId) {
       const creativeId = adData.creative?.id;
       if (!creativeId) continue;
 
+      // Verificar si el creative tiene crop key deprecated (191x100)
+      try {
+        const creativeDetail = await meta.get(`/${creativeId}`, { fields: 'object_story_spec' });
+        const hasOldCrop = JSON.stringify(creativeDetail).includes('191x100');
+        if (hasOldCrop) {
+          logger.warn(`[ARES] Ad "${ad.entity_name}" tiene crop 191x100 deprecated — saltando`);
+          continue;
+        }
+      } catch (_) {} // Si no puede verificar, intentar de todas formas
+
       await meta.createAd(result.new_adset_id, creativeId, `[Ares] ${ad.entity_name || 'Ad'} Clone`, 'ACTIVE');
       logger.info(`[ARES] Ad creado en clon con creative ${creativeId} de "${ad.entity_name}" (ROAS ${(ad.metrics?.last_7d?.roas || 0).toFixed(2)}x)`);
       adCopied = true;
