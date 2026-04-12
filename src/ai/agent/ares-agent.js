@@ -163,22 +163,29 @@ async function duplicateWinner(candidate, aresCampaignId) {
   }
 
   // Paso 2: Encontrar el mejor ad del original y copiar su creative al clon
+  // Intenta con el mejor ad primero; si falla (ej: crop key deprecated), prueba con el siguiente
   const { getAdsForAdSet } = require('../../db/queries');
   const originalAds = await getAdsForAdSet(candidate.entity_id);
-  const activeAds = originalAds.filter(a => a.status === 'ACTIVE');
-  const bestAd = activeAds.sort((a, b) => (b.metrics?.last_7d?.roas || 0) - (a.metrics?.last_7d?.roas || 0))[0];
+  const activeAds = originalAds.filter(a => a.status === 'ACTIVE')
+    .sort((a, b) => (b.metrics?.last_7d?.roas || 0) - (a.metrics?.last_7d?.roas || 0));
 
-  if (bestAd) {
+  let adCopied = false;
+  for (const ad of activeAds) {
     try {
-      const adData = await meta.get(`/${bestAd.entity_id}`, { fields: 'creative{id}' });
+      const adData = await meta.get(`/${ad.entity_id}`, { fields: 'creative{id}' });
       const creativeId = adData.creative?.id;
-      if (creativeId) {
-        await meta.createAd(result.new_adset_id, creativeId, `[Ares] ${bestAd.entity_name || 'Best Ad'} Clone`, 'ACTIVE');
-        logger.info(`[ARES] Ad creado en clon con creative ${creativeId} del mejor ad (ROAS ${(bestAd.metrics?.last_7d?.roas || 0).toFixed(2)}x)`);
-      }
+      if (!creativeId) continue;
+
+      await meta.createAd(result.new_adset_id, creativeId, `[Ares] ${ad.entity_name || 'Ad'} Clone`, 'ACTIVE');
+      logger.info(`[ARES] Ad creado en clon con creative ${creativeId} de "${ad.entity_name}" (ROAS ${(ad.metrics?.last_7d?.roas || 0).toFixed(2)}x)`);
+      adCopied = true;
+      break;
     } catch (adErr) {
-      logger.warn(`[ARES] Error copiando ad al clon: ${adErr.message}. Clon creado pero sin ads.`);
+      logger.warn(`[ARES] Ad "${ad.entity_name}" creative incompatible: ${adErr.message}. Probando siguiente...`);
     }
+  }
+  if (!adCopied) {
+    logger.warn(`[ARES] Ningun ad compatible encontrado para clon de ${candidate.entity_name}. Clon creado sin ads.`);
   }
 
   // Paso 3: Activar el clon
