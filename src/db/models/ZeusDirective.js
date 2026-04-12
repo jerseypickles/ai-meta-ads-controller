@@ -16,7 +16,7 @@ const zeusDirectiveSchema = new mongoose.Schema({
   // Tipo de directiva
   directive_type: {
     type: String,
-    enum: ['prioritize', 'avoid', 'adjust', 'alert', 'insight', 'force_graduate'],
+    enum: ['prioritize', 'avoid', 'adjust', 'alert', 'insight', 'force_graduate', 'force_duplicate', 'pause_clone'],
     required: true
   },
 

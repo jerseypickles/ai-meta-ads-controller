@@ -2,6 +2,7 @@ const logger = require('../../utils/logger');
 const ActionLog = require('../../db/models/ActionLog');
 const SystemConfig = require('../../db/models/SystemConfig');
 const MetricSnapshot = require('../../db/models/MetricSnapshot');
+const ZeusDirective = require('../../db/models/ZeusDirective');
 const { getLatestSnapshots } = require('../../db/queries');
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -254,6 +255,105 @@ async function duplicateWinner(candidate, aresCampaignId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// FASE 0: PROCESAR DIRECTIVAS DE ZEUS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function processZeusDirectives(aresCampaignId) {
+  const directives = await ZeusDirective.find({
+    target_agent: 'ares',
+    active: true,
+    executed: false
+  }).sort({ confidence: -1 }).lean();
+
+  if (directives.length === 0) return { processed: 0, results: [] };
+
+  const { getMetaClient } = require('../../meta/client');
+  const meta = getMetaClient();
+  const results = [];
+
+  for (const d of directives) {
+    try {
+      const data = d.data || {};
+
+      if (d.directive_type === 'force_duplicate') {
+        // Zeus ordena duplicar un ad set especifico
+        if (!data.adset_id) { logger.warn(`[ARES] force_duplicate sin adset_id — skip`); continue; }
+
+        const snap = await MetricSnapshot.findOne({ entity_type: 'adset', entity_id: data.adset_id, status: 'ACTIVE' }).sort({ created_at: -1 }).lean();
+        if (!snap) {
+          logger.warn(`[ARES] force_duplicate: ad set ${data.adset_id} no encontrado o inactivo`);
+          await ZeusDirective.updateOne({ _id: d._id }, { executed: true, executed_at: new Date(), execution_result: 'ad set not found or inactive' });
+          continue;
+        }
+
+        // Contar duplicaciones previas
+        const prevDups = await ActionLog.countDocuments({ action: 'duplicate_adset', agent_type: 'ares_agent', entity_id: data.adset_id, success: true });
+        const candidate = {
+          entity_id: snap.entity_id,
+          entity_name: snap.entity_name || snap.entity_id,
+          roas_7d: snap.metrics?.last_7d?.roas || 0,
+          spend_7d: snap.metrics?.last_7d?.spend || 0,
+          frequency: snap.metrics?.last_7d?.frequency || 0,
+          daily_budget: snap.daily_budget || 0,
+          purchases_7d: snap.metrics?.last_7d?.purchases || 0,
+          cpa_7d: snap.metrics?.last_7d?.spend > 0 && snap.metrics?.last_7d?.purchases > 0 ? Math.round(snap.metrics.last_7d.spend / snap.metrics.last_7d.purchases * 100) / 100 : 0,
+          clone_number: prevDups + 1
+        };
+
+        const result = await duplicateWinner(candidate, aresCampaignId);
+        logger.info(`[ARES] Zeus force_duplicate ejecutado: "${result.clone_name}"`);
+        await ZeusDirective.updateOne({ _id: d._id }, { executed: true, executed_at: new Date(), execution_result: `duplicated → ${result.clone_name}` });
+        results.push({ type: 'force_duplicate', ...result });
+
+      } else if (d.directive_type === 'pause_clone' || (d.directive_type === 'adjust' && data.action === 'pause')) {
+        // Zeus ordena pausar un clon
+        if (!data.adset_id) { logger.warn(`[ARES] pause_clone sin adset_id — skip`); continue; }
+
+        await meta.post(`/${data.adset_id}`, { status: 'PAUSED' });
+        logger.info(`[ARES] Zeus pause_clone ejecutado: ${data.adset_id} — ${data.reason || 'underperforming'}`);
+
+        await ActionLog.create({
+          entity_type: 'adset', entity_id: data.adset_id,
+          action: 'pause_adset', reasoning: `Zeus directive: ${data.reason || d.directive}`,
+          confidence: 'high', agent_type: 'ares_agent', success: true, executed_at: new Date()
+        });
+        await ZeusDirective.updateOne({ _id: d._id }, { executed: true, executed_at: new Date(), execution_result: 'clone paused' });
+        results.push({ type: 'pause_clone', adset_id: data.adset_id, success: true });
+
+      } else if (d.directive_type === 'adjust' && data.new_budget) {
+        // Zeus ordena cambiar budget de un clon
+        if (!data.adset_id) { logger.warn(`[ARES] adjust budget sin adset_id — skip`); continue; }
+
+        await meta.updateBudget(data.adset_id, data.new_budget);
+        logger.info(`[ARES] Zeus adjust budget ejecutado: ${data.adset_id} → $${data.new_budget}/dia`);
+
+        await ActionLog.create({
+          entity_type: 'adset', entity_id: data.adset_id,
+          action: 'scale_budget', before_value: null, after_value: data.new_budget,
+          reasoning: `Zeus directive: ${data.reason || d.directive}`,
+          confidence: 'high', agent_type: 'ares_agent', success: true, executed_at: new Date()
+        });
+        await ZeusDirective.updateOne({ _id: d._id }, { executed: true, executed_at: new Date(), execution_result: `budget → $${data.new_budget}/dia` });
+        results.push({ type: 'adjust_budget', adset_id: data.adset_id, new_budget: data.new_budget, success: true });
+
+      } else {
+        // prioritize, alert, avoid — directivas informacionales, solo marcar como recibidas
+        logger.info(`[ARES] Zeus ${d.directive_type}: "${d.directive}" — acknowledged`);
+        await ZeusDirective.updateOne({ _id: d._id }, { executed: true, executed_at: new Date(), execution_result: 'acknowledged' });
+        results.push({ type: d.directive_type, directive: d.directive, acknowledged: true });
+      }
+
+    } catch (err) {
+      logger.error(`[ARES] Error procesando directiva ${d._id}: ${err.message}`);
+      await ZeusDirective.updateOne({ _id: d._id }, { executed: true, executed_at: new Date(), execution_result: `error: ${err.message}` });
+      results.push({ type: d.directive_type, error: err.message });
+    }
+  }
+
+  return { processed: results.length, results };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MAIN: RUN ARES AGENT
 // ═══════════════════════════════════════════════════════════════════════════════
 async function runAresAgent() {
@@ -270,7 +370,18 @@ async function runAresAgent() {
     return { duplicated: 0, candidates: 0, elapsed: '0s', cycle_id: cycleId, error: err.message };
   }
 
-  // Fase 2: Encontrar candidatos
+  // Fase 0: Procesar directivas de Zeus (force_duplicate, pause_clone, adjust)
+  let zeusResults = { processed: 0, results: [] };
+  try {
+    zeusResults = await processZeusDirectives(aresCampaignId);
+    if (zeusResults.processed > 0) {
+      logger.info(`[ARES] ${zeusResults.processed} directivas de Zeus procesadas`);
+    }
+  } catch (err) {
+    logger.error(`[ARES] Error procesando directivas de Zeus: ${err.message}`);
+  }
+
+  // Fase 1: Encontrar candidatos (duplicacion autonoma)
   const candidates = await findDuplicationCandidates();
   logger.info(`[ARES] ${candidates.length} candidatos encontrados para duplicacion`);
 
@@ -317,6 +428,18 @@ async function runAresAgent() {
     const ZeusConversation = require('../../db/models/ZeusConversation');
     let msg = `Ciclo completado: ${duplicated} ad sets duplicados a campana Ares de ${candidates.length} candidatos.`;
 
+    // Reportar directivas de Zeus procesadas
+    if (zeusResults.processed > 0) {
+      msg += `\n\nDIRECTIVAS DE ZEUS PROCESADAS (${zeusResults.processed}):`;
+      zeusResults.results.forEach(r => {
+        if (r.type === 'force_duplicate' && r.success) msg += `\n  - FORCE_DUPLICATE: "${r.original}" → "${r.clone_name}"`;
+        else if (r.type === 'pause_clone') msg += `\n  - PAUSE_CLONE: ${r.adset_id} pausado`;
+        else if (r.type === 'adjust_budget') msg += `\n  - ADJUST: ${r.adset_id} → $${r.new_budget}/dia`;
+        else if (r.acknowledged) msg += `\n  - ${r.type.toUpperCase()}: "${r.directive}" — acknowledged`;
+        else if (r.error) msg += `\n  - ${r.type.toUpperCase()}: ERROR — ${r.error}`;
+      });
+    }
+
     if (duplicated > 0) {
       msg += '\n\nDUPLICADOS:';
       results.filter(r => r.success).forEach(r => {
@@ -359,6 +482,7 @@ async function runAresAgent() {
     duplicated,
     candidates: candidates.length,
     results,
+    zeus_directives: zeusResults,
     elapsed,
     cycle_id: cycleId
   };
