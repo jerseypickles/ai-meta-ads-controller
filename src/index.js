@@ -912,8 +912,8 @@ function initCronJobs() {
   });
   logger.info('  [*] Testing Agent — 5x/día: 6:30am, 10:30am, 2:30pm, 6:30pm, 10:30pm ET');
 
-  // Zeus Learner — 2x/día (5am, 5pm ET)
-  cron.schedule('0 5,17 * * *', jobZeusLearner, {
+  // Zeus Learner — 4x/dia (5am, 11am, 5pm, 11pm ET)
+  cron.schedule('0 5,11,17,23 * * *', jobZeusLearner, {
     timezone: TIMEZONE,
     name: 'zeus-learner'
   });

@@ -19,7 +19,8 @@ const brainInsightSchema = new mongoose.Schema({
       'summary',           // Resumen periódico del estado general
       'follow_up',         // Seguimiento de un insight anterior
       'brain_thinking',    // Razonamiento del Brain — por qué decidió NO actuar
-      'brain_activity'     // Actividad del Brain — resumen de ciclo, qué analizó/hizo
+      'brain_activity',    // Actividad del Brain — resumen de ciclo, qué analizó/hizo
+      'hypothesis'         // Hipotesis generada por Zeus — testeable, con prediccion
     ],
     required: true,
     index: true

@@ -351,6 +351,51 @@ async function gatherAccountIntelligence() {
   }).sort({ executed_at: -1 }).lean();
   const totalPendingBudget = pendingRedistributions.reduce((sum, a) => sum + (a.redistributable_budget || 0), 0);
 
+  // ═══ MEJORA 1: Autoevaluacion de decisiones pasadas ═══
+  // Usamos learned_reward (siempre disponible) como señal principal
+  const zeusActionResults = await ActionLog.find({
+    agent_type: 'unified_agent',
+    success: true,
+    learned_reward: { $ne: null },
+    executed_at: { $gte: new Date(Date.now() - 14 * 24 * 3600000) }
+  }).sort({ executed_at: -1 }).limit(15).lean();
+
+  const pastDecisions = zeusActionResults.map(a => {
+    const before = a.metrics_at_execution || {};
+    const after = a.metrics_after_3d || a.metrics_after_1d || {};
+    const roasChange = before.roas_7d > 0
+      ? (((after.roas_7d - before.roas_7d) / before.roas_7d) * 100).toFixed(0)
+      : 'N/A';
+    const reward = a.learned_reward || 0;
+    const verdict = reward > 0.1 ? 'positive' : reward < -0.1 ? 'negative' : 'neutral';
+    return {
+      action: a.action,
+      entity: (a.entity_name || '').substring(0, 30),
+      date: a.executed_at?.toISOString().split('T')[0] || '',
+      roas_before: (before.roas_7d || 0).toFixed(2),
+      roas_after: (after.roas_7d || 0).toFixed(2),
+      roas_change_pct: roasChange,
+      cpa_before: (before.cpa_7d || 0).toFixed(0),
+      cpa_after: (after.cpa_7d || 0).toFixed(0),
+      verdict,
+      reward: reward.toFixed(2)
+    };
+  });
+
+  // ═══ MEJORA 2: Budget distribution por ad set ═══
+  const allAdsetBudgets = adsetPerformance.map(a => ({
+    name: a.name,
+    daily_budget: a.daily_budget || 0,
+    roas_7d: parseFloat(a.roas_7d) || 0
+  }));
+
+  // ═══ MEJORA 3: Hipotesis previas de Zeus para review ═══
+  const prevHypotheses = await BrainInsight.find({
+    insight_type: 'hypothesis',
+    generated_by: 'zeus',
+    created_at: { $gte: new Date(Date.now() - 7 * 24 * 3600000) }
+  }).sort({ created_at: -1 }).limit(5).lean();
+
   return {
     account: {
       active_adsets: activeAdsets.length,
@@ -403,7 +448,13 @@ async function gatherAccountIntelligence() {
     apollo: {
       ready_pool: readyCount,
       old_proposals_24h: oldProposals
-    }
+    },
+    past_decisions: pastDecisions,
+    all_adset_budgets: allAdsetBudgets,
+    previous_hypotheses: prevHypotheses.map(h => ({
+      text: h.body || h.title,
+      date: h.created_at?.toISOString().split('T')[0] || ''
+    }))
   };
 }
 
@@ -444,7 +495,37 @@ async function generateDirectives(patterns, signals, accountData, uploadedData, 
   const highFreqSection = (acct.high_frequency || []).map(a => `- ${a.name}: freq ${a.frequency_7d} (QUEMANDO AUDIENCIA), ROAS ${a.roas_7d}x`).join('\n') || 'Ninguno';
   const lowCtrSection = (acct.low_ctr || []).map(a => `- ${a.name}: CTR ${a.ctr_7d}% (CREATIVOS NO ENGANCHAN), $${a.spend_7d} spend`).join('\n') || 'Ninguno';
 
+  // ═══ MEJORA 1: Sección de autoevaluación ═══
+  const pastDecisionsSection = (accountData.past_decisions || []).length > 0
+    ? accountData.past_decisions.map(d =>
+        `- ${d.date} ${d.action} "${d.entity}": ROAS ${d.roas_before}x -> ${d.roas_after}x (${d.roas_change_pct}%), CPA $${d.cpa_before} -> $${d.cpa_after}, verdict: ${d.verdict}, reward: ${d.reward}`
+      ).join('\n')
+    : 'No measured results yet.';
+
+  // ═══ MEJORA 2: Budget allocation ═══
+  const budgetTarget = 3000;
+  const budgetCeiling = 3500;
+  const currentBudget = acct.total_daily_budget || 0;
+  const budgetHeadroom = Math.max(0, budgetCeiling - currentBudget);
+  const allBudgets = (accountData.all_adset_budgets || []).sort((a, b) => (b.daily_budget || 0) - (a.daily_budget || 0));
+  const top5BudgetSum = allBudgets.slice(0, 5).reduce((s, a) => s + (a.daily_budget || 0), 0);
+  const top5BudgetPct = currentBudget > 0 ? ((top5BudgetSum / currentBudget) * 100).toFixed(0) : '0';
+  const bottom5BudgetSum = allBudgets.slice(-5).reduce((s, a) => s + (a.daily_budget || 0), 0);
+
+  // ═══ MEJORA 3: Hipotesis previas ═══
+  const prevHypSection = (accountData.previous_hypotheses || []).length > 0
+    ? accountData.previous_hypotheses.map(h => `- [${h.date}] ${h.text}`).join('\n')
+    : 'No previous hypotheses.';
+
   const context = `
+## YOUR PAST DECISIONS — RESULTS (learn from these)
+${pastDecisionsSection}
+Repeat what worked. Avoid what failed. If a scale_up had negative verdict, do not scale that ad set again without new evidence.
+
+## YOUR PREVIOUS HYPOTHESES (review: did they hold up?)
+${prevHypSection}
+If confirmed by data, reinforce the strategy. If disproven, adjust.
+
 ## PANORAMA FINANCIERO DE LA CUENTA (ultimos 7 dias)
 
 ### Metricas Globales
@@ -465,6 +546,16 @@ async function generateDirectives(patterns, signals, accountData, uploadedData, 
 | ATC→Purchase rate | ${acct.atc_to_purchase || 0}% | — | — |
 | Ad sets activos | ${acct.active_adsets || 0} | — | — |
 | Budget diario total | $${acct.total_daily_budget || 0}/dia | — | — |
+
+### Budget Allocation (ZERO-SUM thinking)
+| Metric | Value |
+|--------|-------|
+| Current total budget | $${currentBudget}/day |
+| Target | $${budgetTarget}/day |
+| Ceiling (NEVER exceed) | $${budgetCeiling}/day |
+| Headroom available | $${budgetHeadroom}/day |
+| Top 5 ad sets budget | $${Math.round(top5BudgetSum)}/day (${top5BudgetPct}%) |
+| Bottom 5 ad sets budget | $${Math.round(bottom5BudgetSum)}/day |
 
 ### Top 5 Ad Sets (mejor ROAS)
 ${topSection}
@@ -528,7 +619,7 @@ ${(accountData.prometheus.close_to_kill || []).length > 0
   try {
     const response = await claude.messages.create({
       model: 'claude-opus-4-6',
-      max_tokens: 1500,
+      max_tokens: 2000,
       messages: [{
         role: 'user',
         content: `Eres Zeus, el cerebro central de un sistema autonomo de Meta Ads para Jersey Pickles (ecommerce food, mercado US, ~$3K/dia).
@@ -581,6 +672,9 @@ Return ONLY valid JSON. Keep ALL strings SHORT (max 80 chars). Use English only.
     "short thought max 80 chars",
     "another thought max 80 chars"
   ],
+  "hypotheses": [
+    "testable hypothesis about WHY something works or fails max 80 chars"
+  ],
   "intelligence_summary": "2 sentence summary max 150 chars"
 }
 
@@ -600,6 +694,9 @@ Rules:
 - REDISTRIBUTION: When an old ad set dies (fatigued ad paused), its budget is NOT auto-redistributed (ABO not CBO). You must plan gradual scaling of [Prometheus] graduated ad sets to absorb the lost budget. Example: old ad set had $100/d → scale 3 [Prometheus] by +15% each over 2 weeks. Never dump budget all at once.
 - PENDING REDISTRIBUTIONS: Check athena.pending_redistributions in context. These are ad sets Athena recently paused with budget freed waiting for you to redistribute. For each pending redistribution, issue scale_up directives to 2-3 top performers splitting the freed budget proportionally (max +15% per target). After you issue these scale directives, the pending_redistributions will be cleared automatically.
 - KILL SAFETY: Athena should only kill a fatigued ad if the account has 10+ active ad sets with ROAS > 2x. Never leave the account short on capacity.
+- BUDGET CEILING: Current total is $${currentBudget}/day. Ceiling is $${budgetCeiling}/day. Headroom: $${budgetHeadroom}/day. If headroom < $400, pair every scale_up with a scale_down or pause on an underperformer. NEVER push total above $${budgetCeiling}/day. Think about budget as a ZERO-SUM game when near ceiling.
+- SELF-EVALUATION: Check YOUR PAST DECISIONS section. If a past action had negative verdict, do NOT repeat the same action on that entity. If positive, consider doubling down. Learn from your own history.
+- HYPOTHESES: Generate 1-3 testable hypotheses about WHY things work or fail. Not observations (those go in thoughts) but predictions: "If X then Y because Z". Example: "BYB products convert 2x singles - Apollo should prioritize BYB" or "Office scenes work due to lunch impulse - test more workday scenarios". Min 1, max 3 hypotheses.
 - For Apollo data field, include: scenes (first 40 chars), styles (ugly-ad/pov-selfie/overhead-flat/close-up-texture/action-shot), angles (casual-fun/curiosity/social-proof/urgency/humor/controversy/sensory)
 - Max 5 thoughts. First person. Specific with real numbers.
 - ALL strings must be short. No line breaks inside strings. No double quotes inside strings.`
@@ -711,6 +808,24 @@ Rules:
 
     if (thoughts.length > 0) {
       logger.info(`[ZEUS] ${thoughts.length} pensamientos guardados`);
+    }
+
+    // Guardar hipotesis como BrainInsights
+    const hypotheses = result.hypotheses || [];
+    for (const hyp of hypotheses) {
+      if (!hyp || hyp.length < 5) continue;
+      await BrainInsight.create({
+        insight_type: 'hypothesis',
+        severity: 'medium',
+        title: `Hipotesis Zeus: ${hyp.substring(0, 70)}`,
+        body: hyp,
+        generated_by: 'zeus',
+        entities: [],
+        data_points: { source: 'zeus_learner', created_cycle: new Date().toISOString() }
+      });
+    }
+    if (hypotheses.length > 0) {
+      logger.info(`[ZEUS] ${hypotheses.length} hipotesis guardadas`);
     }
 
     // Si Zeus genero directivas de scale_up Y habia redistribuciones pendientes,
