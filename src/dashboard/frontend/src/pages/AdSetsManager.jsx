@@ -1260,7 +1260,7 @@ export default function AdSetsManager() {
     let list = adSets;
 
     // Filtro por tipo de ad set (produccion, testing, graduado)
-    if (typeFilter === 'production') list = list.filter(as => !(as.entity_name || '').startsWith('[TEST]') && !(as.entity_name || '').includes('[Prometheus]'));
+    if (typeFilter === 'production') list = list.filter(as => !(as.entity_name || '').startsWith('[TEST]') && !(as.entity_name || '').includes('[Prometheus]') && !(as.entity_name || '').startsWith('[Ares]'));
     else if (typeFilter === 'testing') list = list.filter(as => (as.entity_name || '').startsWith('[TEST]'));
     else if (typeFilter === 'graduated') list = list.filter(as => (as.entity_name || '').includes('[Prometheus]'));
 

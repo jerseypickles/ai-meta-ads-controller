@@ -772,7 +772,7 @@ function ZeusPanel({ data, loading, running, onRun, agentStats }) {
   const intelligence = data?.intelligence_score || 0;
 
   const DIRECTIVE_COLORS = { prioritize: '#10b981', avoid: '#ef4444', adjust: '#f59e0b', alert: '#8b5cf6', insight: '#3b82f6' };
-  const AGENT_ICONS = { apollo: '☀️', prometheus: '🔥', athena: '🦉', all: '⚡' };
+  const AGENT_ICONS = { apollo: '☀️', prometheus: '🔥', athena: '🦉', ares: '⚔️', all: '⚡' };
 
   return (
     <div>
@@ -908,7 +908,8 @@ function ZeusPanel({ data, loading, running, onRun, agentStats }) {
                 zeus: { icon: '⚡', color: '#fbbf24', name: 'Zeus' },
                 athena: { icon: '🦉', color: '#60a5fa', name: 'Athena' },
                 apollo: { icon: '☀️', color: '#fbbf24', name: 'Apollo' },
-                prometheus: { icon: '🔥', color: '#fb923c', name: 'Prometheus' }
+                prometheus: { icon: '🔥', color: '#fb923c', name: 'Prometheus' },
+                ares: { icon: '⚔️', color: '#ef4444', name: 'Ares' }
               };
               const from = AGENT_STYLE[c.from] || { icon: '?', color: '#9ca3af', name: c.from };
               const to = AGENT_STYLE[c.to] || { icon: '', color: '#9ca3af', name: c.to };
