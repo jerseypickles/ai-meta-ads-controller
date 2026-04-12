@@ -286,7 +286,7 @@ async function runCreativeAgent() {
   // 2. Pre-scan: detectar ad sets con 0-1 ads activos y forzar flag (no depender del LLM)
   try {
     const activeAdsets = await getLatestSnapshots('adset');
-    const excludeNames = ['[TEST]', 'AI -', 'AMAZON', 'DONT TOUCH', 'DONT_TOUCH', 'EXCLUDE', 'MANUAL ONLY'];
+    const excludeNames = ['[TEST]', 'AI -', 'AMAZON', 'DONT TOUCH', 'DONT_TOUCH', 'EXCLUDE', 'MANUAL ONLY', '[Ares]'];
     const onlyActive = activeAdsets.filter(s => s.status === 'ACTIVE' && !excludeNames.some(ex => (s.entity_name || '').toUpperCase().includes(ex.toUpperCase())));
     let autoFlagged = 0;
 
@@ -330,7 +330,7 @@ async function runCreativeAgent() {
   }
 
   // 4. Check for ad sets needing creatives (excluir legacy/AMAZON/TEST)
-  const excludeRegex = /\[TEST\]|^AI -|AMAZON|DONT TOUCH|DONT_TOUCH|EXCLUDE|MANUAL ONLY/i;
+  const excludeRegex = /\[TEST\]|^AI -|AMAZON|DONT TOUCH|DONT_TOUCH|EXCLUDE|MANUAL ONLY|\[Ares\]/i;
   const needCreatives = skipReactive ? [] : await BrainMemory.find({
     agent_needs_new_creatives: true,
     entity_type: 'adset'
