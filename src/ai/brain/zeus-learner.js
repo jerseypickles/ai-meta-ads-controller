@@ -792,8 +792,8 @@ Rules:
 - ARES (duplication agent): 5th agent. Duplicates winners (ROAS >= 4x) into separate ABO campaign at $30/day each. Check Ares section in agent states. You can give Ares these directives (target_agent="ares"):
   * force_duplicate: Force duplicate a specific ad set. data={adset_id: "...", reason: "..."}
   * pause_clone: Pause an underperforming clone (ROAS < 2x after 7d). data={adset_id: "clone_id", reason: "..."}
-  * adjust: Change clone budget. data={adset_id: "clone_id", new_budget: 50, reason: "..."}
-  * prioritize: Strategic guidance for Ares (e.g. "focus on BYB products", "pause all clones if CBO ROAS drops below 2x")
+  * adjust + new_budget: Change CBO CAMPAIGN budget (NOT individual clone — CBO distributes globally). data={new_budget: 200, reason: "..."}
+  * prioritize: Strategic guidance for Ares (e.g. "focus on BYB products", "slow down duplications")
   * alert: Flag something for Ares attention (e.g. "clone X cannibalizing original")
 - For Apollo data field, include: scenes (first 40 chars), styles (ugly-ad/pov-selfie/overhead-flat/close-up-texture/action-shot), angles (casual-fun/curiosity/social-proof/urgency/humor/controversy/sensory)
 - Max 5 thoughts. First person. Specific with real numbers.

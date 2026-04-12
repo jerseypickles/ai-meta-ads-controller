@@ -26,9 +26,8 @@ const EXCLUDE_PATTERNS = ['[TEST]', 'AI -', 'AMAZON', 'DONT TOUCH', 'DONT_TOUCH'
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Obtener o crear la campana ABO de Ares.
- * Campana ABO con is_adset_budget_sharing_enabled (Meta comparte hasta 20% entre ad sets).
- * Cada clon tiene su propio budget ($30/dia).
+ * Obtener o crear la campana CBO de Ares.
+ * Campana CBO con budget a nivel de campana — Meta distribuye entre clones.
  */
 async function getAresCampaignId() {
   // 1. SystemConfig
@@ -42,18 +41,18 @@ async function getAresCampaignId() {
   const { getMetaClient } = require('../../meta/client');
   const meta = getMetaClient();
 
-  logger.info('[ARES] Creando campana ABO con budget sharing para duplicados...');
+  logger.info('[ARES] Creando campana CBO para duplicados...');
   const result = await meta.createCampaign({
     name: '[ARES] Duplicados Ganadores',
     objective: 'OUTCOME_SALES',
     status: 'ACTIVE',
     is_adset_budget_sharing_enabled: true
-    // Sin daily_budget a nivel de campana — cada ad set tiene su propio budget (ABO)
+    // CBO: budget a nivel de campana, Meta distribuye entre clones
   });
 
   const campaignId = result.campaign_id;
   await SystemConfig.set('ares_campaign_id', campaignId, 'ares_agent');
-  logger.info(`[ARES] Campana ABO creada: ${campaignId} — cada clon tendra $${CLONE_DAILY_BUDGET}/dia`);
+  logger.info(`[ARES] Campana CBO creada: ${campaignId}`);
 
   return campaignId;
 }
@@ -321,20 +320,21 @@ async function processZeusDirectives(aresCampaignId) {
         results.push({ type: 'pause_clone', adset_id: data.adset_id, success: true });
 
       } else if (d.directive_type === 'adjust' && data.new_budget) {
-        // Zeus ordena cambiar budget de un clon
-        if (!data.adset_id) { logger.warn(`[ARES] adjust budget sin adset_id — skip`); continue; }
+        // Zeus ordena cambiar budget de la campana CBO (no de un clon individual — CBO no permite eso)
+        const currentData = await meta.get(`/${aresCampaignId}`, { fields: 'daily_budget' });
+        const currentCboBudget = currentData.daily_budget ? parseInt(currentData.daily_budget) / 100 : 0;
 
-        await meta.updateBudget(data.adset_id, data.new_budget);
-        logger.info(`[ARES] Zeus adjust budget ejecutado: ${data.adset_id} → $${data.new_budget}/dia`);
+        await meta.updateBudget(aresCampaignId, data.new_budget);
+        logger.info(`[ARES] Zeus adjust CBO budget: $${currentCboBudget} → $${data.new_budget}/dia`);
 
         await ActionLog.create({
-          entity_type: 'adset', entity_id: data.adset_id,
-          action: 'scale_budget', before_value: null, after_value: data.new_budget,
+          entity_type: 'campaign', entity_id: aresCampaignId,
+          action: 'scale_budget', before_value: currentCboBudget, after_value: data.new_budget,
           reasoning: `Zeus directive: ${data.reason || d.directive}`,
           confidence: 'high', agent_type: 'ares_agent', success: true, executed_at: new Date()
         });
-        await ZeusDirective.updateOne({ _id: d._id }, { executed: true, executed_at: new Date(), execution_result: `budget → $${data.new_budget}/dia` });
-        results.push({ type: 'adjust_budget', adset_id: data.adset_id, new_budget: data.new_budget, success: true });
+        await ZeusDirective.updateOne({ _id: d._id }, { executed: true, executed_at: new Date(), execution_result: `CBO budget $${currentCboBudget} → $${data.new_budget}/dia` });
+        results.push({ type: 'adjust_cbo_budget', old_budget: currentCboBudget, new_budget: data.new_budget, success: true });
 
       } else {
         // prioritize, alert, avoid — directivas informacionales, solo marcar como recibidas
@@ -434,7 +434,7 @@ async function runAresAgent() {
       zeusResults.results.forEach(r => {
         if (r.type === 'force_duplicate' && r.success) msg += `\n  - FORCE_DUPLICATE: "${r.original}" → "${r.clone_name}"`;
         else if (r.type === 'pause_clone') msg += `\n  - PAUSE_CLONE: ${r.adset_id} pausado`;
-        else if (r.type === 'adjust_budget') msg += `\n  - ADJUST: ${r.adset_id} → $${r.new_budget}/dia`;
+        else if (r.type === 'adjust_cbo_budget') msg += `\n  - ADJUST CBO: $${r.old_budget} → $${r.new_budget}/dia`;
         else if (r.acknowledged) msg += `\n  - ${r.type.toUpperCase()}: "${r.directive}" — acknowledged`;
         else if (r.error) msg += `\n  - ${r.type.toUpperCase()}: ERROR — ${r.error}`;
       });
