@@ -40,9 +40,8 @@ router.get('/run-status/:jobId', (req, res) => {
 // ═══ GET /intelligence — Datos completos del tab Ares ═══
 router.get('/intelligence', async (req, res) => {
   try {
-    // Campana CBO
+    // Campana Ares (ABO con budget sharing)
     const aresCampaignId = await SystemConfig.get('ares_campaign_id', null);
-    const cboBudget = await SystemConfig.get('ares_cbo_budget', 150);
 
     // Duplicaciones realizadas
     const duplications = await ActionLog.find({
@@ -51,7 +50,7 @@ router.get('/intelligence', async (req, res) => {
       success: true
     }).sort({ executed_at: -1 }).lean();
 
-    // Ad sets activos en la campana CBO de Ares
+    // Ad sets activos en la campana de Ares
     let aresAdSets = [];
     if (aresCampaignId) {
       const allSnapshots = await getLatestSnapshots('adset');
@@ -103,7 +102,7 @@ router.get('/intelligence', async (req, res) => {
 
     res.json({
       campaign_id: aresCampaignId,
-      cbo_budget: cboBudget,
+      clone_budget: 30,
       active_duplicates: aresAdSets.length,
       total_duplicated: totalDuplicated,
       avg_roas: avgRoas,

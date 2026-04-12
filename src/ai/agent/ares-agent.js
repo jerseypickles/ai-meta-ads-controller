@@ -6,7 +6,7 @@ const { getLatestSnapshots } = require('../../db/queries');
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURACION — Ares: Agente de Duplicacion (5to agente)
-// Procedural. Duplica ganadores a campana CBO separada.
+// Procedural. Duplica ganadores a campana ABO con budget sharing.
 // ═══════════════════════════════════════════════════════════════════════════════
 const DUPLICATE_MIN_ROAS = 4.0;        // ROAS 7d minimo para duplicar
 const DUPLICATE_MIN_DAYS = 7;          // Edad minima del ad set (dias)
@@ -14,8 +14,7 @@ const DUPLICATE_MIN_SPEND = 100;       // Spend 7d minimo ($)
 const DUPLICATE_MAX_FREQUENCY = 2.0;   // Frequency maxima (no saturado)
 const MAX_DUPLICATES_PER_CONCEPT = 2;  // Max clones por ad set original
 const MIN_DAYS_BETWEEN_DUPLICATES = 7; // Dias minimos entre duplicaciones del mismo original
-const CBO_INITIAL_BUDGET = 150;        // Budget diario inicial de la campana CBO ($)
-const CBO_BUDGET_PER_DUPLICATE = 30;   // Incremento de budget CBO por cada nuevo duplicado ($)
+const CLONE_DAILY_BUDGET = 30;         // Budget diario de cada clon ($30/dia)
 const MAX_DUPLICATES_PER_CYCLE = 3;    // Max duplicaciones por ciclo (evitar avalancha)
 
 // Patrones a excluir de duplicacion
@@ -26,33 +25,34 @@ const EXCLUDE_PATTERNS = ['[TEST]', 'AI -', 'AMAZON', 'DONT TOUCH', 'DONT_TOUCH'
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Obtener o crear la campana CBO de Ares.
- * Primera vez: crea campana CBO con daily_budget a nivel de campana.
- * Siguientes: lee de SystemConfig.
+ * Obtener o crear la campana ABO de Ares.
+ * Campana ABO con is_adset_budget_sharing_enabled (Meta comparte hasta 20% entre ad sets).
+ * Cada clon tiene su propio budget ($30/dia).
  */
 async function getAresCampaignId() {
   // 1. SystemConfig
   const stored = await SystemConfig.get('ares_campaign_id', null);
   if (stored) {
-    logger.debug(`[ARES] Campana CBO existente: ${stored}`);
+    logger.debug(`[ARES] Campana existente: ${stored}`);
     return stored;
   }
 
-  // 2. Auto-crear campana CBO
+  // 2. Auto-crear campana ABO con budget sharing
   const { getMetaClient } = require('../../meta/client');
   const meta = getMetaClient();
 
-  logger.info('[ARES] Creando campana CBO para duplicados...');
+  logger.info('[ARES] Creando campana ABO con budget sharing para duplicados...');
   const result = await meta.createCampaign({
     name: '[ARES] Duplicados Ganadores',
     objective: 'OUTCOME_SALES',
     status: 'ACTIVE',
-    daily_budget: CBO_INITIAL_BUDGET
+    is_adset_budget_sharing_enabled: true
+    // Sin daily_budget a nivel de campana — cada ad set tiene su propio budget (ABO)
   });
 
   const campaignId = result.campaign_id;
   await SystemConfig.set('ares_campaign_id', campaignId, 'ares_agent');
-  logger.info(`[ARES] Campana CBO creada: ${campaignId} con budget $${CBO_INITIAL_BUDGET}/dia`);
+  logger.info(`[ARES] Campana ABO creada: ${campaignId} — cada clon tendra $${CLONE_DAILY_BUDGET}/dia`);
 
   return campaignId;
 }
@@ -138,7 +138,8 @@ async function findDuplicationCandidates() {
 }
 
 /**
- * Duplicar un ad set ganador a la campana CBO de Ares.
+ * Duplicar un ad set ganador a la campana ABO de Ares.
+ * Cada clon tiene su propio budget ($30/dia).
  */
 async function duplicateWinner(candidate, aresCampaignId) {
   const { getMetaClient } = require('../../meta/client');
@@ -148,27 +149,23 @@ async function duplicateWinner(candidate, aresCampaignId) {
 
   logger.info(`[ARES] Duplicando "${candidate.entity_name}" (ROAS ${candidate.roas_7d.toFixed(2)}x) → "${cloneName}"`);
 
-  // Duplicar ad set con deep_copy a campana CBO
-  // Paso 1: Crear como PAUSED (Meta requiere esto para copies)
+  // Paso 1: Copiar ad set a campana Ares como PAUSED con budget propio ($30/dia)
   const result = await meta.duplicateAdSet(candidate.entity_id, {
     campaign_id: aresCampaignId,
     deep_copy: true,
     name: cloneName,
-    status: 'PAUSED'
+    status: 'PAUSED',
+    daily_budget: CLONE_DAILY_BUDGET
   });
 
   if (!result.success || !result.new_adset_id) {
     throw new Error(`Meta API no devolvio new_adset_id: ${JSON.stringify(result)}`);
   }
 
-  // Paso 2: Activar el clon. En CBO, Meta maneja el budget a nivel de campana.
-  // Si el clon heredo daily_budget del original, necesitamos quitarlo.
+  // Paso 2: Activar el clon
   try {
-    // Primero intentar quitar daily_budget (poner en 0 o null para CBO)
-    await meta.post(`/${result.new_adset_id}`, { daily_budget: 0 }).catch(() => {});
-    // Activar
     await meta.post(`/${result.new_adset_id}`, { status: 'ACTIVE' });
-    logger.info(`[ARES] Clon ${result.new_adset_id} activado exitosamente`);
+    logger.info(`[ARES] Clon ${result.new_adset_id} activado a $${CLONE_DAILY_BUDGET}/dia`);
   } catch (activateErr) {
     logger.warn(`[ARES] Clon creado (${result.new_adset_id}) pero error activando: ${activateErr.message}`);
   }
@@ -183,7 +180,7 @@ async function duplicateWinner(candidate, aresCampaignId) {
     after_value: cloneName,
     new_entity_id: result.new_adset_id,
     target_entity_id: aresCampaignId,
-    reasoning: `Ares: ROAS ${candidate.roas_7d.toFixed(2)}x 7d, ${candidate.purchases_7d} compras, freq ${candidate.frequency.toFixed(1)}, $${Math.round(candidate.spend_7d)} spend. Clone ${candidate.clone_number}/${MAX_DUPLICATES_PER_CONCEPT}.`,
+    reasoning: `Ares: ROAS ${candidate.roas_7d.toFixed(2)}x 7d, ${candidate.purchases_7d} compras, freq ${candidate.frequency.toFixed(1)}, $${Math.round(candidate.spend_7d)} spend. Clone ${candidate.clone_number}/${MAX_DUPLICATES_PER_CONCEPT} a $${CLONE_DAILY_BUDGET}/dia.`,
     confidence: 'high',
     agent_type: 'ares_agent',
     success: true,
@@ -198,24 +195,14 @@ async function duplicateWinner(candidate, aresCampaignId) {
     }
   });
 
-  // Incrementar budget de campana CBO (+$30 por duplicado)
-  try {
-    const currentBudget = await SystemConfig.get('ares_cbo_budget', CBO_INITIAL_BUDGET);
-    const newBudget = currentBudget + CBO_BUDGET_PER_DUPLICATE;
-    await meta.updateBudget(aresCampaignId, newBudget);
-    await SystemConfig.set('ares_cbo_budget', newBudget, 'ares_agent');
-    logger.info(`[ARES] Budget CBO actualizado: $${currentBudget} → $${newBudget}/dia`);
-  } catch (budgetErr) {
-    logger.warn(`[ARES] Error actualizando budget CBO: ${budgetErr.message} (duplicacion exitosa de todas formas)`);
-  }
-
   return {
     success: true,
     original: candidate.entity_name,
     clone_name: cloneName,
     new_adset_id: result.new_adset_id,
     roas: candidate.roas_7d,
-    clone_number: candidate.clone_number
+    clone_number: candidate.clone_number,
+    clone_budget: CLONE_DAILY_BUDGET
   };
 }
 
@@ -227,12 +214,12 @@ async function runAresAgent() {
   const cycleId = `ares_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   logger.info(`═══ Iniciando Ares Agent [${cycleId}] ═══`);
 
-  // Fase 1: Obtener o crear campana CBO
+  // Fase 1: Obtener o crear campana Ares
   let aresCampaignId;
   try {
     aresCampaignId = await getAresCampaignId();
   } catch (err) {
-    logger.error(`[ARES] Error obteniendo campana CBO: ${err.message}`);
+    logger.error(`[ARES] Error obteniendo campana Ares: ${err.message}`);
     return { duplicated: 0, candidates: 0, elapsed: '0s', cycle_id: cycleId, error: err.message };
   }
 
@@ -281,7 +268,7 @@ async function runAresAgent() {
   // Reportar a Zeus con inteligencia
   try {
     const ZeusConversation = require('../../db/models/ZeusConversation');
-    let msg = `Ciclo completado: ${duplicated} ad sets duplicados a campana CBO de ${candidates.length} candidatos.`;
+    let msg = `Ciclo completado: ${duplicated} ad sets duplicados a campana Ares de ${candidates.length} candidatos.`;
 
     if (duplicated > 0) {
       msg += '\n\nDUPLICADOS:';

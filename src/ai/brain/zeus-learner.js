@@ -435,10 +435,9 @@ async function gatherAccountIntelligence() {
     roas_7d: parseFloat(a.roas_7d) || 0
   }));
 
-  // ═══ DATOS DE ARES: campana CBO de duplicados ═══
+  // ═══ DATOS DE ARES: campana ABO de duplicados ═══
   const aresCampaignId = await SystemConfig.get('ares_campaign_id', null);
-  const aresCboBudget = await SystemConfig.get('ares_cbo_budget', 150);
-  let aresData = { campaign_id: aresCampaignId, cbo_budget: aresCboBudget, active_duplicates: 0, adsets: [], total_spend_7d: 0, avg_roas: 0 };
+  let aresData = { campaign_id: aresCampaignId, clone_budget: 30, active_duplicates: 0, adsets: [], total_spend_7d: 0, avg_roas: 0 };
 
   if (aresCampaignId) {
     const aresAdsets = activeAdsets.filter(s => s.campaign_id === aresCampaignId);
@@ -669,7 +668,7 @@ ${athenaSection}
   - Slots disponibles AHORA: ${accountData.prometheus.slots_available_now}
   - Slots proyectados en 24h: ${accountData.prometheus.slots_available_24h}
 - Apollo: ${accountData.apollo.ready_pool} creativos en pool (${accountData.apollo.old_proposals_24h} con +24h aging)
-- Ares: ${accountData.ares?.active_duplicates || 0} duplicados activos en CBO, budget $${accountData.ares?.cbo_budget || 150}/dia, ROAS promedio ${accountData.ares?.avg_roas || 0}x, ${accountData.ares?.total_duplications || 0} duplicaciones totales
+- Ares: ${accountData.ares?.active_duplicates || 0} duplicados activos ($${accountData.ares?.clone_budget || 30}/dia c/u), ROAS promedio ${accountData.ares?.avg_roas || 0}x, ${accountData.ares?.total_duplications || 0} duplicaciones totales
 ${(accountData.ares?.adsets || []).length > 0
   ? '  Duplicados: ' + accountData.ares.adsets.map(a => `${a.name} (${a.roas_7d}x, $${a.spend_7d})`).join(', ')
   : '  Sin duplicados activos aun'}
@@ -712,9 +711,9 @@ Tienes 4 agentes:
 - Apollo (genera creativos con Gemini + Claude)
 - Prometheus (testea creativos en ad sets dedicados $10/dia)
 - Athena (gestiona ad sets de produccion: scale, pause, hold)
-- Ares (duplica ganadores a campana CBO separada — procedural, tu supervision)
+- Ares (duplica ganadores a campana ABO separada — procedural, tu supervision, $30/dia por clon)
 
-Tu rol: analizar el PANORAMA COMPLETO de la cuenta + los datos de cada agente, y generar directivas estrategicas. No solo mires tests — mira toda la cuenta incluyendo la campana CBO de Ares.
+Tu rol: analizar el PANORAMA COMPLETO de la cuenta + los datos de cada agente, y generar directivas estrategicas. No solo mires tests — mira toda la cuenta incluyendo los duplicados de Ares.
 
 ## YOUR PREVIOUS DIRECTIVES (what you said last cycle + execution status)
 ${await (async () => {
@@ -782,7 +781,7 @@ Rules:
 - BUDGET CEILING: Current total is $${currentBudget}/day. Ceiling is $${budgetCeiling}/day. Headroom: $${budgetHeadroom}/day. If headroom < $400, pair every scale_up with a scale_down or pause on an underperformer. NEVER push total above $${budgetCeiling}/day. Think about budget as a ZERO-SUM game when near ceiling.
 - SELF-EVALUATION: Check YOUR PAST DECISIONS section. If a past action had negative verdict, do NOT repeat the same action on that entity. If positive, consider doubling down. Learn from your own history.
 - HYPOTHESES: Generate 1-3 testable hypotheses about WHY things work or fail. Not observations (those go in thoughts) but predictions: "If X then Y because Z". Example: "BYB products convert 2x singles - Apollo should prioritize BYB" or "Office scenes work due to lunch impulse - test more workday scenarios". Min 1, max 3 hypotheses.
-- ARES (duplication agent): You have a 5th agent Ares that duplicates winners (ROAS >= 4x) into a CBO campaign. Check the Ares section in agent states. If a duplicate is underperforming (ROAS < 2x after 7d), tell Ares to pause it. If CBO budget is too low for the number of duplicates, suggest increasing it. You can issue force_duplicate directives: target_agent="ares", directive_type="force_duplicate", data={adset_id: "...", reason: "..."}.
+- ARES (duplication agent): You have a 5th agent Ares that duplicates winners (ROAS >= 4x) into a separate ABO campaign at $30/day each. Check the Ares section in agent states. If a duplicate is underperforming (ROAS < 2x after 7d), tell Ares to pause it. You can issue force_duplicate directives: target_agent="ares", directive_type="force_duplicate", data={adset_id: "...", reason: "..."}.
 - For Apollo data field, include: scenes (first 40 chars), styles (ugly-ad/pov-selfie/overhead-flat/close-up-texture/action-shot), angles (casual-fun/curiosity/social-proof/urgency/humor/controversy/sensory)
 - Max 5 thoughts. First person. Specific with real numbers.
 - ALL strings must be short. No line breaks inside strings. No double quotes inside strings.`

@@ -968,8 +968,10 @@ class MetaClient {
       status,
       bid_strategy: params.bid_strategy || 'LOWEST_COST_WITHOUT_CAP',
       special_ad_categories: JSON.stringify(special_ad_categories),
-      // CBO: daily_budget a nivel de campana (en centavos). Si se pasa, Meta trata como CBO.
-      ...(params.daily_budget ? { daily_budget: Math.round(params.daily_budget * 100) } : {})
+      // CBO: daily_budget a nivel de campana (en centavos)
+      ...(params.daily_budget ? { daily_budget: Math.round(params.daily_budget * 100) } : {}),
+      // ABO con budget sharing: Meta puede compartir hasta 20% entre ad sets
+      ...(params.is_adset_budget_sharing_enabled ? { is_adset_budget_sharing_enabled: 'True' } : {})
     };
 
     logger.info(`Creando campana: "${name}" (${objective})`);

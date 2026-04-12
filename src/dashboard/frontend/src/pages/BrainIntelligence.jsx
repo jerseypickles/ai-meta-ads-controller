@@ -962,7 +962,7 @@ function AresPanel({ data, loading, running, onRun, onRefresh }) {
           <span style={{ fontSize: '1.5rem' }}>⚔️</span>
           <div>
             <div style={{ fontSize: '1.15rem', fontWeight: 600 }}>Ares — Duplicador</div>
-            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Duplica ganadores a campana CBO separada</div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Duplica ganadores a campana ABO con budget sharing</div>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -980,9 +980,9 @@ function AresPanel({ data, loading, running, onRun, onRefresh }) {
         {[
           { value: data.active_duplicates || 0, label: 'Duplicados Activos' },
           { value: data.total_duplicated || 0, label: 'Total Duplicados' },
-          { value: `${data.avg_roas || 0}x`, label: 'ROAS Promedio CBO' },
-          { value: `$${data.cbo_budget || 150}`, label: 'Budget CBO/dia' },
-          { value: `$${data.total_spend_7d || 0}`, label: 'Spend 7d CBO' },
+          { value: `${data.avg_roas || 0}x`, label: 'ROAS Promedio' },
+          { value: `$${data.clone_budget || 30}`, label: 'Budget/clon' },
+          { value: `$${data.total_spend_7d || 0}`, label: 'Spend 7d' },
           { value: data.candidates?.length || 0, label: 'Candidatos' }
         ].map((s, i) => (
           <div key={i} style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '12px 14px', textAlign: 'center' }}>
@@ -992,10 +992,10 @@ function AresPanel({ data, loading, running, onRun, onRefresh }) {
         ))}
       </div>
 
-      {/* Duplicados Activos en CBO */}
+      {/* Duplicados Activos */}
       {(data.adsets || []).length > 0 && (
         <div style={{ marginBottom: 24 }}>
-          <h4 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 10 }}>Duplicados Activos en CBO</h4>
+          <h4 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 10 }}>Duplicados Activos</h4>
           <div style={{ display: 'grid', gap: 8 }}>
             {data.adsets.map((a, i) => (
               <div key={i} style={{
@@ -1105,9 +1105,9 @@ function OverviewPanel({ agentData, testStats, readyCount, activeTestCount, onNa
       key: 'ares', name: 'Ares', role: 'Duplicador', icon: '⚔️',
       metrics: [
         { value: aresData?.active_duplicates || 0, label: 'Duplicados' },
-        { value: `${aresData?.avg_roas || 0}x`, label: 'ROAS CBO' }
+        { value: `${aresData?.avg_roas || 0}x`, label: 'ROAS Clones' }
       ],
-      last: (aresData?.active_duplicates || 0) > 0 ? `${aresData.active_duplicates} clones activos — CBO $${aresData?.cbo_budget || 150}/dia` : 'Sin duplicados activos',
+      last: (aresData?.active_duplicates || 0) > 0 ? `${aresData.active_duplicates} clones activos — $${aresData?.clone_budget || 30}/dia c/u` : 'Sin duplicados activos',
       status: (aresData?.active_duplicates || 0) > 0 ? 'active' : 'idle'
     }
   ];
