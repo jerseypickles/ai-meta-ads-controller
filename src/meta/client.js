@@ -1175,7 +1175,15 @@ class MetaClient {
 
     logger.info(`Duplicando ad set ${adSetId} con opciones: ${JSON.stringify(options)}`);
 
-    const result = await this.post(`/${adSetId}/copies`, params);
+    let result;
+    try {
+      result = await this.post(`/${adSetId}/copies`, params);
+    } catch (err) {
+      // Capturar error detallado de Meta para debugging
+      const metaErr = err.response?.data?.error || {};
+      logger.error(`[duplicateAdSet] Error 400 detalle: code=${metaErr.code} type=${metaErr.type} subcode=${metaErr.error_subcode} msg=${metaErr.message || err.message} user_title=${metaErr.error_user_title || 'n/a'}`);
+      throw err;
+    }
 
     // Si se especificó nombre, renombrar el nuevo ad set
     const newId = result.copied_adset_id || result.id;

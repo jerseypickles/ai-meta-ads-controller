@@ -149,10 +149,10 @@ async function duplicateWinner(candidate, aresCampaignId) {
 
   logger.info(`[ARES] Duplicando "${candidate.entity_name}" (ROAS ${candidate.roas_7d.toFixed(2)}x) → "${cloneName}"`);
 
-  // Paso 1: Copiar ad set a campana Ares como PAUSED con budget propio ($30/dia)
+  // Paso 1: Copiar ad set SIN ads (deep_copy: false — Meta limita copies sincronas a <3 objetos)
   const result = await meta.duplicateAdSet(candidate.entity_id, {
     campaign_id: aresCampaignId,
-    deep_copy: true,
+    deep_copy: false,
     name: cloneName,
     status: 'PAUSED',
     daily_budget: CLONE_DAILY_BUDGET
@@ -162,7 +162,26 @@ async function duplicateWinner(candidate, aresCampaignId) {
     throw new Error(`Meta API no devolvio new_adset_id: ${JSON.stringify(result)}`);
   }
 
-  // Paso 2: Activar el clon
+  // Paso 2: Encontrar el mejor ad del original y copiar su creative al clon
+  const { getAdsForAdSet } = require('../../db/queries');
+  const originalAds = await getAdsForAdSet(candidate.entity_id);
+  const activeAds = originalAds.filter(a => a.status === 'ACTIVE');
+  const bestAd = activeAds.sort((a, b) => (b.metrics?.last_7d?.roas || 0) - (a.metrics?.last_7d?.roas || 0))[0];
+
+  if (bestAd) {
+    try {
+      const adData = await meta.get(`/${bestAd.entity_id}`, { fields: 'creative{id}' });
+      const creativeId = adData.creative?.id;
+      if (creativeId) {
+        await meta.createAd(result.new_adset_id, creativeId, `[Ares] ${bestAd.entity_name || 'Best Ad'} Clone`, 'ACTIVE');
+        logger.info(`[ARES] Ad creado en clon con creative ${creativeId} del mejor ad (ROAS ${(bestAd.metrics?.last_7d?.roas || 0).toFixed(2)}x)`);
+      }
+    } catch (adErr) {
+      logger.warn(`[ARES] Error copiando ad al clon: ${adErr.message}. Clon creado pero sin ads.`);
+    }
+  }
+
+  // Paso 3: Activar el clon
   try {
     await meta.post(`/${result.new_adset_id}`, { status: 'ACTIVE' });
     logger.info(`[ARES] Clon ${result.new_adset_id} activado a $${CLONE_DAILY_BUDGET}/dia`);
