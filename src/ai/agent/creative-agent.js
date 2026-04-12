@@ -469,21 +469,28 @@ async function runCreativeAgent() {
     logger.warn(`[CREATIVE-AGENT] Error leyendo live test signals: ${err.message}`);
   }
 
-  // Helper: calcula bonus/penalty por señal temprana (conservador — no sobrepesar muestras pequeñas)
-  // Nota: ATC puede estar en 0 por problemas de tracking Meta — usamos purchases como señal real
+  // Helper: calcula bonus/penalty por señal de tests en vivo
+  // Purchases son la verdad final. ATC puede estar en 0 por bug de tracking Meta.
   const liveSignalScore = (sceneShort) => {
     const d = liveSceneSignals[sceneShort];
     if (!d) return 0;
     const avgRoas = d.spend > 0 ? d.revenue / d.spend : 0;
-    // Si tiene compras, aplicar solo bonus — no penalty (las compras son la verdad final)
+
     if (d.purchases > 0) {
+      // Ganador fuerte: muchas compras + ROAS alto → boost maximo
+      if (d.count >= 3 && d.purchases >= 4 && avgRoas >= 4.0) return 5;
+      if (d.count >= 2 && d.purchases >= 3 && avgRoas >= 3.0) return 4;
       if (d.count >= 2 && d.purchases >= 2 && avgRoas >= 3.0) return Math.min(4, Math.floor(avgRoas / 3));
-      if (d.count >= 1 && d.purchases >= 1 && avgRoas >= 5.0 && d.spend >= 5) return 2;
-      return 0; // tiene compras pero muestra muy pequeña — neutral
+      if (d.count >= 1 && d.purchases >= 1 && avgRoas >= 5.0) return 2;
+      // Tiene compras pero ROAS bajo → escena mediocre, penalty leve
+      if (d.spend >= 30 && avgRoas < 2.0) return -1;
+      return 0;
     }
-    // Sin compras + spend significativo → penalty por muestra suficiente
-    if (d.count >= 2 && d.spend >= 25) return -3;
-    if (d.count >= 1 && d.spend >= 20) return -2;
+
+    // Sin compras — penalizar basado en spend (mas gasto sin resultado = peor)
+    if (d.count >= 2 && d.spend >= 15) return -4;
+    if (d.count >= 1 && d.spend >= 15) return -3;
+    if (d.count >= 1 && d.spend >= 10) return -2;
     return 0;
   };
 
