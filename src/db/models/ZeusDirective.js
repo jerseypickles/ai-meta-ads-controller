@@ -8,7 +8,7 @@ const zeusDirectiveSchema = new mongoose.Schema({
   // Agente destino
   target_agent: {
     type: String,
-    enum: ['apollo', 'prometheus', 'athena', 'all'],
+    enum: ['apollo', 'prometheus', 'athena', 'ares', 'all'],
     required: true,
     index: true
   },

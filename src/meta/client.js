@@ -967,7 +967,9 @@ class MetaClient {
       objective,
       status,
       bid_strategy: params.bid_strategy || 'LOWEST_COST_WITHOUT_CAP',
-      special_ad_categories: JSON.stringify(special_ad_categories)
+      special_ad_categories: JSON.stringify(special_ad_categories),
+      // CBO: daily_budget a nivel de campana (en centavos). Si se pasa, Meta trata como CBO.
+      ...(params.daily_budget ? { daily_budget: Math.round(params.daily_budget * 100) } : {})
     };
 
     logger.info(`Creando campana: "${name}" (${objective})`);
@@ -1160,8 +1162,12 @@ class MetaClient {
    */
   async duplicateAdSet(adSetId, options = {}) {
     const params = {
-      status_option: 'PAUSED', // Siempre crear pausado para revisión
+      status_option: options.status || 'PAUSED',
+      deep_copy: options.deep_copy !== false, // default true — copia ads hijos
       rename_options: options.name ? JSON.stringify({ rename_suffix: '' }) : undefined,
+      // campaign_id: copiar a otra campana (ej: CBO de Ares)
+      ...(options.campaign_id ? { campaign_id: options.campaign_id } : {}),
+      // daily_budget: solo para ABO (CBO no tiene budget individual por ad set)
       ...(options.daily_budget ? { daily_budget: Math.round(options.daily_budget * 100) } : {})
     };
 
@@ -1170,13 +1176,14 @@ class MetaClient {
     const result = await this.post(`/${adSetId}/copies`, params);
 
     // Si se especificó nombre, renombrar el nuevo ad set
-    if (options.name && result.copied_adset_id) {
-      await this.post(`/${result.copied_adset_id}`, { name: options.name });
+    const newId = result.copied_adset_id || result.id;
+    if (options.name && newId) {
+      await this.post(`/${newId}`, { name: options.name });
     }
 
     return {
       success: true,
-      new_adset_id: result.copied_adset_id || result.id,
+      new_adset_id: newId,
       original_adset_id: adSetId
     };
   }

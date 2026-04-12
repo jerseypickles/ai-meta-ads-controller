@@ -6,8 +6,8 @@ const mongoose = require('mongoose');
  */
 const zeusConversationSchema = new mongoose.Schema({
   // Quien habla
-  from: { type: String, enum: ['zeus', 'athena', 'apollo', 'prometheus'], required: true, index: true },
-  to: { type: String, enum: ['zeus', 'athena', 'apollo', 'prometheus', 'all'], required: true },
+  from: { type: String, enum: ['zeus', 'athena', 'apollo', 'prometheus', 'ares'], required: true, index: true },
+  to: { type: String, enum: ['zeus', 'athena', 'apollo', 'prometheus', 'ares', 'all'], required: true },
 
   // Mensaje
   message: { type: String, required: true },

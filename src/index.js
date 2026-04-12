@@ -18,6 +18,7 @@ const { runManager } = require('./ai/adset-creator/manager');
 const { runAccountAgent } = require('./ai/agent/account-agent');
 const { runCreativeAgent, syncProposalPerformance } = require('./ai/agent/creative-agent');
 const { runTestingAgent } = require('./ai/agent/testing-agent');
+const { runAresAgent } = require('./ai/agent/ares-agent');
 const { runZeusLearner } = require('./ai/brain/zeus-learner');
 const { startDashboard } = require('./dashboard/server');
 const { refreshMetaToken } = require('./dashboard/routes/meta-auth');
@@ -635,7 +636,31 @@ async function jobTestingAgent() {
 }
 
 /**
- * Job: Zeus Learner — 2x/dia (5am, 5pm ET).
+ * Job: Ares Agent — 2x/dia (8am, 4pm ET).
+ * Duplica ganadores (ROAS >= 4x) a campana CBO separada.
+ */
+async function jobAresAgent() {
+  const aiEnabled = await isAIEnabled();
+  if (!aiEnabled) return;
+
+  const agentMode = await SystemConfig.get('agent_mode', 'unified');
+  if (agentMode !== 'unified') return;
+
+  try {
+    logger.info('[CRON] Ejecutando Ares Agent...');
+    const result = await runAresAgent();
+    if (result.duplicated > 0) {
+      logger.info(`[CRON] Ares Agent: ${result.duplicated} duplicados de ${result.candidates} candidatos en ${result.elapsed}`);
+    } else {
+      logger.debug(`[CRON] Ares Agent: 0 duplicados (${result.candidates} candidatos) en ${result.elapsed}`);
+    }
+  } catch (error) {
+    logger.error('[CRON] Error en Ares Agent:', error);
+  }
+}
+
+/**
+ * Job: Zeus Learner — 4x/dia (5am, 11am, 5pm, 11pm ET).
  * Aprende patrones creativos, senales de tests, genera directivas para agentes.
  */
 async function jobZeusLearner() {
@@ -911,6 +936,13 @@ function initCronJobs() {
     name: 'testing-agent'
   });
   logger.info('  [*] Testing Agent — 5x/día: 6:30am, 10:30am, 2:30pm, 6:30pm, 10:30pm ET');
+
+  // Ares Agent — 2x/dia (8am, 4pm ET)
+  cron.schedule('0 8,16 * * *', jobAresAgent, {
+    timezone: TIMEZONE,
+    name: 'ares-agent'
+  });
+  logger.info('  [*] Ares Agent — 2x/dia: 8am, 4pm ET');
 
   // Zeus Learner — 4x/dia (5am, 11am, 5pm, 11pm ET)
   cron.schedule('0 5,11,17,23 * * *', jobZeusLearner, {
