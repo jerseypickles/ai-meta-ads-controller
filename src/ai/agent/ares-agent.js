@@ -150,12 +150,12 @@ async function duplicateWinner(candidate, aresCampaignId) {
   logger.info(`[ARES] Duplicando "${candidate.entity_name}" (ROAS ${candidate.roas_7d.toFixed(2)}x) → "${cloneName}"`);
 
   // Paso 1: Copiar ad set SIN ads (deep_copy: false — Meta limita copies sincronas a <3 objetos)
+  // Sin daily_budget — campana CBO maneja el budget a nivel de campana
   const result = await meta.duplicateAdSet(candidate.entity_id, {
     campaign_id: aresCampaignId,
     deep_copy: false,
     name: cloneName,
-    status: 'PAUSED',
-    daily_budget: CLONE_DAILY_BUDGET
+    status: 'PAUSED'
   });
 
   if (!result.success || !result.new_adset_id) {
@@ -204,6 +204,17 @@ async function duplicateWinner(candidate, aresCampaignId) {
     logger.info(`[ARES] Clon ${result.new_adset_id} activado a $${CLONE_DAILY_BUDGET}/dia`);
   } catch (activateErr) {
     logger.warn(`[ARES] Clon creado (${result.new_adset_id}) pero error activando: ${activateErr.message}`);
+  }
+
+  // Paso 4: Incrementar budget CBO de la campana (+$30 por cada nuevo duplicado)
+  try {
+    const campaignData = await meta.get(`/${aresCampaignId}`, { fields: 'daily_budget' });
+    const currentCboBudget = campaignData.daily_budget ? parseInt(campaignData.daily_budget) / 100 : 150;
+    const newCboBudget = currentCboBudget + CLONE_DAILY_BUDGET;
+    await meta.updateBudget(aresCampaignId, newCboBudget);
+    logger.info(`[ARES] Budget CBO actualizado: $${currentCboBudget} → $${newCboBudget}/dia`);
+  } catch (budgetErr) {
+    logger.warn(`[ARES] Error actualizando budget CBO: ${budgetErr.message}`);
   }
 
   // Registrar en ActionLog
