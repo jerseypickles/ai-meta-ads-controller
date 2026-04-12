@@ -258,6 +258,52 @@ async function gatherAccountIntelligence() {
   // Total budget diario
   const totalDailyBudget = activeAdsets.reduce((s, a) => s + (a.daily_budget || 0), 0);
 
+  // ═══ CEILING ADAPTATIVO: sube/baja segun performance sostenida ═══
+  const CEILING_MIN = 3500;
+  const CEILING_MAX = 10000;
+  const CEILING_STEP_UP = 500;
+  const CEILING_STEP_UP_FAST = 1000;
+  const CEILING_STEP_DOWN = 500;
+  const roas7dNum = parseFloat(globalRoas7d) || 0;
+  const cpa7dNum = parseFloat(globalCpa) || 0;
+
+  let currentCeiling = await SystemConfig.get('budget_ceiling', CEILING_MIN);
+  let ceilingChanged = false;
+  let ceilingReason = '';
+
+  // Subir: ROAS >= 4x sostenido → +$1000
+  if (roas7dNum >= 4.0 && cpa7dNum <= 25 && cpa7dNum > 0) {
+    const newCeiling = Math.min(CEILING_MAX, currentCeiling + CEILING_STEP_UP_FAST);
+    if (newCeiling !== currentCeiling) {
+      ceilingReason = `ROAS ${roas7dNum.toFixed(2)}x >= 4x + CPA $${cpa7dNum} <= $25 → ceiling +$${CEILING_STEP_UP_FAST}`;
+      currentCeiling = newCeiling;
+      ceilingChanged = true;
+    }
+  }
+  // Subir: ROAS >= 3x sostenido → +$500
+  else if (roas7dNum >= 3.0 && cpa7dNum <= 25 && cpa7dNum > 0) {
+    const newCeiling = Math.min(CEILING_MAX, currentCeiling + CEILING_STEP_UP);
+    if (newCeiling !== currentCeiling) {
+      ceilingReason = `ROAS ${roas7dNum.toFixed(2)}x >= 3x + CPA $${cpa7dNum} <= $25 → ceiling +$${CEILING_STEP_UP}`;
+      currentCeiling = newCeiling;
+      ceilingChanged = true;
+    }
+  }
+  // Bajar: ROAS < 2x → -$500
+  else if (roas7dNum < 2.0 && roas7dNum > 0) {
+    const newCeiling = Math.max(CEILING_MIN, currentCeiling - CEILING_STEP_DOWN);
+    if (newCeiling !== currentCeiling) {
+      ceilingReason = `ROAS ${roas7dNum.toFixed(2)}x < 2x → ceiling -$${CEILING_STEP_DOWN}`;
+      currentCeiling = newCeiling;
+      ceilingChanged = true;
+    }
+  }
+
+  if (ceilingChanged) {
+    await SystemConfig.set('budget_ceiling', currentCeiling, 'zeus_learner');
+    logger.info(`[ZEUS] Budget ceiling ajustado: $${currentCeiling}/dia — ${ceilingReason}`);
+  }
+
   // Funnel data global
   let totalAtc = 0, totalIc = 0;
   for (const as of activeAdsets) {
@@ -454,7 +500,8 @@ async function gatherAccountIntelligence() {
     previous_hypotheses: prevHypotheses.map(h => ({
       text: h.body || h.title,
       date: h.created_at?.toISOString().split('T')[0] || ''
-    }))
+    })),
+    budget_ceiling: currentCeiling
   };
 }
 
@@ -502,9 +549,9 @@ async function generateDirectives(patterns, signals, accountData, uploadedData, 
       ).join('\n')
     : 'No measured results yet.';
 
-  // ═══ MEJORA 2: Budget allocation ═══
+  // ═══ MEJORA 2: Budget allocation (ceiling adaptativo desde SystemConfig) ═══
   const budgetTarget = 3000;
-  const budgetCeiling = 3500;
+  const budgetCeiling = accountData.budget_ceiling || 3500;
   const currentBudget = acct.total_daily_budget || 0;
   const budgetHeadroom = Math.max(0, budgetCeiling - currentBudget);
   const allBudgets = (accountData.all_adset_budgets || []).sort((a, b) => (b.daily_budget || 0) - (a.daily_budget || 0));
