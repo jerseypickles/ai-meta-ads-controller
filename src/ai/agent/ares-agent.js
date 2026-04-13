@@ -198,10 +198,23 @@ async function duplicateWinner(candidate, aresCampaignId) {
     logger.warn(`[ARES] Ningun ad compatible encontrado para clon de ${candidate.entity_name}. Clon creado sin ads.`);
   }
 
-  // Paso 3: Activar el clon
+  // Paso 3: Activar el clon + verificar que los ads esten activos
   try {
     await meta.post(`/${result.new_adset_id}`, { status: 'ACTIVE' });
-    logger.info(`[ARES] Clon ${result.new_adset_id} activado a $${CLONE_DAILY_BUDGET}/dia`);
+    logger.info(`[ARES] Clon ${result.new_adset_id} activado`);
+
+    // Verificar ads dentro del clon — a veces Meta los deja PAUSED
+    const cloneAds = await meta.get(`/${result.new_adset_id}/ads`, { fields: 'id,name,status' });
+    for (const ad of (cloneAds.data || [])) {
+      if (ad.status !== 'ACTIVE') {
+        try {
+          await meta.post(`/${ad.id}`, { status: 'ACTIVE' });
+          logger.info(`[ARES] Ad "${ad.name}" en clon activado (estaba ${ad.status})`);
+        } catch (adErr) {
+          logger.warn(`[ARES] No se pudo activar ad ${ad.id}: ${adErr.message}`);
+        }
+      }
+    }
   } catch (activateErr) {
     logger.warn(`[ARES] Clon creado (${result.new_adset_id}) pero error activando: ${activateErr.message}`);
   }
