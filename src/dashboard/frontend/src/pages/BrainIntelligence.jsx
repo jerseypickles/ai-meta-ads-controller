@@ -955,23 +955,28 @@ function AresPanel({ data, loading, running, onRun, onRefresh }) {
   if (loading && !data) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Cargando Ares...</div>;
   if (!data) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Sin datos de Ares — esperando primer ciclo</div>;
 
-  const [showClones, setShowClones] = useState(false);
+  const [expandedSections, setExpandedSections] = useState({ clones: false, candidates: true, history: false });
+  const toggle = (key) => setExpandedSections(prev => ({ ...prev, [key]: !prev[key] }));
   const cbo = data.cbo || {};
+  const clones = data.adsets || [];
+  const candidates = data.candidates || [];
+  const dups = data.recent_duplications || [];
+  const roasColor = (r) => r >= 3 ? '#10b981' : r >= 1.5 ? '#f59e0b' : r > 0 ? '#ef4444' : 'var(--text-muted)';
 
   return (
     <div className="agent-panel">
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontSize: '1.5rem' }}>⚔️</span>
           <div>
             <div style={{ fontSize: '1.15rem', fontWeight: 600 }}>Ares — Campana CBO</div>
-            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Duplica ganadores a campana CBO — Meta distribuye budget entre clones</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Meta distribuye budget entre clones de ganadores validados</div>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="brain-action-btn" onClick={onRefresh} disabled={loading} style={{ fontSize: '0.75rem' }}>
-            {loading ? 'Cargando...' : 'Refrescar'}
+            {loading ? '...' : 'Refrescar'}
           </button>
           <button className="brain-action-btn primary" onClick={onRun} disabled={running} style={{ fontSize: '0.75rem' }}>
             {running ? 'Ejecutando...' : 'Ejecutar Ares'}
@@ -979,95 +984,134 @@ function AresPanel({ data, loading, running, onRun, onRefresh }) {
         </div>
       </div>
 
-      {/* CBO Campaign Stats — lo principal */}
-      <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '20px', marginBottom: 20, border: '1px solid rgba(239,68,68,0.15)' }}>
-        <div style={{ fontSize: '0.7rem', color: '#ef4444', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>Performance Campana CBO</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 16 }}>
-          {[
-            { value: `${cbo.roas || data.avg_roas || 0}x`, label: 'ROAS', color: (cbo.roas || 0) >= 3 ? '#10b981' : (cbo.roas || 0) >= 1.5 ? '#f59e0b' : '#ef4444' },
-            { value: `$${cbo.spend_7d || data.total_spend_7d || 0}`, label: 'Spend 7d' },
-            { value: `$${cbo.revenue_7d || 0}`, label: 'Revenue 7d', color: '#10b981' },
-            { value: cbo.purchases_7d || 0, label: 'Compras' },
-            { value: cbo.cpa ? `$${cbo.cpa}` : '—', label: 'CPA' },
-            { value: cbo.active_clones || data.active_duplicates || 0, label: 'Clones Activos' }
-          ].map((s, i) => (
-            <div key={i} style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: '1.3rem', fontWeight: 700, color: s.color || 'var(--text-primary)' }}>{s.value}</div>
-              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 2 }}>{s.label}</div>
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* ═══ TREE: CBO Campaign (raiz) ═══ */}
+      <div style={{ borderLeft: '2px solid #ef4444', paddingLeft: 20, marginLeft: 8 }}>
 
-      {/* Clones — detalle colapsable */}
-      {(data.adsets || []).length > 0 && (
-        <div style={{ marginBottom: 24 }}>
-          <h4 onClick={() => setShowClones(!showClones)} style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 8, cursor: 'pointer', userSelect: 'none' }}>
-            {showClones ? '▾' : '▸'} Detalle por clon ({data.adsets.length})
-          </h4>
-          {showClones && (
-            <div style={{ display: 'grid', gap: 6 }}>
-              {data.adsets.map((a, i) => (
-                <div key={i} style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', padding: '8px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ fontSize: '0.78rem', color: 'var(--text-primary)' }}>{a.adset_name}</div>
-                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: 2 }}>
-                      ${a.spend_7d} spend | {a.purchases_7d} compras | freq {a.frequency} | CTR {a.ctr}%
+        {/* Raiz: Performance CBO */}
+        <div style={{ position: 'relative', marginBottom: 20 }}>
+          <div style={{ position: 'absolute', left: -27, top: 12, width: 12, height: 12, borderRadius: '50%', background: '#ef4444' }} />
+          <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '16px 20px' }}>
+            <div style={{ fontSize: '0.7rem', color: '#ef4444', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 14 }}>
+              Campana CBO — Performance Global
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
+              <div>
+                <div style={{ fontSize: '2rem', fontWeight: 800, color: roasColor(cbo.roas || 0), lineHeight: 1 }}>{cbo.roas || data.avg_roas || 0}x</div>
+                <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: 4 }}>ROAS CBO</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)' }}>${cbo.revenue_7d || 0}</div>
+                <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: 2 }}>Revenue 7d</div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: 4 }}>${cbo.spend_7d || data.total_spend_7d || 0} spend</div>
+              </div>
+              <div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)' }}>{cbo.purchases_7d || 0}</div>
+                <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: 2 }}>Compras</div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: 4 }}>CPA {cbo.cpa ? `$${cbo.cpa}` : '—'}</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 20, marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border-color)' }}>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{clones.length} clones activos</span>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{data.total_duplicated || 0} duplicaciones totales</span>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{candidates.length} candidatos pendientes</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Rama: Clones activos */}
+        {clones.length > 0 && (
+          <div style={{ position: 'relative', marginBottom: 16 }}>
+            <div style={{ position: 'absolute', left: -25, top: 8, width: 8, height: 8, borderRadius: '50%', background: 'var(--text-muted)', border: '2px solid var(--bg-primary)' }} />
+            <div onClick={() => toggle('clones')} style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                {expandedSections.clones ? '▾' : '▸'} Clones Activos ({clones.length})
+              </span>
+              <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>— distribucion de Meta</span>
+            </div>
+            {expandedSections.clones && (
+              <div style={{ borderLeft: '1px solid var(--border-color)', paddingLeft: 16, marginLeft: 4 }}>
+                {clones.map((a, i) => (
+                  <div key={i} style={{ position: 'relative', marginBottom: 6 }}>
+                    <div style={{ position: 'absolute', left: -20, top: 10, width: 6, height: 6, borderRadius: '50%', background: roasColor(a.roas_7d) }} />
+                    <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', padding: '8px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-primary)' }}>{a.adset_name}</div>
+                        <div style={{ fontSize: '0.63rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                          ${a.spend_7d} spend | {a.purchases_7d} compras | freq {a.frequency} | CTR {a.ctr}%
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '0.8rem', fontWeight: 700, color: roasColor(a.roas_7d) }}>{a.roas_7d}x</div>
+                        <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>3d: {a.roas_3d}x</div>
+                      </div>
                     </div>
                   </div>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: a.roas_7d >= 3 ? '#10b981' : a.roas_7d >= 1.5 ? '#f59e0b' : 'var(--text-muted)' }}>
-                    {a.roas_7d}x
-                  </span>
-                </div>
-              ))}
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Rama: Candidatos */}
+        {candidates.length > 0 && (
+          <div style={{ position: 'relative', marginBottom: 16 }}>
+            <div style={{ position: 'absolute', left: -25, top: 8, width: 8, height: 8, borderRadius: '50%', background: '#10b981', border: '2px solid var(--bg-primary)' }} />
+            <div onClick={() => toggle('candidates')} style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                {expandedSections.candidates ? '▾' : '▸'} Candidatos para Duplicar ({candidates.length})
+              </span>
+              <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>— ROAS &ge; 4x, 7d+, freq &lt; 2.0</span>
             </div>
-          )}
-        </div>
-      )}
-
-      {/* Candidatos para Duplicar */}
-      {(data.candidates || []).length > 0 && (
-        <div style={{ marginBottom: 24 }}>
-          <h4 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 10 }}>Candidatos para Duplicar (ROAS &ge; 4x, 7d+, freq &lt; 2.0)</h4>
-          <div style={{ display: 'grid', gap: 6 }}>
-            {data.candidates.map((c, i) => (
-              <div key={i} style={{
-                background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '10px 14px',
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-              }}>
-                <div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-primary)' }}>{c.entity_name}</div>
-                  <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>${c.spend_7d} spend | {c.purchases_7d} compras | freq {c.frequency}</div>
-                </div>
-                <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#10b981' }}>{c.roas_7d}x</span>
+            {expandedSections.candidates && (
+              <div style={{ borderLeft: '1px solid var(--border-color)', paddingLeft: 16, marginLeft: 4 }}>
+                {candidates.map((c, i) => (
+                  <div key={i} style={{ position: 'relative', marginBottom: 4 }}>
+                    <div style={{ position: 'absolute', left: -20, top: 10, width: 6, height: 6, borderRadius: '50%', background: '#10b981' }} />
+                    <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', padding: '8px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-primary)' }}>{c.entity_name}</div>
+                        <div style={{ fontSize: '0.63rem', color: 'var(--text-muted)' }}>${c.spend_7d} spend | {c.purchases_7d} compras | freq {c.frequency}</div>
+                      </div>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#10b981' }}>{c.roas_7d}x</span>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Historial de Duplicaciones */}
-      {(data.recent_duplications || []).length > 0 && (
-        <div>
-          <h4 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 10 }}>Historial de Duplicaciones</h4>
-          <div style={{ display: 'grid', gap: 6 }}>
-            {data.recent_duplications.map((d, i) => (
-              <div key={i} style={{
-                background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '10px 14px',
-                fontSize: '0.75rem'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <span style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{d.original_name} → {d.clone_name}</span>
-                  <span style={{ color: 'var(--text-muted)' }}>{new Date(d.executed_at).toLocaleDateString('es', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-                </div>
-                <div style={{ color: 'var(--text-muted)' }}>ROAS al duplicar: {(d.roas_at_dup || 0).toFixed(2)}x</div>
+        {/* Rama: Historial */}
+        {dups.length > 0 && (
+          <div style={{ position: 'relative' }}>
+            <div style={{ position: 'absolute', left: -25, top: 8, width: 8, height: 8, borderRadius: '50%', background: 'var(--text-muted)', border: '2px solid var(--bg-primary)' }} />
+            <div onClick={() => toggle('history')} style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 500 }}>
+                {expandedSections.history ? '▾' : '▸'} Historial ({dups.length})
+              </span>
+            </div>
+            {expandedSections.history && (
+              <div style={{ borderLeft: '1px solid var(--border-color)', paddingLeft: 16, marginLeft: 4 }}>
+                {dups.map((d, i) => (
+                  <div key={i} style={{ position: 'relative', marginBottom: 4 }}>
+                    <div style={{ position: 'absolute', left: -20, top: 10, width: 6, height: 6, borderRadius: '50%', background: 'var(--text-muted)' }} />
+                    <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', padding: '8px 12px', fontSize: '0.72rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--text-primary)' }}>{d.original_name} → {d.clone_name}</span>
+                        <span style={{ color: 'var(--text-muted)' }}>{new Date(d.executed_at).toLocaleDateString('es', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                      <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>ROAS al duplicar: {(d.roas_at_dup || 0).toFixed(2)}x</div>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
-        </div>
-      )}
+        )}
 
-      {(data.adsets || []).length === 0 && (data.candidates || []).length === 0 && (
+      </div>
+
+      {clones.length === 0 && candidates.length === 0 && (
         <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
           Ares esta esperando ganadores. Necesita ad sets con ROAS &ge; 4x (7d), $100+ spend, freq &lt; 2.0, 7+ dias.
         </div>
