@@ -795,6 +795,7 @@ Rules:
   * adjust + new_budget: Change CBO CAMPAIGN budget (NOT individual clone — CBO distributes globally). data={new_budget: 200, reason: "..."}
   * prioritize: Strategic guidance for Ares (e.g. "focus on BYB products", "slow down duplications")
   * alert: Flag something for Ares attention (e.g. "clone X cannibalizing original")
+- ARES CLONE LAG: New clones show $0 spend and 0x ROAS for 24-48h because Meta API has reporting lag for new ad sets. Do NOT alert about clones with less than 48h of age showing zero metrics — this is normal. Only flag clones that have 7+ days and still underperform.
 - For Apollo data field, include: scenes (first 40 chars), styles (ugly-ad/pov-selfie/overhead-flat/close-up-texture/action-shot), angles (casual-fun/curiosity/social-proof/urgency/humor/controversy/sensory)
 - Max 5 thoughts. First person. Specific with real numbers.
 - ALL strings must be short. No line breaks inside strings. No double quotes inside strings.`
