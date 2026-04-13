@@ -668,7 +668,7 @@ async function runCreativeAgent() {
   }
 
   // ═══ GENERACION PROACTIVA — siempre generar algunos para ad sets nuevos ═══
-  const MIN_PROACTIVE_PER_CYCLE = 3; // siempre generar al menos 3 proactivos para escalar
+  const MIN_PROACTIVE_PER_CYCLE = 2; // 2 proactivos por ciclo — balanceado con pool de 54+
   const MIN_POOL_SIZE = 10;
   const readyCount = await CreativeProposal.countDocuments({ status: 'ready' });
   const poolNeeded = Math.max(0, MIN_POOL_SIZE - readyCount - generated);

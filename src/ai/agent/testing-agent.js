@@ -14,9 +14,9 @@ const { getAdsForAdSet } = require('../../db/queries');
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURACION
 // ═══════════════════════════════════════════════════════════════════════════════
-const MAX_CONCURRENT_TESTS = 45;
+const MAX_CONCURRENT_TESTS = 60;
 const TEST_DAILY_BUDGET = 10; // $10/dia
-const MAX_DAILY_TESTING_BUDGET = 450; // Cap diario total: $450 max en testing
+const MAX_DAILY_TESTING_BUDGET = 600; // Cap diario total: $600 max en testing
 const MAX_LAUNCHES_PER_CYCLE = 7; // Max tests nuevos por ciclo (evitar avalancha)
 const TEST_MAX_DAYS = 7;
 const KILL_MIN_SPEND = 25;     // Kill si $25+ spend y 0 compras
