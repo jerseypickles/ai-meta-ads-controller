@@ -73,13 +73,15 @@ router.get('/intelligence', async (req, res) => {
         });
     }
 
-    // Candidatos actuales (ad sets que cumplen criterios)
+    // Candidatos actuales (ad sets que cumplen criterios y NO tienen clones activos)
     const allSnapshots = await getLatestSnapshots('adset');
-    const EXCLUDE_PATTERNS = ['[TEST]', 'AI -', 'AMAZON', 'DONT TOUCH', 'EXCLUDE', 'MANUAL ONLY'];
+    const EXCLUDE_PATTERNS = ['[TEST]', 'AI -', 'AMAZON', 'DONT TOUCH', 'EXCLUDE', 'MANUAL ONLY', '[ARES]'];
+    const alreadyDuplicated = new Set(duplications.map(d => d.entity_id));
     const candidates = allSnapshots.filter(s => {
       if (s.status !== 'ACTIVE') return false;
       const name = (s.entity_name || '').toUpperCase();
       if (EXCLUDE_PATTERNS.some(ex => name.includes(ex.toUpperCase()))) return false;
+      if (alreadyDuplicated.has(s.entity_id)) return false;
       const m7 = s.metrics?.last_7d || {};
       return (m7.roas || 0) >= 4.0 && (m7.spend || 0) >= 100 && (m7.frequency || 0) < 2.0;
     }).map(s => {
