@@ -40,7 +40,7 @@ router.get('/run-status/:jobId', (req, res) => {
 // ═══ GET /intelligence — Datos completos del tab Ares ═══
 router.get('/intelligence', async (req, res) => {
   try {
-    // Campana Ares (ABO con budget sharing)
+    // Campana Ares (CBO — budget a nivel de campana)
     const aresCampaignId = await SystemConfig.get('ares_campaign_id', null);
 
     // Duplicaciones realizadas
@@ -94,19 +94,31 @@ router.get('/intelligence', async (req, res) => {
       };
     }).sort((a, b) => b.roas_7d - a.roas_7d);
 
-    // Stats globales de Ares
+    // Stats de la campana CBO (lo que importa)
     const totalDuplicated = duplications.length;
-    const totalSpend = aresAdSets.reduce((s, a) => s + a.spend_7d, 0);
-    const totalRevenue = aresAdSets.reduce((s, a) => s + (a.roas_7d * a.spend_7d), 0);
-    const avgRoas = totalSpend > 0 ? Math.round((totalRevenue / totalSpend) * 100) / 100 : 0;
+    const cbo_spend = aresAdSets.reduce((s, a) => s + a.spend_7d, 0);
+    const cbo_revenue = aresAdSets.reduce((s, a) => s + Math.round(a.roas_7d * a.spend_7d), 0);
+    const cbo_roas = cbo_spend > 0 ? Math.round((cbo_revenue / cbo_spend) * 100) / 100 : 0;
+    const cbo_purchases = aresAdSets.reduce((s, a) => s + a.purchases_7d, 0);
+    const cbo_cpa = cbo_purchases > 0 ? Math.round(cbo_spend / cbo_purchases * 100) / 100 : 0;
 
     res.json({
       campaign_id: aresCampaignId,
+      // Metricas CBO (campana como un todo)
+      cbo: {
+        roas: cbo_roas,
+        spend_7d: cbo_spend,
+        revenue_7d: cbo_revenue,
+        purchases_7d: cbo_purchases,
+        cpa: cbo_cpa,
+        active_clones: aresAdSets.length
+      },
+      // Legacy fields (retrocompat)
       clone_budget: 30,
       active_duplicates: aresAdSets.length,
       total_duplicated: totalDuplicated,
-      avg_roas: avgRoas,
-      total_spend_7d: totalSpend,
+      avg_roas: cbo_roas,
+      total_spend_7d: cbo_spend,
       adsets: aresAdSets,
       candidates,
       recent_duplications: duplications.slice(0, 10).map(d => ({

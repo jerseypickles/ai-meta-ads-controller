@@ -955,6 +955,9 @@ function AresPanel({ data, loading, running, onRun, onRefresh }) {
   if (loading && !data) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Cargando Ares...</div>;
   if (!data) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Sin datos de Ares — esperando primer ciclo</div>;
 
+  const [showClones, setShowClones] = useState(false);
+  const cbo = data.cbo || {};
+
   return (
     <div className="agent-panel">
       {/* Header */}
@@ -962,8 +965,8 @@ function AresPanel({ data, loading, running, onRun, onRefresh }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontSize: '1.5rem' }}>⚔️</span>
           <div>
-            <div style={{ fontSize: '1.15rem', fontWeight: 600 }}>Ares — Duplicador</div>
-            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Duplica ganadores a campana ABO con budget sharing</div>
+            <div style={{ fontSize: '1.15rem', fontWeight: 600 }}>Ares — Campana CBO</div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Duplica ganadores a campana CBO — Meta distribuye budget entre clones</div>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -976,49 +979,49 @@ function AresPanel({ data, loading, running, onRun, onRefresh }) {
         </div>
       </div>
 
-      {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10, marginBottom: 20 }}>
-        {[
-          { value: data.active_duplicates || 0, label: 'Duplicados Activos' },
-          { value: data.total_duplicated || 0, label: 'Total Duplicados' },
-          { value: `${data.avg_roas || 0}x`, label: 'ROAS Promedio' },
-          { value: `$${data.clone_budget || 30}`, label: 'Budget/clon' },
-          { value: `$${data.total_spend_7d || 0}`, label: 'Spend 7d' },
-          { value: data.candidates?.length || 0, label: 'Candidatos' }
-        ].map((s, i) => (
-          <div key={i} style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '12px 14px', textAlign: 'center' }}>
-            <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-primary)' }}>{s.value}</div>
-            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>{s.label}</div>
-          </div>
-        ))}
+      {/* CBO Campaign Stats — lo principal */}
+      <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '20px', marginBottom: 20, border: '1px solid rgba(239,68,68,0.15)' }}>
+        <div style={{ fontSize: '0.7rem', color: '#ef4444', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>Performance Campana CBO</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 16 }}>
+          {[
+            { value: `${cbo.roas || data.avg_roas || 0}x`, label: 'ROAS', color: (cbo.roas || 0) >= 3 ? '#10b981' : (cbo.roas || 0) >= 1.5 ? '#f59e0b' : '#ef4444' },
+            { value: `$${cbo.spend_7d || data.total_spend_7d || 0}`, label: 'Spend 7d' },
+            { value: `$${cbo.revenue_7d || 0}`, label: 'Revenue 7d', color: '#10b981' },
+            { value: cbo.purchases_7d || 0, label: 'Compras' },
+            { value: cbo.cpa ? `$${cbo.cpa}` : '—', label: 'CPA' },
+            { value: cbo.active_clones || data.active_duplicates || 0, label: 'Clones Activos' }
+          ].map((s, i) => (
+            <div key={i} style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '1.3rem', fontWeight: 700, color: s.color || 'var(--text-primary)' }}>{s.value}</div>
+              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 2 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
-      {/* Duplicados Activos */}
+      {/* Clones — detalle colapsable */}
       {(data.adsets || []).length > 0 && (
         <div style={{ marginBottom: 24 }}>
-          <h4 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 10 }}>Duplicados Activos</h4>
-          <div style={{ display: 'grid', gap: 8 }}>
-            {data.adsets.map((a, i) => (
-              <div key={i} style={{
-                background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '12px 16px',
-                border: `1px solid ${a.roas_7d >= 4 ? '#10b98130' : a.roas_7d >= 2 ? '#f59e0b30' : '#ef444430'}`
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-primary)' }}>{a.adset_name}</div>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: a.roas_7d >= 4 ? '#10b981' : a.roas_7d >= 2 ? '#f59e0b' : '#ef4444' }}>
-                    {a.roas_7d}x ROAS
+          <h4 onClick={() => setShowClones(!showClones)} style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 8, cursor: 'pointer', userSelect: 'none' }}>
+            {showClones ? '▾' : '▸'} Detalle por clon ({data.adsets.length})
+          </h4>
+          {showClones && (
+            <div style={{ display: 'grid', gap: 6 }}>
+              {data.adsets.map((a, i) => (
+                <div key={i} style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', padding: '8px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-primary)' }}>{a.adset_name}</div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                      ${a.spend_7d} spend | {a.purchases_7d} compras | freq {a.frequency} | CTR {a.ctr}%
+                    </div>
+                  </div>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 600, color: a.roas_7d >= 3 ? '#10b981' : a.roas_7d >= 1.5 ? '#f59e0b' : 'var(--text-muted)' }}>
+                    {a.roas_7d}x
                   </span>
                 </div>
-                <div style={{ display: 'flex', gap: 16, fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 6 }}>
-                  <span>3d: {a.roas_3d}x</span>
-                  <span>${a.spend_7d} spend</span>
-                  <span>{a.purchases_7d} compras</span>
-                  <span>freq {a.frequency}</span>
-                  <span>CTR {a.ctr}%</span>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
