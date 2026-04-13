@@ -1004,6 +1004,12 @@ const AdSetRow = ({ adset, timeWindow, onRefresh, brainRecs, brainInsights, trac
               {(adset.entity_name || '').includes('[Prometheus]') && (
                 <span style={{ fontSize: '0.6rem', fontWeight: 700, background: '#10b98120', color: '#34d399', padding: '1px 6px', borderRadius: 4, marginRight: 6, verticalAlign: 'middle' }}>GRADUATED</span>
               )}
+              {adset.learning_stage === 'LEARNING' && (
+                <span style={{ fontSize: '0.6rem', fontWeight: 700, background: '#f59e0b20', color: '#fbbf24', padding: '1px 6px', borderRadius: 4, marginRight: 6, verticalAlign: 'middle' }} title={`${adset.learning_stage_conversions || 0}/50 conversiones`}>LEARNING</span>
+              )}
+              {adset.learning_stage === 'FAIL' && (
+                <span style={{ fontSize: '0.6rem', fontWeight: 700, background: '#ef444420', color: '#f87171', padding: '1px 6px', borderRadius: 4, marginRight: 6, verticalAlign: 'middle' }}>LIMITED</span>
+              )}
               {adset.entity_name || adset.entity_id}
             </div>
             {(recCount > 0 || insightCount > 0 || trackingCount > 0 || pendingCreativeRefresh || adsetFatigue.level !== 'none') && (

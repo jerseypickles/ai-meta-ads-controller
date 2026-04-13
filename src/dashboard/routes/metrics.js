@@ -223,6 +223,8 @@ async function _fetchLiveAdSets() {
       budget_remaining: parseBudget(as.budget_remaining),
       bid_strategy: as.bid_strategy || null,
       optimization_goal: as.optimization_goal || null,
+      learning_stage: as.learning_stage_info?.status || null,
+      learning_stage_conversions: as.learning_stage_info?.conversions || 0,
       metrics,
       analysis,
       id: id,

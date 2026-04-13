@@ -2049,6 +2049,8 @@ function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onR
               {/* Row 1: name + trend badge */}
               <div className="agent-card-top">
                 <span className="agent-card-name" title={adset.adset_name}>{adset.adset_name}</span>
+                {adset.learning_stage === 'LEARNING' && <span className="agent-badge-sm" style={{ color: '#fbbf24', background: 'rgba(251,191,36,0.15)' }} title={`${adset.learning_conversions || 0}/50 conv`}>LEARNING</span>}
+                {adset.learning_stage === 'FAIL' && <span className="agent-badge-sm" style={{ color: '#f87171', background: 'rgba(248,113,113,0.15)' }}>LIMITED</span>}
                 <span className="agent-badge-sm" style={{ background: trend.bg, color: trend.color }}>{trend.label}</span>
                 {isNew && <span className="agent-badge-sm" style={{ color: '#3b82f6', background: 'rgba(59,130,246,0.15)' }}>{adset.days_old}d</span>}
                 {adset.agent?.needs_new_creatives && <span className="agent-badge-sm" style={{ color: '#f59e0b', background: 'rgba(245,158,11,0.15)' }}>Creativos</span>}
