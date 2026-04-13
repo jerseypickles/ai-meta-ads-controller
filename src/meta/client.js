@@ -680,7 +680,7 @@ class MetaClient {
    */
   async getCampaignsWithAdSets() {
     const campaignFields = 'id,name,status,effective_status,objective,daily_budget,lifetime_budget,budget_remaining,created_time,updated_time';
-    const adsetFields = 'id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,bid_strategy,optimization_goal,campaign_id,created_time,updated_time';
+    const adsetFields = 'id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,bid_strategy,optimization_goal,campaign_id,created_time,updated_time,learning_stage_info';
 
     const params = {
       fields: `${campaignFields},adsets.limit(200){${adsetFields}}`,

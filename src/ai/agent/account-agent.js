@@ -1181,8 +1181,10 @@ async function runAccountAgent() {
     const pauses = { length: results.reduce((n, r) => n + (r.action_types || []).filter(t => t === 'pause').length, 0) };
     const holds = { length: results.filter(r => !r.action_types || r.action_types.length === 0).length };
 
+    const learningCount = results.filter(r => r.skipReason && r.skipReason.startsWith('Learning phase')).length;
     let msg = `Ciclo completado (${mode}): ${activeAdSets.length} ad sets evaluados, ${totalActions} acciones en ${elapsed}.`;
     msg += ` Escalé ${scales.length}, pausé ${pauses.length}, holdé ${holds.length}.`;
+    if (learningCount > 0) msg += ` ${learningCount} ad sets en LEARNING (no tocados).`;
     if (activeDirectives.length > 0) {
       msg += ` Recibí ${activeDirectives.length} directivas tuyas: ${activeDirectives.map(d => `"${d.directive.substring(0, 50)}"`).join(', ')}.`;
     }
@@ -1347,6 +1349,14 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
   if (excludePatterns.some(p => (adSetName || '').toUpperCase().includes(p))) {
     logger.debug(`[ACCOUNT-AGENT] ${adSetName}: excluded by name pattern — skip`);
     return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: 'Excluded by name' };
+  }
+
+  // ═══ PRE-CHECK: Learning stage — do NOT touch ad sets in LEARNING (resets counter) ═══
+  if (snapshot.learning_stage === 'LEARNING') {
+    const convs = snapshot.learning_stage_conversions || 0;
+    const needed = 50 - convs;
+    logger.debug(`[ACCOUNT-AGENT] ${adSetName}: Meta LEARNING phase (${convs}/50 conversions, ~${needed} needed) — skip to avoid resetting`);
+    return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Learning phase (${convs}/50 conv)` };
   }
 
   // ═══ PRE-CHECK: Low spend filter (< $5/week) ═══
