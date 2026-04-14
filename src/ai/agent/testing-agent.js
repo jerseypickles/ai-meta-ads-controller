@@ -385,14 +385,14 @@ async function graduateTest(test, metrics) {
   // ═══ GRADUACION: Solo promover test ad set como ad set nuevo de produccion ═══
   // NO crear ad en ad set original (Meta ignora ads nuevos en ad sets con ad viejo dominante)
 
-  // 1. Promover test ad set: renombrar + subir budget
+  // 1. Promover test ad set: SOLO renombrar (NO cambiar budget — resetea Meta learning)
+  // Athena escalará gradualmente (+15%) una vez que salga de learning
   const promotedName = `${proposal?.headline || 'Graduated'} [Prometheus]`;
   try {
     await meta.post(`/${test.test_adset_id}`, {
-      name: promotedName,
-      daily_budget: Math.round(GRADUATED_BUDGET * 100)
+      name: promotedName
     });
-    logger.info(`[TESTING-AGENT] Test ad set promovido: "${promotedName}" → $${GRADUATED_BUDGET}/dia`);
+    logger.info(`[TESTING-AGENT] Test ad set promovido: "${promotedName}" — budget se mantiene en $${TEST_DAILY_BUDGET}/dia (Athena escalará)`);
   } catch (err) {
     logger.warn(`[TESTING-AGENT] No se pudo promover test ad set: ${err.message}. Pausando en su lugar.`);
     await meta.updateStatus(test.test_adset_id, 'PAUSED');
