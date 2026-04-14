@@ -43,6 +43,11 @@ const metricSnapshotSchema = new mongoose.Schema({
   // Fecha de creación en Meta (para calcular edad del ad/adset)
   meta_created_time: { type: Date, default: null },
 
+  // Learning stage de Meta (solo ad sets)
+  learning_stage: { type: String, enum: ['LEARNING', 'SUCCESS', 'FAIL', null], default: null },
+  learning_stage_conversions: { type: Number, default: 0 },
+  learning_stage_last_edit: { type: Date, default: null },
+
   // Métricas por ventana de tiempo (today, last_3d, last_7d, last_14d, last_30d)
   metrics: {
     today: { type: metricsWindowSchema, default: () => ({}) },
