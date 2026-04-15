@@ -450,11 +450,13 @@ async function killOrExpireTest(test, reason, phase) {
   const { getMetaClient } = require('../../meta/client');
   const meta = getMetaClient();
 
-  // 1. Pausar test ad set
+  // 1. Eliminar test ad set (DELETED para que no contamine snapshots)
   try {
-    await meta.updateStatus(test.test_adset_id, 'PAUSED');
+    await meta.updateStatus(test.test_adset_id, 'DELETED');
   } catch (err) {
-    logger.warn(`[TESTING-AGENT] No se pudo pausar test ${test.test_adset_id}: ${err.message}`);
+    // Fallback a PAUSED si DELETED falla
+    try { await meta.updateStatus(test.test_adset_id, 'PAUSED'); } catch (_) {}
+    logger.warn(`[TESTING-AGENT] No se pudo eliminar test ${test.test_adset_id}: ${err.message} — pausado`);
   }
 
   const now = new Date();

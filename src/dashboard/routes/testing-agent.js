@@ -113,8 +113,10 @@ router.post('/tests/:id/kill', async (req, res) => {
     const { getMetaClient } = require('../../meta/client');
     const meta = getMetaClient();
 
-    // Pausar test ad set
-    try { await meta.updateStatus(test.test_adset_id, 'PAUSED'); } catch (_) {}
+    // Eliminar test ad set
+    try { await meta.updateStatus(test.test_adset_id, 'DELETED'); } catch (_) {
+      try { await meta.updateStatus(test.test_adset_id, 'PAUSED'); } catch (__) {}
+    }
 
     // Actualizar
     test.phase = 'killed';
