@@ -106,7 +106,7 @@ async function findDuplicationCandidates() {
   const filteredCandidates = [];
   for (const c of candidates) {
     const prevDups = await ActionLog.find({
-      action: 'duplicate_adset',
+      action: { $in: ['duplicate_adset', 'fast_track_duplicate'] },
       agent_type: 'ares_agent',
       entity_id: c.entity_id,
       success: true
@@ -367,6 +367,112 @@ async function processZeusDirectives(aresCampaignId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// FASE 0.5: FAST-TRACK — Graduados recientes con ROAS alto directo a CBO
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const FAST_TRACK_MIN_ROAS = 5.0;      // ROAS minimo para fast-track
+const FAST_TRACK_MIN_PURCHASES = 3;    // Compras minimas
+const FAST_TRACK_LOOKBACK_HOURS = 12;  // Buscar graduados de ultimas 12h
+const FAST_TRACK_MAX_PER_CYCLE = 2;    // Max fast-tracks por ciclo
+
+async function processFastTrackGraduates(aresCampaignId) {
+  const TestRun = require('../../db/models/TestRun');
+
+  const lookback = new Date(Date.now() - FAST_TRACK_LOOKBACK_HOURS * 3600000);
+  const recentGrads = await TestRun.find({
+    phase: 'graduated',
+    graduated_at: { $gte: lookback }
+  }).lean();
+
+  if (recentGrads.length === 0) return { tracked: 0, results: [] };
+
+  // Filtrar por umbral alto
+  const qualifying = recentGrads.filter(t => {
+    const m = t.metrics || {};
+    return (m.roas || 0) >= FAST_TRACK_MIN_ROAS && (m.purchases || 0) >= FAST_TRACK_MIN_PURCHASES;
+  });
+
+  if (qualifying.length === 0) return { tracked: 0, results: [] };
+
+  // Excluir los que ya fueron fast-tracked o duplicados
+  const results = [];
+  let tracked = 0;
+
+  for (const test of qualifying) {
+    if (tracked >= FAST_TRACK_MAX_PER_CYCLE) break;
+
+    const adsetId = test.test_adset_id;
+    if (!adsetId) continue;
+
+    // Verificar si ya fue clonado (fast-track o normal)
+    const alreadyCloned = await ActionLog.findOne({
+      entity_id: adsetId,
+      action: { $in: ['duplicate_adset', 'fast_track_duplicate'] },
+      agent_type: 'ares_agent',
+      success: true
+    }).lean();
+
+    if (alreadyCloned) {
+      logger.debug(`[ARES] Fast-track: ${test.test_adset_name} ya fue clonado — skip`);
+      continue;
+    }
+
+    // Obtener snapshot para metricas actuales
+    const snap = await MetricSnapshot.findOne({ entity_type: 'adset', entity_id: adsetId }).sort({ created_at: -1 }).lean();
+    if (!snap || snap.status !== 'ACTIVE') continue;
+
+    const m = test.metrics || {};
+    const candidate = {
+      entity_id: adsetId,
+      entity_name: test.test_adset_name || snap.entity_name || adsetId,
+      roas_7d: m.roas || 0,
+      spend_7d: m.spend || 0,
+      frequency: snap.metrics?.last_7d?.frequency || 0,
+      daily_budget: snap.daily_budget || 10,
+      purchases_7d: m.purchases || 0,
+      cpa_7d: m.purchases > 0 ? Math.round(m.spend / m.purchases * 100) / 100 : 0,
+      clone_number: 1
+    };
+
+    try {
+      const result = await duplicateWinner(candidate, aresCampaignId);
+      tracked++;
+
+      // Registrar como fast_track_duplicate (distinto de duplicate_adset normal)
+      await ActionLog.create({
+        entity_type: 'adset',
+        entity_id: adsetId,
+        entity_name: candidate.entity_name,
+        action: 'fast_track_duplicate',
+        before_value: candidate.daily_budget,
+        after_value: result.clone_name,
+        new_entity_id: result.new_adset_id,
+        target_entity_id: aresCampaignId,
+        reasoning: `Fast-track: ROAS ${candidate.roas_7d.toFixed(2)}x, ${candidate.purchases_7d} compras — graduado directo a CBO.`,
+        confidence: 'high',
+        agent_type: 'ares_agent',
+        success: true,
+        executed_at: new Date(),
+        metrics_at_execution: {
+          roas: candidate.roas_7d,
+          spend: candidate.spend_7d,
+          purchases: candidate.purchases_7d,
+          cpa: candidate.cpa_7d
+        }
+      });
+
+      logger.info(`[ARES] FAST-TRACK: "${candidate.entity_name}" (${candidate.roas_7d.toFixed(2)}x, ${candidate.purchases_7d} compras) → "${result.clone_name}"`);
+      results.push({ type: 'fast_track', original: candidate.entity_name, clone_name: result.clone_name, roas: candidate.roas_7d, purchases: candidate.purchases_7d, success: true });
+    } catch (err) {
+      logger.error(`[ARES] Fast-track error "${candidate.entity_name}": ${err.message}`);
+      results.push({ type: 'fast_track', original: candidate.entity_name, error: err.message, success: false });
+    }
+  }
+
+  return { tracked, results };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MAIN: RUN ARES AGENT
 // ═══════════════════════════════════════════════════════════════════════════════
 async function runAresAgent() {
@@ -392,6 +498,17 @@ async function runAresAgent() {
     }
   } catch (err) {
     logger.error(`[ARES] Error procesando directivas de Zeus: ${err.message}`);
+  }
+
+  // Fase 0.5: Fast-track — graduados recientes con ROAS alto directo a CBO
+  let fastTrackResults = { tracked: 0, results: [] };
+  try {
+    fastTrackResults = await processFastTrackGraduates(aresCampaignId);
+    if (fastTrackResults.tracked > 0) {
+      logger.info(`[ARES] ${fastTrackResults.tracked} fast-tracks ejecutados`);
+    }
+  } catch (err) {
+    logger.error(`[ARES] Error en fast-track: ${err.message}`);
   }
 
   // Fase 1: Encontrar candidatos (duplicacion autonoma)
@@ -440,6 +557,14 @@ async function runAresAgent() {
   try {
     const ZeusConversation = require('../../db/models/ZeusConversation');
     let msg = `Ciclo completado: ${duplicated} ad sets duplicados a campana Ares de ${candidates.length} candidatos.`;
+
+    // Reportar fast-tracks
+    if (fastTrackResults.tracked > 0) {
+      msg += `\n\nFAST-TRACK (${fastTrackResults.tracked} graduados directo a CBO):`;
+      fastTrackResults.results.filter(r => r.success).forEach(r => {
+        msg += `\n  - "${r.original}" ROAS ${r.roas.toFixed(2)}x ${r.purchases} compras → "${r.clone_name}"`;
+      });
+    }
 
     // Reportar directivas de Zeus procesadas
     if (zeusResults.processed > 0) {
@@ -493,8 +618,10 @@ async function runAresAgent() {
 
   return {
     duplicated,
+    fast_tracked: fastTrackResults.tracked,
     candidates: candidates.length,
     results,
+    fast_track_results: fastTrackResults.results,
     zeus_directives: zeusResults,
     elapsed,
     cycle_id: cycleId
