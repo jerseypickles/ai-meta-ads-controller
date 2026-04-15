@@ -1310,6 +1310,7 @@ class MetaClient {
       name: `Creative - ${headline || 'Sin título'} - ${new Date().toISOString().split('T')[0]}`,
       object_story_spec: JSON.stringify({
         page_id,
+        instagram_user_id: params.instagram_user_id || '17841404033228624',
         link_data: linkData
       })
     };
@@ -1352,7 +1353,7 @@ class MetaClient {
 
     const creativeParams = {
       name: `Creative - ${(headlines || [''])[0] || 'Multi-text'} - ${new Date().toISOString().split('T')[0]}`,
-      object_story_spec: JSON.stringify({ page_id }),
+      object_story_spec: JSON.stringify({ page_id, instagram_user_id: params.instagram_user_id || '17841404033228624' }),
       asset_feed_spec: JSON.stringify(assetFeedSpec)
     };
 
