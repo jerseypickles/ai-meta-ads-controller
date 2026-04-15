@@ -27,7 +27,7 @@ router.get('/activity', async (req, res) => {
 
     // 1. Get all active ad set snapshots
     const allSnapshots = await getLatestSnapshots('adset');
-    const excludeNames = ['[TEST]', 'AI -', 'AMAZON', 'DONT TOUCH', 'DONT_TOUCH', 'EXCLUDE', 'MANUAL ONLY'];
+    const excludeNames = ['[TEST]', '[Ares]', 'AI -', 'AMAZON', 'DONT TOUCH', 'DONT_TOUCH', 'EXCLUDE', 'MANUAL ONLY'];
     const activeAdSets = allSnapshots.filter(s => s.status === 'ACTIVE' && !excludeNames.some(ex => (s.entity_name || '').toUpperCase().includes(ex.toUpperCase())));
 
     // 2. Get all BrainMemory with agent assessments
