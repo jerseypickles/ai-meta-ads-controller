@@ -523,6 +523,16 @@ async function gatherAccountIntelligence() {
       learning_count: activeAdsets.filter(s => s.learning_stage === 'LEARNING').length,
       success_count: activeAdsets.filter(s => s.learning_stage === 'SUCCESS').length
     },
+    learning_detail: activeAdsets
+      .filter(s => s.learning_stage === 'LEARNING' && !(s.entity_name || '').startsWith('[TEST]') && !(s.entity_name || '').startsWith('[Ares]'))
+      .map(s => ({
+        name: s.entity_name,
+        conversions: s.learning_stage_conversions || 0,
+        needed: 50 - (s.learning_stage_conversions || 0),
+        roas: (s.metrics?.last_7d?.roas || 0).toFixed(2),
+        budget: s.daily_budget || 0
+      }))
+      .sort((a, b) => b.conversions - a.conversions),
     athena: {
       actions_7d: recentActions.length,
       action_types: actionSummary,
@@ -652,6 +662,13 @@ If confirmed by data, reinforce the strategy. If disproven, adjust.
 | Budget diario total | $${acct.total_daily_budget || 0}/dia | — | — |
 | Ad sets en LEARNING | ${acct.learning_count || 0} | — | Meta necesita ~50 conv para salir |
 | Ad sets SUCCESS | ${acct.success_count || 0} | — | Salieron de learning |
+
+### Ad Sets Closest to Exiting LEARNING (production only)
+${(() => {
+  const inLearning = (accountData.learning_detail || []);
+  if (inLearning.length === 0) return 'No learning data available yet.';
+  return inLearning.slice(0, 8).map(a => `- ${a.name}: ${a.conversions}/50 (${a.needed} needed) ROAS ${a.roas}x $${a.budget}/d`).join('\n');
+})()}
 
 ### Budget Allocation (ZERO-SUM thinking)
 | Metric | Value |

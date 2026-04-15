@@ -1094,6 +1094,7 @@ const TOOL_HANDLERS = {
 
 const MAX_TURNS = 10;
 const OBSERVER_TOOLS = TOOLS.filter(t => !['scale_budget', 'pause_ad', 'reactivate_ad', 'pause_adset'].includes(t.name));
+const LEARNING_SCALE_ONLY_TOOLS = TOOLS.filter(t => !['pause_ad', 'reactivate_ad', 'pause_adset'].includes(t.name));
 
 /**
  * Detect if we're in active hours (6am-10pm ET) or observer mode.
@@ -1351,12 +1352,26 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
     return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: 'Excluded by name' };
   }
 
-  // ═══ PRE-CHECK: Learning stage — do NOT touch ad sets in LEARNING (resets counter) ═══
+  // ═══ PRE-CHECK: Learning stage — limited actions on ad sets in LEARNING ═══
+  // Scale +15% does NOT reset learning (only >20% does). But pause/kill DOES reset.
+  // Exception: [Prometheus] graduates with ROAS >= 3x can be scaled to accelerate exit.
   if (snapshot.learning_stage === 'LEARNING') {
     const convs = snapshot.learning_stage_conversions || 0;
     const needed = 50 - convs;
-    logger.debug(`[ACCOUNT-AGENT] ${adSetName}: Meta LEARNING phase (${convs}/50 conversions, ~${needed} needed) — skip to avoid resetting`);
-    return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Learning phase (${convs}/50 conv)` };
+    const roas7d = snapshot.metrics?.last_7d?.roas || 0;
+    const isPrometheusGrad = (adSetName || '').includes('[Prometheus]');
+
+    if (isPrometheusGrad && roas7d >= 3.0) {
+      // Allow scale only — inject context so Claude knows it can ONLY scale, never pause
+      logger.info(`[ACCOUNT-AGENT] ${adSetName}: LEARNING (${convs}/50) but [Prometheus] ROAS ${roas7d.toFixed(2)}x — allowing scale to accelerate exit`);
+      ctx.learningPhase = true;
+      ctx.learningConversions = convs;
+      ctx.learningNeeded = needed;
+      ctx.learningScaleOnly = true; // Flag: only scale allowed, no pause/kill
+    } else {
+      logger.debug(`[ACCOUNT-AGENT] ${adSetName}: Meta LEARNING phase (${convs}/50 conv, ~${needed} needed) — skip`);
+      return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Learning phase (${convs}/50 conv)` };
+    }
   }
 
   // ═══ PRE-CHECK: Low spend filter (< $5/week) ═══
@@ -1407,7 +1422,7 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
   };
 
   const isObserver = mode === 'observer';
-  const activeTools = isObserver ? OBSERVER_TOOLS : TOOLS;
+  const activeTools = isObserver ? OBSERVER_TOOLS : (ctx.learningScaleOnly ? LEARNING_SCALE_ONLY_TOOLS : TOOLS);
 
   // Leer directivas de Zeus para Athena
   let zeusContext = '';
