@@ -461,9 +461,24 @@ async function gatherAccountIntelligence() {
     });
     const aresSpend = aresMapped.reduce((s, a) => s + a.spend_7d, 0);
     const aresRevenue = aresMapped.reduce((s, a) => s + (parseFloat(a.roas_7d) * a.spend_7d), 0);
+    const aresWithSpend = aresMapped.filter(a => a.spend_7d > 0).length;
+    const aresNoSpend = aresMapped.filter(a => a.spend_7d === 0).length;
+
+    // Leer budget real de la campana CBO desde Meta
+    let cboBudget = 0;
+    try {
+      const { getMetaClient } = require('../../meta/client');
+      const meta = getMetaClient();
+      const campData = await meta.get(`/${aresCampaignId}`, { fields: 'daily_budget' });
+      cboBudget = campData.daily_budget ? parseInt(campData.daily_budget) / 100 : 0;
+    } catch (_) {}
+
     aresData = {
       ...aresData,
       active_duplicates: aresMapped.length,
+      clones_with_spend: aresWithSpend,
+      clones_no_spend: aresNoSpend,
+      cbo_daily_budget: cboBudget,
       adsets: aresMapped,
       total_spend_7d: aresSpend,
       avg_roas: aresSpend > 0 ? (aresRevenue / aresSpend).toFixed(2) : '0'
@@ -504,7 +519,9 @@ async function gatherAccountIntelligence() {
       atc_7d: totalAtc,
       ic_7d: totalIc,
       click_to_atc: clickToAtc,
-      atc_to_purchase: atcToPurchase
+      atc_to_purchase: atcToPurchase,
+      learning_count: activeAdsets.filter(s => s.learning_stage === 'LEARNING').length,
+      success_count: activeAdsets.filter(s => s.learning_stage === 'SUCCESS').length
     },
     athena: {
       actions_7d: recentActions.length,
@@ -633,6 +650,8 @@ If confirmed by data, reinforce the strategy. If disproven, adjust.
 | ATC→Purchase rate | ${acct.atc_to_purchase || 0}% | — | — |
 | Ad sets activos | ${acct.active_adsets || 0} | — | — |
 | Budget diario total | $${acct.total_daily_budget || 0}/dia | — | — |
+| Ad sets en LEARNING | ${acct.learning_count || 0} | — | Meta necesita ~50 conv para salir |
+| Ad sets SUCCESS | ${acct.success_count || 0} | — | Salieron de learning |
 
 ### Budget Allocation (ZERO-SUM thinking)
 | Metric | Value |
@@ -676,9 +695,9 @@ ${athenaSection}
   - Slots disponibles AHORA: ${accountData.prometheus.slots_available_now}
   - Slots proyectados en 24h: ${accountData.prometheus.slots_available_24h}
 - Apollo: ${accountData.apollo.ready_pool} creativos en pool (${accountData.apollo.old_proposals_24h} con +24h aging)
-- Ares: ${accountData.ares?.active_duplicates || 0} duplicados activos ($${accountData.ares?.clone_budget || 30}/dia c/u), ROAS promedio ${accountData.ares?.avg_roas || 0}x, ${accountData.ares?.total_duplications || 0} duplicaciones totales
+- Ares CBO: ${accountData.ares?.active_duplicates || 0} clones (${accountData.ares?.clones_with_spend || 0} con spend, ${accountData.ares?.clones_no_spend || 0} sin spend). CBO budget: $${accountData.ares?.cbo_daily_budget || 0}/dia. ROAS ${accountData.ares?.avg_roas || 0}x. $${accountData.ares?.total_spend_7d || 0} spend 7d. ${accountData.ares?.total_duplications || 0} duplicaciones totales
 ${(accountData.ares?.adsets || []).length > 0
-  ? '  Duplicados: ' + accountData.ares.adsets.map(a => `${a.name} (${a.roas_7d}x, $${a.spend_7d})`).join(', ')
+  ? '  Top clones: ' + accountData.ares.adsets.filter(a => a.spend_7d > 0).sort((a,b) => parseFloat(b.roas_7d) - parseFloat(a.roas_7d)).slice(0,5).map(a => `${a.name} (${a.roas_7d}x, $${a.spend_7d})`).join(', ')
   : '  Sin duplicados activos aun'}
 
 ### ANTICIPACION — Tests cerca de GRADUARSE EARLY (ROAS >= 3x + 2+ compras)
