@@ -677,22 +677,28 @@ async function runCreativeAgent() {
   if (proactiveNeeded > 0 && rankedProducts.length > 0 && rankedScenes.length > 0) {
     logger.info(`[CREATIVE-AGENT] Pool bajo (${readyCount} + ${generated} generados). Generando ${proactiveNeeded} proactivos para escalar.`);
 
-    // Distribuir productos: contar cuantos ready hay por producto y priorizar los sub-representados
-    const readyByProduct = {};
-    const allReady = await CreativeProposal.find({ status: 'ready' }).select('product_name').lean();
-    for (const rp of allReady) readyByProduct[rp.product_name || 'unknown'] = (readyByProduct[rp.product_name || 'unknown'] || 0) + 1;
+    // Distribucion: primer slot SIEMPRE para BYB (custom), resto rota entre los demas
+    const bybProduct = rankedProducts.find(p => p.prompt_type === 'custom');
+    const otherProducts = rankedProducts.filter(p => p.prompt_type !== 'custom');
 
-    // Rotar productos balanceando: el que menos ready tiene va primero
-    const balancedProducts = [...rankedProducts].sort((a, b) => {
-      const readyA = readyByProduct[a.product_name] || 0;
-      const readyB = readyByProduct[b.product_name] || 0;
-      if (readyA !== readyB) return readyA - readyB; // menos ready primero
-      return (b.performance?.avg_roas || 0) - (a.performance?.avg_roas || 0); // desempate por ROAS
-    });
+    // Construir lista de productos por slot: [BYB, otro, BYB, otro, ...]
+    const productSlots = [];
+    let otherIdx = 0;
+    for (let i = 0; i < proactiveNeeded; i++) {
+      if (i % 2 === 0 && bybProduct) {
+        productSlots.push(bybProduct); // Slots pares: BYB
+      } else if (otherProducts.length > 0) {
+        productSlots.push(otherProducts[otherIdx % otherProducts.length]);
+        otherIdx++;
+      } else if (bybProduct) {
+        productSlots.push(bybProduct); // Si no hay otros, todo BYB
+      }
+    }
+    logger.info(`[CREATIVE-AGENT] Proactivos: ${productSlots.map(p => p.product_name).join(', ')}`);
 
     for (let p = 0; p < proactiveNeeded; p++) {
       try {
-        const product = balancedProducts[p % balancedProducts.length];
+        const product = productSlots[p] || rankedProducts[0];
         const sceneIdx = (globalSceneIndex + p) % rankedScenes.length;
         const scenePick = rankedScenes[sceneIdx];
         const style = weightedPick(adjustedStyles);
