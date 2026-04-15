@@ -556,11 +556,25 @@ async function processForceGraduateDirectives() {
   for (const d of directives) {
     try {
       const data = d.data || {};
-      // Buscar el test por test_id (preferido) o por adset_id
+      // Buscar el test por test_id (ObjectId), headline, adset_name o adset_id
       let test = null;
       if (data.test_id) {
-        test = await TestRun.findById(data.test_id).lean();
-      } else if (data.adset_id || data.test_adset_id) {
+        // Intentar como ObjectId primero
+        if (/^[a-f\d]{24}$/i.test(data.test_id)) {
+          test = await TestRun.findById(data.test_id).lean();
+        }
+        // Si no es ObjectId o no encontro, buscar por nombre/headline
+        if (!test) {
+          test = await TestRun.findOne({
+            $or: [
+              { test_adset_name: { $regex: data.test_id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' } },
+              { test_adset_name: `[TEST] ${data.test_id}` }
+            ],
+            phase: { $in: ['learning', 'evaluating'] }
+          }).lean();
+        }
+      }
+      if (!test && (data.adset_id || data.test_adset_id)) {
         test = await TestRun.findOne({
           test_adset_id: data.adset_id || data.test_adset_id,
           phase: { $in: ['learning', 'evaluating'] }
