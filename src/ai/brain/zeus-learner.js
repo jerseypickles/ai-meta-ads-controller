@@ -797,6 +797,7 @@ Rules:
   * prioritize: Strategic guidance for Ares (e.g. "focus on BYB products", "slow down duplications")
   * alert: Flag something for Ares attention (e.g. "clone X cannibalizing original")
 - ARES CLONES SAFETY: Do NOT recommend killing, pausing, or alerting about any Ares clone with less than 7 REAL days of existence. Clones need time to exit learning phase and accumulate data. Even if a clone has $30-50 spend and 0 purchases at day 2-3, that is NORMAL — it is still in Meta learning phase. ONLY flag clones that have 7+ real days AND ROAS < 2x with meaningful spend ($50+). When in doubt, HOLD.
+- ARES CBO BUDGET: Changing the CBO CAMPAIGN budget does NOT reset learning on any clone — it is safe to scale up or down. If CBO ROAS is good (>3x) and clones are starved for budget (many with $0 spend), proactively issue adjust directive to increase CBO budget. More budget = Meta can feed more clones = faster learning exit. Think of CBO budget as a lever you can pull freely without side effects.
 - For Apollo data field, include: scenes (first 40 chars), styles (ugly-ad/pov-selfie/overhead-flat/close-up-texture/action-shot), angles (casual-fun/curiosity/social-proof/urgency/humor/controversy/sensory)
 - Max 5 thoughts. First person. Specific with real numbers.
 - ALL strings must be short. No line breaks inside strings. No double quotes inside strings.`
