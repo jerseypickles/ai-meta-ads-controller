@@ -57,17 +57,18 @@ class KillSwitch {
       const totalPurchases7d = snapshots.reduce((sum, s) => sum + (s.metrics?.last_7d?.purchases || 0), 0);
       const accountCPA = totalPurchases7d > 0 ? totalSpend7d / totalPurchases7d : 0;
 
-      // CHECK 1: ROAS por debajo del umbral crítico
-      if (accountROAS > 0 && accountROAS < safetyGuards.kill_switch.account_roas_below) {
+      // CHECK 1: ROAS por debajo del umbral crítico — requiere $1000+ spend 7d
+      if (accountROAS > 0 && totalSpend7d >= 1000 && accountROAS < safetyGuards.kill_switch.account_roas_below) {
         return this.triggerEmergencyPause(
-          `ROAS de la cuenta en ${accountROAS.toFixed(2)}x — debajo del umbral de ${safetyGuards.kill_switch.account_roas_below}x`
+          `ROAS de la cuenta en ${accountROAS.toFixed(2)}x con $${totalSpend7d.toFixed(0)} spend — debajo del umbral de ${safetyGuards.kill_switch.account_roas_below}x`
         );
       }
 
-      // CHECK 2: CPA demasiado alto
-      if (accountCPA > 0 && accountCPA > kpiTargets.cpa_target * safetyGuards.kill_switch.account_cpa_above_multiplier) {
+      // CHECK 2: CPA demasiado alto — requiere mínimo 100 compras 7d para disparar
+      // (evita falsos positivos cuando el data collector aún no procesó todos los snapshots)
+      if (accountCPA > 0 && totalPurchases7d >= 100 && accountCPA > kpiTargets.cpa_target * safetyGuards.kill_switch.account_cpa_above_multiplier) {
         return this.triggerEmergencyPause(
-          `CPA de la cuenta en $${accountCPA.toFixed(2)} — ${safetyGuards.kill_switch.account_cpa_above_multiplier}x por encima del objetivo de $${kpiTargets.cpa_target}`
+          `CPA de la cuenta en $${accountCPA.toFixed(2)} con ${totalPurchases7d} compras 7d — ${safetyGuards.kill_switch.account_cpa_above_multiplier}x por encima del objetivo de $${kpiTargets.cpa_target}`
         );
       }
 
