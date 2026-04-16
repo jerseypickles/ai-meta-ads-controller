@@ -14,10 +14,10 @@ const { getAdsForAdSet } = require('../../db/queries');
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURACION
 // ═══════════════════════════════════════════════════════════════════════════════
-const MAX_CONCURRENT_TESTS = 60;
+const MAX_CONCURRENT_TESTS = 40;
 const TEST_DAILY_BUDGET = 10; // $10/dia
-const MAX_DAILY_TESTING_BUDGET = 600; // Cap diario total: $600 max en testing
-const MAX_LAUNCHES_PER_CYCLE = 7; // Max tests nuevos por ciclo (evitar avalancha)
+const MAX_DAILY_TESTING_BUDGET = 400; // Cap diario total: $400 max en testing
+const MAX_LAUNCHES_PER_CYCLE = 5; // Max tests nuevos por ciclo
 const TEST_MAX_DAYS = 7;
 const KILL_MIN_SPEND = 25;     // Kill si $25+ spend y 0 compras
 const GRADUATED_BUDGET = 20;   // Budget al promover test ad set graduado ($20/dia)
