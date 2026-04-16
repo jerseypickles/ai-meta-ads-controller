@@ -271,8 +271,12 @@ async function duplicateWinner(candidate, aresCampaignId) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function processZeusDirectives(aresCampaignId) {
+  // Buscar directivas para 'ares' Y para 'all' que sean relevantes (CBO budget, etc)
   const directives = await ZeusDirective.find({
-    target_agent: 'ares',
+    $or: [
+      { target_agent: 'ares' },
+      { target_agent: 'all', directive_type: 'adjust', 'data.new_budget': { $exists: true } }
+    ],
     active: true,
     executed: false
   }).sort({ confidence: -1 }).lean();
@@ -340,10 +344,11 @@ async function processZeusDirectives(aresCampaignId) {
         await meta.updateBudget(aresCampaignId, data.new_budget);
         logger.info(`[ARES] Zeus adjust CBO budget: $${currentCboBudget} → $${data.new_budget}/dia`);
 
+        const action = data.new_budget > currentCboBudget ? 'scale_up' : 'scale_down';
         await ActionLog.create({
           entity_type: 'campaign', entity_id: aresCampaignId,
-          action: 'scale_budget', before_value: currentCboBudget, after_value: data.new_budget,
-          reasoning: `Zeus directive: ${data.reason || d.directive}`,
+          action, before_value: currentCboBudget, after_value: data.new_budget,
+          reasoning: `Zeus CBO budget directive: ${data.reason || d.directive}`,
           confidence: 'high', agent_type: 'ares_agent', success: true, executed_at: new Date()
         });
         await ZeusDirective.updateOne({ _id: d._id }, { executed: true, executed_at: new Date(), execution_result: `CBO budget $${currentCboBudget} → $${data.new_budget}/dia` });
