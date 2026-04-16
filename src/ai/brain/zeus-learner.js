@@ -713,6 +713,14 @@ ${athenaSection}
   - Slots proyectados en 24h: ${accountData.prometheus.slots_available_24h}
 - Apollo: ${accountData.apollo.ready_pool} creativos en pool (${accountData.apollo.old_proposals_24h} con +24h aging)
 - Ares CBO: ${accountData.ares?.active_duplicates || 0} clones (${accountData.ares?.clones_with_spend || 0} con spend, ${accountData.ares?.clones_no_spend || 0} sin spend). CBO budget: $${accountData.ares?.cbo_daily_budget || 0}/dia. ROAS ${accountData.ares?.avg_roas || 0}x. $${accountData.ares?.total_spend_7d || 0} spend 7d. ${accountData.ares?.total_duplications || 0} duplicaciones totales
+
+### CBO vs ABO COMPARISON (decision: should we migrate more to CBO?)
+| Metric | ABO Production | CBO Ares | Winner |
+|--------|----------------|----------|--------|
+| ROAS 7d | ${(acct.roas_7d || 0).toFixed(2)}x | ${accountData.ares?.avg_roas || '0'}x | ${parseFloat(accountData.ares?.avg_roas || 0) > (acct.roas_7d || 0) ? 'CBO' : 'ABO'} |
+| Spend 7d | $${acct.spend_7d || 0} | $${accountData.ares?.total_spend_7d || 0} | — |
+| CBO history | — | ${accountData.ares?.total_duplications || 0} duplicaciones, ${(accountData.ares?.total_spend_7d || 0) < 3000 ? '<1 semana' : '1+ semanas'} de data | — |
+Rule: migrate only after 3+ weeks of consistent CBO winning. Current data is early signal.
 ${(accountData.ares?.adsets || []).length > 0
   ? '  Top clones: ' + accountData.ares.adsets.filter(a => a.spend_7d > 0).sort((a,b) => parseFloat(b.roas_7d) - parseFloat(a.roas_7d)).slice(0,5).map(a => `${a.name} (${a.roas_7d}x, $${a.spend_7d})`).join(', ')
   : '  Sin duplicados activos aun'}
@@ -834,6 +842,7 @@ Rules:
   * alert: Flag something for Ares attention (e.g. "clone X cannibalizing original")
 - ARES CLONES SAFETY: Do NOT recommend killing, pausing, or alerting about any Ares clone with less than 7 REAL days of existence. Clones need time to exit learning phase and accumulate data. Even if a clone has $30-50 spend and 0 purchases at day 2-3, that is NORMAL — it is still in Meta learning phase. ONLY flag clones that have 7+ real days AND ROAS < 2x with meaningful spend ($50+). When in doubt, HOLD.
 - ARES CBO BUDGET: Changing the CBO CAMPAIGN budget does NOT reset learning on any clone — it is safe to scale up or down. If CBO ROAS is good (>3x) and clones are starved for budget (many with $0 spend), proactively issue adjust directive to increase CBO budget. More budget = Meta can feed more clones = faster learning exit. Think of CBO budget as a lever you can pull freely without side effects.
+- CBO vs ABO STRATEGY: Compare ROAS of Ares CBO campaign vs ABO production. If CBO ROAS has beaten ABO consistently for 3+ cycles AND CBO has 50+ purchases of history, consider recommending gradual migration: (a) shift more budget to CBO (raise CBO budget +$200-500 at a time), (b) identify ABO ad sets already cloned to CBO that underperform in ABO — suggest pausing those ABO originals since the CBO clone is carrying the weight. Generate an "alert" directive to athena if you want to flag migration candidates. Rule: do NOT migrate unless CBO has proven itself for 3+ weeks. Current window is too early (only ~4 days of CBO data).
 - For Apollo data field, include: scenes (first 40 chars), styles (ugly-ad/pov-selfie/overhead-flat/close-up-texture/action-shot), angles (casual-fun/curiosity/social-proof/urgency/humor/controversy/sensory)
 - Max 5 thoughts. First person. Specific with real numbers.
 - ALL strings must be short. No line breaks inside strings. No double quotes inside strings.`
