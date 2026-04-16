@@ -753,7 +753,7 @@ ${(accountData.prometheus.close_to_kill || []).length > 0
 
   try {
     const response = await claude.messages.create({
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-7',
       max_tokens: 2000,
       messages: [{
         role: 'user',
