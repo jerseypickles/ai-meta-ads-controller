@@ -717,7 +717,7 @@ ${athenaSection}
 ### CBO vs ABO COMPARISON (decision: should we migrate more to CBO?)
 | Metric | ABO Production | CBO Ares | Winner |
 |--------|----------------|----------|--------|
-| ROAS 7d | ${(acct.roas_7d || 0).toFixed(2)}x | ${accountData.ares?.avg_roas || '0'}x | ${parseFloat(accountData.ares?.avg_roas || 0) > (acct.roas_7d || 0) ? 'CBO' : 'ABO'} |
+| ROAS 7d | ${parseFloat(acct.roas_7d || 0).toFixed(2)}x | ${accountData.ares?.avg_roas || '0'}x | ${parseFloat(accountData.ares?.avg_roas || 0) > parseFloat(acct.roas_7d || 0) ? 'CBO' : 'ABO'} |
 | Spend 7d | $${acct.spend_7d || 0} | $${accountData.ares?.total_spend_7d || 0} | — |
 | CBO history | — | ${accountData.ares?.total_duplications || 0} duplicaciones, ${(accountData.ares?.total_spend_7d || 0) < 3000 ? '<1 semana' : '1+ semanas'} de data | — |
 Rule: migrate only after 3+ weeks of consistent CBO winning. Current data is early signal.
