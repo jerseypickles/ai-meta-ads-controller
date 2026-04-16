@@ -1355,10 +1355,10 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
   // ═══ PRE-CHECK: Learning stage — limited actions on ad sets in LEARNING ═══
   // Scale +15% does NOT reset learning (only >20% does). But pause/kill DOES reset.
   // Exception: [Prometheus] graduates with ROAS >= 3x can be scaled to accelerate exit.
-  if (snapshot.learning_stage === 'LEARNING') {
-    const convs = snapshot.learning_stage_conversions || 0;
+  if (adSetSnap.learning_stage === 'LEARNING') {
+    const convs = adSetSnap.learning_stage_conversions || 0;
     const needed = 50 - convs;
-    const roas7d = snapshot.metrics?.last_7d?.roas || 0;
+    const roas7d = adSetSnap.metrics?.last_7d?.roas || 0;
     const isPrometheusGrad = (adSetName || '').includes('[Prometheus]');
 
     if (isPrometheusGrad && roas7d >= 3.0) {
