@@ -1362,12 +1362,8 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
     const isPrometheusGrad = (adSetName || '').includes('[Prometheus]');
 
     if (isPrometheusGrad && roas7d >= 3.0) {
-      // Allow scale only — inject context so Claude knows it can ONLY scale, never pause
+      // Allow scale only — flags will be injected into ctx after it's created
       logger.info(`[ACCOUNT-AGENT] ${adSetName}: LEARNING (${convs}/50) but [Prometheus] ROAS ${roas7d.toFixed(2)}x — allowing scale to accelerate exit`);
-      ctx.learningPhase = true;
-      ctx.learningConversions = convs;
-      ctx.learningNeeded = needed;
-      ctx.learningScaleOnly = true; // Flag: only scale allowed, no pause/kill
     } else {
       logger.debug(`[ACCOUNT-AGENT] ${adSetName}: Meta LEARNING phase (${convs}/50 conv, ~${needed} needed) — skip`);
       return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Learning phase (${convs}/50 conv)` };
@@ -1420,6 +1416,14 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
     actionTypes: [],
     hasZeusScaleDirective
   };
+
+  // Inject learning flags if [Prometheus] graduate in LEARNING with good ROAS
+  if (adSetSnap.learning_stage === 'LEARNING' && (adSetName || '').includes('[Prometheus]') && adSetRoas >= 3.0) {
+    ctx.learningPhase = true;
+    ctx.learningConversions = adSetSnap.learning_stage_conversions || 0;
+    ctx.learningNeeded = 50 - (adSetSnap.learning_stage_conversions || 0);
+    ctx.learningScaleOnly = true;
+  }
 
   const isObserver = mode === 'observer';
   const activeTools = isObserver ? OBSERVER_TOOLS : (ctx.learningScaleOnly ? LEARNING_SCALE_ONLY_TOOLS : TOOLS);
