@@ -590,10 +590,89 @@ async function gatherAccountIntelligence() {
 // FASE 4: GENERAR DIRECTIVAS CON CLAUDE
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/**
+ * Zeus ejecuta directas — acciones que pidió 2+ ciclos y nadie ejecutó.
+ * Solo escala [Prometheus] graduados y pausa underperformers. No toca producción normal.
+ */
+async function executeStaleDirectives() {
+  const { getMetaClient } = require('../../meta/client');
+  const meta = getMetaClient();
+  const ActionLog = require('../../db/models/ActionLog');
+
+  // Directivas con 2+ ciclos sin ejecutar (12h+)
+  const stale = await ZeusDirective.find({
+    active: false,
+    executed: false,
+    created_at: { $lte: new Date(Date.now() - 12 * 3600000) },
+    directive_type: { $in: ['prioritize', 'alert'] },
+    target_agent: 'athena'
+  }).sort({ confidence: -1 }).limit(5).lean();
+
+  let executed = 0;
+  for (const d of stale) {
+    const data = d.data || {};
+
+    // Solo escalar [Prometheus] graduados en LEARNING
+    if (d.directive_type === 'prioritize' && data.adset_id && d.directive.toLowerCase().includes('scale')) {
+      try {
+        const MetricSnapshot = require('../../db/models/MetricSnapshot');
+        const snap = await MetricSnapshot.findOne({ entity_id: data.adset_id, entity_type: 'adset' }).sort({ created_at: -1 }).lean();
+        if (!snap || snap.status !== 'ACTIVE') continue;
+        if (!(snap.entity_name || '').includes('[Prometheus]')) continue;
+        if ((snap.metrics?.last_7d?.roas || 0) < 3.0) continue;
+
+        const currentBudget = snap.daily_budget || 10;
+        const newBudget = Math.round(currentBudget * 1.15 * 100) / 100;
+        await meta.updateBudget(data.adset_id, newBudget);
+
+        await ActionLog.create({
+          entity_type: 'adset', entity_id: data.adset_id, entity_name: snap.entity_name,
+          action: 'scale_up', before_value: currentBudget, after_value: newBudget,
+          reasoning: `Zeus direct execution: directive stale 12h+. ${d.directive}`,
+          confidence: 'high', agent_type: 'zeus_agent', success: true, executed_at: new Date()
+        });
+
+        await ZeusDirective.updateOne({ _id: d._id }, { executed: true, executed_at: new Date(), execution_result: `Zeus direct: $${currentBudget} → $${newBudget}` });
+        logger.info(`[ZEUS] DIRECT EXECUTION: ${snap.entity_name} scaled $${currentBudget} → $${newBudget} (stale directive)`);
+        executed++;
+      } catch (err) {
+        logger.warn(`[ZEUS] Direct execution error: ${err.message}`);
+      }
+    }
+
+    // Pausar ad sets que Zeus pidió 2+ veces
+    if (d.directive_type === 'alert' && data.adset_id && d.directive.toLowerCase().includes('pause')) {
+      try {
+        const MetricSnapshot = require('../../db/models/MetricSnapshot');
+        const snap = await MetricSnapshot.findOne({ entity_id: data.adset_id, entity_type: 'adset' }).sort({ created_at: -1 }).lean();
+        if (!snap || snap.status !== 'ACTIVE') continue;
+        if ((snap.metrics?.last_7d?.roas || 0) >= 1.5) continue; // Solo pausar si realmente es malo
+
+        await meta.updateStatus(data.adset_id, 'PAUSED');
+
+        await ActionLog.create({
+          entity_type: 'adset', entity_id: data.adset_id, entity_name: snap.entity_name,
+          action: 'pause_adset', reasoning: `Zeus direct execution: stale pause directive. ${d.directive}`,
+          confidence: 'high', agent_type: 'zeus_agent', success: true, executed_at: new Date()
+        });
+
+        await ZeusDirective.updateOne({ _id: d._id }, { executed: true, executed_at: new Date(), execution_result: `Zeus direct: paused` });
+        logger.info(`[ZEUS] DIRECT EXECUTION: ${snap.entity_name} PAUSED (stale directive, ROAS ${(snap.metrics?.last_7d?.roas || 0).toFixed(2)}x)`);
+        executed++;
+      } catch (err) {
+        logger.warn(`[ZEUS] Direct pause error: ${err.message}`);
+      }
+    }
+  }
+
+  if (executed > 0) logger.info(`[ZEUS] Direct execution: ${executed} stale directives executed`);
+  return executed;
+}
+
 async function generateDirectives(patterns, signals, accountData, uploadedData, athenaData) {
-  // Desactivar TODAS las directivas anteriores — cada ciclo reemplaza completamente
+  // Desactivar directivas anteriores EXCEPTO las que son estrategia persistente
   await ZeusDirective.updateMany(
-    { active: true },
+    { active: true, persistent: { $ne: true } },
     { $set: { active: false } }
   );
 
@@ -913,7 +992,7 @@ Rules:
     let created = 0;
 
     const VALID_CATEGORIES = ['creative_pattern', 'test_signal', 'account_pattern', 'cross_agent', 'general'];
-    const VALID_TARGETS = ['apollo', 'prometheus', 'athena', 'all'];
+    const VALID_TARGETS = ['apollo', 'prometheus', 'athena', 'ares', 'all'];
     const VALID_TYPES = ['prioritize', 'avoid', 'adjust', 'alert', 'insight', 'force_graduate'];
 
     for (const d of (result.directives || [])) {
@@ -1050,9 +1129,17 @@ async function runZeusLearner() {
   // Fase 3: Datos de cuenta
   const accountData = await gatherAccountIntelligence();
 
+  // Fase 3.5: Ejecutar directivas estancadas (Zeus actúa directo si nadie escuchó)
+  let directExecuted = 0;
+  try {
+    directExecuted = await executeStaleDirectives();
+  } catch (err) {
+    logger.error(`[ZEUS] Error en ejecucion directa: ${err.message}`);
+  }
+
   // Fase 4: Generar directivas + pensamientos (Claude)
   const directivesCreated = await generateDirectives(patterns, signals, accountData, uploadedData, athenaData);
-  logger.info(`[ZEUS] Directivas generadas: ${directivesCreated}`);
+  logger.info(`[ZEUS] Directivas generadas: ${directivesCreated}${directExecuted > 0 ? `, ${directExecuted} ejecutadas directo` : ''}`);
 
   const elapsed = `${((Date.now() - startTime) / 1000).toFixed(1)}s`;
   logger.info(`═══ Zeus Learner completado [${cycleId}]: ${patterns.tests_processed} tests aprendidos, ${directivesCreated} directivas — ${elapsed} ═══`);

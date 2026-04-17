@@ -41,6 +41,7 @@ const zeusDirectiveSchema = new mongoose.Schema({
 
   // Estado
   active: { type: Boolean, default: true, index: true },
+  persistent: { type: Boolean, default: false }, // Directivas persistentes no se desactivan entre ciclos
 
   // Tracking de ejecucion (problema 1: Zeus debe saber que sus directivas ya fueron cumplidas)
   executed: { type: Boolean, default: false, index: true },
