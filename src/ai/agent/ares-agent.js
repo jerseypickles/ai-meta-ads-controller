@@ -29,6 +29,17 @@ const EXCLUDE_PATTERNS = ['[TEST]', 'AI -', 'AMAZON', 'DONT TOUCH', 'DONT_TOUCH'
  * Obtener o crear la campana CBO de Ares.
  * Campana CBO con budget a nivel de campana — Meta distribuye entre clones.
  */
+/**
+ * Obtener CBO 2 — campaña para nuevos clones (fast-tracks + duplicaciones nuevas).
+ * CBO 1 (ares_campaign_id) se queda con los clones existentes.
+ */
+async function getAresCampaign2Id() {
+  const stored = await SystemConfig.get('ares_campaign_2_id', null);
+  if (stored) return stored;
+  // Fallback a CBO 1 si CBO 2 no existe
+  return getAresCampaignId();
+}
+
 async function getAresCampaignId() {
   // 1. SystemConfig
   const stored = await SystemConfig.get('ares_campaign_id', null);
@@ -494,7 +505,18 @@ async function runAresAgent() {
     return { duplicated: 0, candidates: 0, elapsed: '0s', cycle_id: cycleId, error: err.message };
   }
 
+  // Obtener CBO 2 para nuevos clones
+  let aresCampaign2Id;
+  try {
+    aresCampaign2Id = await getAresCampaign2Id();
+  } catch (err) {
+    aresCampaign2Id = aresCampaignId; // fallback a CBO 1
+  }
+  const isUsingCbo2 = aresCampaign2Id !== aresCampaignId;
+  if (isUsingCbo2) logger.info(`[ARES] Nuevos clones iran a CBO 2: ${aresCampaign2Id}`);
+
   // Fase 0: Procesar directivas de Zeus (force_duplicate, pause_clone, adjust)
+  // Directivas de adjust budget se aplican a CBO 1 (la principal)
   let zeusResults = { processed: 0, results: [] };
   try {
     zeusResults = await processZeusDirectives(aresCampaignId);
@@ -505,12 +527,12 @@ async function runAresAgent() {
     logger.error(`[ARES] Error procesando directivas de Zeus: ${err.message}`);
   }
 
-  // Fase 0.5: Fast-track — graduados recientes con ROAS alto directo a CBO
+  // Fase 0.5: Fast-track — graduados recientes van a CBO 2
   let fastTrackResults = { tracked: 0, results: [] };
   try {
-    fastTrackResults = await processFastTrackGraduates(aresCampaignId);
+    fastTrackResults = await processFastTrackGraduates(aresCampaign2Id);
     if (fastTrackResults.tracked > 0) {
-      logger.info(`[ARES] ${fastTrackResults.tracked} fast-tracks ejecutados`);
+      logger.info(`[ARES] ${fastTrackResults.tracked} fast-tracks a CBO 2`);
     }
   } catch (err) {
     logger.error(`[ARES] Error en fast-track: ${err.message}`);
@@ -538,14 +560,14 @@ async function runAresAgent() {
     return { duplicated: 0, candidates: 0, elapsed, cycle_id: cycleId };
   }
 
-  // Fase 3: Duplicar (max MAX_DUPLICATES_PER_CYCLE por ciclo)
+  // Fase 3: Duplicar a CBO 2 (max MAX_DUPLICATES_PER_CYCLE por ciclo)
   const toDuplicate = candidates.slice(0, MAX_DUPLICATES_PER_CYCLE);
   let duplicated = 0;
   const results = [];
 
   for (const candidate of toDuplicate) {
     try {
-      const result = await duplicateWinner(candidate, aresCampaignId);
+      const result = await duplicateWinner(candidate, aresCampaign2Id);
       duplicated++;
       results.push(result);
       logger.info(`[ARES] ✓ Duplicado: "${result.original}" → "${result.clone_name}" (ROAS ${result.roas.toFixed(2)}x)`);

@@ -445,10 +445,13 @@ async function gatherAccountIntelligence() {
 
   // ═══ DATOS DE ARES: campana ABO de duplicados ═══
   const aresCampaignId = await SystemConfig.get('ares_campaign_id', null);
-  let aresData = { campaign_id: aresCampaignId, clone_budget: 30, active_duplicates: 0, adsets: [], total_spend_7d: 0, avg_roas: 0 };
+  const aresCampaign2Id = await SystemConfig.get('ares_campaign_2_id', null);
+  let aresData = { campaign_id: aresCampaignId, campaign_2_id: aresCampaign2Id, clone_budget: 30, active_duplicates: 0, adsets: [], total_spend_7d: 0, avg_roas: 0 };
 
   if (aresCampaignId) {
-    const aresAdsets = activeAdsets.filter(s => s.campaign_id === aresCampaignId);
+    // Incluir clones de ambas CBOs
+    const aresCampaignIds = [aresCampaignId, aresCampaign2Id].filter(Boolean);
+    const aresAdsets = activeAdsets.filter(s => aresCampaignIds.includes(s.campaign_id));
     const aresMapped = aresAdsets.map(s => {
       const m7 = s.metrics?.last_7d || {};
       return {
@@ -464,13 +467,17 @@ async function gatherAccountIntelligence() {
     const aresWithSpend = aresMapped.filter(a => a.spend_7d > 0).length;
     const aresNoSpend = aresMapped.filter(a => a.spend_7d === 0).length;
 
-    // Leer budget real de la campana CBO desde Meta
-    let cboBudget = 0;
+    // Leer budget real de ambas CBOs desde Meta
+    let cboBudget = 0, cbo2Budget = 0;
     try {
       const { getMetaClient } = require('../../meta/client');
       const meta = getMetaClient();
       const campData = await meta.get(`/${aresCampaignId}`, { fields: 'daily_budget' });
       cboBudget = campData.daily_budget ? parseInt(campData.daily_budget) / 100 : 0;
+      if (aresCampaign2Id) {
+        const camp2Data = await meta.get(`/${aresCampaign2Id}`, { fields: 'daily_budget' });
+        cbo2Budget = camp2Data.daily_budget ? parseInt(camp2Data.daily_budget) / 100 : 0;
+      }
     } catch (_) {}
 
     aresData = {
@@ -479,6 +486,7 @@ async function gatherAccountIntelligence() {
       clones_with_spend: aresWithSpend,
       clones_no_spend: aresNoSpend,
       cbo_daily_budget: cboBudget,
+      cbo2_daily_budget: cbo2Budget,
       adsets: aresMapped,
       total_spend_7d: aresSpend,
       avg_roas: aresSpend > 0 ? (aresRevenue / aresSpend).toFixed(2) : '0'
@@ -712,7 +720,7 @@ ${athenaSection}
   - Slots disponibles AHORA: ${accountData.prometheus.slots_available_now}
   - Slots proyectados en 24h: ${accountData.prometheus.slots_available_24h}
 - Apollo: ${accountData.apollo.ready_pool} creativos en pool (${accountData.apollo.old_proposals_24h} con +24h aging)
-- Ares CBO: ${accountData.ares?.active_duplicates || 0} clones (${accountData.ares?.clones_with_spend || 0} con spend, ${accountData.ares?.clones_no_spend || 0} sin spend). CBO budget: $${accountData.ares?.cbo_daily_budget || 0}/dia. ROAS ${accountData.ares?.avg_roas || 0}x. $${accountData.ares?.total_spend_7d || 0} spend 7d. ${accountData.ares?.total_duplications || 0} duplicaciones totales
+- Ares: ${accountData.ares?.active_duplicates || 0} clones total (${accountData.ares?.clones_with_spend || 0} con spend). CBO 1: $${accountData.ares?.cbo_daily_budget || 0}/dia (ganadores probados). CBO 2: $${accountData.ares?.cbo2_daily_budget || 0}/dia (nuevos). ROAS combinado ${accountData.ares?.avg_roas || 0}x. $${accountData.ares?.total_spend_7d || 0} spend 7d
 
 ### CBO vs ABO COMPARISON (decision: should we migrate more to CBO?)
 | Metric | ABO Production | CBO Ares | Winner |
