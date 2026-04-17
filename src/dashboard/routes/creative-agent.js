@@ -229,11 +229,11 @@ const CreativeProposal = require('../../db/models/CreativeProposal');
 router.get('/proposals', async (req, res) => {
   try {
     const status = req.query.status || '';
-    const query = status ? { status } : { status: { $ne: 'rejected' } };
+    const query = status ? { status } : { status: { $in: ['ready', 'testing', 'graduated', 'killed', 'expired'] } };
     const proposals = await CreativeProposal.find(query)
       .select('-image_base64 -prompt_used')
-      .sort({ status: 1, created_at: -1 })
-      .limit(100)
+      .sort({ created_at: -1 })
+      .limit(300)
       .lean();
 
     const pending = proposals.filter(p => p.status === 'pending' || p.status === 'ready').length;
