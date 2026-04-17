@@ -357,6 +357,13 @@ async function monitorTests() {
         continue;
       }
 
+      // Dia 3-5: Kill agresivo — 1 compra + $40+ spend + ROAS < 2x = no va a mejorar
+      if (daysActive >= 3 && metrics.purchases <= 1 && metrics.spend >= 40 && metrics.roas < 2.0) {
+        await killOrExpireTest(test, `${metrics.purchases} compras con $${metrics.spend.toFixed(0)} spend, ROAS ${metrics.roas.toFixed(2)}x — CPA demasiado alto, no mejorara`, 'killed');
+        killed++;
+        continue;
+      }
+
       // Dia 3-5: Esperar — guardar assessment
       const assessment = `Dia ${daysActive}: $${metrics.spend.toFixed(2)} spend, ${metrics.purchases} compras, ROAS ${metrics.roas.toFixed(2)}x, CTR ${metrics.ctr.toFixed(1)}%, ${metrics.add_to_cart || 0} ATC, freq ${metrics.frequency.toFixed(1)}. Evaluando.`;
       await TestRun.findByIdAndUpdate(test._id, {
