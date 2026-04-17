@@ -577,9 +577,9 @@ async function runCreativeAgent() {
       }
       globalSceneIndex = (globalSceneIndex + PROPOSALS_PER_ADSET) % rankedScenes.length;
 
-      // Decidir si hacer combo — solo productos standard (excluir custom/BYB)
-      const standardProducts = rankedProducts.filter(p => p.prompt_type !== 'custom');
-      const doCombo = standardProducts.length >= 2 && product.prompt_type !== 'custom' && Math.random() < 0.3;
+      // Combo desactivado — generaba productos fantasma con labels incorrectos.
+      // El variety pack es Build Your Box (custom prompt) que ya tiene su propio flujo.
+      const doCombo = false;
       let refImages, refTypes, comboNames = [];
 
       if (doCombo) {
