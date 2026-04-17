@@ -40,28 +40,29 @@ router.get('/run-status/:jobId', (req, res) => {
 // ═══ GET /intelligence — Datos completos del tab Ares ═══
 router.get('/intelligence', async (req, res) => {
   try {
-    // Campana Ares (CBO — budget a nivel de campana)
+    // Ambas campanas CBO
     const aresCampaignId = await SystemConfig.get('ares_campaign_id', null);
+    const aresCampaign2Id = await SystemConfig.get('ares_campaign_2_id', null);
 
-    // Duplicaciones realizadas
+    // Duplicaciones realizadas (incluye fast-tracks)
     const duplications = await ActionLog.find({
-      action: 'duplicate_adset',
+      action: { $in: ['duplicate_adset', 'fast_track_duplicate'] },
       agent_type: 'ares_agent',
       success: true
     }).sort({ executed_at: -1 }).lean();
 
-    // Ad sets activos en la campana de Ares
-    let aresAdSets = [];
-    if (aresCampaignId) {
-      const allSnapshots = await getLatestSnapshots('adset');
-      aresAdSets = allSnapshots
-        .filter(s => s.campaign_id === aresCampaignId && s.status === 'ACTIVE')
+    const allSnapshots = await getLatestSnapshots('adset');
+
+    // Helper: mapear ad sets de una campana
+    const mapCampaignAdsets = (campaignId) => {
+      if (!campaignId) return [];
+      return allSnapshots
+        .filter(s => s.campaign_id === campaignId && s.status === 'ACTIVE')
         .map(s => {
           const m7 = s.metrics?.last_7d || {};
           const m3 = s.metrics?.last_3d || {};
           return {
-            adset_id: s.entity_id,
-            adset_name: s.entity_name,
+            adset_id: s.entity_id, adset_name: s.entity_name,
             daily_budget: s.daily_budget || 0,
             roas_7d: Math.round((m7.roas || 0) * 100) / 100,
             roas_3d: Math.round((m3.roas || 0) * 100) / 100,
@@ -71,10 +72,29 @@ router.get('/intelligence', async (req, res) => {
             ctr: Math.round((m7.ctr || 0) * 100) / 100
           };
         });
-    }
+    };
 
-    // Candidatos actuales (ad sets que cumplen criterios y NO tienen clones activos)
-    const allSnapshots = await getLatestSnapshots('adset');
+    // Helper: calcular stats de una lista de ad sets
+    const calcStats = (adsets) => {
+      const spend = adsets.reduce((s, a) => s + a.spend_7d, 0);
+      const revenue = adsets.reduce((s, a) => s + Math.round(a.roas_7d * a.spend_7d), 0);
+      const purchases = adsets.reduce((s, a) => s + a.purchases_7d, 0);
+      return {
+        roas: spend > 0 ? Math.round((revenue / spend) * 100) / 100 : 0,
+        spend_7d: spend, revenue_7d: revenue, purchases_7d: purchases,
+        cpa: purchases > 0 ? Math.round(spend / purchases * 100) / 100 : 0,
+        active_clones: adsets.length
+      };
+    };
+
+    const cbo1Adsets = mapCampaignAdsets(aresCampaignId);
+    const cbo2Adsets = mapCampaignAdsets(aresCampaign2Id);
+    const allAdsets = [...cbo1Adsets, ...cbo2Adsets];
+    const cbo1Stats = calcStats(cbo1Adsets);
+    const cbo2Stats = calcStats(cbo2Adsets);
+    const totalStats = calcStats(allAdsets);
+
+    // Candidatos (no duplicados aun)
     const EXCLUDE_PATTERNS = ['[TEST]', 'AI -', 'AMAZON', 'DONT TOUCH', 'EXCLUDE', 'MANUAL ONLY', '[ARES]'];
     const alreadyDuplicated = new Set(duplications.map(d => d.entity_id));
     const candidates = allSnapshots.filter(s => {
@@ -87,8 +107,7 @@ router.get('/intelligence', async (req, res) => {
     }).map(s => {
       const m7 = s.metrics?.last_7d || {};
       return {
-        entity_id: s.entity_id,
-        entity_name: s.entity_name,
+        entity_id: s.entity_id, entity_name: s.entity_name,
         roas_7d: Math.round((m7.roas || 0) * 100) / 100,
         spend_7d: Math.round(m7.spend || 0),
         purchases_7d: m7.purchases || 0,
@@ -96,32 +115,21 @@ router.get('/intelligence', async (req, res) => {
       };
     }).sort((a, b) => b.roas_7d - a.roas_7d);
 
-    // Stats de la campana CBO (lo que importa)
-    const totalDuplicated = duplications.length;
-    const cbo_spend = aresAdSets.reduce((s, a) => s + a.spend_7d, 0);
-    const cbo_revenue = aresAdSets.reduce((s, a) => s + Math.round(a.roas_7d * a.spend_7d), 0);
-    const cbo_roas = cbo_spend > 0 ? Math.round((cbo_revenue / cbo_spend) * 100) / 100 : 0;
-    const cbo_purchases = aresAdSets.reduce((s, a) => s + a.purchases_7d, 0);
-    const cbo_cpa = cbo_purchases > 0 ? Math.round(cbo_spend / cbo_purchases * 100) / 100 : 0;
-
     res.json({
       campaign_id: aresCampaignId,
-      // Metricas CBO (campana como un todo)
-      cbo: {
-        roas: cbo_roas,
-        spend_7d: cbo_spend,
-        revenue_7d: cbo_revenue,
-        purchases_7d: cbo_purchases,
-        cpa: cbo_cpa,
-        active_clones: aresAdSets.length
-      },
-      // Legacy fields (retrocompat)
+      campaign_2_id: aresCampaign2Id,
+      // Metricas por CBO individual
+      cbo1: { ...cbo1Stats, adsets: cbo1Adsets },
+      cbo2: { ...cbo2Stats, adsets: cbo2Adsets },
+      // Metricas combinadas
+      cbo: totalStats,
+      // Legacy + global
       clone_budget: 30,
-      active_duplicates: aresAdSets.length,
-      total_duplicated: totalDuplicated,
-      avg_roas: cbo_roas,
-      total_spend_7d: cbo_spend,
-      adsets: aresAdSets,
+      active_duplicates: allAdsets.length,
+      total_duplicated: duplications.length,
+      avg_roas: totalStats.roas,
+      total_spend_7d: totalStats.spend_7d,
+      adsets: allAdsets,
       candidates,
       recent_duplications: duplications.slice(0, 10).map(d => ({
         original_name: d.entity_name,
