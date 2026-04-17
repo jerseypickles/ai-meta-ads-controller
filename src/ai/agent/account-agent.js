@@ -1453,9 +1453,13 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
   const baseContext = `Ad set ${adSetId} ("${adSetName}"). Budget: $${currentBudget}/day. 7d ROAS: ${adSetRoas.toFixed(2)}x, Spend: $${adSetSpend.toFixed(0)}, Purchases: ${adSetPurchases}, Frequency: ${adSetFrequency.toFixed(1)}.`;
   const planContext = pendingPlan ? `\n\nYOUR PREVIOUS PLAN for this ad set: "${pendingPlan}"\nCheck if conditions are met and execute accordingly. If conditions changed, make a new plan.` : '';
 
+  const learningContext = ctx.learningScaleOnly
+    ? `\n\n⚡ CRITICAL: This [Prometheus] graduate is in Meta LEARNING phase with ROAS ${adSetRoas.toFixed(2)}x (${ctx.learningConversions}/50 conversions, needs ${ctx.learningNeeded} more). It has budget $${currentBudget}/day which is TOO LOW. You MUST scale_budget by +15% to $${Math.round(currentBudget * 1.15 * 100) / 100}/day NOW to accelerate exit from learning. Scale +15% does NOT reset learning. This is your ONLY action — scale it and save assessment. Do NOT hold.`
+    : '';
+
   const userMessage = isObserver
     ? `[OBSERVER MODE — nighttime, read-only] Analyze ${baseContext} Gather data, analyze trends, and save your assessment. You CANNOT take actions right now — only observe and document what you see.${planContext}`
-    : `Analyze and manage ${baseContext} Gather detailed data, decide actions, and save your assessment.${planContext}`;
+    : `Analyze and manage ${baseContext} Gather detailed data, decide actions, and save your assessment.${planContext}${learningContext}`;
 
   let messages = [{ role: 'user', content: userMessage }];
 
