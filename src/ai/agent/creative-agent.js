@@ -427,6 +427,14 @@ async function runCreativeAgent() {
 
     if (directives.length > 0) {
       logger.info(`[CREATIVE-AGENT] Zeus directivas aplicadas: ${directives.length} (${Object.keys(zeusSceneBoosts).length} scene boosts, ${Object.keys(zeusStyleBoosts).length} style boosts)`);
+      // Marcar directivas como ejecutadas
+      for (const d of directives) {
+        if (!d.executed) {
+          await ZeusDirective.updateOne({ _id: d._id }, {
+            $set: { executed: true, executed_at: new Date(), execution_result: `applied: ${Object.keys(zeusSceneBoosts).length} scenes, ${Object.keys(zeusStyleBoosts).length} styles, ${Object.keys(zeusAngleBoosts).length} angles` }
+          });
+        }
+      }
     }
   } catch (err) {
     logger.warn(`[CREATIVE-AGENT] Error leyendo Zeus directivas: ${err.message}`);
