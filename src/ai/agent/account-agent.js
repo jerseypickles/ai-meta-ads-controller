@@ -191,6 +191,7 @@ Then: pause old ad, set next_review_hours: 120.
 - Ad set in learning (<5 days old) -> HOLD. Gates will block you anyway.
 - Budget changed externally -> HOLD 5 days. Learning reset.
 NOTE: If Zeus has a PRIORITIZE directive for an ad set, these HOLD rules do NOT apply to that ad set (except learning phase <5 days).
+EXCEPTION: [Prometheus] graduated ad sets in LEARNING with ROAS >= 3x MUST be scaled +15% EVERY cycle regardless of all rules above. These are proven winners stuck at $10-20/day. Scale +15% does NOT reset Meta learning. The "max 1 per week" and "90% observation" and "HOLD" rules do NOT apply to [Prometheus] graduates needing scale. This is your HIGHEST PRIORITY action when you see the ⚡ CRITICAL prompt.
 
 ## KILLING FATIGUED ADS (critical safety)
 - Before pausing the LAST active ad in an ad set, check: does the account have 10+ other active ad sets with ROAS > 2x?
