@@ -743,7 +743,7 @@ ${(accountData.ares?.adsets || []).length > 0
 ### ANTICIPACION — Tests cerca de GRADUARSE EARLY (ROAS >= 3x + 2+ compras)
 ${(accountData.prometheus.close_to_early_grad || []).length > 0
   ? accountData.prometheus.close_to_early_grad.map(t =>
-      `- "${t.name}" ROAS ${t.roas}x, ${t.purchases} compras, $${t.spend} spend, ${t.age}d ${t.ready_now ? '✓ READY NOW (force_graduate available)' : `⏳ ${t.hours_to_grad}h to natural early grad`}`
+      `- "${t.name}" adset_id=${t.adset_id} ROAS ${t.roas}x, ${t.purchases} compras, $${t.spend} spend, ${t.age}d ${t.ready_now ? '✓ READY NOW — use data.adset_id in force_graduate' : `⏳ ${t.hours_to_grad}h to natural early grad`}`
     ).join('\n')
   : 'Ninguno todavia'}
 
@@ -834,7 +834,7 @@ Rules:
 - target_agent: athena, apollo, prometheus, ares, or all
 - directive_type: prioritize, avoid, adjust, alert, force_graduate, or force_duplicate
 - ANTICIPATE — you are a CEO not a reactor. Look at the ANTICIPACION sections in context:
-  * If a test shows ✓ READY NOW in close_to_early_grad, issue a force_graduate directive to Prometheus with data.test_id to graduate it IMMEDIATELY (frees a slot, gets winner into production faster). Format: target_agent="prometheus", directive_type="force_graduate", data={test_id: "...", reason: "..."}
+  * If a test shows ✓ READY NOW in close_to_early_grad, issue a force_graduate directive to Prometheus. IMPORTANT: copy the adset_id EXACTLY from the context into data.adset_id. Format: target_agent="prometheus", directive_type="force_graduate", data={adset_id: "COPY_EXACT_ID", test_id: "exact test name", reason: "..."}
   * If close_to_early_grad has tests with hours_to_grad <= 12, mention them in thoughts so we know what's coming
   * If close_to_kill is large (5+), Apollo may need to slow down generation OR pool needs cleaning
   * If slots_available_24h is high (8+), tell Prometheus to prepare next wave from ready pool

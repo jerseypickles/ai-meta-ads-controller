@@ -583,6 +583,28 @@ async function processForceGraduateDirectives() {
           }).lean();
         }
       }
+      // Fallback: buscar por test_name (Zeus a veces usa este campo)
+      if (!test && data.test_name) {
+        const escaped = data.test_name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        test = await TestRun.findOne({
+          $or: [
+            { test_adset_name: { $regex: escaped, $options: 'i' } },
+            { test_adset_name: `[TEST] ${data.test_name}` }
+          ],
+          phase: { $in: ['learning', 'evaluating'] }
+        }).lean();
+      }
+      // Fallback: buscar por directive text (Zeus parafrasea nombres)
+      if (!test) {
+        const words = d.directive.split(/\s+/).filter(w => w.length > 4 && !/ROAS|ready|convs|purchases|graduate/i.test(w)).slice(0, 5);
+        if (words.length >= 2) {
+          const pattern = words.join('.*');
+          test = await TestRun.findOne({
+            test_adset_name: { $regex: pattern, $options: 'i' },
+            phase: { $in: ['learning', 'evaluating'] }
+          }).lean();
+        }
+      }
       if (!test && (data.adset_id || data.test_adset_id)) {
         test = await TestRun.findOne({
           test_adset_id: data.adset_id || data.test_adset_id,
