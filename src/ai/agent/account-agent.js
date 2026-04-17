@@ -1396,14 +1396,17 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
     const hoursSinceCheck = (Date.now() - new Date(lastCheck).getTime()) / 3600000;
     const isHealthy = (trend === 'stable' || trend === 'improving') && adSetRoas >= 2.0 && adSetFrequency < 2.5;
 
-    if (isHealthy && hoursSinceCheck < 12 && !pendingPlan) {
+    // No smart-skip [Prometheus] graduates in LEARNING — they need to be scaled
+    const isPrometheusLearning = (adSetName || '').includes('[Prometheus]') && adSetSnap.learning_stage === 'LEARNING' && adSetRoas >= 3.0;
+    if (isHealthy && hoursSinceCheck < 12 && !pendingPlan && !isPrometheusLearning) {
       logger.debug(`[ACCOUNT-AGENT] ${adSetName}: healthy (${trend}, ROAS ${adSetRoas.toFixed(1)}x), checked ${hoursSinceCheck.toFixed(0)}h ago — smart skip`);
       return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Smart skip: healthy, ${hoursSinceCheck.toFixed(0)}h ago` };
     }
   }
 
   // Next review schedule skip (respeta el programa de Athena)
-  if (mode === 'full' && nextReview && new Date(nextReview) > new Date() && !pendingPlan && !zeusHasDirectives) {
+  const isPromLearningScale = (adSetName || '').includes('[Prometheus]') && adSetSnap.learning_stage === 'LEARNING' && adSetRoas >= 3.0;
+  if (mode === 'full' && nextReview && new Date(nextReview) > new Date() && !pendingPlan && !zeusHasDirectives && !isPromLearningScale) {
     const hoursLeft = Math.round((new Date(nextReview) - new Date()) / 3600000);
     logger.debug(`[ACCOUNT-AGENT] ${adSetName}: next review in ${hoursLeft}h — skip`);
     return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Next review in ${hoursLeft}h` };
