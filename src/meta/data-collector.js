@@ -313,10 +313,27 @@ class DataCollector {
 
       // ── 5. Save ad set snapshots (bulkWrite — 1 round-trip instead of N) ──
       const adSetEntries = Object.entries(adSetMap);
+      // Zero glitch protection: si insights vienen en cero pero ad set tuvo data antes, usar metricas del snapshot anterior
+      const prevSnapshots = {};
+      try {
+        const recentSnaps = await MetricSnapshot.aggregate([
+          { $match: { entity_type: 'adset', entity_id: { $in: adSetEntries.map(([id]) => id) } } },
+          { $sort: { entity_id: 1, created_at: -1 } },
+          { $group: { _id: '$entity_id', doc: { $first: '$$ROOT' } } }
+        ]);
+        for (const s of recentSnaps) prevSnapshots[s._id] = s.doc;
+      } catch (_) {}
+
       const adSetOps = adSetEntries.map(([adSetId, info]) => {
-        const metrics = {};
+        let metrics = {};
         for (const w of WINDOWS) {
           metrics[w] = adSetInsights[adSetId]?.[w] || this._emptyMetrics();
+        }
+        // Zero glitch protection: si 7d spend es 0 pero snapshot anterior tenia data, preservar metricas anteriores
+        const prev = prevSnapshots[adSetId];
+        if (metrics.last_7d?.spend === 0 && prev?.metrics?.last_7d?.spend > 0) {
+          metrics = prev.metrics;
+          logger.debug(`  [ZERO-GLITCH] ${info.name}: insights vinieron en cero, preservando metricas anteriores (spend $${prev.metrics.last_7d.spend})`);
         }
         return {
           insertOne: {
