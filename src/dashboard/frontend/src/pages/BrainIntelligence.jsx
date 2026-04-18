@@ -18,6 +18,7 @@ import {
   getAresIntelligence, runAresApi
 } from '../api';
 
+import AthenaPanel from '../components/AthenaPanel';
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
 const ImpactOrb = React.lazy(() => import('../components/ImpactOrb'));
 const BrainKnowledgeOrb = React.lazy(() => import('../components/BrainKnowledgeOrb'));
@@ -460,7 +461,7 @@ export default function BrainIntelligence() {
           />
         ) : activeTab === 'athena' ? (
           <>
-            <AgentPanel
+            <AthenaPanel
               data={agentData}
               loading={agentLoading}
               running={agentRunning}
@@ -1829,20 +1830,20 @@ function PrometheusPanel({ testRuns, activeTests, finishedTests, testStats, load
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// AGENT PANEL — Athena: Grid de ad sets con assessments y acciones
+// ATHENA PANEL — Estratega de Cuenta: data-driven, identidad propia
 // ═══════════════════════════════════════════════════════════════════
 
 function AgentPanel({ data, loading, running, expandedAdSet, onToggleExpand, onRunAgent, onRefresh, formatTime }) {
+  const [activeSection, setActiveSection] = useState('overview'); // overview | actions | adsets | learning
   const [perfData, setPerfData] = useState(null);
   const [perfLoading, setPerfLoading] = useState(false);
-  const [showPerf, setShowPerf] = useState(false);
 
   useEffect(() => {
-    if (showPerf && !perfData) {
+    if (activeSection === 'performance' && !perfData) {
       setPerfLoading(true);
       getAgentPerformance(8).then(d => setPerfData(d)).catch(err => console.error(err)).finally(() => setPerfLoading(false));
     }
-  }, [showPerf, perfData]);
+  }, [activeSection, perfData]);
 
   if (loading && !data) {
     return <div className="brain-loading">Cargando actividad del agente...</div>;
