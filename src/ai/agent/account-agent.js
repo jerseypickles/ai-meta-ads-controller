@@ -1421,12 +1421,24 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
     hasZeusScaleDirective
   };
 
-  // Inject learning flags if [Prometheus] graduate in LEARNING with good ROAS
+  // [Prometheus] graduates in LEARNING with ROAS >= 3x: scale +15% DIRECTLY (no Claude needed)
   if (adSetSnap.learning_stage === 'LEARNING' && (adSetName || '').includes('[Prometheus]') && adSetRoas >= 3.0) {
-    ctx.learningPhase = true;
-    ctx.learningConversions = adSetSnap.learning_stage_conversions || 0;
-    ctx.learningNeeded = 50 - (adSetSnap.learning_stage_conversions || 0);
-    ctx.learningScaleOnly = true;
+    const currentBudget = adSetSnap.daily_budget || 10;
+    const newBudget = Math.round(currentBudget * 1.15 * 100) / 100;
+    try {
+      await meta.updateBudget(adSetId, newBudget);
+      const ActionLog = require('../../db/models/ActionLog');
+      await ActionLog.create({
+        entity_type: 'adset', entity_id: adSetId, entity_name: adSetName,
+        action: 'scale_up', before_value: currentBudget, after_value: newBudget,
+        reasoning: `Auto-scale [Prometheus] graduate in LEARNING: ROAS ${adSetRoas.toFixed(2)}x, ${adSetSnap.learning_stage_conversions || 0}/50 conv. +15% to accelerate exit.`,
+        confidence: 'high', agent_type: 'unified_agent', success: true, executed_at: new Date()
+      });
+      logger.info(`[ACCOUNT-AGENT] ⚡ AUTO-SCALED: ${adSetName} $${currentBudget} → $${newBudget} (ROAS ${adSetRoas.toFixed(2)}x, LEARNING ${adSetSnap.learning_stage_conversions || 0}/50)`);
+      return { actionsExecuted: 1, assessmentSaved: false, action_types: ['scale_up'] };
+    } catch (scaleErr) {
+      logger.warn(`[ACCOUNT-AGENT] Auto-scale error ${adSetName}: ${scaleErr.message}`);
+    }
   }
 
   const isObserver = mode === 'observer';
