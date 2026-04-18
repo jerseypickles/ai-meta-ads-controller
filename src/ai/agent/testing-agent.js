@@ -382,6 +382,59 @@ async function monitorTests() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // GRADUACION
 // ═══════════════════════════════════════════════════════════════════════════════
+/**
+ * Marca directivas force_graduate activas del mismo test como resueltas,
+ * aunque Prometheus haya llegado al outcome por su cuenta (graduacion o kill natural).
+ * Cierra el loop para Zeus: ve que su intuicion fue correcta (si fue graduada) o errada (si fue killed).
+ */
+async function _resolveForceGraduateDirectives(test, outcome, metrics) {
+  const ZeusDirective = require('../../db/models/ZeusDirective');
+  try {
+    const proposal = test.proposal_id ? await CreativeProposal.findById(test.proposal_id).lean() : null;
+    const headline = proposal?.headline || '';
+    const testName = test.test_adset_name || '';
+
+    // Match por adset_id (lo mas confiable — Zeus lo manda siempre) o por nombre/headline
+    const matchers = [];
+    if (test.test_adset_id) {
+      matchers.push({ 'data.adset_id': test.test_adset_id });
+      matchers.push({ 'data.test_adset_id': test.test_adset_id });
+    }
+    if (headline) matchers.push({ 'data.test_id': { $regex: headline.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' } });
+    if (testName) matchers.push({ 'data.test_id': { $regex: testName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' } });
+
+    if (matchers.length === 0) return 0;
+
+    const result = outcome === 'graduated'
+      ? `graduated naturally (ROAS ${(metrics?.roas || 0).toFixed(2)}x, ${metrics?.purchases || 0} purchases) — Zeus called it right`
+      : `${outcome} naturally (ROAS ${(metrics?.roas || 0).toFixed(2)}x, ${metrics?.purchases || 0} purchases) — Zeus directive bypassed by outcome`;
+
+    const updated = await ZeusDirective.updateMany(
+      {
+        directive_type: 'force_graduate',
+        active: true,
+        executed: false,
+        $or: matchers
+      },
+      {
+        $set: {
+          executed: true,
+          executed_at: new Date(),
+          execution_result: result
+        }
+      }
+    );
+
+    if (updated.modifiedCount > 0) {
+      logger.info(`[TESTING-AGENT] Zeus directives cerradas para ${testName}: ${updated.modifiedCount} (${outcome})`);
+    }
+    return updated.modifiedCount;
+  } catch (err) {
+    logger.warn(`[TESTING-AGENT] No se pudo cerrar directivas force_graduate (non-fatal): ${err.message}`);
+    return 0;
+  }
+}
+
 async function graduateTest(test, metrics) {
   const { getMetaClient } = require('../../meta/client');
   const meta = getMetaClient();
@@ -448,6 +501,9 @@ async function graduateTest(test, metrics) {
   });
 
   logger.info(`[TESTING-AGENT] GRADUADO: "${proposal?.headline}" → "${promotedName}" a $${GRADUATED_BUDGET}/dia`);
+
+  // 5. Cerrar directivas force_graduate pendientes de Zeus para este test (aunque Prometheus llego primero)
+  await _resolveForceGraduateDirectives(test, 'graduated', metrics);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -501,6 +557,9 @@ async function killOrExpireTest(test, reason, phase) {
   } catch (_) {}
 
   logger.info(`[TESTING-AGENT] ${phase.toUpperCase()}: "${test.test_adset_name}" — ${reason}`);
+
+  // Cerrar directivas force_graduate pendientes de Zeus para este test (Zeus pidio graduar pero Prometheus mato/expiro)
+  await _resolveForceGraduateDirectives(test, phase, test.metrics);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
