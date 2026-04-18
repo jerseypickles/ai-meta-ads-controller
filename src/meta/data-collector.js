@@ -324,17 +324,50 @@ class DataCollector {
         for (const s of recentSnaps) prevSnapshots[s._id] = s.doc;
       } catch (_) {}
 
+      // ── Health check: si >50% de ad sets activos vinieron con spend=0, batch sospechoso ──
+      const activeWithInsights = adSetEntries.filter(([id, info]) => info.effective_status === 'ACTIVE');
+      const activeWithZeroSpend = activeWithInsights.filter(([id]) => !adSetInsights[id]?.last_7d?.spend);
+      const zeroPct = activeWithInsights.length > 0 ? Math.round(activeWithZeroSpend.length / activeWithInsights.length * 100) : 0;
+      const isSuspiciousBatch = zeroPct > 50 && activeWithInsights.length > 10;
+
+      if (isSuspiciousBatch) {
+        logger.warn(`  [DATA-QUALITY] ⚠️ Batch sospechoso: ${zeroPct}% de ${activeWithInsights.length} ad sets activos vinieron con spend=0. Preservando metricas anteriores para todos.`);
+      }
+
+      // ── Deduplicación: detectar ad sets duplicados por nombre ──
+      const nameCount = {};
+      adSetEntries.forEach(([id, info]) => {
+        const name = info.name || id;
+        if (!nameCount[name]) nameCount[name] = [];
+        nameCount[name].push(id);
+      });
+      const duplicates = Object.entries(nameCount).filter(([, ids]) => ids.length > 1);
+      if (duplicates.length > 0) {
+        logger.warn(`  [DATA-QUALITY] ${duplicates.length} nombres duplicados: ${duplicates.map(([n, ids]) => `"${n}" (${ids.length}x)`).join(', ')}`);
+      }
+
+      let zeroGlitchCount = 0;
       const adSetOps = adSetEntries.map(([adSetId, info]) => {
         let metrics = {};
         for (const w of WINDOWS) {
           metrics[w] = adSetInsights[adSetId]?.[w] || this._emptyMetrics();
         }
-        // Zero glitch protection: si 7d spend es 0 pero snapshot anterior tenia data, preservar metricas anteriores
+
+        // Zero glitch protection: preservar metricas si nuevas vienen en cero
         const prev = prevSnapshots[adSetId];
-        if (metrics.last_7d?.spend === 0 && prev?.metrics?.last_7d?.spend > 0) {
+        const newSpend7d = metrics.last_7d?.spend || 0;
+        const prevSpend7d = prev?.metrics?.last_7d?.spend || 0;
+
+        if ((newSpend7d === 0 && prevSpend7d > 0) || isSuspiciousBatch && prevSpend7d > 0) {
           metrics = prev.metrics;
-          logger.debug(`  [ZERO-GLITCH] ${info.name}: insights vinieron en cero, preservando metricas anteriores (spend $${prev.metrics.last_7d.spend})`);
+          zeroGlitchCount++;
         }
+
+        // Validación cruzada: si spend 7d bajó >90% vs anterior, marcar sospechoso
+        if (newSpend7d > 0 && prevSpend7d > 0 && newSpend7d < prevSpend7d * 0.1) {
+          logger.debug(`  [DATA-QUALITY] ${info.name}: spend 7d cayo ${Math.round((1 - newSpend7d/prevSpend7d)*100)}% ($${prevSpend7d.toFixed(0)} → $${newSpend7d.toFixed(0)}) — sospechoso pero guardando`);
+        }
+
         return {
           insertOne: {
             document: {
@@ -359,11 +392,13 @@ class DataCollector {
           }
         };
       });
+
       if (adSetOps.length > 0) {
         await MetricSnapshot.bulkWrite(adSetOps, { ordered: false });
         totalSnapshots += adSetOps.length;
       }
       const adSetSnapshots = adSetOps.length;
+      if (zeroGlitchCount > 0) logger.warn(`  [ZERO-GLITCH] ${zeroGlitchCount} ad sets preservados (metricas anteriores)`);
       logger.info(`  ${adSetSnapshots} snapshots de ad sets guardados`);
 
       // ── 6. Save ad snapshots (bulkWrite — 1 round-trip instead of N) ──
