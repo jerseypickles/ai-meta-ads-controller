@@ -67,14 +67,14 @@ async function _markZeusDirectivesExecuted(adsetId, actionType, actionLogId, res
       executed: false
     }).lean();
 
-    // Matchear: data.ad_set_id coincide con el numero del ad set en el nombre,
-    // O data.adset_id es exactamente el meta_id, O el nombre del ad set en el texto
+    // Matchear: data.adset_id puede ser el meta_id numerico, el numero ordinal ("29"),
+    // o el NOMBRE completo del ad set ("Campfire Snacks... [Prometheus]"). Todos los casos se cubren.
     const adsetIdStr = String(adsetId);
     // Buscar el snapshot para obtener el nombre del ad set
     const allSnaps = await getLatestSnapshots('adset');
     const snap = allSnaps.find(s => s.entity_id === adsetIdStr);
     const adsetName = (snap?.entity_name || '').toLowerCase();
-    // Numero del ad set (suele ser solo digitos, ej "40")
+    // Numero del ad set (suele ser solo digitos para legacy: "40")
     const adsetNumber = adsetName.match(/^\d+$/) ? adsetName : null;
 
     const matchedIds = [];
@@ -82,9 +82,14 @@ async function _markZeusDirectivesExecuted(adsetId, actionType, actionLogId, res
       const data = d.data || {};
       const dirText = (d.directive || '').toLowerCase();
 
-      // Match por entity_id estructurado
+      // Match por entity_id estructurado — 3 formas: meta_id exacto, numero ordinal, nombre completo
       const dataAdsetId = String(data.ad_set_id || data.adset_id || '');
-      const matchById = dataAdsetId && (dataAdsetId === adsetIdStr || (adsetNumber && dataAdsetId === adsetNumber));
+      const dataAdsetIdLower = dataAdsetId.toLowerCase();
+      const matchById = dataAdsetId && (
+        dataAdsetId === adsetIdStr ||                              // meta_id exacto
+        (adsetNumber && dataAdsetId === adsetNumber) ||            // ordinal "29" === nombre "29"
+        (adsetName && dataAdsetIdLower === adsetName)              // nombre "Campfire... [Prometheus]" === entity_name
+      );
 
       // Match por accion en el data
       const dataAction = (data.action || '').toLowerCase();
@@ -92,7 +97,12 @@ async function _markZeusDirectivesExecuted(adsetId, actionType, actionLogId, res
         (actionType.startsWith('scale') && dataAction.startsWith('scale'));
 
       // Match por nombre/numero en el texto de la directiva
-      const matchByText = adsetNumber && dirText.includes(`ad set ${adsetNumber}`) && (
+      const matchByNumberInText = adsetNumber && dirText.includes(`ad set ${adsetNumber}`);
+      // Match por nombre del ad set dentro del texto — util cuando Zeus narra sin structured data
+      // Usamos un substring significativo (primeros 30 chars) porque el nombre puede ser largo
+      const adsetNameSignificant = adsetName && adsetName.length >= 10 ? adsetName.substring(0, Math.min(40, adsetName.length)) : null;
+      const matchByNameInText = adsetNameSignificant && dirText.includes(adsetNameSignificant);
+      const matchByText = (matchByNumberInText || matchByNameInText) && (
         (actionType.startsWith('scale') && dirText.includes('scale')) ||
         (actionType === 'pause' && (dirText.includes('pause') || dirText.includes('kill'))) ||
         (actionType === 'pause_adset' && (dirText.includes('pause') || dirText.includes('kill')))
