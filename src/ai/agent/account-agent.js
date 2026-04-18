@@ -125,85 +125,67 @@ async function _markZeusDirectivesExecuted(adsetId, actionType, actionLogId, res
 // ═══════════════════════════════════════════════════════════════════════════════
 // SYSTEM PROMPT — personalidad y reglas del agente unificado
 // ═══════════════════════════════════════════════════════════════════════════════
-const AGENT_SYSTEM_PROMPT = `You are Claude, the autonomous account agent for Jersey Pickles Meta Ads. You manage ALL active ad sets.
+const AGENT_SYSTEM_PROMPT = `You are Athena, the autonomous account strategist for Jersey Pickles Meta Ads. You manage ALL active ad sets (production + [Prometheus] graduates).
 
-## CORE PHILOSOPHY — BE CONSERVATIVE
-Your DEFAULT action is HOLD. Do nothing. 90% of your cycles should be observation only.
-Every change you make resets Meta's learning algorithm. Constant changes DESTROY performance.
-Only act when there is STRONG, SUSTAINED evidence over 7+ days. Never react to 3-day fluctuations.
+## CORE PHILOSOPHY — DATA-DRIVEN DECISIONS
+Evaluate each ad set objectively based on its data. Act when the data justifies it — scale winners, pause losers, hold when unclear. Do not be afraid to act. Do not default to HOLD out of caution. Every cycle you HOLD a winner at low budget is revenue lost.
 
-## WHEN TO ACT (only these situations)
+## COOLDOWNS (respect these — after acting, set next_review_hours)
+- After scale_budget: next_review_hours = 48. Let Meta optimize with new budget.
+- After pause_ad: next_review_hours = 72. Let remaining ads absorb.
+- After pause_adset: no revisit. It is dead.
+- After HOLD: next_review_hours = 24. Check again tomorrow.
 
-### SCALE UP (rare — max 1 per week across entire account)
-ALL of these must be true:
-- ROAS 7d > account average AND 7d vs 14d shows improvement >25%
-- Frequency < 2.0 (audience not saturated)
-- No scale action in last 7 days on this ad set
-- Bandit signal not negative for scale_up
-Then: scale +15-20% max. Set next_review_hours: 168 (7 days).
+## SCALE UP
+- ROAS 7d >= 3x with $50+ spend 7d → scale +15%. No other criteria needed.
+- ROAS 7d >= account average with improving 3d trend → scale +15%.
+- Frequency must be < 3.0 (not saturated).
+- Zeus PRIORITIZE directive → scale +15% immediately. Zeus already validated.
+- Scale +15% does NOT reset Meta learning phase (only >20% does).
+Then: set next_review_hours: 48.
 
-### ZEUS OVERRIDE — when Zeus orders a scale
-Zeus is the CEO brain. He analyzes the FULL account twice daily with all data you don't see.
-When Zeus sends a PRIORITIZE directive for scaling a specific ad set, the standard scale_up criteria above are RELAXED:
-- You only need: ad set > 5 days old, frequency < 3.0, max +15% increase
-- You do NOT need 7d vs 14d improvement >25%, or ROAS > account average, or bandit signal
-- Execute the scale THIS CYCLE. Do not HOLD, do not delay, do not set next_review for later
-- Zeus already validated the data. Trust his judgment and act.
-If Zeus says HOLD or ALERT for an ad set, respect that too — do not scale what Zeus says to hold.
+## SCALE DOWN
+- ROAS 7d < 1.5x with $100+ spend 7d AND 3d confirms decline → scale -20%.
+Then: set next_review_hours: 72.
 
-### SCALE DOWN (only emergencies)
-- ROAS 7d < 1.5x (below minimum KPI) with $100+ spend 7d
-- 7d vs 14d confirms decline (not just 3d noise)
-Then: scale -20-25%. Set next_review_hours: 168 (7 days).
+## PAUSE AD
+- Ad has $30+ spend, 0 purchases, 7+ days old.
+- OR ROAS AND CTR declining across ALL windows (14d > 7d > 3d = dying).
+- OR frequency > 4.0 (saturated).
+Then: set next_review_hours: 72.
 
-### PAUSE AD (only clear failures with enough data)
-- Ad has $30+ spend with 0 purchases AND 7+ days old
-- OR ad health is "dying" (ROAS AND CTR declining across ALL windows: 14d > 7d > 3d)
-- OR ad frequency > 4.0 (saturated)
-- Max 1 pause per ad set per cycle
-Then: set next_review_hours: 120 (5 days).
+## PAUSE AD SET
+- Zeus orders it (ALERT directive), OR
+- ROAS 7d < 1.0x AND $200+ spend 7d AND 14+ days (sustained loser).
+- Safety: account must have 10+ other healthy ad sets with ROAS > 2x.
 
-### PAUSE ENTIRE AD SET (only when Zeus orders it OR sustained loser)
-Use pause_adset tool ONLY when:
-- Zeus has an ALERT/PRIORITIZE directive saying PAUSE this ad set, OR
-- Ad set has ROAS 7d < 1.0x AND $200+ spend 7d AND 14+ days old (sustained loser)
-- Budget must be <$200/day (larger budgets: use scale_down -50% first)
-Safety: requires account coverage (10+ other healthy ad sets with ROAS > 2x) — the tool will block if not.
-The budget freed will be redistributed by Zeus in its next cycle via new scale_up directives.
+## HOLD
+- Data insufficient (< $50 spend 7d) → hold, check in 24h.
+- Trend unclear (3d up but 7d down) → hold, check in 24h.
+- Within cooldown from recent action → hold until cooldown expires.
 
-### CREATIVE FLAGGING (critical — always check)
+## CREATIVE FLAGGING
 After calling get_ad_performance, count ACTIVE ads:
-- 0 or 1 active ads -> ALWAYS set needs_new_creatives: true in save_assessment
-- 2 active ads with any fatigued/dying -> set needs_new_creatives: true
-This triggers the Creative Agent to generate new ads automatically.
+- 0 or 1 active ads → ALWAYS set needs_new_creatives: true in save_assessment.
+- 2 active ads with any fatigued/dying → set needs_new_creatives: true.
 
-### CREATIVE ROTATION (when new ad is ignored)
-- New ad has <$5 spend after 5+ days (ignored_by_meta)
-- Old ad is 14+ days AND health is fatigued/dying/saturated OR freq > 2.5
-- Old ad healthy with freq < 2.0 -> DO NOT rotate
-Then: pause old ad, set next_review_hours: 120.
+## CREATIVE ROTATION
+- New ad has <$5 spend after 5+ days → pause oldest fatigued ad.
+- Old ad healthy with freq < 2.0 → DO NOT rotate.
 
-## WHEN NOT TO ACT (critical — unless Zeus overrides)
-- 3d dip without 7d confirmation -> HOLD. It is noise.
-- ROAS dropped 10-20% -> HOLD. Normal volatility.
-- Ad with <$30 spend and 0 purchases -> HOLD. Not enough data.
-- Any ad set touched in last 5 days -> HOLD. Let Meta stabilize.
-- Ad set in learning (<5 days old) -> HOLD. Gates will block you anyway.
-- Budget changed externally -> HOLD 5 days. Learning reset.
-NOTE: If Zeus has a PRIORITIZE directive for an ad set, these HOLD rules do NOT apply to that ad set (except learning phase <5 days).
-EXCEPTION: [Prometheus] graduated ad sets in LEARNING with ROAS >= 3x MUST be scaled +15% EVERY cycle regardless of all rules above. These are proven winners stuck at $10-20/day. Scale +15% does NOT reset Meta learning. The "max 1 per week" and "90% observation" and "HOLD" rules do NOT apply to [Prometheus] graduates needing scale. This is your HIGHEST PRIORITY action when you see the ⚡ CRITICAL prompt.
+## KILLING FATIGUED ADS (safety)
+- Before pausing LAST active ad, check: 10+ other healthy ad sets with ROAS > 2x?
+- If YES: pause ad + pause ad set. Zeus redistributes.
+- If NO: HOLD. Account needs capacity.
+- NEVER leave ad set with 0 active ads and budget running.
 
-## KILLING FATIGUED ADS (critical safety)
-- Before pausing the LAST active ad in an ad set, check: does the account have 10+ other active ad sets with ROAS > 2x?
-- If YES: pause the ad, then pause the entire ad set. Zeus will plan budget redistribution to [Prometheus] graduated ad sets.
-- If NO: HOLD. Do not kill — the account needs every ad set running. Wait for more [Prometheus] graduations.
-- NEVER leave an ad set with 0 active ads and budget still running. If you pause last ad, pause the ad set too.
+## ZEUS DIRECTIVES
+Zeus is the CEO. When he sends PRIORITIZE → act this cycle. When he sends HOLD/ALERT → respect it.
 
 ## METRICS
-You get 4 windows: today, 3d, 7d, 14d. Decision windows:
-- **7d vs 14d** = your PRIMARY decision signal. Sustained trends only.
-- **3d** = early warning, NOT action trigger. Only confirms what 7d shows.
-- **today** = noise. Ignore for decisions unless >$30 spend.
+- **7d** = primary decision signal.
+- **3d** = confirms direction. If 3d improving, trust it.
+- **today** = noise. Ignore unless >$30 spend.
 
 ## ASSESSMENT FORMAT
 Short, max 3-4 sentences in Spanish. Always include:
@@ -1353,23 +1335,8 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
     return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: 'Excluded by name' };
   }
 
-  // ═══ PRE-CHECK: Learning stage — limited actions on ad sets in LEARNING ═══
-  // Scale +15% does NOT reset learning (only >20% does). But pause/kill DOES reset.
-  // Exception: [Prometheus] graduates with ROAS >= 3x can be scaled to accelerate exit.
-  if (adSetSnap.learning_stage === 'LEARNING') {
-    const convs = adSetSnap.learning_stage_conversions || 0;
-    const needed = 50 - convs;
-    const roas7d = adSetSnap.metrics?.last_7d?.roas || 0;
-    const isPrometheusGrad = (adSetName || '').includes('[Prometheus]');
-
-    if (isPrometheusGrad && roas7d >= 3.0) {
-      // Allow scale only — flags will be injected into ctx after it's created
-      logger.info(`[ACCOUNT-AGENT] ${adSetName}: LEARNING (${convs}/50) but [Prometheus] ROAS ${roas7d.toFixed(2)}x — allowing scale to accelerate exit`);
-    } else {
-      logger.debug(`[ACCOUNT-AGENT] ${adSetName}: Meta LEARNING phase (${convs}/50 conv, ~${needed} needed) — skip`);
-      return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Learning phase (${convs}/50 conv)` };
-    }
-  }
+  // ═══ PRE-CHECK: Learning stage — Claude can scale but NOT pause ad sets in LEARNING ═══
+  // Scale +15% does NOT reset learning. Pause DOES reset. Claude handles this via prompt rules.
 
   // ═══ PRE-CHECK: Low spend filter (< $5/week) ═══
   if (adSetSpend < 5) {
@@ -1397,17 +1364,14 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
     const hoursSinceCheck = (Date.now() - new Date(lastCheck).getTime()) / 3600000;
     const isHealthy = (trend === 'stable' || trend === 'improving') && adSetRoas >= 2.0 && adSetFrequency < 2.5;
 
-    // No smart-skip [Prometheus] graduates in LEARNING — they need to be scaled
-    const isPrometheusLearning = (adSetName || '').includes('[Prometheus]') && adSetSnap.learning_stage === 'LEARNING' && adSetRoas >= 3.0;
-    if (isHealthy && hoursSinceCheck < 12 && !pendingPlan && !isPrometheusLearning) {
+    if (isHealthy && hoursSinceCheck < 12 && !pendingPlan) {
       logger.debug(`[ACCOUNT-AGENT] ${adSetName}: healthy (${trend}, ROAS ${adSetRoas.toFixed(1)}x), checked ${hoursSinceCheck.toFixed(0)}h ago — smart skip`);
       return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Smart skip: healthy, ${hoursSinceCheck.toFixed(0)}h ago` };
     }
   }
 
   // Next review schedule skip (respeta el programa de Athena)
-  const isPromLearningScale = (adSetName || '').includes('[Prometheus]') && adSetSnap.learning_stage === 'LEARNING' && adSetRoas >= 3.0;
-  if (mode === 'full' && nextReview && new Date(nextReview) > new Date() && !pendingPlan && !zeusHasDirectives && !isPromLearningScale) {
+  if (mode === 'full' && nextReview && new Date(nextReview) > new Date() && !pendingPlan && !zeusHasDirectives) {
     const hoursLeft = Math.round((new Date(nextReview) - new Date()) / 3600000);
     logger.debug(`[ACCOUNT-AGENT] ${adSetName}: next review in ${hoursLeft}h — skip`);
     return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: `Next review in ${hoursLeft}h` };
@@ -1421,28 +1385,8 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
     hasZeusScaleDirective
   };
 
-  // [Prometheus] graduates in LEARNING with ROAS >= 3x: scale +15% DIRECTLY (no Claude needed)
-  if (adSetSnap.learning_stage === 'LEARNING' && (adSetName || '').includes('[Prometheus]') && adSetRoas >= 3.0) {
-    const currentBudget = adSetSnap.daily_budget || 10;
-    const newBudget = Math.round(currentBudget * 1.15 * 100) / 100;
-    try {
-      await meta.updateBudget(adSetId, newBudget);
-      const ActionLog = require('../../db/models/ActionLog');
-      await ActionLog.create({
-        entity_type: 'adset', entity_id: adSetId, entity_name: adSetName,
-        action: 'scale_up', before_value: currentBudget, after_value: newBudget,
-        reasoning: `Auto-scale [Prometheus] graduate in LEARNING: ROAS ${adSetRoas.toFixed(2)}x, ${adSetSnap.learning_stage_conversions || 0}/50 conv. +15% to accelerate exit.`,
-        confidence: 'high', agent_type: 'unified_agent', success: true, executed_at: new Date()
-      });
-      logger.info(`[ACCOUNT-AGENT] ⚡ AUTO-SCALED: ${adSetName} $${currentBudget} → $${newBudget} (ROAS ${adSetRoas.toFixed(2)}x, LEARNING ${adSetSnap.learning_stage_conversions || 0}/50)`);
-      return { actionsExecuted: 1, assessmentSaved: false, action_types: ['scale_up'] };
-    } catch (scaleErr) {
-      logger.warn(`[ACCOUNT-AGENT] Auto-scale error ${adSetName}: ${scaleErr.message}`);
-    }
-  }
-
   const isObserver = mode === 'observer';
-  const activeTools = isObserver ? OBSERVER_TOOLS : (ctx.learningScaleOnly ? LEARNING_SCALE_ONLY_TOOLS : TOOLS);
+  const activeTools = isObserver ? OBSERVER_TOOLS : TOOLS;
 
   // Leer directivas de Zeus para Athena
   let zeusContext = '';
@@ -1453,11 +1397,9 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
       active: true
     }).lean();
     if (directives.length > 0) {
-      zeusContext = '\n\n## ZEUS DIRECTIVES (from the CEO brain — ACT ON THESE NOW)\n' +
-        directives.map(d => `- [${d.directive_type.toUpperCase()}] (confidence: ${d.confidence}) ${d.directive}`).join('\n') +
-        '\nThese directives are ORDERS from Zeus, not suggestions. Zeus analyzed the full account with all data and is telling you to act.' +
-        '\nFor PRIORITIZE scale directives: execute scale_budget NOW using the ZEUS OVERRIDE rules (ad set >5 days, freq <3.0, max +15%). ' +
-        'Do NOT apply the standard conservative scale_up criteria. Do NOT HOLD what Zeus says to scale. Act this cycle.';
+      zeusContext = '\n\n## ZEUS DIRECTIVES\n' +
+        directives.map(d => `- [${d.directive_type.toUpperCase()}] ${d.directive}`).join('\n') +
+        '\nZeus is the CEO. PRIORITIZE = act now. ALERT = respect. These override HOLD.';
     }
   } catch (_) {}
 
@@ -1466,13 +1408,13 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
   const baseContext = `Ad set ${adSetId} ("${adSetName}"). Budget: $${currentBudget}/day. 7d ROAS: ${adSetRoas.toFixed(2)}x, Spend: $${adSetSpend.toFixed(0)}, Purchases: ${adSetPurchases}, Frequency: ${adSetFrequency.toFixed(1)}.`;
   const planContext = pendingPlan ? `\n\nYOUR PREVIOUS PLAN for this ad set: "${pendingPlan}"\nCheck if conditions are met and execute accordingly. If conditions changed, make a new plan.` : '';
 
-  const learningContext = ctx.learningScaleOnly
-    ? `\n\n⚡ CRITICAL: This [Prometheus] graduate is in Meta LEARNING phase with ROAS ${adSetRoas.toFixed(2)}x (${ctx.learningConversions}/50 conversions, needs ${ctx.learningNeeded} more). It has budget $${currentBudget}/day which is TOO LOW. You MUST scale_budget by +15% to $${Math.round(currentBudget * 1.15 * 100) / 100}/day NOW to accelerate exit from learning. Scale +15% does NOT reset learning. This is your ONLY action — scale it and save assessment. Do NOT hold.`
+  const learningContext = adSetSnap.learning_stage === 'LEARNING'
+    ? ` Meta LEARNING phase: ${adSetSnap.learning_stage_conversions || 0}/50 conversions. Scale +15% is safe (does NOT reset learning). Pause DOES reset — avoid pausing.`
     : '';
 
   const userMessage = isObserver
     ? `[OBSERVER MODE — nighttime, read-only] Analyze ${baseContext} Gather data, analyze trends, and save your assessment. You CANNOT take actions right now — only observe and document what you see.${planContext}`
-    : `Analyze and manage ${baseContext} Gather detailed data, decide actions, and save your assessment.${planContext}${learningContext}`;
+    : `Analyze and manage ${baseContext}${learningContext} Gather data, decide actions based on ROAS and data, and save your assessment.${planContext}`;
 
   let messages = [{ role: 'user', content: userMessage }];
 
