@@ -685,22 +685,19 @@ async function runCreativeAgent() {
   if (proactiveNeeded > 0 && rankedProducts.length > 0 && rankedScenes.length > 0) {
     logger.info(`[CREATIVE-AGENT] Pool bajo (${readyCount} + ${generated} generados). Generando ${proactiveNeeded} proactivos para escalar.`);
 
-    // Distribucion: primer slot SIEMPRE para BYB (custom), resto rota entre los demas
+    // Distribucion PAREJA: rotar todos los productos en round-robin
+    // Ciclo 1: BYB, Hot Tomatoes | Ciclo 2: Half Sour, Texas Chili | Ciclo 3: BYB, Hot Tomatoes...
     const bybProduct = rankedProducts.find(p => p.prompt_type === 'custom');
     const otherProducts = rankedProducts.filter(p => p.prompt_type !== 'custom');
+    const allProductsRotation = bybProduct ? [bybProduct, ...otherProducts] : [...otherProducts];
 
-    // Construir lista de productos por slot: [BYB, otro, BYB, otro, ...]
+    // Usar timestamp para rotar — cada ciclo empieza en un producto diferente
+    const rotationOffset = Math.floor(Date.now() / 3600000) % allProductsRotation.length;
+
     const productSlots = [];
-    let otherIdx = 0;
     for (let i = 0; i < proactiveNeeded; i++) {
-      if (i % 2 === 0 && bybProduct) {
-        productSlots.push(bybProduct); // Slots pares: BYB
-      } else if (otherProducts.length > 0) {
-        productSlots.push(otherProducts[otherIdx % otherProducts.length]);
-        otherIdx++;
-      } else if (bybProduct) {
-        productSlots.push(bybProduct); // Si no hay otros, todo BYB
-      }
+      const idx = (rotationOffset + i) % allProductsRotation.length;
+      productSlots.push(allProductsRotation[idx]);
     }
     logger.info(`[CREATIVE-AGENT] Proactivos: ${productSlots.map(p => p.product_name).join(', ')}`);
 
