@@ -510,6 +510,101 @@ async function gatherAccountIntelligence() {
     created_at: { $gte: new Date(Date.now() - 7 * 24 * 3600000) }
   }).sort({ created_at: -1 }).limit(5).lean();
 
+  // ═══ GRADUATES INVESTMENT PHASE — cohort + 14d ROAS trend ═══
+  // Athena escala graduados +15% iterativamente para empujarlos a 50 conv (exit learning).
+  // Esta inversion temporalmente degrada ROAS account-level. Zeus debe entender ESO antes de pedir freno.
+  let gradInvestment = null;
+  try {
+    const TestRun = require('../../db/models/TestRun');
+    const allGrads = await TestRun.find({ phase: 'graduated' }).select('test_adset_id graduated_at').lean();
+    const nowMs = Date.now();
+    const cohort = [];
+    for (const g of allGrads) {
+      if (!g.graduated_at || !g.test_adset_id) continue;
+      const snap = activeAdsets.find(s => s.entity_id === g.test_adset_id);
+      if (!snap) continue; // ya pausado/eliminado, no cuenta como cohort activa
+      const ageDays = Math.floor((nowMs - new Date(g.graduated_at).getTime()) / 86400000);
+      cohort.push({
+        name: snap.entity_name,
+        age_days: ageDays,
+        learning_stage: snap.learning_stage,
+        conv: snap.learning_stage_conversions || 0,
+        roas: snap.metrics?.last_7d?.roas || 0,
+        budget: snap.daily_budget || 0,
+        spend_7d: snap.metrics?.last_7d?.spend || 0
+      });
+    }
+
+    // 14d account ROAS trend — comparar agregado de hace 7-14d vs ahora
+    const MetricSnapshot = require('../../db/models/MetricSnapshot');
+    const snapsBefore = await MetricSnapshot.aggregate([
+      { $match: {
+        entity_type: 'adset',
+        snapshot_at: { $gte: new Date(nowMs - 14 * 86400000), $lte: new Date(nowMs - 7 * 86400000) }
+      }},
+      { $sort: { entity_id: 1, snapshot_at: 1 } },
+      { $group: {
+        _id: '$entity_id',
+        spend_then: { $first: '$metrics.last_7d.spend' },
+        revenue_then: { $first: '$metrics.last_7d.purchase_value' }
+      }}
+    ]);
+    const sumSpendBefore = snapsBefore.reduce((s, x) => s + (x.spend_then || 0), 0);
+    const sumRevBefore = snapsBefore.reduce((s, x) => s + (x.revenue_then || 0), 0);
+    const roas14dAgo = sumSpendBefore > 0 ? sumRevBefore / sumSpendBefore : 0;
+    const roasNow = parseFloat(globalRoas7d) || 0;
+    const roasChangePct = roas14dAgo > 0 ? ((roasNow - roas14dAgo) / roas14dAgo) * 100 : 0;
+    const spendChangePct = sumSpendBefore > 0 ? ((g7d.spend - sumSpendBefore) / sumSpendBefore) * 100 : 0;
+
+    if (cohort.length > 0) {
+      const inLearning = cohort.filter(c => c.learning_stage === 'LEARNING').length;
+      const inSuccess = cohort.filter(c => c.learning_stage === 'SUCCESS').length;
+      const inFail = cohort.filter(c => c.learning_stage === 'FAIL').length;
+      const totalGradSpend = cohort.reduce((s, c) => s + c.spend_7d, 0);
+      const avgAge = cohort.reduce((s, c) => s + c.age_days, 0) / cohort.length;
+      const oldestAge = Math.max(...cohort.map(c => c.age_days));
+      const newestAge = Math.min(...cohort.map(c => c.age_days));
+      const closestToSuccess = cohort
+        .filter(c => c.learning_stage === 'LEARNING' && c.conv > 0)
+        .sort((a, b) => b.conv - a.conv)
+        .slice(0, 5);
+      // Proyectar dias hasta primer SUCCESS basado en velocidad del lider
+      let projectedDaysToFirstSuccess = null;
+      const leader = closestToSuccess[0];
+      if (leader && leader.age_days > 0 && leader.conv > 0) {
+        const convPerDay = leader.conv / leader.age_days;
+        projectedDaysToFirstSuccess = Math.ceil((50 - leader.conv) / convPerDay);
+      }
+
+      gradInvestment = {
+        cohort_size: cohort.length,
+        in_learning: inLearning,
+        in_success: inSuccess,
+        in_fail: inFail,
+        avg_age_days: Math.round(avgAge * 10) / 10,
+        oldest_age: oldestAge,
+        newest_age: newestAge,
+        total_spend_7d: Math.round(totalGradSpend),
+        pct_of_account_spend: g7d.spend > 0 ? Math.round((totalGradSpend / g7d.spend) * 100) : 0,
+        roas_14d_ago: roas14dAgo.toFixed(2),
+        roas_now: roasNow.toFixed(2),
+        roas_change_pct: Math.round(roasChangePct * 10) / 10,
+        spend_change_pct: Math.round(spendChangePct * 10) / 10,
+        closest_to_success: closestToSuccess.map(c => ({
+          name: c.name,
+          age_days: c.age_days,
+          conv: c.conv,
+          needed: 50 - c.conv,
+          roas: c.roas.toFixed(2),
+          budget: c.budget
+        })),
+        projected_days_to_first_success: projectedDaysToFirstSuccess
+      };
+    }
+  } catch (err) {
+    logger.warn(`[ZEUS] Error computando grad_investment (non-fatal): ${err.message}`);
+  }
+
   return {
     account: {
       active_adsets: activeAdsets.length,
@@ -582,7 +677,8 @@ async function gatherAccountIntelligence() {
       text: h.body || h.title,
       date: h.created_at?.toISOString().split('T')[0] || ''
     })),
-    budget_ceiling: currentCeiling
+    budget_ceiling: currentCeiling,
+    grad_investment: gradInvestment
   };
 }
 
@@ -761,6 +857,36 @@ ${(() => {
   const inLearning = (accountData.learning_detail || []);
   if (inLearning.length === 0) return 'No learning data available yet.';
   return inLearning.slice(0, 8).map(a => `- ${a.name}: ${a.conversions}/50 (${a.needed} needed) ROAS ${a.roas}x $${a.budget}/d`).join('\n');
+})()}
+
+### GRADUATES INVESTMENT PHASE — read this BEFORE interpreting account ROAS
+${(() => {
+  const gi = accountData.grad_investment;
+  if (!gi || gi.cohort_size === 0) return 'No active graduates cohort.';
+  const trendDir = gi.roas_change_pct < -3 ? 'DEGRADING' : gi.roas_change_pct > 3 ? 'IMPROVING' : 'STABLE';
+  const closest = (gi.closest_to_success || []).map(c =>
+    `  - "${(c.name||'').substring(0,45)}": ${c.conv}/50 conv (${c.needed} needed), ${c.age_days}d old, ROAS ${c.roas}x, $${c.budget}/d`
+  ).join('\n') || '  (none with conversions yet)';
+  const projection = gi.projected_days_to_first_success != null
+    ? `~${gi.projected_days_to_first_success} days (based on leader's velocity)`
+    : 'unknown — leader has 0 conv yet';
+
+  return `Cohort: ${gi.cohort_size} graduates active | avg age ${gi.avg_age_days}d | oldest ${gi.oldest_age}d | newest ${gi.newest_age}d
+Status: ${gi.in_learning} in LEARNING | ${gi.in_success} SUCCESS | ${gi.in_fail} FAIL
+Investment: graduates spend $${gi.total_spend_7d}/7d (${gi.pct_of_account_spend}% of account)
+Account ROAS 14d trend: ${gi.roas_14d_ago}x → ${gi.roas_now}x (${gi.roas_change_pct >= 0 ? '+' : ''}${gi.roas_change_pct}%, ${trendDir})
+Spend change 14d: ${gi.spend_change_pct >= 0 ? '+' : ''}${gi.spend_change_pct}%
+Projected first SUCCESS: ${projection}
+
+Top 5 closest to SUCCESS:
+${closest}
+
+INTERPRETATION RULES (read carefully):
+- A degrading account ROAS while many graduates are in LEARNING is EXPECTED, not a failure. You are paying to push them through.
+- Do NOT panic-pause graduates or recommend frenar scaling based ONLY on account-ROAS dip. The dip IS the investment.
+- Athena escalating graduates +15% is the SANCTIONED strategy — do not contradict it unless a SPECIFIC graduate shows ROAS < 1.5x sustained AND >7 days old.
+- Re-evaluate the strategy ONLY if (a) oldest graduate >14d still 0 conv, OR (b) account spend +50%+ AND revenue flat, OR (c) projected days to first SUCCESS > 30.
+- The cohort is YOUNG (most under 7d) — judging effectiveness now is premature. Pacience.`;
 })()}
 
 ### Budget Allocation (ZERO-SUM thinking)
