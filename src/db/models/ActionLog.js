@@ -224,7 +224,10 @@ const actionLogSchema = new mongoose.Schema({
   learned_at: { type: Date, default: null, index: true },
   learned_reward: { type: Number, default: null },
   learned_bucket: { type: String, default: null },
-  learned_overlap_count: { type: Number, default: 0 }  // Fix 4: concurrent actions count for attribution
+  learned_overlap_count: { type: Number, default: 0 },  // Fix 4: concurrent actions count for attribution
+  // Re-learning con ventana de 7d (signal mas confiable que 3d)
+  learned_7d_at: { type: Date, default: null, index: true },
+  learned_7d_reward: { type: Number, default: null }
 });
 
 // Índice para buscar acciones recientes por entidad

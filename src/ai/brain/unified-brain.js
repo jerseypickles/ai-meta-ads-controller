@@ -139,7 +139,7 @@ class UnifiedBrain {
 
       // 5. Construir resumen del learner para Claude
       const learnerState = await this.learner.loadState();
-      const learnerSummary = this._buildLearnerSummary(learnerState, learningResult);
+      const learnerSummary = await this._buildLearnerSummary(learnerState, learningResult);
 
       // 5.5. Build feature set EARLY — used by both diagnostics and scorer
       const features = this.buildFeatureSet({
@@ -643,7 +643,7 @@ class UnifiedBrain {
     };
   }
 
-  _buildLearnerSummary(state, learningResult) {
+  async _buildLearnerSummary(state, learningResult) {
     if (!state || !state.buckets || Object.keys(state.buckets).length === 0) {
       return 'Sin datos de aprendizaje aun. Sistema en fase inicial.';
     }
@@ -653,6 +653,53 @@ class UnifiedBrain {
 
     if (learningResult.processed > 0) {
       lines.push(`Ultimo ciclo: ${learningResult.processed} acciones procesadas, reward medio: ${learningResult.averageReward.toFixed(3)}`);
+    }
+
+    // Agregado por tipo de accion leido directamente de ActionLog.learned_reward.
+    // La fuente es autoritativa: un reward por accion medida, sin dilucion del bucket state.
+    // Es el signal que el brain necesita para recalibrar sus propios patrones (ej: "tus scale_up dan reward negativo en promedio").
+    let actionRows = [];
+    try {
+      const aggregate = await ActionLog.aggregate([
+        { $match: { learned_reward: { $ne: null } } },
+        { $group: {
+          _id: '$action',
+          count: { $sum: 1 },
+          avg: { $avg: '$learned_reward' },
+          pos: { $sum: { $cond: [{ $gt: ['$learned_reward', 0.05] }, 1, 0] } },
+          neg: { $sum: { $cond: [{ $lt: ['$learned_reward', -0.05] }, 1, 0] } }
+        }},
+        { $match: { count: { $gte: 5 } } },
+        { $sort: { count: -1 } }
+      ]);
+      actionRows = aggregate.map(a => ({
+        action: a._id,
+        count: a.count,
+        avg: a.avg,
+        pos: a.pos,
+        neg: a.neg
+      }));
+    } catch (err) {
+      logger.warn(`[BRAIN] No se pudo computar agregado de learned_reward (non-fatal): ${err.message}`);
+    }
+
+    if (actionRows.length > 0) {
+      lines.push('');
+      lines.push('TU RENDIMIENTO POR TIPO DE ACCION (reward promedio — fuente: ActionLog.learned_reward):');
+      for (const r of actionRows) {
+        const label = r.avg <= -0.15 ? 'MUY NEGATIVO'
+          : r.avg < -0.05 ? 'negativo'
+          : r.avg > 0.15 ? 'MUY POSITIVO'
+          : r.avg > 0.05 ? 'positivo'
+          : 'neutro';
+        const sign = r.avg >= 0 ? '+' : '';
+        const winRate = r.count > 0 ? Math.round((r.pos / r.count) * 100) : 0;
+        lines.push(`  ${r.action.padEnd(22)} n=${String(r.count).padStart(4)}  avg=${sign}${r.avg.toFixed(3)}  winRate=${winRate}%  ${label}`);
+      }
+      lines.push('Interpretacion:');
+      lines.push('  - avg < -0.05 → esa accion destruye valor en promedio: endurece criterios o emitela menos.');
+      lines.push('  - avg > +0.05 → esa accion funciona: usala mas proactivamente.');
+      lines.push('  - winRate es el % de acciones con reward > +0.05 (mejoras reales, no neutras).');
     }
 
     // Resumir top buckets con mas datos
@@ -666,6 +713,7 @@ class UnifiedBrain {
       .slice(0, 5);
 
     if (bucketEntries.length > 0) {
+      lines.push('');
       lines.push('Patrones detectados por contexto:');
       for (const { bucket, actions } of bucketEntries) {
         const actionSummary = Object.entries(actions)
