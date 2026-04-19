@@ -11,6 +11,7 @@ const ActionLog = require('../../db/models/ActionLog');
 const MetricSnapshot = require('../../db/models/MetricSnapshot');
 const { getLatestSnapshots, getAdsForAdSet } = require('../../db/queries');
 const ZeusDirective = require('../../db/models/ZeusDirective');
+const { buildDNA } = require('../creative/dna-helper');
 
 const claude = new Anthropic({ apiKey: config.claude.apiKey });
 
@@ -634,6 +635,16 @@ async function runCreativeAgent() {
         const copy = await generateCopy(product.product_name, sceneShort, copyAngle, doCombo, comboNames);
 
         // Save as proposal (NOT uploaded yet) — image stored as base64 in DB
+        // DNA — 5 dimensiones persistidas (Fase 1 Creative DNA system)
+        const dna = buildDNA({
+          style: style.key,
+          copy_angle: copy.copy_angle || copyAngle.key,
+          scene: sceneShort,
+          scene_short: sceneShort,
+          product_name: doCombo ? comboNames.join(' + ') : product.product_name,
+          headline: copy.headline
+        });
+
         await CreativeProposal.create({
           adset_id: adsetId,
           adset_name: adsetName,
@@ -646,6 +657,12 @@ async function runCreativeAgent() {
           primary_text: copy.primary_text,
           link_url: product.link_url || 'https://jerseypickles.com',
           prompt_used: prompt,
+          // DNA fields
+          style: dna.style,
+          copy_angle: dna.copy_angle,
+          framing: dna.framing,
+          hook_type: dna.hook_type,
+          dna_hash: dna.dna_hash,
           status: 'ready'
         });
 
@@ -729,6 +746,16 @@ async function runCreativeAgent() {
         const copy = await generateCopy(product.product_name, scenePick.short, copyAngle, false, []);
 
         // Propuesta proactiva: adset_id = 'proactive' — Prometheus crea ad set nuevo
+        // DNA — 5 dimensiones persistidas
+        const dna = buildDNA({
+          style: style.key,
+          copy_angle: copy.copy_angle || copyAngle.key,
+          scene: scenePick.short,
+          scene_short: scenePick.short,
+          product_name: product.product_name,
+          headline: copy.headline
+        });
+
         await CreativeProposal.create({
           adset_id: 'proactive',
           adset_name: 'Nuevo ad set (Prometheus)',
@@ -741,6 +768,12 @@ async function runCreativeAgent() {
           primary_text: copy.primary_text,
           link_url: product.link_url || 'https://jerseypickles.com',
           prompt_used: prompt,
+          // DNA fields
+          style: dna.style,
+          copy_angle: dna.copy_angle,
+          framing: dna.framing,
+          hook_type: dna.hook_type,
+          dna_hash: dna.dna_hash,
           status: 'ready'
         });
 

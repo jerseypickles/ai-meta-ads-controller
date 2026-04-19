@@ -504,6 +504,18 @@ async function graduateTest(test, metrics) {
 
   // 5. Cerrar directivas force_graduate pendientes de Zeus para este test (aunque Prometheus llego primero)
   await _resolveForceGraduateDirectives(test, 'graduated', metrics);
+
+  // 6. Update Creative DNA fitness (Fase 1 DNA system)
+  try {
+    const { updateDNAFitness } = require('../creative/dna-helper');
+    await updateDNAFitness(proposal, 'graduated', {
+      spend: metrics.spend || 0,
+      revenue: (metrics.roas || 0) * (metrics.spend || 0),
+      purchases: metrics.purchases || 0
+    });
+  } catch (dnaErr) {
+    logger.warn(`[TESTING-AGENT] DNA fitness update failed (non-fatal): ${dnaErr.message}`);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -560,6 +572,22 @@ async function killOrExpireTest(test, reason, phase) {
 
   // Cerrar directivas force_graduate pendientes de Zeus para este test (Zeus pidio graduar pero Prometheus mato/expiro)
   await _resolveForceGraduateDirectives(test, phase, test.metrics);
+
+  // Update Creative DNA fitness (Fase 1 DNA system)
+  try {
+    const { updateDNAFitness } = require('../creative/dna-helper');
+    const proposal = test.proposal_id ? await CreativeProposal.findById(test.proposal_id).lean() : null;
+    if (proposal) {
+      const m = test.metrics || {};
+      await updateDNAFitness(proposal, phase, {
+        spend: m.spend || 0,
+        revenue: (m.roas || 0) * (m.spend || 0),
+        purchases: m.purchases || 0
+      });
+    }
+  } catch (dnaErr) {
+    logger.warn(`[TESTING-AGENT] DNA fitness update failed (non-fatal): ${dnaErr.message}`);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

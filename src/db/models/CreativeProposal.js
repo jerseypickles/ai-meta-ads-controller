@@ -24,6 +24,16 @@ const creativeProposalSchema = new mongoose.Schema({
   link_url: { type: String, default: '' },
   prompt_used: { type: String, default: '' },
 
+  // ═══ DNA — Creative dimensions (Abril 2026) ═══
+  // 5 dimensiones trackeadas para Creative DNA system.
+  // Cada creativo tiene un DNA unico — combinacion especifica de estas 5.
+  // Se usa para CreativeDNA fitness tracking y Apollo evolutivo.
+  style: { type: String, default: '', index: true },        // ugly-ad | pov-selfie | overhead-flat | close-up-texture | action-shot
+  copy_angle: { type: String, default: '', index: true },   // curiosity | social-proof | urgency | humor | sensory | casual-fun | controversy
+  framing: { type: String, default: '', index: true },      // auto-extraido del headline: curiosity | upgrade | obsession | transformation | question | bold-claim | other
+  hook_type: { type: String, default: '', index: true },    // question | statement | exclamation | number
+  dna_hash: { type: String, default: '', index: true },     // hash deterministico: "style|angle|scene|product|hook"
+
   // Status
   status: {
     type: String,
