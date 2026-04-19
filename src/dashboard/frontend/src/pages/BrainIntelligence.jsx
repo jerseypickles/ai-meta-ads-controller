@@ -956,11 +956,12 @@ function AresPanel({ data, loading, running, onRun, onRefresh }) {
   if (loading && !data) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Cargando Ares...</div>;
   if (!data) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Sin datos de Ares — esperando primer ciclo</div>;
 
-  const [expandedSections, setExpandedSections] = useState({ cbo1: false, cbo2: true, candidates: true, history: false });
+  const [expandedSections, setExpandedSections] = useState({ cbo1: false, cbo2: true, cbo3: true, candidates: true, history: false });
   const toggle = (key) => setExpandedSections(prev => ({ ...prev, [key]: !prev[key] }));
   const cbo = data.cbo || {};
   const cbo1 = data.cbo1 || {};
   const cbo2 = data.cbo2 || {};
+  const cbo3 = data.cbo3 || {};
   const candidates = data.candidates || [];
   const dups = data.recent_duplications || [];
   const roasColor = (r) => r >= 3 ? '#10b981' : r >= 1.5 ? '#f59e0b' : r > 0 ? '#ef4444' : 'var(--text-muted)';
@@ -1038,7 +1039,7 @@ function AresPanel({ data, loading, running, onRun, onRefresh }) {
           { v: `${cbo.roas || 0}x`, l: 'ROAS Total', c: roasColor(cbo.roas || 0) },
           { v: `$${cbo.revenue_7d || 0}`, l: 'Revenue 7d' },
           { v: cbo.purchases_7d || 0, l: 'Compras' },
-          { v: (cbo1.active_clones || 0) + (cbo2.active_clones || 0), l: 'Clones' },
+          { v: (cbo1.active_clones || 0) + (cbo2.active_clones || 0) + (cbo3.active_clones || 0), l: 'Clones' },
           { v: candidates.length, l: 'Candidatos' }
         ].map((s, i) => (
           <div key={i} style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', padding: '10px', textAlign: 'center' }}>
@@ -1048,10 +1049,13 @@ function AresPanel({ data, loading, running, onRun, onRefresh }) {
         ))}
       </div>
 
-      {/* Tree: 2 CBOs */}
+      {/* Tree: 3 CBOs (CBO 3 = rescate/medicion, abril 2026) */}
       <div style={{ borderLeft: '2px solid #ef4444', paddingLeft: 20, marginLeft: 8 }}>
         <CboCard title="CBO 1 — Ganadores Probados" color="#ef4444" stats={cbo1} adsets={cbo1.adsets} sectionKey="cbo1" />
         <CboCard title="CBO 2 — Nuevos Ganadores" color="#f59e0b" stats={cbo2} adsets={cbo2.adsets} sectionKey="cbo2" />
+        {data.campaign_3_id && (
+          <CboCard title="CBO 3 — Medición / Rescate" color="#8b5cf6" stats={cbo3} adsets={cbo3.adsets} sectionKey="cbo3" />
+        )}
 
         {/* Candidatos */}
         {candidates.length > 0 && (
@@ -1102,9 +1106,9 @@ function AresPanel({ data, loading, running, onRun, onRefresh }) {
         )}
       </div>
 
-      {(cbo1.active_clones || 0) === 0 && (cbo2.active_clones || 0) === 0 && candidates.length === 0 && (
+      {(cbo1.active_clones || 0) === 0 && (cbo2.active_clones || 0) === 0 && (cbo3.active_clones || 0) === 0 && candidates.length === 0 && (
         <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
-          Ares esta esperando ganadores. Necesita ad sets con ROAS &ge; 4x (7d), $100+ spend, freq &lt; 2.0, 7+ dias.
+          Ares esta esperando ganadores. Criterios endurecidos: ROAS &ge; 3x sostenido 14d, $500+ spend, 30+ purch, 21+ dias, 40+ learning conv o SUCCESS.
         </div>
       )}
     </div>

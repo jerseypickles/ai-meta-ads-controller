@@ -40,9 +40,10 @@ router.get('/run-status/:jobId', (req, res) => {
 // ═══ GET /intelligence — Datos completos del tab Ares ═══
 router.get('/intelligence', async (req, res) => {
   try {
-    // Ambas campanas CBO
+    // Tres campanas CBO (CBO 3 agregada abril 2026 como tier de rescate/medicion)
     const aresCampaignId = await SystemConfig.get('ares_campaign_id', null);
     const aresCampaign2Id = await SystemConfig.get('ares_campaign_2_id', null);
+    const aresCampaign3Id = await SystemConfig.get('ares_campaign_3_id', null);
 
     // Duplicaciones realizadas (incluye fast-tracks)
     const duplications = await ActionLog.find({
@@ -89,9 +90,11 @@ router.get('/intelligence', async (req, res) => {
 
     const cbo1Adsets = mapCampaignAdsets(aresCampaignId);
     const cbo2Adsets = mapCampaignAdsets(aresCampaign2Id);
-    const allAdsets = [...cbo1Adsets, ...cbo2Adsets];
+    const cbo3Adsets = mapCampaignAdsets(aresCampaign3Id);
+    const allAdsets = [...cbo1Adsets, ...cbo2Adsets, ...cbo3Adsets];
     const cbo1Stats = calcStats(cbo1Adsets);
     const cbo2Stats = calcStats(cbo2Adsets);
+    const cbo3Stats = calcStats(cbo3Adsets);
     const totalStats = calcStats(allAdsets);
 
     // Candidatos (no duplicados aun)
@@ -102,8 +105,17 @@ router.get('/intelligence', async (req, res) => {
       const name = (s.entity_name || '').toUpperCase();
       if (EXCLUDE_PATTERNS.some(ex => name.includes(ex.toUpperCase()))) return false;
       if (alreadyDuplicated.has(s.entity_id)) return false;
+      // Criterios endurecidos (abril 2026 — match ares-agent.js):
+      // ROAS sostenido 14d (fallback 7d), $500+ spend, 30+ purch, freq < 2.0
+      const m14 = s.metrics?.last_14d || s.metrics?.last_7d || {};
       const m7 = s.metrics?.last_7d || {};
-      return (m7.roas || 0) >= 4.0 && (m7.spend || 0) >= 100 && (m7.frequency || 0) < 2.0;
+      const roas = m14.roas || 0;
+      const spend = m14.spend || 0;
+      const purchases = m14.purchases || 0;
+      const freq = m7.frequency || 0;
+      const learningConv = s.learning_stage_conversions || 0;
+      const isSuccess = s.learning_stage === 'SUCCESS';
+      return roas >= 3.0 && spend >= 500 && purchases >= 30 && freq < 2.0 && (isSuccess || learningConv >= 40);
     }).map(s => {
       const m7 = s.metrics?.last_7d || {};
       return {
@@ -118,9 +130,11 @@ router.get('/intelligence', async (req, res) => {
     res.json({
       campaign_id: aresCampaignId,
       campaign_2_id: aresCampaign2Id,
+      campaign_3_id: aresCampaign3Id,
       // Metricas por CBO individual
       cbo1: { ...cbo1Stats, adsets: cbo1Adsets },
       cbo2: { ...cbo2Stats, adsets: cbo2Adsets },
+      cbo3: { ...cbo3Stats, adsets: cbo3Adsets },
       // Metricas combinadas
       cbo: totalStats,
       // Legacy + global
