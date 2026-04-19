@@ -7,16 +7,26 @@ const { getLatestSnapshots } = require('../../db/queries');
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURACION — Ares: Agente de Duplicacion (5to agente)
-// Procedural. Duplica ganadores a campana ABO con budget sharing.
+// Procedural. Duplica ganadores a campanas CBO.
+//
+// CRITERIOS ENDURECIDOS (Abril 2026) — raíz del problema anterior:
+// Ares duplicaba con criterios permisivos → 32 clones en CBO1 → 14 starved.
+// Nuevo filtro exige track record SOSTENIDO antes de duplicar.
 // ═══════════════════════════════════════════════════════════════════════════════
-const DUPLICATE_MIN_ROAS = 4.0;        // ROAS 7d minimo para duplicar
-const DUPLICATE_MIN_DAYS = 7;          // Edad minima del ad set (dias)
-const DUPLICATE_MIN_SPEND = 100;       // Spend 7d minimo ($)
-const DUPLICATE_MAX_FREQUENCY = 2.0;   // Frequency maxima (no saturado)
-const MAX_DUPLICATES_PER_CONCEPT = 2;  // Max clones por ad set original
-const MIN_DAYS_BETWEEN_DUPLICATES = 7; // Dias minimos entre duplicaciones del mismo original
-const CLONE_DAILY_BUDGET = 30;         // Budget diario de cada clon ($30/dia)
-const MAX_DUPLICATES_PER_CYCLE = 3;    // Max duplicaciones por ciclo (evitar avalancha)
+const DUPLICATE_MIN_ROAS = 3.0;              // ROAS minimo SOSTENIDO 14d (era 4x 7d)
+const DUPLICATE_MIN_DAYS = 21;               // Edad minima (era 7d)
+const DUPLICATE_MIN_SPEND = 500;             // Spend acumulado minimo (era $100 7d)
+const DUPLICATE_MIN_PURCHASES = 30;          // Purchases acumulados minimos (nuevo)
+const DUPLICATE_MIN_LEARNING_CONV = 40;      // Learning conv progress minimo (nuevo, o SUCCESS)
+const DUPLICATE_MAX_FREQUENCY = 2.0;         // Frequency maxima
+const MAX_DUPLICATES_PER_CONCEPT = 2;
+const MIN_DAYS_BETWEEN_DUPLICATES = 7;
+const CLONE_DAILY_BUDGET = 30;
+const MAX_DUPLICATES_PER_CYCLE = 3;
+
+// Fast-track ELIMINADO (abril 2026): 100% fail rate en produccion.
+// El criterio original (ROAS 5x + 3 purch en testing) no predice performance en CBO.
+const FAST_TRACK_DISABLED = true;
 
 // Patrones a excluir de duplicacion
 const EXCLUDE_PATTERNS = ['[TEST]', 'AI -', 'AMAZON', 'DONT TOUCH', 'DONT_TOUCH', 'EXCLUDE', 'MANUAL ONLY'];
@@ -82,34 +92,55 @@ async function findDuplicationCandidates() {
     return !EXCLUDE_PATTERNS.some(ex => name.includes(ex.toUpperCase()));
   });
 
-  // Filtrar por criterios de performance
+  // Filtrar por criterios de performance ENDURECIDOS
+  // El objetivo: solo duplicar ad sets que ya probaron sostenibilidad real en ABO.
+  // Prevención: no generar starved clones en CBO por dilucion de poblacion debil.
   const candidates = [];
   for (const snap of active) {
+    const m14d = snap.metrics?.last_14d || snap.metrics?.last_7d || {};
     const m7d = snap.metrics?.last_7d || {};
-    const roas7d = m7d.roas || 0;
-    const spend7d = m7d.spend || 0;
+    const roasSustained = m14d.roas || m7d.roas || 0;  // 14d preferido, fallback 7d
+    const spendAccumulated = m14d.spend || m7d.spend || 0;
+    const purchasesAccumulated = m14d.purchases || m7d.purchases || 0;
     const freq = m7d.frequency || 0;
+    const learningConv = snap.learning_stage_conversions || 0;
+    const isSuccess = snap.learning_stage === 'SUCCESS';
 
-    // Criterios de performance
-    if (roas7d < DUPLICATE_MIN_ROAS) continue;
-    if (spend7d < DUPLICATE_MIN_SPEND) continue;
+    // Filtro 1: ROAS sostenido (14d preferido)
+    if (roasSustained < DUPLICATE_MIN_ROAS) continue;
+
+    // Filtro 2: Spend acumulado (track record real)
+    if (spendAccumulated < DUPLICATE_MIN_SPEND) continue;
+
+    // Filtro 3: Purchases acumulados (data suficiente para Meta)
+    if (purchasesAccumulated < DUPLICATE_MIN_PURCHASES) continue;
+
+    // Filtro 4: Frequency (no saturado)
     if (freq >= DUPLICATE_MAX_FREQUENCY) continue;
 
-    // Edad minima
+    // Filtro 5: Edad minima (duration)
     if (snap.meta_created_time) {
       const daysOld = (Date.now() - new Date(snap.meta_created_time).getTime()) / 86400000;
       if (daysOld < DUPLICATE_MIN_DAYS) continue;
+    } else {
+      // Sin meta_created_time no podemos verificar edad → skip por seguridad
+      continue;
     }
+
+    // Filtro 6: Learning maturity (SUCCESS o 40+ conv)
+    if (!isSuccess && learningConv < DUPLICATE_MIN_LEARNING_CONV) continue;
 
     candidates.push({
       entity_id: snap.entity_id,
       entity_name: snap.entity_name || snap.entity_id,
-      roas_7d: roas7d,
-      spend_7d: spend7d,
+      roas_7d: roasSustained,
+      spend_7d: spendAccumulated,
+      purchases_7d: purchasesAccumulated,
       frequency: freq,
+      learning_conv: learningConv,
+      learning_stage: snap.learning_stage,
       daily_budget: snap.daily_budget || 0,
-      purchases_7d: m7d.purchases || 0,
-      cpa_7d: m7d.spend > 0 && m7d.purchases > 0 ? Math.round(m7d.spend / m7d.purchases * 100) / 100 : 0
+      cpa_7d: spendAccumulated > 0 && purchasesAccumulated > 0 ? Math.round(spendAccumulated / purchasesAccumulated * 100) / 100 : 0
     });
   }
 
@@ -383,15 +414,24 @@ async function processZeusDirectives(aresCampaignId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// FASE 0.5: FAST-TRACK — Graduados recientes con ROAS alto directo a CBO
+// FASE 0.5: FAST-TRACK — DESACTIVADO (abril 2026)
 // ═══════════════════════════════════════════════════════════════════════════════
+// Motivo: 100% fail rate en produccion. Los 9 FTs enviados a CBO en marzo/abril
+// 2026 todos terminaron con $0-5 spend / 7d y 0 purchases. El criterio de
+// "ROAS >= 5x + 3 purchases en testing" no predice performance en CBO.
+// Los graduates deben probar 21+ dias en ABO produccion antes de ser considerados.
 
-const FAST_TRACK_MIN_ROAS = 5.0;      // ROAS minimo para fast-track
-const FAST_TRACK_MIN_PURCHASES = 3;    // Compras minimas
-const FAST_TRACK_LOOKBACK_HOURS = 12;  // Buscar graduados de ultimas 12h
-const FAST_TRACK_MAX_PER_CYCLE = 2;    // Max fast-tracks por ciclo
+const FAST_TRACK_MIN_ROAS = 5.0;      // Deprecated
+const FAST_TRACK_MIN_PURCHASES = 3;    // Deprecated
+const FAST_TRACK_LOOKBACK_HOURS = 12;  // Deprecated
+const FAST_TRACK_MAX_PER_CYCLE = 2;    // Deprecated
 
 async function processFastTrackGraduates(aresCampaignId) {
+  if (FAST_TRACK_DISABLED) {
+    logger.debug('[ARES] Fast-track disabled (100% fail rate — graduates go via normal 21d ABO path).');
+    return { tracked: 0, results: [], disabled: true };
+  }
+  // Codigo legacy preservado abajo por si se reactiva en el futuro tras cambiar criterios
   const TestRun = require('../../db/models/TestRun');
 
   const lookback = new Date(Date.now() - FAST_TRACK_LOOKBACK_HOURS * 3600000);
@@ -489,6 +529,104 @@ async function processFastTrackGraduates(aresCampaignId) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// RETIREMENT: pausa ad sets que fallaron su "segunda oportunidad" en CBO 3
+// ═══════════════════════════════════════════════════════════════════════════════
+// Principio: CBO 3 es el tier de rescate/medicion. Los clones que NO rinden ahi
+// con delivery garantizado son confirmados como ruido y se pausan.
+// IMPORTANTE: esto solo toca CBO 3. NUNCA pausa clones de CBO 1 o CBO 2.
+// Si el usuario decidió dejar los starved en CBO 1/2 dormant, Ares respeta eso.
+
+const CBO3_RETIREMENT_MIN_DAYS = 14;        // Edad minima en CBO 3 antes de considerar pause
+const CBO3_RETIREMENT_MIN_ROAS = 1.5;       // ROAS bajo el cual se pausa
+const CBO3_RETIREMENT_MIN_SPEND = 50;       // Spend minimo acumulado para que el kill sea informado
+const CBO3_CAMPAIGN_PATTERN = /Medicion|Segunda Oportunidad|UCI|CBO 3/i;
+
+async function retireFromCBO3() {
+  const { getMetaClient } = require('../../meta/client');
+  const meta = getMetaClient();
+  const results = [];
+
+  try {
+    const allSnapshots = await getLatestSnapshots('adset');
+    const cbo3Snaps = allSnapshots.filter(s => {
+      if (s.status !== 'ACTIVE') return false;
+      const campName = (s.campaign_name || '');
+      return CBO3_CAMPAIGN_PATTERN.test(campName);
+    });
+
+    if (cbo3Snaps.length === 0) {
+      return { evaluated: 0, retired: 0, results: [] };
+    }
+
+    logger.info(`[ARES] Retirement scan: ${cbo3Snaps.length} ad sets en CBO 3`);
+
+    for (const snap of cbo3Snaps) {
+      if (!snap.meta_created_time) continue;
+      const ageDays = (Date.now() - new Date(snap.meta_created_time).getTime()) / 86400000;
+
+      // Proteccion: nunca pausar <14d de edad real en CBO 3
+      if (ageDays < CBO3_RETIREMENT_MIN_DAYS) continue;
+
+      const m7d = snap.metrics?.last_7d || {};
+      const roas = m7d.roas || 0;
+      const spend = m7d.spend || 0;
+
+      // Criterios de retirement
+      // (a) Bleeder: spend >= $50 Y ROAS < 1.5x sostenido
+      // (b) Confirmed dead: edad >= 14d Y spend acumulado sigue siendo <$20 (Meta lo abandono incluso con delivery garantizado)
+      const isBleeder = spend >= CBO3_RETIREMENT_MIN_SPEND && roas < CBO3_RETIREMENT_MIN_ROAS;
+      const isConfirmedDead = ageDays >= CBO3_RETIREMENT_MIN_DAYS && spend < 20 && (m7d.purchases || 0) === 0;
+
+      if (!isBleeder && !isConfirmedDead) continue;
+
+      const reason = isBleeder
+        ? `CBO 3 retirement: bleeder — ROAS ${roas.toFixed(2)}x con $${spend.toFixed(0)} spend (14d+ delivery garantizado)`
+        : `CBO 3 retirement: confirmed dead — $${spend.toFixed(0)} spend, 0 purchases despues de ${Math.round(ageDays)}d`;
+
+      logger.info(`[ARES] Retiring "${snap.entity_name}": ${reason}`);
+
+      try {
+        await meta.updateStatus(snap.entity_id, 'PAUSED');
+
+        await ActionLog.create({
+          entity_type: 'adset',
+          entity_id: snap.entity_id,
+          entity_name: snap.entity_name,
+          campaign_id: snap.campaign_id,
+          campaign_name: snap.campaign_name,
+          action: 'pause',
+          before_value: 'ACTIVE',
+          after_value: 'PAUSED',
+          reasoning: reason,
+          confidence: 'high',
+          agent_type: 'ares_agent',
+          success: true,
+          metrics_at_execution: {
+            roas_7d: roas,
+            spend_7d: spend,
+            purchases_7d: m7d.purchases || 0,
+            daily_budget: snap.daily_budget || 0
+          }
+        });
+
+        results.push({ entity_id: snap.entity_id, name: snap.entity_name, reason, success: true });
+      } catch (err) {
+        logger.error(`[ARES] Error retiring ${snap.entity_id}: ${err.message}`);
+        results.push({ entity_id: snap.entity_id, success: false, error: err.message });
+      }
+    }
+
+    const ok = results.filter(r => r.success).length;
+    if (ok > 0) logger.info(`[ARES] Retirement: ${ok} ad sets pausados en CBO 3`);
+
+    return { evaluated: cbo3Snaps.length, retired: ok, results };
+  } catch (err) {
+    logger.warn(`[ARES] Error en retirement loop (non-fatal): ${err.message}`);
+    return { evaluated: 0, retired: 0, results: [], error: err.message };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MAIN: RUN ARES AGENT
 // ═══════════════════════════════════════════════════════════════════════════════
 async function runAresAgent() {
@@ -527,15 +665,20 @@ async function runAresAgent() {
     logger.error(`[ARES] Error procesando directivas de Zeus: ${err.message}`);
   }
 
-  // Fase 0.5: Fast-track — graduados recientes van a CBO 2
-  let fastTrackResults = { tracked: 0, results: [] };
+  // Fase 0.5: Fast-track — DESACTIVADO (abril 2026, 100% fail rate)
+  let fastTrackResults = { tracked: 0, results: [], disabled: true };
   try {
     fastTrackResults = await processFastTrackGraduates(aresCampaign2Id);
-    if (fastTrackResults.tracked > 0) {
-      logger.info(`[ARES] ${fastTrackResults.tracked} fast-tracks a CBO 2`);
-    }
   } catch (err) {
     logger.error(`[ARES] Error en fast-track: ${err.message}`);
+  }
+
+  // Fase 0.7: Retirement — pausar ad sets en CBO 3 que fallaron segunda oportunidad
+  let retirementResults = { evaluated: 0, retired: 0, results: [] };
+  try {
+    retirementResults = await retireFromCBO3();
+  } catch (err) {
+    logger.error(`[ARES] Error en retirement: ${err.message}`);
   }
 
   // Fase 1: Encontrar candidatos (duplicacion autonoma)
