@@ -443,10 +443,11 @@ async function gatherAccountIntelligence() {
     roas_7d: parseFloat(a.roas_7d) || 0
   }));
 
-  // ═══ DATOS DE ARES: campana ABO de duplicados ═══
+  // ═══ DATOS DE ARES: campanas CBO (3 tiers) ═══
   const aresCampaignId = await SystemConfig.get('ares_campaign_id', null);
   const aresCampaign2Id = await SystemConfig.get('ares_campaign_2_id', null);
-  let aresData = { campaign_id: aresCampaignId, campaign_2_id: aresCampaign2Id, clone_budget: 30, active_duplicates: 0, adsets: [], total_spend_7d: 0, avg_roas: 0 };
+  const aresCampaign3Id = await SystemConfig.get('ares_campaign_3_id', null);
+  let aresData = { campaign_id: aresCampaignId, campaign_2_id: aresCampaign2Id, campaign_3_id: aresCampaign3Id, clone_budget: 30, active_duplicates: 0, adsets: [], total_spend_7d: 0, avg_roas: 0 };
 
   if (aresCampaignId) {
     const mapAdsets = (list) => list.map(s => {
@@ -463,16 +464,20 @@ async function gatherAccountIntelligence() {
     const cbo1Adsets = mapAdsets(activeAdsets.filter(s => s.campaign_id === aresCampaignId));
     const cbo1Stats = calcStats(cbo1Adsets);
 
-    // CBO 2 — nuevos
+    // CBO 2 — rising winners
     const cbo2Adsets = aresCampaign2Id ? mapAdsets(activeAdsets.filter(s => s.campaign_id === aresCampaign2Id)) : [];
     const cbo2Stats = calcStats(cbo2Adsets);
 
-    // Combinado
-    const allMapped = [...cbo1Adsets, ...cbo2Adsets];
+    // CBO 3 — rescate/medicion (abril 2026)
+    const cbo3Adsets = aresCampaign3Id ? mapAdsets(activeAdsets.filter(s => s.campaign_id === aresCampaign3Id)) : [];
+    const cbo3Stats = calcStats(cbo3Adsets);
+
+    // Combinado (todos los tiers)
+    const allMapped = [...cbo1Adsets, ...cbo2Adsets, ...cbo3Adsets];
     const allStats = calcStats(allMapped);
 
-    // Leer budget real de ambas CBOs desde Meta
-    let cboBudget = 0, cbo2Budget = 0;
+    // Leer budget real de las 3 CBOs desde Meta
+    let cboBudget = 0, cbo2Budget = 0, cbo3Budget = 0;
     try {
       const { getMetaClient } = require('../../meta/client');
       const meta = getMetaClient();
@@ -481,6 +486,10 @@ async function gatherAccountIntelligence() {
       if (aresCampaign2Id) {
         const camp2Data = await meta.get(`/${aresCampaign2Id}`, { fields: 'daily_budget' });
         cbo2Budget = camp2Data.daily_budget ? parseInt(camp2Data.daily_budget) / 100 : 0;
+      }
+      if (aresCampaign3Id) {
+        const camp3Data = await meta.get(`/${aresCampaign3Id}`, { fields: 'daily_budget' });
+        cbo3Budget = camp3Data.daily_budget ? parseInt(camp3Data.daily_budget) / 100 : 0;
       }
     } catch (_) {}
 
@@ -491,8 +500,10 @@ async function gatherAccountIntelligence() {
       clones_no_spend: allStats.noSpend,
       cbo_daily_budget: cboBudget,
       cbo2_daily_budget: cbo2Budget,
+      cbo3_daily_budget: cbo3Budget,
       cbo1: { clones: cbo1Stats.count, roas: cbo1Stats.roas, spend_7d: cbo1Stats.spend, purchases: cbo1Stats.purchases, with_spend: cbo1Stats.withSpend },
       cbo2: { clones: cbo2Stats.count, roas: cbo2Stats.roas, spend_7d: cbo2Stats.spend, purchases: cbo2Stats.purchases, with_spend: cbo2Stats.withSpend },
+      cbo3: { clones: cbo3Stats.count, roas: cbo3Stats.roas, spend_7d: cbo3Stats.spend, purchases: cbo3Stats.purchases, with_spend: cbo3Stats.withSpend, no_spend: cbo3Stats.noSpend },
       adsets: allMapped,
       total_spend_7d: allStats.spend,
       avg_roas: allStats.roas
@@ -959,7 +970,8 @@ ${athenaSection}
   - Slots proyectados en 24h: ${accountData.prometheus.slots_available_24h}
 - Apollo: ${accountData.apollo.ready_pool} creativos en pool (${accountData.apollo.old_proposals_24h} con +24h aging)
 - Ares CBO 1 (probados): ${accountData.ares?.cbo1?.clones || 0} clones (${accountData.ares?.cbo1?.with_spend || 0} con spend) | ROAS ${accountData.ares?.cbo1?.roas || '0'}x | $${accountData.ares?.cbo1?.spend_7d || 0} spend 7d | ${accountData.ares?.cbo1?.purchases || 0} compras | Budget $${accountData.ares?.cbo_daily_budget || 0}/dia
-- Ares CBO 2 (nuevos): ${accountData.ares?.cbo2?.clones || 0} clones (${accountData.ares?.cbo2?.with_spend || 0} con spend) | ROAS ${accountData.ares?.cbo2?.roas || '0'}x | $${accountData.ares?.cbo2?.spend_7d || 0} spend 7d | ${accountData.ares?.cbo2?.purchases || 0} compras | Budget $${accountData.ares?.cbo2_daily_budget || 0}/dia
+- Ares CBO 2 (rising): ${accountData.ares?.cbo2?.clones || 0} clones (${accountData.ares?.cbo2?.with_spend || 0} con spend) | ROAS ${accountData.ares?.cbo2?.roas || '0'}x | $${accountData.ares?.cbo2?.spend_7d || 0} spend 7d | ${accountData.ares?.cbo2?.purchases || 0} compras | Budget $${accountData.ares?.cbo2_daily_budget || 0}/dia
+- Ares CBO 3 (medicion/rescate): ${accountData.ares?.cbo3?.clones || 0} clones (${accountData.ares?.cbo3?.with_spend || 0} con spend, ${accountData.ares?.cbo3?.no_spend || 0} sin spend) | ROAS ${accountData.ares?.cbo3?.roas || '0'}x | $${accountData.ares?.cbo3?.spend_7d || 0} spend 7d | ${accountData.ares?.cbo3?.purchases || 0} compras | Budget $${accountData.ares?.cbo3_daily_budget || 0}/dia
 
 ### CBO vs ABO COMPARISON (decision: should we migrate more to CBO?)
 | Metric | ABO Production | CBO Ares | Winner |
@@ -1088,6 +1100,12 @@ Rules:
   * prioritize: Strategic guidance for Ares (e.g. "focus on BYB products", "slow down duplications")
   * alert: Flag something for Ares attention (e.g. "clone X cannibalizing original")
 - ARES CLONES SAFETY: Do NOT recommend killing, pausing, or alerting about any Ares clone with less than 7 REAL days of existence. Clones need time to exit learning phase and accumulate data. Even if a clone has $30-50 spend and 0 purchases at day 2-3, that is NORMAL — it is still in Meta learning phase. ONLY flag clones that have 7+ real days AND ROAS < 2x with meaningful spend ($50+). When in doubt, HOLD.
+- ARES CBO 3 — TIER DE RESCATE/MEDICION (abril 2026): CBO 3 es un tier experimental donde se duplican ad sets que estaban starved en CBO 1 o CBO 2. Proposito: dar delivery garantizado (porque poblacion homogeneamente low-confidence → Meta distribuye mas parejo). Reglas especificas:
+  * NO pedir pausar clones en CBO 3 antes de dia 14 (experimento necesita run completo)
+  * Retirement automatico de Ares dispara en dia 14+ si ROAS < 1.5x o 0 purchases con delivery garantizado
+  * Si CBO 3 produce winners (ROAS > 3x sostenido + 5+ purchases) → recomienda a Ares duplicarlos a CBO 1 o CBO 2
+  * Los originales en CBO 1/2 de los rescatados siguen activos (dormant) — NO recomendar pausarlos tampoco, costo cero
+  * CBO 3 existe como experimento. Si no produce winners en 14 dias, se vacia solo por retirement. No sugerir raise budget hasta ver data.
 - ARES DUPLICATION SAMPLE GUARDRAIL (CRITICAL): NEVER recommend force_duplicate or alert-to-duplicate for any ad set with LESS than $100 spend_7d, OR LESS than 5 purchases_7d, OR LESS than 3 days of activity — NO MATTER how impressive the ROAS appears. A 10x ROAS on 2 conversions is statistical noise, not signal. Each premature duplication wastes ~$200-300 in CBO evaluation budget on noise. Wait for the sample to mature. The word "stable" requires >= 7 days AND >= 10 purchases — never claim stability on smaller samples.
 - ARES CBO BUDGET (revised): Changing the CBO CAMPAIGN budget does NOT reset learning on individual clones, BUT raising budget when most clones are stuck in LEARNING does NOT speed exit — Meta only feeds clones that exit learning. BEFORE recommending a CBO budget raise, check: (a) what fraction of clones are in LEARNING vs SUCCESS, (b) are SUCCESS clones being constrained by current budget? If >70% of clones are in LEARNING, budget is not the bottleneck — wait for learning exits before adjusting. Only raise CBO budget when SUCCESS clones consume >= 70% of current budget AND ROAS stays > 3x. If clones are starved and most are in LEARNING, the answer is patience, not budget.
 - SAMPLE SIZE LITERACY (read before any "winner" claim): A ROAS number is only as trustable as its sample. Before claiming any ad set is a "winner", "stable", "proven", or "consistent": REQUIRE >= $100 spend_7d AND >= 5 purchases_7d. ROAS on <$50 spend or <3 purchases is NOISE, not signal — even if it shows 10x. Cohen's rule: confidence interval on ROAS scales with 1/sqrt(purchases). With 3 purchases the 95% CI on ROAS is ±60% of the point estimate. Use words like "early signal" or "promising" for small samples — never "stable" or "winner".

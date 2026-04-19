@@ -50,6 +50,15 @@ async function getAresCampaign2Id() {
   return getAresCampaignId();
 }
 
+/**
+ * Obtener CBO 3 — tier de medicion/rescate (abril 2026).
+ * Recibe ad sets starved de CBO 1/2 para fair test con delivery garantizado.
+ * Retorna null si no existe (no auto-create — se crea manual con script).
+ */
+async function getAresCampaign3Id() {
+  return await SystemConfig.get('ares_campaign_3_id', null);
+}
+
 async function getAresCampaignId() {
   // 1. SystemConfig
   const stored = await SystemConfig.get('ares_campaign_id', null);
@@ -379,21 +388,35 @@ async function processZeusDirectives(aresCampaignId) {
         results.push({ type: 'pause_clone', adset_id: data.adset_id, success: true });
 
       } else if (d.directive_type === 'adjust' && data.new_budget) {
-        // Zeus ordena cambiar budget de la campana CBO (no de un clon individual — CBO no permite eso)
-        const currentData = await meta.get(`/${aresCampaignId}`, { fields: 'daily_budget' });
+        // Zeus ordena cambiar budget de una CBO. Seleccionar target segun data.cbo_tier:
+        //   'production' | 'rising' | 'rescue' o numero 1/2/3. Default: CBO 1 (production).
+        const aresCampaign2IdLocal = await SystemConfig.get('ares_campaign_2_id', null);
+        const aresCampaign3IdLocal = await SystemConfig.get('ares_campaign_3_id', null);
+        let targetCboId = aresCampaignId;
+        let targetTier = 'CBO 1';
+        const tierHint = (data.cbo_tier || data.tier || '').toString().toLowerCase();
+        if (tierHint.includes('2') || tierHint.includes('rising') || tierHint.includes('prospects')) {
+          targetCboId = aresCampaign2IdLocal || aresCampaignId;
+          targetTier = 'CBO 2';
+        } else if (tierHint.includes('3') || tierHint.includes('rescue') || tierHint.includes('medicion') || tierHint.includes('uci')) {
+          targetCboId = aresCampaign3IdLocal || aresCampaignId;
+          targetTier = 'CBO 3';
+        }
+
+        const currentData = await meta.get(`/${targetCboId}`, { fields: 'daily_budget' });
         const currentCboBudget = currentData.daily_budget ? parseInt(currentData.daily_budget) / 100 : 0;
 
-        await meta.updateBudget(aresCampaignId, data.new_budget);
-        logger.info(`[ARES] Zeus adjust CBO budget: $${currentCboBudget} → $${data.new_budget}/dia`);
+        await meta.updateBudget(targetCboId, data.new_budget);
+        logger.info(`[ARES] Zeus adjust ${targetTier} budget: $${currentCboBudget} → $${data.new_budget}/dia`);
 
         const action = data.new_budget > currentCboBudget ? 'scale_up' : 'scale_down';
         await ActionLog.create({
-          entity_type: 'campaign', entity_id: aresCampaignId,
+          entity_type: 'campaign', entity_id: targetCboId,
           action, before_value: currentCboBudget, after_value: data.new_budget,
-          reasoning: `Zeus CBO budget directive: ${data.reason || d.directive}`,
+          reasoning: `Zeus ${targetTier} budget directive: ${data.reason || d.directive}`,
           confidence: 'high', agent_type: 'ares_agent', success: true, executed_at: new Date()
         });
-        await ZeusDirective.updateOne({ _id: d._id }, { executed: true, executed_at: new Date(), execution_result: `CBO budget $${currentCboBudget} → $${data.new_budget}/dia` });
+        await ZeusDirective.updateOne({ _id: d._id }, { executed: true, executed_at: new Date(), execution_result: `${targetTier} budget $${currentCboBudget} → $${data.new_budget}/dia` });
         results.push({ type: 'adjust_cbo_budget', old_budget: currentCboBudget, new_budget: data.new_budget, success: true });
 
       } else {

@@ -1,11 +1,24 @@
 require('dotenv').config();
 const mongoose = require('mongoose');
-const { MetaClient } = require('../src/meta/client');
-const logger = require('../src/utils/logger');
-const config = require('../config');
 
 const DRY_RUN = !process.argv.includes('--execute');
 const PHASE = parseInt(process.argv.find(a => a.startsWith('--phase='))?.split('=')[1] || '0');
+
+// Bootstrap: si META_ACCESS_TOKEN no está en env, cargarlo de MongoDB (MetaToken)
+// Esto permite correr el script sin pasar credenciales en línea de comandos.
+async function bootstrapMetaCredentials() {
+  if (process.env.META_ACCESS_TOKEN && process.env.META_AD_ACCOUNT_ID) return;
+  const tok = await mongoose.connection.db.collection('metatokens').findOne({ is_active: true });
+  if (!tok || !tok.access_token) {
+    throw new Error('No se encontró MetaToken activo en MongoDB');
+  }
+  process.env.META_ACCESS_TOKEN = tok.access_token;
+  if (tok.ad_account_id) process.env.META_AD_ACCOUNT_ID = tok.ad_account_id;
+  process.env.META_API_VERSION = process.env.META_API_VERSION || 'v21.0';
+}
+
+// Lazy imports — después de bootstrap
+let MetaClient, logger, config;
 
 // Configuracion del experimento CBO 3
 const CBO3_CAMPAIGN_NAME = '[ARES] Medicion — Segunda Oportunidad';
@@ -250,6 +263,13 @@ async function phase2DuplicateToCBO3(meta) {
 
 async function main() {
   await mongoose.connect(process.env.MONGODB_URI, { maxPoolSize: 3 });
+  await bootstrapMetaCredentials();
+
+  // Lazy import después del bootstrap (config lee env al cargarse)
+  MetaClient = require('../src/meta/client').MetaClient;
+  logger = require('../src/utils/logger');
+  config = require('../config');
+
   const meta = new MetaClient();
 
   if (DRY_RUN) {
