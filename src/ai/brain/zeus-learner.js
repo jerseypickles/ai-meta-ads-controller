@@ -510,6 +510,14 @@ async function gatherAccountIntelligence() {
     created_at: { $gte: new Date(Date.now() - 7 * 24 * 3600000) }
   }).sort({ created_at: -1 }).limit(5).lean();
 
+  // Hipotesis YA VALIDADAS por el validator (feedback del loop de aprendizaje)
+  const validatedHypotheses = await BrainInsight.find({
+    insight_type: 'hypothesis',
+    generated_by: 'zeus',
+    is_resolved: true,
+    resolved_at: { $gte: new Date(Date.now() - 14 * 24 * 3600000) }
+  }).sort({ resolved_at: -1 }).limit(10).lean();
+
   // ═══ GRADUATES INVESTMENT PHASE — cohort + 14d ROAS trend ═══
   // Athena escala graduados +15% iterativamente para empujarlos a 50 conv (exit learning).
   // Esta inversion temporalmente degrada ROAS account-level. Zeus debe entender ESO antes de pedir freno.
@@ -677,6 +685,13 @@ async function gatherAccountIntelligence() {
       text: h.body || h.title,
       date: h.created_at?.toISOString().split('T')[0] || ''
     })),
+    validated_hypotheses: validatedHypotheses.map(h => ({
+      text: h.body || h.title,
+      date: h.created_at?.toISOString().split('T')[0] || '',
+      verdict: h.diagnosis || h.data_points?.verdict || 'unknown',
+      evidence: h.data_points?.evidence || '',
+      recommendation: h.data_points?.recommendation || ''
+    })),
     budget_ceiling: currentCeiling,
     grad_investment: gradInvestment
   };
@@ -820,12 +835,24 @@ async function generateDirectives(patterns, signals, accountData, uploadedData, 
     ? accountData.previous_hypotheses.map(h => `- [${h.date}] ${h.text}`).join('\n')
     : 'No previous hypotheses.';
 
+  // Hipotesis YA validadas por el validator (con veredicto + evidencia)
+  const validatedHypSection = (accountData.validated_hypotheses || []).length > 0
+    ? accountData.validated_hypotheses.map(h => {
+        const icon = h.verdict === 'confirmed' ? '✓' : h.verdict === 'rejected' ? '✗' : '?';
+        return `${icon} [${h.date}] ${h.verdict.toUpperCase()}: "${(h.text || '').substring(0, 80)}"\n    evidence: ${h.evidence}\n    recommendation: ${h.recommendation}`;
+      }).join('\n')
+    : 'No validated hypotheses yet (validator runs daily at 2am ET on hypotheses >= 7 days old).';
+
   const context = `
 ## YOUR PAST DECISIONS — RESULTS (learn from these)
 ${pastDecisionsSection}
 Repeat what worked. Avoid what failed. If a scale_up had negative verdict, do not scale that ad set again without new evidence.
 
-## YOUR PREVIOUS HYPOTHESES (review: did they hold up?)
+## YOUR HYPOTHESES — VALIDATED AGAINST REAL DATA (7+ days later)
+${validatedHypSection}
+These are YOUR predictions from past cycles that were graded against what actually happened. CONFIRMED means your prediction held up — reinforce that strategic pattern. REJECTED means you were wrong — adjust your thinking. INCONCLUSIVE means the data didn't resolve it — be less confident on that type of prediction. Use these to calibrate your confidence level on new hypotheses.
+
+## YOUR PREVIOUS HYPOTHESES (pending validation, < 7d old)
 ${prevHypSection}
 If confirmed by data, reinforce the strategy. If disproven, adjust.
 

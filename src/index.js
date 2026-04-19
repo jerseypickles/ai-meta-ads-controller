@@ -20,6 +20,7 @@ const { runCreativeAgent, syncProposalPerformance } = require('./ai/agent/creati
 const { runTestingAgent } = require('./ai/agent/testing-agent');
 const { runAresAgent } = require('./ai/agent/ares-agent');
 const { runZeusLearner } = require('./ai/brain/zeus-learner');
+const { runHypothesisValidator } = require('./ai/brain/hypothesis-validator');
 const { startDashboard } = require('./dashboard/server');
 const { refreshMetaToken } = require('./dashboard/routes/meta-auth');
 const { syncCreativeMetrics } = require('./dashboard/routes/creatives');
@@ -680,6 +681,25 @@ async function jobZeusLearner() {
 }
 
 /**
+ * Job: Hypothesis Validator — 1x/dia (2am ET).
+ * Valida hipotesis emitidas por Zeus hace 7+ dias contra data real.
+ * Marca confirmed/rejected/inconclusive para que Zeus aprenda de sus propias predicciones.
+ */
+async function jobHypothesisValidator() {
+  const aiEnabled = await isAIEnabled();
+  if (!aiEnabled) return;
+  try {
+    logger.info('[CRON] Ejecutando Hypothesis Validator...');
+    const result = await runHypothesisValidator();
+    if (result.total > 0) {
+      logger.info(`[CRON] Validator: ${result.confirmed} confirmed, ${result.rejected} rejected, ${result.inconclusive} inconclusive (${result.errors} errors)`);
+    }
+  } catch (error) {
+    logger.error('[CRON] Error en Hypothesis Validator:', error);
+  }
+}
+
+/**
  * Job: AI Ops Metrics Refresh — 24/7 con frecuencia adaptativa.
  * Horas activas: cada 15 min (Meta refresca insights cada ~15 min).
  * Fuera de horas: cada 30 min (mantener datos razonablemente frescos).
@@ -950,6 +970,13 @@ function initCronJobs() {
     name: 'zeus-learner'
   });
   logger.info('  [*] Zeus Learner — 2x/día: 5am, 5pm ET');
+
+  // Hypothesis Validator — 1x/dia (2am ET), valida hipotesis de Zeus de hace 7+ dias
+  cron.schedule('0 2 * * *', jobHypothesisValidator, {
+    timezone: TIMEZONE,
+    name: 'hypothesis-validator'
+  });
+  logger.info('  [*] Hypothesis Validator — diario 2am ET');
 
   // AI Ops metrics refresh — cada 15 min, 24/7
   cron.schedule('5,20,35,50 * * * *', jobAIOpsRefresh, {
