@@ -339,6 +339,12 @@ export const getApolloIntelligence = async () => {
   return response.data;
 };
 
+export const getDNALab = async (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  const response = await api.get('/api/creative-agent/dna' + (qs ? '?' + qs : ''));
+  return response.data;
+};
+
 export const updateProduct = async (productId, data) => {
   const response = await api.patch(`/api/creative-agent/products/${productId}`, data);
   return response.data;

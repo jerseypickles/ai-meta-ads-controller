@@ -12,7 +12,7 @@ import {
   getAgentActivity, runAccountAgent, getAgentAdsetDetail, getAgentThoughts, getAgentPerformance,
   generateCopyForUpload, uploadAndCreateAd,
   getProducts, createProduct, deleteProduct, addProductImages, getProductImageUrl, runCreativeAgentApi,
-  getCreativeProposals, approveCreativeProposal, rejectCreativeProposal, getProposalImageUrl, sendProposalFeedback, getApolloIntelligence, updateProduct, deleteProductImage,
+  getCreativeProposals, approveCreativeProposal, rejectCreativeProposal, getProposalImageUrl, sendProposalFeedback, getApolloIntelligence, getDNALab, updateProduct, deleteProductImage,
   getTestRuns, killTestRun, runTestingAgentApi, getTestImageUrl,
   getZeusIntelligence, runZeusApi, getZeusThoughts, getZeusConversations,
   getAresIntelligence, runAresApi
@@ -1206,12 +1206,26 @@ function ApolloPanel({ products, proposals, readyProposals, historyProposals, lo
   const [runningCreative, setRunningCreative] = useState(false);
   const [apolloIntel, setApolloIntel] = useState(null);
   const [feedbackModal, setFeedbackModal] = useState(null); // { id, headline }
+  const [dnaData, setDnaData] = useState(null);
+  const [dnaLoading, setDnaLoading] = useState(false);
+  const [dnaSort, setDnaSort] = useState('score');
+  const [dnaMinSamples, setDnaMinSamples] = useState(1);
+  const [dnaFilters, setDnaFilters] = useState({ scene: '', style: '', angle: '', product: '', hook: '' });
   const fileRef = useRef(null);
 
   // Cargar inteligencia de Apollo
   useEffect(() => {
     getApolloIntelligence().then(setApolloIntel).catch(() => {});
   }, []);
+
+  // Cargar DNA Lab data cuando se abre el tab
+  useEffect(() => {
+    if (apolloSubTab !== 'dna') return;
+    setDnaLoading(true);
+    const params = { sort: dnaSort, min_samples: dnaMinSamples, limit: 50 };
+    Object.entries(dnaFilters).forEach(([k, v]) => { if (v) params[k] = v; });
+    getDNALab(params).then(setDnaData).catch(() => {}).finally(() => setDnaLoading(false));
+  }, [apolloSubTab, dnaSort, dnaMinSamples, dnaFilters]);
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -1264,6 +1278,9 @@ function ApolloPanel({ products, proposals, readyProposals, historyProposals, lo
         </button>
         <button className={`sub-tab ${apolloSubTab === 'intelligence' ? 'active' : ''}`} onClick={() => setApolloSubTab('intelligence')}>
           Inteligencia
+        </button>
+        <button className={`sub-tab ${apolloSubTab === 'dna' ? 'active' : ''}`} onClick={() => setApolloSubTab('dna')}>
+          🧬 DNA Lab
         </button>
         <button className={`sub-tab ${apolloSubTab === 'products' ? 'active' : ''}`} onClick={() => setApolloSubTab('products')}>
           Productos ({products.length})
@@ -1397,6 +1414,185 @@ function ApolloPanel({ products, proposals, readyProposals, historyProposals, lo
           )}
 
           {!apolloIntel && <div className="brain-loading">Cargando inteligencia...</div>}
+        </div>
+      )}
+
+      {apolloSubTab === 'dna' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Header + Stats globales */}
+          <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '16px 20px', border: '1px solid rgba(139, 92, 246, 0.2)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <span style={{ fontSize: '1.3rem' }}>🧬</span>
+              <div style={{ fontWeight: 700, color: 'var(--text-primary)' }}>Creative DNA Lab</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                {dnaData?.global_stats?.total_dnas || 0} DNAs únicos · {dnaData?.global_stats?.total_tests || 0} tests
+              </div>
+            </div>
+            {dnaData?.global_stats && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
+                {[
+                  { v: dnaData.global_stats.total_dnas, l: 'DNAs únicos' },
+                  { v: dnaData.global_stats.total_tests, l: 'Tests totales' },
+                  { v: Math.round((dnaData.global_stats.overall_win_rate || 0) * 100) + '%', l: 'Win rate' },
+                  { v: (dnaData.global_stats.aggregate_roas || 0) + 'x', l: 'ROAS agregado' },
+                  { v: '$' + dnaData.global_stats.total_spend, l: 'Spend total' }
+                ].map((s, i) => (
+                  <div key={i} style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#8b5cf6' }}>{s.v}</div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{s.l}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Filtros + Sort */}
+          <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '12px 16px', display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginRight: 4 }}>Ordenar:</div>
+            {[
+              { k: 'score', l: 'Score' },
+              { k: 'roas', l: 'ROAS' },
+              { k: 'winrate', l: 'Win rate' },
+              { k: 'samples', l: 'Samples' },
+              { k: 'recent', l: 'Recientes' }
+            ].map(o => (
+              <button key={o.k} onClick={() => setDnaSort(o.k)}
+                style={{
+                  padding: '4px 10px', borderRadius: 4, cursor: 'pointer',
+                  border: dnaSort === o.k ? '1px solid #8b5cf6' : '1px solid var(--border-color)',
+                  background: dnaSort === o.k ? 'rgba(139, 92, 246, 0.1)' : 'transparent',
+                  color: dnaSort === o.k ? '#8b5cf6' : 'var(--text-secondary)',
+                  fontSize: '0.72rem'
+                }}>{o.l}</button>
+            ))}
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginLeft: 12 }}>Min samples:</div>
+            {[1, 2, 3, 5].map(n => (
+              <button key={n} onClick={() => setDnaMinSamples(n)}
+                style={{
+                  padding: '4px 10px', borderRadius: 4, cursor: 'pointer',
+                  border: dnaMinSamples === n ? '1px solid #8b5cf6' : '1px solid var(--border-color)',
+                  background: dnaMinSamples === n ? 'rgba(139, 92, 246, 0.1)' : 'transparent',
+                  color: dnaMinSamples === n ? '#8b5cf6' : 'var(--text-secondary)',
+                  fontSize: '0.72rem'
+                }}>{n}+</button>
+            ))}
+            {(dnaFilters.scene || dnaFilters.style || dnaFilters.angle || dnaFilters.product || dnaFilters.hook) && (
+              <button onClick={() => setDnaFilters({ scene: '', style: '', angle: '', product: '', hook: '' })}
+                style={{ padding: '4px 10px', marginLeft: 'auto', background: '#ef4444', color: 'white', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '0.7rem' }}>
+                Clear filters
+              </button>
+            )}
+          </div>
+
+          {/* Distribuciones por dimensión — chips clickeables como filtros */}
+          {dnaData?.distributions && (
+            <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '14px 18px' }}>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 10, fontWeight: 600, textTransform: 'uppercase' }}>
+                Distribución por dimensión (click para filtrar)
+              </div>
+              {['style', 'angle', 'product', 'scene', 'hook'].map(dim => {
+                const filterKey = dim === 'angle' ? 'angle' : dim;
+                const top = (dnaData.distributions[dim] || []).slice(0, 8);
+                if (top.length === 0) return null;
+                return (
+                  <div key={dim} style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: 4, textTransform: 'capitalize' }}>{dim}:</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {top.map(item => {
+                        const isActive = dnaFilters[filterKey] === item.value;
+                        const roasColor = item.avg_roas >= 5 ? '#10b981' : item.avg_roas >= 2 ? '#f59e0b' : '#ef4444';
+                        return (
+                          <button key={item.value}
+                            onClick={() => setDnaFilters(prev => ({ ...prev, [filterKey]: isActive ? '' : item.value }))}
+                            style={{
+                              padding: '3px 8px', borderRadius: 10, cursor: 'pointer',
+                              border: isActive ? '1px solid #8b5cf6' : '1px solid var(--border-color)',
+                              background: isActive ? 'rgba(139, 92, 246, 0.15)' : 'transparent',
+                              fontSize: '0.65rem', color: 'var(--text-primary)'
+                            }}>
+                            {(item.value || 'unknown').substring(0, 24)}
+                            <span style={{ marginLeft: 4, color: 'var(--text-muted)' }}>{item.tests}t</span>
+                            <span style={{ marginLeft: 4, color: roasColor }}>{item.avg_roas}x</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Tabla de DNAs */}
+          {dnaLoading && !dnaData && <div className="brain-loading">Cargando DNA Lab...</div>}
+          {dnaData?.dnas && (
+            <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '14px 18px' }}>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: 10, fontWeight: 600, textTransform: 'uppercase' }}>
+                Top {dnaData.dnas.length} DNAs {dnaData.filter_applied && Object.keys(dnaData.filter_applied).length > 1 ? '(filtrados)' : ''}
+              </div>
+              {dnaData.dnas.length === 0 ? (
+                <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                  Sin DNAs que coincidan con los filtros actuales.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {dnaData.dnas.map((dna, i) => {
+                    const f = dna.fitness || {};
+                    const dims = dna.dimensions || {};
+                    const roasColor = f.avg_roas >= 5 ? '#10b981' : f.avg_roas >= 2 ? '#f59e0b' : '#ef4444';
+                    const winPct = Math.round((f.win_rate || 0) * 100);
+                    const confPct = Math.round((f.sample_confidence || 0) * 100);
+                    return (
+                      <div key={dna.dna_hash} style={{
+                        display: 'grid',
+                        gridTemplateColumns: '30px 1fr 80px 70px 70px 60px',
+                        gap: 8, alignItems: 'center',
+                        padding: '8px 10px',
+                        background: 'var(--bg-primary)',
+                        borderRadius: 4,
+                        borderLeft: `3px solid ${roasColor}`
+                      }}>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 700 }}>#{i + 1}</div>
+                        <div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                            {['style', 'copy_angle', 'scene', 'product', 'hook_type'].map((dim, j) => (
+                              <span key={j} style={{
+                                fontSize: '0.62rem', padding: '1px 6px',
+                                background: 'var(--bg-secondary)', borderRadius: 3,
+                                color: 'var(--text-primary)'
+                              }}>{(dims[dim] || '?').substring(0, 20)}</span>
+                            ))}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: '0.85rem', fontWeight: 700, color: roasColor }}>{f.avg_roas}x</div>
+                          <div style={{ fontSize: '0.55rem', color: 'var(--text-muted)' }}>ROAS</div>
+                        </div>
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>{winPct}%</div>
+                          <div style={{ fontSize: '0.55rem', color: 'var(--text-muted)' }}>Win</div>
+                        </div>
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                            {f.tests_graduated}/{f.tests_total}
+                          </div>
+                          <div style={{ fontSize: '0.55rem', color: 'var(--text-muted)' }}>G/T</div>
+                        </div>
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: confPct > 30 ? '#10b981' : 'var(--text-muted)' }}>{confPct}%</div>
+                          <div style={{ fontSize: '0.55rem', color: 'var(--text-muted)' }}>Conf</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', padding: '8px 12px', textAlign: 'center' }}>
+            Creative DNA Fase 1 — Foundation. Apollo usará este mapa de fitness para evolucionar creatives en Fase 3.
+          </div>
         </div>
       )}
 

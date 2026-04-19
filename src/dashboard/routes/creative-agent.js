@@ -393,4 +393,100 @@ router.get('/proposals/:id/image', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/creative-agent/dna — DNA Lab data
+ *
+ * Retorna stats de CreativeDNA con filtros opcionales:
+ *   ?sort=roas|winrate|samples|recent (default: score)
+ *   ?min_samples=N (default: 1)
+ *   ?scene=X&style=Y&angle=Z&product=P (filtros de dimensión)
+ *   ?limit=N (default: 50)
+ */
+router.get('/dna', async (req, res) => {
+  try {
+    const CreativeDNA = require('../../db/models/CreativeDNA');
+
+    const minSamples = parseInt(req.query.min_samples) || 1;
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const sort = req.query.sort || 'score';
+
+    const filter = { 'fitness.tests_total': { $gte: minSamples } };
+    if (req.query.scene) filter['dimensions.scene'] = req.query.scene;
+    if (req.query.style) filter['dimensions.style'] = req.query.style;
+    if (req.query.angle) filter['dimensions.copy_angle'] = req.query.angle;
+    if (req.query.product) filter['dimensions.product'] = req.query.product;
+    if (req.query.hook) filter['dimensions.hook_type'] = req.query.hook;
+
+    let sortSpec;
+    switch (sort) {
+      case 'roas': sortSpec = { 'fitness.avg_roas': -1 }; break;
+      case 'winrate': sortSpec = { 'fitness.win_rate': -1 }; break;
+      case 'samples': sortSpec = { 'fitness.tests_total': -1 }; break;
+      case 'recent': sortSpec = { 'fitness.last_test_at': -1 }; break;
+      default: sortSpec = { 'fitness.avg_roas': -1, 'fitness.sample_confidence': -1 };
+    }
+
+    const dnas = await CreativeDNA.find(filter).sort(sortSpec).limit(limit).lean();
+
+    // Distribuciones por dimensión (de TODOS los DNAs, no solo los filtrados)
+    const allDnas = await CreativeDNA.find({ 'fitness.tests_total': { $gte: 1 } }).lean();
+
+    const tallyByDim = (dim) => {
+      const counts = {};
+      const roasSum = {};
+      for (const d of allDnas) {
+        const key = d.dimensions?.[dim] || 'unknown';
+        counts[key] = (counts[key] || 0) + (d.fitness?.tests_total || 0);
+        roasSum[key] = (roasSum[key] || 0) + ((d.fitness?.avg_roas || 0) * (d.fitness?.tests_total || 0));
+      }
+      return Object.entries(counts).map(([k, tests]) => ({
+        value: k,
+        tests,
+        avg_roas: tests > 0 ? Math.round((roasSum[k] / tests) * 100) / 100 : 0
+      })).sort((a, b) => b.tests - a.tests);
+    };
+
+    const distributions = {
+      scene: tallyByDim('scene'),
+      style: tallyByDim('style'),
+      angle: tallyByDim('copy_angle'),
+      product: tallyByDim('product'),
+      hook: tallyByDim('hook_type')
+    };
+
+    // Stats globales
+    const totalTests = allDnas.reduce((s, d) => s + (d.fitness?.tests_total || 0), 0);
+    const totalGraduated = allDnas.reduce((s, d) => s + (d.fitness?.tests_graduated || 0), 0);
+    const totalSpend = allDnas.reduce((s, d) => s + (d.fitness?.total_spend || 0), 0);
+    const totalRevenue = allDnas.reduce((s, d) => s + (d.fitness?.total_revenue || 0), 0);
+
+    res.json({
+      dnas: dnas.map(d => ({
+        dna_hash: d.dna_hash,
+        dimensions: d.dimensions,
+        fitness: d.fitness,
+        generation: d.generation,
+        created_via: d.created_via,
+        last_test_at: d.fitness?.last_test_at,
+        first_seen_at: d.first_seen_at
+      })),
+      distributions,
+      global_stats: {
+        total_dnas: allDnas.length,
+        total_tests: totalTests,
+        total_graduated: totalGraduated,
+        overall_win_rate: totalTests > 0 ? totalGraduated / totalTests : 0,
+        total_spend: Math.round(totalSpend),
+        total_revenue: Math.round(totalRevenue),
+        aggregate_roas: totalSpend > 0 ? Math.round((totalRevenue / totalSpend) * 100) / 100 : 0
+      },
+      filter_applied: filter,
+      sort_applied: sort
+    });
+  } catch (err) {
+    logger.error(`[CREATIVE-AGENT] Error en /dna: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
