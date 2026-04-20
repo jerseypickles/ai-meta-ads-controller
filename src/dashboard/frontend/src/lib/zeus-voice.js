@@ -34,7 +34,7 @@ export class ZeusVoice {
     this._unlocking = false;
     this._fetchesInFlight = 0;
     this._stopped = false;
-    this._useFallbackTTS = false;
+    this._permanentFallback = false; // solo si la key no sirve del todo (401/403)
 
     this._audio = null;
     this._audioContext = null;
@@ -91,7 +91,6 @@ export class ZeusVoice {
       }
     } catch (err) {
       console.warn('Zeus: audio element setup failed:', err.message);
-      this._useFallbackTTS = true;
     }
 
     // 3. Unlock speechSynthesis tirando una utterance silenciosa
@@ -202,7 +201,8 @@ export class ZeusVoice {
   async _enqueueText(text) {
     if (this._muted || this._stopped) return;
 
-    if (this._useFallbackTTS) {
+    // Si ya confirmamos que no hay OpenAI key en este servidor, no intentamos
+    if (this._permanentFallback) {
       this._speakWithBrowser(text);
       return;
     }
@@ -212,21 +212,33 @@ export class ZeusVoice {
       const audioBlob = await this._fetchAudio(text);
       if (this._stopped) return;
 
-      // Preferir AudioContext (no tiene restricciones de autoplay una vez resumed)
+      // AudioContext (Safari friendly)
       if (this._audioContext) {
-        const arrayBuffer = await audioBlob.arrayBuffer();
-        const audioBuffer = await this._audioContext.decodeAudioData(arrayBuffer);
-        if (this._stopped) return;
-        this._audioQueue.push({ buffer: audioBuffer, text });
-        this._maybePlay();
-      } else {
-        // Fallback al HTMLAudioElement
-        this._audioQueue.push({ blob: audioBlob, text });
-        this._maybePlay();
+        try {
+          const arrayBuffer = await audioBlob.arrayBuffer();
+          const audioBuffer = await this._audioContext.decodeAudioData(arrayBuffer.slice(0));
+          if (this._stopped) return;
+          console.info('[Zeus] OpenAI TTS playback via AudioContext');
+          this._audioQueue.push({ buffer: audioBuffer, text });
+          this._maybePlay();
+          return;
+        } catch (decodeErr) {
+          console.warn('[Zeus] AudioContext decode failed, trying HTMLAudioElement:', decodeErr.message);
+        }
       }
+
+      // Fallback HTMLAudioElement
+      console.info('[Zeus] OpenAI TTS playback via HTMLAudioElement');
+      this._audioQueue.push({ blob: audioBlob, text });
+      this._maybePlay();
     } catch (err) {
-      console.warn('Zeus TTS fetch/decode failed, fallback a speechSynthesis:', err.message);
-      this._useFallbackTTS = true;
+      console.warn('[Zeus] TTS fetch failed esta vez, usando speechSynthesis:', err.message);
+      // Solo marcar fallback permanente si es 401/403/404 (config problem),
+      // no para 429/500/timeout que son transitorios
+      if (/HTTP 401|HTTP 403|HTTP 404|HTTP 503/.test(err.message)) {
+        this._permanentFallback = true;
+        console.warn('[Zeus] OpenAI TTS deshabilitado permanentemente este sesión');
+      }
       this._speakWithBrowser(text);
     } finally {
       this._fetchesInFlight -= 1;
@@ -301,11 +313,7 @@ export class ZeusVoice {
 
     // Camino 2: HTMLAudioElement (fallback)
     if (!this._audio || !next.blob) {
-      // Sin forma de reproducir — cae al fallback del browser
-      if (next.text) {
-        this._useFallbackTTS = true;
-        this._speakWithBrowser(next.text);
-      }
+      if (next.text) this._speakWithBrowser(next.text);
       return;
     }
 
@@ -316,10 +324,9 @@ export class ZeusVoice {
     const p = this._audio.play();
     if (p?.catch) {
       p.catch(err => {
-        console.warn('Audio play failed, fallback a speechSynthesis:', err.message);
+        console.warn('Audio play failed para este chunk, fallback a speechSynthesis:', err.message);
         this._playing = false;
         URL.revokeObjectURL(url);
-        this._useFallbackTTS = true;
         if (next.text) this._speakWithBrowser(next.text);
       });
     }
