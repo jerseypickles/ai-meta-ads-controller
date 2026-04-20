@@ -1,10 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const OpenAI = require('openai');
+const config = require('../../../config');
 const logger = require('../../utils/logger');
 const ZeusChatMessage = require('../../db/models/ZeusChatMessage');
 const SystemConfig = require('../../db/models/SystemConfig');
 const { runOracle } = require('../../ai/zeus/oracle-runner');
+
+const ALLOWED_VOICES = ['onyx', 'echo', 'ash', 'sage', 'verse', 'coral', 'alloy', 'ballad'];
+const DEFAULT_VOICE = 'onyx';
 
 const LAST_SEEN_KEY = 'zeus_oracle_last_seen';
 const GREETING_GAP_HOURS = 2;
@@ -207,6 +212,44 @@ router.get('/chat/conversations', async (req, res) => {
       }))
     });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ POST /tts — OpenAI TTS streaming (mp3) ═══
+router.post('/tts', async (req, res) => {
+  try {
+    const { text, voice } = req.body || {};
+    if (!text || typeof text !== 'string') {
+      return res.status(400).json({ error: 'text requerido' });
+    }
+    const clean = text.trim().substring(0, 4000);
+    if (!clean) return res.status(400).json({ error: 'text vacío' });
+
+    const apiKey = config.openai?.apiKey || process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ error: 'OPENAI_API_KEY no configurada' });
+    }
+
+    const selectedVoice = ALLOWED_VOICES.includes(voice) ? voice : DEFAULT_VOICE;
+    const client = new OpenAI({ apiKey });
+
+    const response = await client.audio.speech.create({
+      model: 'tts-1-hd',
+      voice: selectedVoice,
+      input: clean,
+      response_format: 'mp3',
+      speed: 1.0
+    });
+
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Cache-Control', 'no-cache');
+
+    // OpenAI SDK returns a Response with a body stream (web streams)
+    const buffer = Buffer.from(await response.arrayBuffer());
+    res.send(buffer);
+  } catch (err) {
+    logger.error(`[ZEUS-CHAT] /tts error: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });

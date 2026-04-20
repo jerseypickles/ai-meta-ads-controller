@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import api from '../api';
+import { ZeusVoice, ZeusMic } from '../lib/zeus-voice';
 
 const LS_CONV_KEY = 'zeus_oracle_conversation_id';
+const LS_MUTED_KEY = 'zeus_voice_muted';
+const LS_UNLOCKED_KEY = 'zeus_voice_unlocked';
 
 function getApiBase() {
   return import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
@@ -44,19 +47,64 @@ function streamSSE(path, handlers) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export default function ZeusSpeaks() {
-  const [mode, setMode] = useState('loading'); // loading | greeting | collapsed | error | none
+  const [mode, setMode] = useState('loading'); // loading | awaiting_unlock | greeting | collapsed | error | none
   const [streamingText, setStreamingText] = useState('');
   const [conversationId, setConversationId] = useState(null);
   const [toolActivity, setToolActivity] = useState([]);
   const [streaming, setStreaming] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const [muted, setMuted] = useState(() => localStorage.getItem(LS_MUTED_KEY) === '1');
   const esRef = useRef(null);
+  const voiceRef = useRef(null);
 
   useEffect(() => {
+    voiceRef.current = new ZeusVoice({
+      voice: 'onyx',
+      onSpeakStart: () => setSpeaking(true),
+      onSpeakEnd: () => setSpeaking(false),
+      onQueueDrained: () => setSpeaking(false)
+    });
+    voiceRef.current.setMuted(muted);
+
+    // Si el usuario ya interactuó en alguna sesión, asumimos unlocked
+    if (localStorage.getItem(LS_UNLOCKED_KEY) === '1') {
+      voiceRef.current.unlock();
+    }
+
     startGreeting();
-    return () => { esRef.current?.close(); };
+
+    // Capture interaction globally for autoplay unlock
+    const handleInteraction = () => {
+      if (voiceRef.current && !voiceRef.current.isUnlocked()) {
+        voiceRef.current.unlock();
+        localStorage.setItem(LS_UNLOCKED_KEY, '1');
+      }
+    };
+    window.addEventListener('click', handleInteraction, { once: true });
+    window.addEventListener('keydown', handleInteraction, { once: true });
+
+    return () => {
+      esRef.current?.close();
+      voiceRef.current?.stop();
+      window.removeEventListener('click', handleInteraction);
+      window.removeEventListener('keydown', handleInteraction);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function toggleMute() {
+    const next = !muted;
+    setMuted(next);
+    localStorage.setItem(LS_MUTED_KEY, next ? '1' : '0');
+    voiceRef.current?.setMuted(next);
+  }
+
+  function unlockAudioAndStart() {
+    voiceRef.current?.unlock();
+    localStorage.setItem(LS_UNLOCKED_KEY, '1');
+    startGreeting();
+  }
 
   async function startGreeting() {
     try {
@@ -71,10 +119,18 @@ export default function ZeusSpeaks() {
         return;
       }
 
+      // Si autoplay bloqueado y no está muteado, pedir unlock primero
+      if (!muted && voiceRef.current && !voiceRef.current.isUnlocked()) {
+        setMode('awaiting_unlock');
+        return;
+      }
+
       setMode('greeting');
       setStreaming(true);
       setStreamingText('');
       setToolActivity([]);
+
+      voiceRef.current?.reset();
 
       const es = streamSSE('/api/zeus/greeting/stream', {
         start: (data) => {
@@ -84,7 +140,9 @@ export default function ZeusSpeaks() {
           }
         },
         text_delta: (data) => {
-          setStreamingText(prev => prev + (data.text || ''));
+          const txt = data.text || '';
+          setStreamingText(prev => prev + txt);
+          voiceRef.current?.feed(txt);
         },
         tool_use_start: (data) => {
           setToolActivity(prev => [...prev, { tool: data.tool, status: 'running', at: Date.now() }]);
@@ -100,6 +158,7 @@ export default function ZeusSpeaks() {
         },
         end: () => {
           setStreaming(false);
+          voiceRef.current?.finish();
           es.close();
         }
       });
@@ -128,13 +187,48 @@ export default function ZeusSpeaks() {
           </motion.div>
         )}
 
+        {mode === 'awaiting_unlock' && (
+          <motion.div
+            key="unlock"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="zeus-speaks-hero zeus-unlock-hero"
+            onClick={unlockAudioAndStart}
+          >
+            <div className="zeus-hero-glow" />
+            <div className="zeus-unlock-inner">
+              <motion.div
+                className="zeus-unlock-orb"
+                animate={{ scale: [1, 1.08, 1] }}
+                transition={{ duration: 1.8, repeat: Infinity }}
+              >
+                ⚡
+              </motion.div>
+              <div>
+                <div className="zeus-unlock-title">Zeus quiere hablarte</div>
+                <div className="zeus-unlock-sub">Toca aquí para escuchar su saludo</div>
+              </div>
+              <button
+                className="zeus-hero-btn"
+                onClick={(e) => { e.stopPropagation(); toggleMute(); setMode('collapsed'); }}
+              >
+                Preferir silencio
+              </button>
+            </div>
+          </motion.div>
+        )}
+
         {mode === 'greeting' && (
           <ZeusHero
             key="greeting"
             text={streamingText}
             toolActivity={toolActivity}
             streaming={streaming}
-            onCollapse={() => setMode('collapsed')}
+            speaking={speaking}
+            muted={muted}
+            onToggleMute={toggleMute}
+            onCollapse={() => { voiceRef.current?.stop(); setMode('collapsed'); }}
             onReply={() => { setMode('collapsed'); setDrawerOpen(true); }}
           />
         )}
@@ -194,6 +288,10 @@ export default function ZeusSpeaks() {
             }}
             onClose={() => setDrawerOpen(false)}
             greetingText={streamingText}
+            voice={voiceRef.current}
+            muted={muted}
+            onToggleMute={toggleMute}
+            speaking={speaking}
           />
         )}
       </AnimatePresence>
@@ -205,7 +303,8 @@ export default function ZeusSpeaks() {
 // HERO — streaming greeting
 // ═══════════════════════════════════════════════════════════════════════════
 
-function ZeusHero({ text, toolActivity, streaming, onCollapse, onReply }) {
+function ZeusHero({ text, toolActivity, streaming, speaking, muted, onToggleMute, onCollapse, onReply }) {
+  const pulsing = streaming || speaking;
   return (
     <motion.div
       initial={{ opacity: 0, y: -12 }}
@@ -218,18 +317,25 @@ function ZeusHero({ text, toolActivity, streaming, onCollapse, onReply }) {
       <div className="zeus-hero-inner">
         <div className="zeus-hero-header">
           <motion.div
-            className="zeus-orb-hero"
-            animate={streaming ? { scale: [1, 1.08, 1] } : { scale: 1 }}
-            transition={streaming ? { duration: 1.6, repeat: Infinity } : {}}
+            className={`zeus-orb-hero ${speaking ? 'zeus-orb-speaking' : ''}`}
+            animate={pulsing ? { scale: [1, speaking ? 1.14 : 1.08, 1] } : { scale: 1 }}
+            transition={pulsing ? { duration: speaking ? 0.9 : 1.6, repeat: Infinity } : {}}
           >
             ⚡
           </motion.div>
           <div style={{ flex: 1 }}>
             <div className="zeus-hero-title">ZEUS</div>
             <div className="zeus-hero-subtitle">
-              {streaming ? 'hablando...' : 'ha terminado'}
+              {speaking ? 'hablando en voz alta...' : streaming ? 'pensando...' : 'ha terminado'}
             </div>
           </div>
+          <button
+            className={`zeus-mute-toggle ${muted ? 'muted' : ''}`}
+            onClick={onToggleMute}
+            title={muted ? 'Activar voz' : 'Silenciar voz'}
+          >
+            {muted ? '🔇' : '🔊'}
+          </button>
           {!streaming && (
             <div style={{ display: 'flex', gap: 6 }}>
               <button className="zeus-hero-btn zeus-hero-btn-primary" onClick={onReply}>
@@ -289,15 +395,18 @@ function toolLabel(tool) {
 // DRAWER — continued chat
 // ═══════════════════════════════════════════════════════════════════════════
 
-function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText }) {
+function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText, voice, muted, onToggleMute, speaking }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const [toolActivity, setToolActivity] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(!!conversationId);
+  const [listening, setListening] = useState(false);
+  const [partialTranscript, setPartialTranscript] = useState('');
   const scrollRef = useRef(null);
   const esRef = useRef(null);
+  const micRef = useRef(null);
 
   useEffect(() => {
     if (conversationId) loadHistory(conversationId);
@@ -322,13 +431,16 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText }
     }
   }
 
-  async function sendMessage() {
-    const msg = input.trim();
+  async function sendMessage(overrideMsg = null) {
+    const msg = (overrideMsg != null ? overrideMsg : input).trim();
     if (!msg || streaming) return;
     setInput('');
+    setPartialTranscript('');
     setStreaming(true);
     setStreamingText('');
     setToolActivity([]);
+
+    voice?.reset();
 
     // Optimistic user message
     setMessages(prev => [...prev, { role: 'user', content: msg, _local: true, created_at: new Date() }]);
@@ -342,7 +454,11 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText }
           onNewConversation(data.conversation_id);
         }
       },
-      text_delta: (data) => setStreamingText(prev => prev + (data.text || '')),
+      text_delta: (data) => {
+        const txt = data.text || '';
+        setStreamingText(prev => prev + txt);
+        voice?.feed(txt);
+      },
       tool_use_start: (data) => {
         setToolActivity(prev => [...prev, { tool: data.tool, status: 'running' }]);
       },
@@ -352,6 +468,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText }
         ));
       },
       end: (data) => {
+        voice?.finish();
         // Commit streaming text to messages
         setMessages(prev => {
           const next = [...prev.filter(m => !m._local)];
@@ -365,12 +482,43 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText }
         es.close();
       },
       error: () => {
+        voice?.stop();
         setStreaming(false);
         es.close();
       }
     });
 
     esRef.current = es;
+  }
+
+  function toggleMic() {
+    if (!ZeusMic.isSupported()) {
+      alert('Tu browser no soporta reconocimiento de voz. Probá con Chrome o Safari.');
+      return;
+    }
+
+    if (listening) {
+      micRef.current?.stop();
+      return;
+    }
+
+    // Unlock audio al mismo tiempo (primera interacción)
+    voice?.unlock();
+    localStorage.setItem(LS_UNLOCKED_KEY, '1');
+
+    const mic = new ZeusMic({
+      lang: 'es-ES',
+      onStart: () => setListening(true),
+      onPartial: (t) => setPartialTranscript(t),
+      onTranscript: (t) => {
+        setPartialTranscript('');
+        if (t.trim()) sendMessage(t);
+      },
+      onEnd: () => setListening(false),
+      onError: (e) => { console.warn('Mic error:', e); setListening(false); }
+    });
+    micRef.current = mic;
+    mic.start();
   }
 
   // Refs for closure capture in end handler
@@ -399,13 +547,30 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText }
       >
         <div className="zeus-drawer-header">
           <div className="zeus-drawer-header-inner">
-            <div className="zeus-orb-drawer">⚡</div>
+            <motion.div
+              className={`zeus-orb-drawer ${speaking ? 'zeus-orb-speaking' : ''}`}
+              animate={speaking ? { scale: [1, 1.12, 1] } : { scale: 1 }}
+              transition={speaking ? { duration: 0.8, repeat: Infinity } : {}}
+            >
+              ⚡
+            </motion.div>
             <div>
               <div className="zeus-drawer-title">Zeus</div>
-              <div className="zeus-drawer-subtitle">Oracle · read-only</div>
+              <div className="zeus-drawer-subtitle">
+                {speaking ? 'hablando...' : streaming ? 'pensando...' : 'Oracle · read-only'}
+              </div>
             </div>
           </div>
-          <button className="zeus-drawer-close" onClick={onClose}>×</button>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            <button
+              className={`zeus-mute-toggle ${muted ? 'muted' : ''}`}
+              onClick={onToggleMute}
+              title={muted ? 'Activar voz' : 'Silenciar voz'}
+            >
+              {muted ? '🔇' : '🔊'}
+            </button>
+            <button className="zeus-drawer-close" onClick={onClose}>×</button>
+          </div>
         </div>
 
         <div ref={scrollRef} className="zeus-drawer-messages">
@@ -456,8 +621,24 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText }
         </div>
 
         <div className="zeus-drawer-input">
+          <button
+            onClick={toggleMic}
+            disabled={streaming}
+            className={`zeus-mic-btn ${listening ? 'listening' : ''}`}
+            title={listening ? 'Detener grabación' : 'Hablar'}
+          >
+            {listening ? (
+              <motion.span
+                animate={{ scale: [1, 1.3, 1] }}
+                transition={{ duration: 0.8, repeat: Infinity }}
+                style={{ display: 'inline-block' }}
+              >
+                🎤
+              </motion.span>
+            ) : '🎤'}
+          </button>
           <textarea
-            value={input}
+            value={listening ? partialTranscript : input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -465,12 +646,12 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText }
                 sendMessage();
               }
             }}
-            placeholder="Preguntále a Zeus..."
+            placeholder={listening ? 'Escuchando...' : 'Preguntále a Zeus (o tocá 🎤 para hablar)...'}
             rows={1}
-            disabled={streaming}
+            disabled={streaming || listening}
           />
           <button
-            onClick={sendMessage}
+            onClick={() => sendMessage()}
             disabled={streaming || !input.trim()}
             className="zeus-send-btn"
           >

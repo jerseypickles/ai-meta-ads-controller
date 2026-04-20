@@ -980,3 +980,107 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* Voice controls */
+.zeus-mute-toggle {
+  background: rgba(17, 21, 51, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--bos-text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: all 150ms;
+  line-height: 1;
+}
+
+.zeus-mute-toggle:hover {
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+.zeus-mute-toggle.muted {
+  opacity: 0.55;
+}
+
+.zeus-orb-speaking {
+  box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.6);
+  animation: zeus-orb-ripple 0.9s ease-out infinite;
+}
+
+@keyframes zeus-orb-ripple {
+  0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.55), 0 0 24px rgba(59, 130, 246, 0.6); }
+  70% { box-shadow: 0 0 0 18px rgba(59, 130, 246, 0), 0 0 36px rgba(139, 92, 246, 0.5); }
+  100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0), 0 0 24px rgba(59, 130, 246, 0.6); }
+}
+
+.zeus-mic-btn {
+  background: rgba(17, 21, 51, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--bos-text);
+  border-radius: 10px;
+  width: 44px;
+  font-size: 1rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 150ms;
+}
+
+.zeus-mic-btn:hover {
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.zeus-mic-btn.listening {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  border-color: transparent;
+  color: white;
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.5);
+}
+
+.zeus-mic-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Unlock autoplay hero */
+.zeus-unlock-hero {
+  cursor: pointer;
+  border-color: rgba(236, 72, 153, 0.35);
+}
+
+.zeus-unlock-hero:hover {
+  border-color: rgba(236, 72, 153, 0.6);
+}
+
+.zeus-unlock-inner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 6px;
+}
+
+.zeus-unlock-orb {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #f472b6, #ec4899 50%, #9d174d);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  filter: drop-shadow(0 0 20px rgba(236, 72, 153, 0.55));
+  flex-shrink: 0;
+}
+
+.zeus-unlock-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--bos-text);
+  letter-spacing: 0.06em;
+}
+
+.zeus-unlock-sub {
+  font-size: 0.75rem;
+  color: var(--bos-text-muted);
+  margin-top: 2px;
+}
