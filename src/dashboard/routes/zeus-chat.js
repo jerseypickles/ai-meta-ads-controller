@@ -7,9 +7,9 @@ const SystemConfig = require('../../db/models/SystemConfig');
 const { runOracle } = require('../../ai/zeus/oracle-runner');
 
 const LAST_SEEN_KEY = 'zeus_oracle_last_seen';
-const GREETING_GAP_HOURS = 2;
+const GREETING_GAP_HOURS = 12;  // Saludo full una vez por día
 
-// ═══ POST /greeting/check — decide qué modo (full / short / none) ═══
+// ═══ POST /greeting/check — decide si saludar o mostrar banner ═══
 router.post('/greeting/check', async (req, res) => {
   try {
     const lastSeenRaw = await SystemConfig.get(LAST_SEEN_KEY, null);
@@ -18,9 +18,13 @@ router.post('/greeting/check', async (req, res) => {
     if (!lastSeen) return res.json({ mode: 'greeting_full', last_seen_at: null });
 
     const hoursSince = (Date.now() - lastSeen.getTime()) / 3600000;
-    if (hoursSince < 0.17) return res.json({ mode: 'none', last_seen_at: lastSeen }); // <10 min
-    if (hoursSince < GREETING_GAP_HOURS) return res.json({ mode: 'greeting_short', last_seen_at: lastSeen });
-    return res.json({ mode: 'greeting_full', last_seen_at: lastSeen });
+    // Con persistencia de chat, el saludo corto repetido es ruidoso.
+    // Solo saludamos completo si pasó el GAP (default 12h = una vez por día).
+    // En cualquier caso menor, el banner colapsado alcanza.
+    if (hoursSince >= GREETING_GAP_HOURS) {
+      return res.json({ mode: 'greeting_full', last_seen_at: lastSeen });
+    }
+    return res.json({ mode: 'none', last_seen_at: lastSeen });
   } catch (err) {
     logger.error(`[ZEUS-CHAT] /greeting/check error: ${err.message}`);
     res.status(500).json({ error: err.message });
@@ -56,10 +60,8 @@ router.get('/greeting/stream', async (req, res) => {
   };
 
   try {
-    const lastSeenRaw = await SystemConfig.get(LAST_SEEN_KEY, null);
-    const lastSeen = lastSeenRaw?.at ? new Date(lastSeenRaw.at) : null;
-    const hoursSince = lastSeen ? (Date.now() - lastSeen.getTime()) / 3600000 : null;
-    const mode = (!lastSeen || hoursSince >= GREETING_GAP_HOURS) ? 'greeting_full' : 'greeting_short';
+    // Con persistencia de chat, solo saludamos completo (una vez por día).
+    const mode = 'greeting_full';
 
     // Reusar conversation_id existente si el cliente lo pasa y es válido;
     // si no, crear uno nuevo.

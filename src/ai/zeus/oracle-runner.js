@@ -88,18 +88,13 @@ async function runOracle({ userMessage, mode = 'chat', history = [], lastSeenAt 
   let modeInstructions = '';
   if (mode === 'greeting_full') {
     modeInstructions = `
-MODO SALUDO COMPLETO (el creador acaba de abrir el dashboard después de ausentarse):
+MODO SALUDO DIARIO (el creador abre el dashboard — típicamente una vez al día):
 - Saludalo con "${greeting}, creador" (o variación natural) y mencioná la hora (${hourNow} ET).
 - Hacé un briefing de 3-5 oraciones sobre qué hicieron los agentes desde su última visita (usá el contexto).
 - Mencioná solo lo notable — no leas listas. Si algo pide atención, decilo.
 - Terminá con una pregunta abierta o algo específico que valga la pena explorar.
-- Máximo 6 oraciones. Tono: presencia ambiente, no reporte corporativo.`;
-  } else if (mode === 'greeting_short') {
-    modeInstructions = `
-MODO SALUDO BREVE (el creador volvió después de poco tiempo):
-- Saludalo con una línea corta y cálida. "Hola de nuevo, creador" o similar.
-- Si pasó algo notable en los últimos minutos, mencionálo en una sola oración.
-- Máximo 2 oraciones. No hagas briefing completo.`;
+- Máximo 6 oraciones. Tono: presencia ambiente, no reporte corporativo.
+- IMPORTANTE: si ya hay historia en esta conversación (el creador ya te escribió antes), NO empieces desde cero — reconocé que seguís la conversación del día anterior.`;
   } else {
     modeInstructions = `
 MODO CHAT:
