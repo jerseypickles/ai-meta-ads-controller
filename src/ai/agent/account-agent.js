@@ -671,7 +671,7 @@ async function handleScaleBudget(input, ctx) {
   const prevBudget = snap.daily_budget || 0;
   const isScaleUp = new_budget > prevBudget;
 
-  // ── GATE: Learning phase (ad set < 3 days old)
+  // ── GATE: Learning phase (ad set < 5 days old)
   if (snap.meta_created_time) {
     const daysOld = (Date.now() - new Date(snap.meta_created_time).getTime()) / 86400000;
     if (daysOld < 5) {
@@ -778,7 +778,7 @@ async function handlePauseAd(input, ctx) {
     return { blocked: true, reason: `BLOCKED: ${ad_id} is an AD SET, not an ad. Never pause ad sets — only individual ads.` };
   }
 
-  // ── GATE: Learning phase (ad set < 3 days old)
+  // ── GATE: Learning phase (ad set < 5 days old)
   const parentSnap = allAdSetSnaps.find(s => s.entity_id === adset_id);
   if (parentSnap?.meta_created_time) {
     const daysOld = (Date.now() - new Date(parentSnap.meta_created_time).getTime()) / 86400000;
@@ -865,7 +865,7 @@ async function handleReactivateAd(input, ctx) {
   const { ad_id, adset_id, reason } = input;
   const meta = getMetaClient();
 
-  // ── GATE: Learning phase (ad set < 3 days old)
+  // ── GATE: Learning phase (ad set < 5 days old)
   const adsetSnap = (await getLatestSnapshots('adset')).find(s => s.entity_id === adset_id);
   if (adsetSnap?.meta_created_time) {
     const daysOld = (Date.now() - new Date(adsetSnap.meta_created_time).getTime()) / 86400000;

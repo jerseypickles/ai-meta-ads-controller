@@ -89,7 +89,14 @@ async function getAresCampaignId() {
 
 /**
  * Buscar ad sets candidatos para duplicacion.
- * Criterios: ROAS >= 4x (7d), freq < 2.0, $100+ spend, 7+ dias, max 2 duplicados.
+ * Criterios ENDURECIDOS (abril 2026):
+ *   - ROAS >= 3x sostenido 14d (fallback 7d)
+ *   - Spend acumulado >= $500
+ *   - Purchases acumuladas >= 30
+ *   - Frequency < 2.0
+ *   - Edad >= 21 dias
+ *   - Learning: SUCCESS o >= 40 conv
+ *   - Max 2 duplicados por concepto, min 7d entre duplicaciones
  */
 async function findDuplicationCandidates() {
   const allSnapshots = await getLatestSnapshots('adset');
@@ -581,6 +588,16 @@ async function retireFromCBO3() {
       return { evaluated: 0, retired: 0, results: [] };
     }
 
+    // Safety: si el portfolio entero tiene 0 spend hoy (billing freeze / auth issue),
+    // el "abandono aparente" puede ser externo, no del ad set. Skip retirement.
+    const activeSnapshots = allSnapshots.filter(s => s.status === 'ACTIVE');
+    const portfolioSpendToday = activeSnapshots.reduce((sum, s) => sum + (s.metrics?.today?.spend || 0), 0);
+    const avgDaily7d = activeSnapshots.reduce((sum, s) => sum + (s.metrics?.last_7d?.spend || 0), 0) / 7;
+    if (avgDaily7d > 100 && portfolioSpendToday < avgDaily7d * 0.15) {
+      logger.warn(`[ARES] Retirement SKIP — portfolio spend today $${Math.round(portfolioSpendToday)} vs avg 7d $${Math.round(avgDaily7d)}/día (posible billing freeze). No retirar ad sets durante freeze externo.`);
+      return { evaluated: cbo3Snaps.length, retired: 0, results: [], skipped_reason: 'portfolio_freeze' };
+    }
+
     logger.info(`[ARES] Retirement scan: ${cbo3Snaps.length} ad sets en CBO 3`);
 
     for (const snap of cbo3Snaps) {
@@ -591,20 +608,25 @@ async function retireFromCBO3() {
       if (ageDays < CBO3_RETIREMENT_MIN_DAYS) continue;
 
       const m7d = snap.metrics?.last_7d || {};
+      const m14d = snap.metrics?.last_14d || {};
       const roas = m7d.roas || 0;
       const spend = m7d.spend || 0;
+      const spend14d = m14d.spend || 0;
+      const purchases14d = m14d.purchases || 0;
 
       // Criterios de retirement
-      // (a) Bleeder: spend >= $50 Y ROAS < 1.5x sostenido
-      // (b) Confirmed dead: edad >= 14d Y spend acumulado sigue siendo <$20 (Meta lo abandono incluso con delivery garantizado)
+      // (a) Bleeder: spend 7d >= $50 Y ROAS 7d < 1.5x sostenido
+      // (b) Confirmed dead: spend acumulado 14d < $20 Y 0 purchases 14d
+      //     (Meta lo abandono incluso con delivery garantizado; usamos 14d para
+      //     evitar falsos positivos por volatilidad de ventana 7d o starvation reciente)
       const isBleeder = spend >= CBO3_RETIREMENT_MIN_SPEND && roas < CBO3_RETIREMENT_MIN_ROAS;
-      const isConfirmedDead = ageDays >= CBO3_RETIREMENT_MIN_DAYS && spend < 20 && (m7d.purchases || 0) === 0;
+      const isConfirmedDead = ageDays >= CBO3_RETIREMENT_MIN_DAYS && spend14d < 20 && purchases14d === 0;
 
       if (!isBleeder && !isConfirmedDead) continue;
 
       const reason = isBleeder
-        ? `CBO 3 retirement: bleeder — ROAS ${roas.toFixed(2)}x con $${spend.toFixed(0)} spend (14d+ delivery garantizado)`
-        : `CBO 3 retirement: confirmed dead — $${spend.toFixed(0)} spend, 0 purchases despues de ${Math.round(ageDays)}d`;
+        ? `CBO 3 retirement: bleeder — ROAS ${roas.toFixed(2)}x con $${spend.toFixed(0)} spend 7d (14d+ edad, delivery garantizado)`
+        : `CBO 3 retirement: confirmed dead — $${spend14d.toFixed(0)} spend acumulado 14d, 0 purchases 14d despues de ${Math.round(ageDays)}d`;
 
       logger.info(`[ARES] Retiring "${snap.entity_name}": ${reason}`);
 
