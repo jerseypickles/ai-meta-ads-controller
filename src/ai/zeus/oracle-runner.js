@@ -11,7 +11,7 @@ const { buildOracleContext, formatContextForPrompt } = require('./oracle-context
 const claude = new Anthropic({ apiKey: config.claude.apiKey });
 const MODEL = 'claude-opus-4-7';
 const MAX_TOOL_ROUNDS = 10;
-const MAX_TOKENS = 8000;
+const MAX_TOKENS = 16000;  // suficiente para thinking + texto + tool_use blocks
 // Opus 4.7 usa adaptive thinking + output_config.effort (low|medium|high)
 const THINKING_EFFORT = 'medium';
 
@@ -222,6 +222,11 @@ ${modeInstructions}`;
 
     tokensUsed += (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0);
 
+    const blockTypes = response.content.map(b => b.type).join(',');
+    if (response.stop_reason && response.stop_reason !== 'tool_use' && response.stop_reason !== 'end_turn') {
+      logger.warn(`[ZEUS-ORACLE] unusual stop_reason=${response.stop_reason} blocks=[${blockTypes}] round=${round}`);
+    }
+
     const assistantContent = [];
     let hadToolUse = false;
 
@@ -284,6 +289,36 @@ ${modeInstructions}`;
       // Finalizamos — no hay tool use, la respuesta está completa
       break;
     }
+  }
+
+  // Safety net: si el loop terminó sin texto (thinking-only, token limit, etc)
+  // intentamos UN round extra sin thinking para obligar respuesta.
+  if (!finalText || finalText.trim().length === 0) {
+    logger.warn(`[ZEUS-ORACLE] Loop terminó sin texto — tokens=${tokensUsed}, tools=${toolCallsExecuted.length}. Intentando fallback sin thinking...`);
+    try {
+      const fallbackResponse = await claude.messages.create({
+        model: MODEL,
+        max_tokens: 2000,
+        system: systemPrompt + '\n\nIMPORTANTE: Respondé ahora directamente con texto. No invoques más tools. Si necesitás ser breve, es mejor que vacío.',
+        messages
+      });
+      for (const block of fallbackResponse.content) {
+        if (block.type === 'text') {
+          finalText += block.text;
+          onEvent('text_delta', { text: block.text });
+        }
+      }
+      tokensUsed += (fallbackResponse.usage?.input_tokens || 0) + (fallbackResponse.usage?.output_tokens || 0);
+    } catch (fallbackErr) {
+      logger.error(`[ZEUS-ORACLE] Fallback también falló: ${fallbackErr.message}`);
+    }
+  }
+
+  // Si aún está vacío después del fallback, mensaje amable
+  if (!finalText || finalText.trim().length === 0) {
+    const emptyMsg = 'Ups, me quedé pensando sin llegar a responder. Probablemente se me fue el presupuesto de tokens en tool calls. Reintentá la pregunta o hacela más específica.';
+    finalText = emptyMsg;
+    onEvent('text_delta', { text: emptyMsg });
   }
 
   // Parsear follow-ups del final del texto
