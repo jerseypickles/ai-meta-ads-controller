@@ -724,8 +724,47 @@
 
 .zeus-banner-text {
   flex: 1;
-  font-size: 0.76rem;
+  font-size: 0.78rem;
   color: var(--bos-text);
+}
+
+.zeus-banner-action {
+  padding: 6px 12px;
+  border-radius: 7px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(17, 21, 51, 0.7);
+  color: var(--bos-text);
+  transition: all 150ms;
+  letter-spacing: 0.04em;
+}
+
+.zeus-banner-action:hover {
+  border-color: rgba(59, 130, 246, 0.5);
+  transform: translateY(-1px);
+}
+
+.zeus-banner-primary {
+  background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+  border-color: transparent;
+  color: white;
+  box-shadow: 0 2px 10px rgba(59, 130, 246, 0.3);
+}
+
+.zeus-banner-primary:hover {
+  filter: brightness(1.1);
+}
+
+.zeus-banner-subtle {
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  opacity: 0.65;
+}
+
+.zeus-banner-subtle:hover {
+  opacity: 1;
 }
 
 .zeus-banner-cta {
@@ -751,26 +790,48 @@
 }
 
 /* Floating action button */
-.zeus-fab {
+.zeus-fab-group {
   position: fixed;
   bottom: 24px;
   right: 24px;
+  z-index: 50;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.zeus-fab {
   width: 56px;
   height: 56px;
   border-radius: 50%;
   border: none;
-  background: linear-gradient(135deg, #3b82f6, #8b5cf6, #ec4899);
   color: white;
   font-size: 1.4rem;
   cursor: pointer;
-  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.4), 0 0 32px rgba(139, 92, 246, 0.3);
-  z-index: 50;
   transition: all 200ms;
 }
 
-.zeus-fab:hover {
+.zeus-fab-voice {
+  background: linear-gradient(135deg, #ef4444, #ec4899, #8b5cf6);
+  box-shadow: 0 8px 24px rgba(236, 72, 153, 0.45), 0 0 32px rgba(239, 68, 68, 0.3);
+}
+
+.zeus-fab-voice:hover {
   transform: scale(1.08);
-  box-shadow: 0 12px 32px rgba(59, 130, 246, 0.6), 0 0 48px rgba(139, 92, 246, 0.4);
+  box-shadow: 0 12px 32px rgba(236, 72, 153, 0.65), 0 0 48px rgba(239, 68, 68, 0.4);
+}
+
+.zeus-fab-text {
+  width: 44px;
+  height: 44px;
+  font-size: 1.1rem;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  box-shadow: 0 6px 18px rgba(59, 130, 246, 0.4);
+}
+
+.zeus-fab-text:hover {
+  transform: scale(1.08);
+  box-shadow: 0 10px 26px rgba(59, 130, 246, 0.55);
 }
 
 .zeus-fab-icon {

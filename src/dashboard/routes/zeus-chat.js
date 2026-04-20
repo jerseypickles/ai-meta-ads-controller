@@ -33,9 +33,14 @@ router.post('/greeting/check', async (req, res) => {
 });
 
 // ═══ POST /greeting/seen — marca last_seen_at (al cerrar saludo) ═══
+// Si body.reset === true, borra last_seen para forzar saludo completo la próxima.
 router.post('/greeting/seen', async (req, res) => {
   try {
-    await SystemConfig.set(LAST_SEEN_KEY, { at: new Date().toISOString() });
+    if (req.body?.reset) {
+      await SystemConfig.set(LAST_SEEN_KEY, { at: null });
+    } else {
+      await SystemConfig.set(LAST_SEEN_KEY, { at: new Date().toISOString() });
+    }
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

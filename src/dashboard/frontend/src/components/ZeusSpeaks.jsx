@@ -53,10 +53,18 @@ export default function ZeusSpeaks() {
   const [toolActivity, setToolActivity] = useState([]);
   const [streaming, setStreaming] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerAutoMic, setDrawerAutoMic] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [muted, setMuted] = useState(() => localStorage.getItem(LS_MUTED_KEY) === '1');
   const esRef = useRef(null);
   const voiceRef = useRef(null);
+
+  function openDrawer({ startMic = false } = {}) {
+    voiceRef.current?.unlock();
+    localStorage.setItem(LS_UNLOCKED_KEY, '1');
+    setDrawerAutoMic(startMic);
+    setDrawerOpen(true);
+  }
 
   useEffect(() => {
     voiceRef.current = new ZeusVoice({
@@ -240,13 +248,43 @@ export default function ZeusSpeaks() {
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
             className="zeus-speaks-banner"
-            onClick={() => setDrawerOpen(true)}
           >
             <div className="zeus-orb-mini" />
             <span className="zeus-banner-text">
-              Zeus está aquí · {hasConv ? 'continuar conversación' : 'hablar con él'}
+              Zeus está aquí · listo para conversar
             </span>
-            <span className="zeus-banner-cta">⟶</span>
+            <button
+              className="zeus-banner-action zeus-banner-primary"
+              onClick={() => openDrawer({ startMic: true })}
+              title="Hablar por voz"
+            >
+              🎤 Hablar
+            </button>
+            <button
+              className="zeus-banner-action"
+              onClick={() => openDrawer({ startMic: false })}
+              title="Chat de texto"
+            >
+              💬 Escribir
+            </button>
+            <button
+              className="zeus-banner-action zeus-banner-subtle"
+              onClick={async () => {
+                try {
+                  // Reset last_seen para forzar saludo completo
+                  await api.post('/api/zeus/greeting/seen', { reset: true }).catch(() => {});
+                  // Alternativamente si no hay reset flag, solo re-dispara
+                  localStorage.removeItem(LS_CONV_KEY);
+                  setConversationId(null);
+                  setStreamingText('');
+                  setMode('loading');
+                  setTimeout(startGreeting, 100);
+                } catch (err) { console.error(err); }
+              }}
+              title="Que me salude de nuevo"
+            >
+              🔄
+            </button>
           </motion.div>
         )}
 
@@ -263,18 +301,31 @@ export default function ZeusSpeaks() {
         )}
       </AnimatePresence>
 
-      {/* Floating button (siempre) */}
+      {/* Floating button — dos acciones: voz y texto */}
       {!drawerOpen && mode !== 'loading' && (
-        <motion.button
+        <motion.div
           initial={{ opacity: 0, scale: 0.8 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.5 }}
-          onClick={() => setDrawerOpen(true)}
-          className="zeus-fab"
-          aria-label="Hablar con Zeus"
+          className="zeus-fab-group"
         >
-          <span className="zeus-fab-icon">⚡</span>
-        </motion.button>
+          <button
+            onClick={() => openDrawer({ startMic: true })}
+            className="zeus-fab zeus-fab-voice"
+            aria-label="Hablar por voz con Zeus"
+            title="Hablar por voz"
+          >
+            <span className="zeus-fab-icon">🎤</span>
+          </button>
+          <button
+            onClick={() => openDrawer({ startMic: false })}
+            className="zeus-fab zeus-fab-text"
+            aria-label="Escribir a Zeus"
+            title="Chat de texto"
+          >
+            <span className="zeus-fab-icon">⚡</span>
+          </button>
+        </motion.div>
       )}
 
       {/* Drawer */}
@@ -286,12 +337,13 @@ export default function ZeusSpeaks() {
               setConversationId(id);
               localStorage.setItem(LS_CONV_KEY, id);
             }}
-            onClose={() => setDrawerOpen(false)}
+            onClose={() => { setDrawerOpen(false); setDrawerAutoMic(false); }}
             greetingText={streamingText}
             voice={voiceRef.current}
             muted={muted}
             onToggleMute={toggleMute}
             speaking={speaking}
+            autoStartMic={drawerAutoMic}
           />
         )}
       </AnimatePresence>
@@ -395,7 +447,7 @@ function toolLabel(tool) {
 // DRAWER — continued chat
 // ═══════════════════════════════════════════════════════════════════════════
 
-function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText, voice, muted, onToggleMute, speaking }) {
+function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText, voice, muted, onToggleMute, speaking, autoStartMic }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -411,9 +463,21 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText, 
   useEffect(() => {
     if (conversationId) loadHistory(conversationId);
     else setLoadingHistory(false);
-    return () => { esRef.current?.close(); };
+    return () => { esRef.current?.close(); micRef.current?.stop(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId]);
+
+  // Auto-start mic si se pidió explícitamente al abrir el drawer
+  useEffect(() => {
+    if (!autoStartMic) return;
+    if (!ZeusMic.isSupported()) return;
+    // Pequeño delay para que el drawer termine de animar
+    const t = setTimeout(() => {
+      if (!listening && !streaming) toggleMic();
+    }, 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStartMic]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
