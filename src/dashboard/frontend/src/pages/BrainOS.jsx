@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import '../brain-os.css';
-import MorningBriefing from '../components/MorningBriefing';
+import ZeusSpeaks from '../components/ZeusSpeaks';
 import NeuralCommandCenter from '../components/NeuralCommandCenter';
 import TemporalSpine from '../components/TemporalSpine';
 import DNAGenomeSpace from '../components/DNAGenomeSpace';
@@ -18,8 +18,8 @@ export default function BrainOS() {
   return (
     <div className="brain-os">
       <div className="brain-os-content">
-        {/* Morning Briefing */}
-        <MorningBriefing />
+        {/* Zeus — voice of the system */}
+        <ZeusSpeaks />
 
         {/* Neural Command Center */}
         <NeuralCommandCenter onAgentClick={setSelectedAgent} />

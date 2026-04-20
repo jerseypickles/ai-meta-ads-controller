@@ -24,6 +24,7 @@ const agentRoutes = require('./routes/agent');
 const creativeAgentRoutes = require('./routes/creative-agent');
 const testingAgentRoutes = require('./routes/testing-agent');
 const zeusRoutes = require('./routes/zeus');
+const zeusChatRoutes = require('./routes/zeus-chat');
 const aresRoutes = require('./routes/ares');
 const authRoutes = require('./routes/auth');
 const metaAuthRoutes = require('./routes/meta-auth');
@@ -87,6 +88,7 @@ app.use('/api/agent', agentRoutes);
 app.use('/api/creative-agent', creativeAgentRoutes);
 app.use('/api/testing-agent', testingAgentRoutes);
 app.use('/api/zeus', zeusRoutes);
+app.use('/api/zeus', zeusChatRoutes);
 app.use('/api/ares', aresRoutes);
 
 // SPA fallback — todas las rutas no-API sirven el frontend
