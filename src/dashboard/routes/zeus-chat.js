@@ -11,6 +11,17 @@ const { runOracle } = require('../../ai/zeus/oracle-runner');
 const ALLOWED_VOICES = ['onyx', 'echo', 'ash', 'sage', 'verse', 'coral', 'alloy', 'ballad'];
 const DEFAULT_VOICE = 'onyx';
 
+// ═══ GET /voice/diagnostics — chequea si OpenAI TTS está disponible ═══
+router.get('/voice/diagnostics', async (req, res) => {
+  const apiKey = config.openai?.apiKey || process.env.OPENAI_API_KEY;
+  res.json({
+    openai_key_set: !!apiKey,
+    openai_key_length: apiKey ? apiKey.length : 0,
+    supported_voices: ALLOWED_VOICES,
+    default_voice: DEFAULT_VOICE
+  });
+});
+
 const LAST_SEEN_KEY = 'zeus_oracle_last_seen';
 const GREETING_GAP_HOURS = 2;
 
