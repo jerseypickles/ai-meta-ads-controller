@@ -929,6 +929,36 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'zeus-learner' });
   logger.info('  [*] Zeus learner — diario 3am ET (post-mortems 7/30/90d)');
 
+  // Lunes 8am ET: plan semanal
+  cron.schedule('0 8 * * 1', async () => {
+    try {
+      const { runWeeklyPlanCron } = require('./ai/zeus/strategic-planner');
+      await runWeeklyPlanCron();
+      logger.info('[ZEUS-PLANNER-CRON] weekly plan generado (draft)');
+    } catch (err) { logger.error(`[ZEUS-PLANNER-CRON] ${err.message}`); }
+  }, { timezone: TIMEZONE, name: 'zeus-weekly-plan' });
+  logger.info('  [*] Zeus plan semanal — lunes 8am ET');
+
+  // Día 1 del mes 8am ET: plan mensual
+  cron.schedule('0 8 1 * *', async () => {
+    try {
+      const { runMonthlyPlanCron } = require('./ai/zeus/strategic-planner');
+      await runMonthlyPlanCron();
+      logger.info('[ZEUS-PLANNER-CRON] monthly plan generado (draft)');
+    } catch (err) { logger.error(`[ZEUS-PLANNER-CRON] ${err.message}`); }
+  }, { timezone: TIMEZONE, name: 'zeus-monthly-plan' });
+  logger.info('  [*] Zeus plan mensual — día 1 8am ET');
+
+  // Día 1 de trimestre 9am ET: plan trimestral
+  cron.schedule('0 9 1 1,4,7,10 *', async () => {
+    try {
+      const { runQuarterlyPlanCron } = require('./ai/zeus/strategic-planner');
+      await runQuarterlyPlanCron();
+      logger.info('[ZEUS-PLANNER-CRON] quarterly plan generado (draft)');
+    } catch (err) { logger.error(`[ZEUS-PLANNER-CRON] ${err.message}`); }
+  }, { timezone: TIMEZONE, name: 'zeus-quarterly-plan' });
+  logger.info('  [*] Zeus plan trimestral — día 1 de Q, 9am ET');
+
   // Semanal domingos 10am ET: hypothesis review bayesiano
   cron.schedule('0 10 * * 0', async () => {
     try {

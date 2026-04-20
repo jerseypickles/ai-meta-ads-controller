@@ -22,6 +22,7 @@ const ZeusPreference = require('../../db/models/ZeusPreference');
 const ZeusWatcher = require('../../db/models/ZeusWatcher');
 const ZeusRecommendationOutcome = require('../../db/models/ZeusRecommendationOutcome');
 const ZeusHypothesis = require('../../db/models/ZeusHypothesis');
+const ZeusStrategicPlan = require('../../db/models/ZeusStrategicPlan');
 const { getLatestSnapshots, getSnapshotHistory, getOverviewHistory } = require('../../db/queries');
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -481,6 +482,54 @@ const TOOL_DEFINITIONS = [
         include_triggered: { type: 'boolean', default: false }
       },
       required: []
+    }
+  },
+  {
+    name: 'query_strategic_plan',
+    description: 'Lee el plan estratégico activo del horizonte especificado (weekly/monthly/quarterly). Usalo al inicio de cualquier respuesta estratégica para alinear con el plan vigente.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        horizon: { type: 'string', enum: ['weekly', 'monthly', 'quarterly', 'all'], default: 'weekly' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'generate_plan',
+    description: 'Generá un plan estratégico nuevo para un horizonte. Úsalo si el creador pide "armame un plan" o si detectás que el plan vigente está obsoleto por cambios grandes.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        horizon: { type: 'string', enum: ['weekly', 'monthly', 'quarterly'], description: 'Qué horizonte' }
+      },
+      required: ['horizon']
+    }
+  },
+  {
+    name: 'approve_plan',
+    description: 'Marca un plan como aprobado por el creador. Úsalo cuando el creador diga "apruebo el plan" o equivalente.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        plan_id: { type: 'string' },
+        adjustments: { type: 'string', description: 'Notas/ajustes del creador' }
+      },
+      required: ['plan_id']
+    }
+  },
+  {
+    name: 'set_north_star',
+    description: 'Define/actualiza la métrica north star del sistema. Úsalo solo si el creador lo pide explícitamente — es una decisión estratégica grande.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        metric: { type: 'string', description: 'ej monthly_revenue, roas_14d, cpa, active_adsets' },
+        target: { type: 'number' },
+        direction: { type: 'string', enum: ['maximize', 'minimize', 'above', 'below'], default: 'maximize' },
+        context: { type: 'string', description: 'Por qué esta métrica' }
+      },
+      required: ['metric', 'direction']
     }
   },
   {
@@ -1287,6 +1336,85 @@ const ZEUS_SELF_FILES = [
   'src/safety/anomaly-detector.js'
 ];
 
+async function handleQueryStrategicPlan(input) {
+  const filter = { status: { $in: ['active', 'draft'] } };
+  if (input.horizon && input.horizon !== 'all') filter.horizon = input.horizon;
+
+  const plans = await ZeusStrategicPlan.find(filter)
+    .sort({ period_start: -1 })
+    .limit(5)
+    .lean();
+
+  return plans.map(p => ({
+    id: p._id.toString(),
+    horizon: p.horizon,
+    period_start: p.period_start,
+    period_end: p.period_end,
+    summary: p.summary,
+    narrative: p.narrative?.substring(0, 800),
+    goals: p.goals,
+    milestones: p.milestones,
+    risks: p.risks,
+    north_star: p.north_star,
+    status: p.status,
+    approved: p.approved_by_creator,
+    approved_at: p.approved_at
+  }));
+}
+
+async function handleGeneratePlan(input) {
+  if (!input.horizon) return { error: 'horizon requerido' };
+  try {
+    const { generatePlan } = require('./strategic-planner');
+    const plan = await generatePlan(input.horizon);
+    return {
+      ok: true,
+      plan_id: plan._id.toString(),
+      horizon: plan.horizon,
+      summary: plan.summary,
+      note: 'Plan generado en draft — el creador debe aprobar con approve_plan'
+    };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function handleApprovePlan(input) {
+  if (!input.plan_id) return { error: 'plan_id requerido' };
+  try {
+    const plan = await ZeusStrategicPlan.findByIdAndUpdate(
+      input.plan_id,
+      { $set: {
+        status: 'active',
+        approved_by_creator: true,
+        approved_at: new Date(),
+        creator_adjustments: input.adjustments || ''
+      }},
+      { new: true }
+    );
+    if (!plan) return { error: 'Plan no encontrado' };
+    return { ok: true, summary: `Plan ${plan.horizon} aprobado y activo` };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function handleSetNorthStar(input) {
+  if (!input.metric) return { error: 'metric requerido' };
+  try {
+    const { setNorthStar } = require('./strategic-planner');
+    await setNorthStar({
+      metric: input.metric,
+      target: input.target ?? null,
+      direction: input.direction || 'maximize',
+      context: input.context || ''
+    });
+    return { ok: true, summary: `North star seteado: ${input.metric} (${input.direction}${input.target ? ` → ${input.target}` : ''})` };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
 async function handleFormHypothesis(input) {
   if (!input.statement) return { error: 'statement requerido' };
   try {
@@ -1704,7 +1832,11 @@ const TOOL_HANDLERS = {
   mark_recommendation_applied: handleMarkRecommendationApplied,
   form_hypothesis: handleFormHypothesis,
   commission_hypothesis_test: handleCommissionHypothesisTest,
-  list_hypotheses: handleListHypotheses
+  list_hypotheses: handleListHypotheses,
+  query_strategic_plan: handleQueryStrategicPlan,
+  generate_plan: handleGeneratePlan,
+  approve_plan: handleApprovePlan,
+  set_north_star: handleSetNorthStar
 };
 
 async function executeTool(toolName, input) {

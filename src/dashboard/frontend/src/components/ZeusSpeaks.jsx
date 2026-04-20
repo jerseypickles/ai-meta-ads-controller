@@ -525,7 +525,11 @@ function toolLabel(tool) {
     mark_recommendation_applied: '📊 marcando aplicada',
     form_hypothesis: '🔬 formulando hipótesis',
     commission_hypothesis_test: '🔬 comisionando test',
-    list_hypotheses: '🔬 revisando hipótesis'
+    list_hypotheses: '🔬 revisando hipótesis',
+    query_strategic_plan: '🗺️ leyendo plan estratégico',
+    generate_plan: '🗺️ generando plan',
+    approve_plan: '🗺️ aprobando plan',
+    set_north_star: '⭐ seteando north star'
   };
   return labels[tool] || tool;
 }
