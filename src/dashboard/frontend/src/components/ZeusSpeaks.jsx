@@ -579,7 +579,34 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
         // pendingFollowups se mantiene para que sigan visibles
         es.close();
       },
-      error: () => {
+      api_error: (data) => {
+        setMessages(prev => {
+          const next = [...prev.filter(m => !m._local)];
+          next.push({ role: 'user', content: msg, created_at: new Date() });
+          next.push({
+            role: 'assistant',
+            content: `⚠️ Algo falló del lado de Zeus: \`${(data.error || 'error').substring(0, 200)}\`. Reintentá en un momento.`,
+            _error: true,
+            created_at: new Date()
+          });
+          return next;
+        });
+        setStreaming(false);
+        setThinking(false);
+        es.close();
+      },
+      error: (data) => {
+        setMessages(prev => {
+          const next = [...prev.filter(m => !m._local)];
+          next.push({ role: 'user', content: msg, created_at: new Date() });
+          next.push({
+            role: 'assistant',
+            content: `⚠️ Se cortó la conexión${data?.error ? ': `' + data.error + '`' : '.'} Reintentá.`,
+            _error: true,
+            created_at: new Date()
+          });
+          return next;
+        });
         setStreaming(false);
         setThinking(false);
         es.close();

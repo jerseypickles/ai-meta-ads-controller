@@ -176,8 +176,8 @@ router.get('/chat/stream', async (req, res) => {
 
     sendEvent('end', { conversation_id });
   } catch (err) {
-    logger.error(`[ZEUS-CHAT] /chat/stream error: ${err.message}`);
-    sendEvent('error', { error: err.message });
+    logger.error(`[ZEUS-CHAT] /chat/stream error: ${err.message} ${err.stack?.substring(0, 300)}`);
+    sendEvent('api_error', { error: err.message });
   } finally {
     res.end();
   }

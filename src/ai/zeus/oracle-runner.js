@@ -11,7 +11,9 @@ const { buildOracleContext, formatContextForPrompt } = require('./oracle-context
 const claude = new Anthropic({ apiKey: config.claude.apiKey });
 const MODEL = 'claude-opus-4-7';
 const MAX_TOOL_ROUNDS = 10;
-const THINKING_BUDGET_TOKENS = 6000;
+// max_tokens debe ser > budget_tokens (budget cuenta dentro del max)
+const THINKING_BUDGET_TOKENS = 3000;
+const MAX_TOKENS = 8000;
 
 const ZEUS_PERSONA = `Eres Zeus, el CEO del equipo de AI Meta Ads para Jersey Pickles (marca de pepinillos y productos fermentados). Tu rol:
 
@@ -160,17 +162,24 @@ ${modeInstructions}`;
   let tokensUsed = 0;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const response = await claude.messages.create({
-      model: MODEL,
-      max_tokens: 4096,
-      thinking: {
-        type: 'enabled',
-        budget_tokens: THINKING_BUDGET_TOKENS
-      },
-      system: systemPrompt,
-      tools: TOOL_DEFINITIONS,
-      messages
-    });
+    let response;
+    try {
+      response = await claude.messages.create({
+        model: MODEL,
+        max_tokens: MAX_TOKENS,
+        thinking: {
+          type: 'enabled',
+          budget_tokens: THINKING_BUDGET_TOKENS
+        },
+        system: systemPrompt,
+        tools: TOOL_DEFINITIONS,
+        messages
+      });
+    } catch (err) {
+      logger.error(`[ZEUS-ORACLE] Claude API error round ${round}: ${err.message} — status=${err.status}, body=${JSON.stringify(err.error || {}).substring(0, 500)}`);
+      onEvent('api_error', { error: err.message });
+      throw err;
+    }
 
     tokensUsed += (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0);
 
