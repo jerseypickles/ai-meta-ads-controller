@@ -891,6 +891,20 @@ function initCronJobs() {
   });
   logger.info('  [*] Kill switch monitor — cada 15 min');
 
+  // Cada 30 minutos: Zeus proactive — detecta señales y manda mensaje espontáneo al chat
+  cron.schedule('*/30 * * * *', async () => {
+    try {
+      const { runProactiveCycle } = require('./ai/zeus/oracle-proactive');
+      const result = await runProactiveCycle();
+      if (result.sent) {
+        logger.info(`[ZEUS-PROACTIVE-CRON] sent message to conversation ${result.conversation_id}`);
+      }
+    } catch (err) {
+      logger.error(`[ZEUS-PROACTIVE-CRON] ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'zeus-proactive' });
+  logger.info('  [*] Zeus proactive — cada 30 min');
+
   // Cada hora: Detección de anomalías por entidad (Meta necesita tiempo para atribuir conversiones)
   cron.schedule('0 * * * *', jobAnomalyDetection, {
     timezone: TIMEZONE,

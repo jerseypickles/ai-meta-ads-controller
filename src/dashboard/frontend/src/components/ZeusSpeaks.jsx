@@ -55,7 +55,33 @@ export default function ZeusSpeaks() {
   const [streaming, setStreaming] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pendingInitialMessage, setPendingInitialMessage] = useState(null);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [unreadPreview, setUnreadPreview] = useState(null);
   const esRef = useRef(null);
+
+  // Poll unread count cada 45s
+  useEffect(() => {
+    async function checkUnread() {
+      try {
+        const res = await api.get('/api/zeus/chat/unread');
+        setUnreadCount(res.data.unread || 0);
+        setUnreadPreview(res.data.latest);
+      } catch (err) { /* silent */ }
+    }
+    checkUnread();
+    const interval = setInterval(checkUnread, 45000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Cuando se abre el drawer, marcá proactivos como leídos
+  useEffect(() => {
+    if (drawerOpen && unreadCount > 0) {
+      api.post('/api/zeus/chat/mark-read').catch(() => {});
+      setUnreadCount(0);
+      setUnreadPreview(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawerOpen]);
 
   useEffect(() => {
     startGreeting();
@@ -212,19 +238,37 @@ export default function ZeusSpeaks() {
         )}
       </AnimatePresence>
 
-      {/* Floating action button */}
+      {/* Floating action button + preview de mensaje proactivo */}
       {!drawerOpen && mode !== 'loading' && (
-        <motion.button
-          initial={{ opacity: 0, scale: 0.8 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.5 }}
-          onClick={() => setDrawerOpen(true)}
-          className="zeus-fab"
-          aria-label="Hablar con Zeus"
-          title="Abrir chat con Zeus"
-        >
-          <span className="zeus-fab-icon">⚡</span>
-        </motion.button>
+        <div className="zeus-fab-wrap">
+          {unreadPreview && unreadCount > 0 && (
+            <motion.button
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setDrawerOpen(true)}
+              className="zeus-unread-preview"
+              title="Abrir chat"
+            >
+              <span className="zeus-unread-preview-label">Zeus:</span>
+              <span className="zeus-unread-preview-text">{unreadPreview.preview}</span>
+            </motion.button>
+          )}
+          <motion.button
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.5 }}
+            onClick={() => setDrawerOpen(true)}
+            className={`zeus-fab ${unreadCount > 0 ? 'has-unread' : ''}`}
+            aria-label="Hablar con Zeus"
+            title="Abrir chat con Zeus"
+          >
+            <span className="zeus-fab-icon">⚡</span>
+            {unreadCount > 0 && (
+              <span className="zeus-fab-badge">{unreadCount > 9 ? '9+' : unreadCount}</span>
+            )}
+          </motion.button>
+        </div>
       )}
 
       {/* Drawer — rendereado en portal al body para escapar overflow/transform de ancestros */}
@@ -824,6 +868,9 @@ function MessageBubble({ message, onFollowup }) {
         </div>
         {isGreeting && (
           <div className="zeus-msg-meta">saludo automático</div>
+        )}
+        {message.proactive && (
+          <div className="zeus-msg-meta zeus-msg-meta-proactive">⚡ Zeus te avisa</div>
         )}
         {followups.length > 0 && onFollowup && (
           <div className="zeus-followups zeus-followups-inline">

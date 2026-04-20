@@ -15,6 +15,13 @@ const zeusChatMessageSchema = new mongoose.Schema({
 
   content: { type: String, default: '' },
 
+  // True si este mensaje fue generado espontáneamente por Zeus (proactivo)
+  // y no en respuesta directa a un mensaje del creador.
+  proactive: { type: Boolean, default: false, index: true },
+
+  // Timestamp cuando el creador vio el mensaje (para badge de unread)
+  read_at: { type: Date, default: null },
+
   // Follow-ups sugeridos que Zeus generó para esta respuesta
   followups: [{ type: String }],
 

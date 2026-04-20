@@ -230,4 +230,41 @@ router.get('/chat/conversations', async (req, res) => {
   }
 });
 
+// ═══ GET /chat/unread — cuenta mensajes proactivos no leídos ═══
+router.get('/chat/unread', async (req, res) => {
+  try {
+    const count = await ZeusChatMessage.countDocuments({
+      proactive: true,
+      read_at: null
+    });
+    const latest = await ZeusChatMessage.findOne({ proactive: true, read_at: null })
+      .sort({ created_at: -1 })
+      .select('content conversation_id created_at')
+      .lean();
+    res.json({
+      unread: count,
+      latest: latest ? {
+        conversation_id: latest.conversation_id,
+        preview: (latest.content || '').substring(0, 200),
+        created_at: latest.created_at
+      } : null
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ POST /chat/mark-read — marca todos los proactivos como leídos ═══
+router.post('/chat/mark-read', async (req, res) => {
+  try {
+    const { conversation_id } = req.body || {};
+    const filter = { proactive: true, read_at: null };
+    if (conversation_id) filter.conversation_id = conversation_id;
+    const result = await ZeusChatMessage.updateMany(filter, { $set: { read_at: new Date() } });
+    res.json({ marked: result.modifiedCount || 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
