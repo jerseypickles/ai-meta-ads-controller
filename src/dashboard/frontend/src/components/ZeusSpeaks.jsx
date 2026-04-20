@@ -66,6 +66,46 @@ export default function ZeusSpeaks() {
     setDrawerOpen(true);
   }
 
+  async function testVoice() {
+    voiceRef.current?.unlock();
+    localStorage.setItem(LS_UNLOCKED_KEY, '1');
+
+    try {
+      const res = await fetch(`${getApiBase()}/api/zeus/tts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + localStorage.getItem('auth_token')
+        },
+        body: JSON.stringify({ text: 'Hola creador, soy Zeus. Este es un test de voz.' })
+      });
+      console.info('[ZeusTest] response status:', res.status, 'provider:', res.headers.get('X-TTS-Provider'));
+      if (!res.ok) {
+        alert('Error TTS: ' + res.status);
+        return;
+      }
+      const blob = await res.blob();
+      console.info('[ZeusTest] blob size:', blob.size, 'type:', blob.type);
+
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.volume = 1.0;
+      audio.onplay = () => console.info('[ZeusTest] onplay fired');
+      audio.onended = () => console.info('[ZeusTest] onended fired');
+      audio.onerror = (e) => console.warn('[ZeusTest] audio error:', audio.error);
+
+      try {
+        await audio.play();
+        console.info('[ZeusTest] play() resolved OK — should be audible');
+      } catch (err) {
+        console.warn('[ZeusTest] play() rejected:', err.name, err.message);
+        alert('Safari bloqueó audio: ' + err.message);
+      }
+    } catch (err) {
+      alert('Test falló: ' + err.message);
+    }
+  }
+
   useEffect(() => {
     voiceRef.current = new ZeusVoice({
       voice: 'onyx',
@@ -269,11 +309,16 @@ export default function ZeusSpeaks() {
             </button>
             <button
               className="zeus-banner-action zeus-banner-subtle"
+              onClick={testVoice}
+              title="Test de voz (diagnóstico)"
+            >
+              🔉 Test
+            </button>
+            <button
+              className="zeus-banner-action zeus-banner-subtle"
               onClick={async () => {
                 try {
-                  // Reset last_seen para forzar saludo completo
                   await api.post('/api/zeus/greeting/seen', { reset: true }).catch(() => {});
-                  // Alternativamente si no hay reset flag, solo re-dispara
                   localStorage.removeItem(LS_CONV_KEY);
                   setConversationId(null);
                   setStreamingText('');

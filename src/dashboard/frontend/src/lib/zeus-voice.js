@@ -201,7 +201,6 @@ export class ZeusVoice {
   async _enqueueText(text) {
     if (this._muted || this._stopped) return;
 
-    // Si ya confirmamos que no hay OpenAI key en este servidor, no intentamos
     if (this._permanentFallback) {
       this._speakWithBrowser(text);
       return;
@@ -211,33 +210,13 @@ export class ZeusVoice {
     try {
       const audioBlob = await this._fetchAudio(text);
       if (this._stopped) return;
-
-      // AudioContext (Safari friendly)
-      if (this._audioContext) {
-        try {
-          const arrayBuffer = await audioBlob.arrayBuffer();
-          const audioBuffer = await this._audioContext.decodeAudioData(arrayBuffer.slice(0));
-          if (this._stopped) return;
-          console.info('[Zeus] OpenAI TTS playback via AudioContext');
-          this._audioQueue.push({ buffer: audioBuffer, text });
-          this._maybePlay();
-          return;
-        } catch (decodeErr) {
-          console.warn('[Zeus] AudioContext decode failed, trying HTMLAudioElement:', decodeErr.message);
-        }
-      }
-
-      // Fallback HTMLAudioElement
-      console.info('[Zeus] OpenAI TTS playback via HTMLAudioElement');
+      console.info('[Zeus] TTS blob received, size:', audioBlob.size, 'bytes, type:', audioBlob.type);
       this._audioQueue.push({ blob: audioBlob, text });
       this._maybePlay();
     } catch (err) {
-      console.warn('[Zeus] TTS fetch failed esta vez, usando speechSynthesis:', err.message);
-      // Solo marcar fallback permanente si es 401/403/404 (config problem),
-      // no para 429/500/timeout que son transitorios
+      console.warn('[Zeus] TTS fetch failed:', err.message);
       if (/HTTP 401|HTTP 403|HTTP 404|HTTP 503/.test(err.message)) {
         this._permanentFallback = true;
-        console.warn('[Zeus] OpenAI TTS deshabilitado permanentemente este sesión');
       }
       this._speakWithBrowser(text);
     } finally {
@@ -295,40 +274,56 @@ export class ZeusVoice {
 
     const next = this._audioQueue.shift();
 
-    // Camino 1: AudioBuffer via AudioContext (Safari friendly)
-    if (next.buffer && this._audioContext) {
-      try {
-        const source = this._audioContext.createBufferSource();
-        source.buffer = next.buffer;
-        source.connect(this._audioContext.destination);
-        source.onended = () => this._playNext();
-        this._playing = true;
-        this.onSpeakStart();
-        source.start(0);
-        return;
-      } catch (err) {
-        console.warn('AudioContext playback failed:', err.message);
-      }
-    }
-
-    // Camino 2: HTMLAudioElement (fallback)
     if (!this._audio || !next.blob) {
+      console.warn('[Zeus] No audio element o blob, fallback speechSynthesis');
       if (next.text) this._speakWithBrowser(next.text);
       return;
     }
 
     const url = URL.createObjectURL(next.blob);
     this._audio.src = url;
+    this._audio.volume = 1.0;
     this._playing = true;
     this.onSpeakStart();
+
+    console.info('[Zeus] calling audio.play()');
     const p = this._audio.play();
-    if (p?.catch) {
-      p.catch(err => {
-        console.warn('Audio play failed para este chunk, fallback a speechSynthesis:', err.message);
+    if (p?.then) {
+      p.then(() => {
+        console.info('[Zeus] audio.play() promise resolved');
+      }).catch(err => {
+        console.warn('[Zeus] audio.play() rejected:', err.name, err.message);
         this._playing = false;
         URL.revokeObjectURL(url);
-        if (next.text) this._speakWithBrowser(next.text);
+        // NotAllowedError significa Safari bloqueó — intentamos decodeAudioData como último recurso
+        if (this._audioContext && err.name === 'NotAllowedError') {
+          this._tryAudioContextPlay(next.blob, next.text);
+        } else if (next.text) {
+          this._speakWithBrowser(next.text);
+        }
       });
+    }
+  }
+
+  async _tryAudioContextPlay(blob, text) {
+    try {
+      const arrayBuffer = await blob.arrayBuffer();
+      const audioBuffer = await this._audioContext.decodeAudioData(arrayBuffer.slice(0));
+      if (this._audioContext.state === 'suspended') {
+        await this._audioContext.resume();
+      }
+      const source = this._audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(this._audioContext.destination);
+      source.onended = () => this._playNext();
+      this._playing = true;
+      this.onSpeakStart();
+      console.info('[Zeus] fallback playback via AudioContext BufferSource');
+      source.start(0);
+    } catch (err) {
+      console.warn('[Zeus] AudioContext fallback también falló:', err.message);
+      this._playing = false;
+      if (text) this._speakWithBrowser(text);
     }
   }
 
