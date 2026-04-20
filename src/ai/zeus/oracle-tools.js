@@ -340,6 +340,56 @@ const TOOL_DEFINITIONS = [
       },
       required: ['question']
     }
+  },
+  {
+    name: 'code_overview',
+    description: 'Overview de la estructura del código del proyecto (árbol de directorios hasta 2 niveles + info de package.json). Llamala al principio si vas a navegar código, para orientarte.',
+    input_schema: {
+      type: 'object',
+      properties: {},
+      required: []
+    }
+  },
+  {
+    name: 'list_code_files',
+    description: 'Lista archivos del código que matchean un pattern en el path. Ej: pattern="brain-analyzer" o pattern="src/ai/". Devuelve paths, tamaños y modificación.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string', description: 'Substring que debe estar en el path' },
+        extensions: { type: 'array', items: { type: 'string' }, description: 'Filtrar por extensiones, ej [".js", ".jsx"]' },
+        limit: { type: 'number', default: 50 }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'read_code_file',
+    description: 'Lee un archivo del código (read-only, sandboxeado al proyecto). Soporta rango de líneas para archivos grandes.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Path relativo al root del proyecto (ej "src/ai/brain/zeus-learner.js")' },
+        start_line: { type: 'number', default: 1, description: 'Línea de inicio (1-indexed)' },
+        limit_lines: { type: 'number', default: 300, description: 'Cantidad máxima de líneas a leer' }
+      },
+      required: ['path']
+    }
+  },
+  {
+    name: 'grep_code',
+    description: 'Busca pattern (regex-compatible) en archivos del código. Devuelve file+line+snippet con contexto.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string', description: 'Pattern a buscar (regex o literal)' },
+        file_glob: { type: 'string', description: 'Filtra archivos cuyo path contenga este substring (ej "src/ai")' },
+        extensions: { type: 'array', items: { type: 'string' } },
+        max_matches: { type: 'number', default: 30 },
+        context_lines: { type: 'number', default: 1, description: 'Líneas de contexto antes/después del match' }
+      },
+      required: ['pattern']
+    }
   }
 ];
 
@@ -950,6 +1000,32 @@ async function handleAskAgent(agentKey, input) {
   return await askAgent(agentKey, input.question);
 }
 
+const codeTools = require('./code-tools');
+
+async function handleCodeOverview() {
+  return codeTools.codeOverview();
+}
+
+async function handleListCodeFiles(input) {
+  return codeTools.listCodeFiles(input || {});
+}
+
+async function handleReadCodeFile(input) {
+  try {
+    return codeTools.readCodeFile(input || {});
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function handleGrepCode(input) {
+  try {
+    return codeTools.grepCode(input || {});
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
 const TOOL_HANDLERS = {
   query_portfolio: handleQueryPortfolio,
   query_adsets: handleQueryAdsets,
@@ -976,7 +1052,11 @@ const TOOL_HANDLERS = {
   ask_athena: (input) => handleAskAgent('athena', input),
   ask_apollo: (input) => handleAskAgent('apollo', input),
   ask_prometheus: (input) => handleAskAgent('prometheus', input),
-  ask_ares: (input) => handleAskAgent('ares', input)
+  ask_ares: (input) => handleAskAgent('ares', input),
+  code_overview: handleCodeOverview,
+  list_code_files: handleListCodeFiles,
+  read_code_file: handleReadCodeFile,
+  grep_code: handleGrepCode
 };
 
 async function executeTool(toolName, input) {

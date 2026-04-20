@@ -495,7 +495,11 @@ function toolLabel(tool) {
     ask_athena: '🦉 consultando a Athena',
     ask_apollo: '☀️ consultando a Apollo',
     ask_prometheus: '🔥 consultando a Prometheus',
-    ask_ares: '⚔️ consultando a Ares'
+    ask_ares: '⚔️ consultando a Ares',
+    code_overview: '📂 overview del código',
+    list_code_files: '📄 listando archivos',
+    read_code_file: '📖 leyendo código',
+    grep_code: '🔍 buscando en código'
   };
   return labels[tool] || tool;
 }
