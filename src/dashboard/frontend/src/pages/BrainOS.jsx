@@ -17,7 +17,7 @@ export default function BrainOS() {
       {/* Toggle para legacy dashboard */}
       <button
         className="legacy-toggle"
-        onClick={() => navigate('/brain')}
+        onClick={() => navigate('/brain-legacy')}
       >
         ⟵ Legacy dashboard
       </button>
@@ -133,7 +133,7 @@ function AgentDetailPanel({ agent, onClose }) {
           Ver detalle completo
         </div>
         <button
-          onClick={() => { window.location.href = '/brain?tab=' + agent; }}
+          onClick={() => { window.location.href = '/brain-legacy?tab=' + agent; }}
           style={{
             background: 'linear-gradient(90deg, var(--bos-synapse), var(--bos-electric))',
             color: 'white', border: 'none', borderRadius: 10,

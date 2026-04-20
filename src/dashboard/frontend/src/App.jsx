@@ -76,7 +76,7 @@ function App() {
             path="/brain"
             element={
               <ProtectedRoute>
-                <BrainIntelligence />
+                <BrainOS />
               </ProtectedRoute>
             }
           />
@@ -85,6 +85,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <BrainOS />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/brain-legacy"
+            element={
+              <ProtectedRoute>
+                <BrainIntelligence />
               </ProtectedRoute>
             }
           />
