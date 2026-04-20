@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import api from '../api';
+import { renderVizBlock } from './zeus-viz';
 
 const LS_CONV_KEY = 'zeus_oracle_conversation_id';
 
@@ -381,6 +382,22 @@ function ZeusMarkdown({ children }) {
             );
           }
           return <a href={href} target="_blank" rel="noreferrer" {...props}>{children}</a>;
+        },
+        code: ({ inline, className, children: codeChildren, ...props }) => {
+          const match = /^language-zeus:(\w+)$/.exec(className || '');
+          if (match && !inline) {
+            const type = match[1];
+            try {
+              const raw = Array.isArray(codeChildren) ? codeChildren.join('') : String(codeChildren || '');
+              const spec = JSON.parse(raw);
+              const rendered = renderVizBlock(type, spec);
+              if (rendered) return rendered;
+            } catch (err) {
+              console.warn('[ZeusMarkdown] viz parse error', err);
+            }
+          }
+          // Default code rendering
+          return <code className={className} {...props}>{codeChildren}</code>;
         }
       }}
     >

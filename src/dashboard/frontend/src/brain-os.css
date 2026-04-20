@@ -1276,6 +1276,154 @@
   30% { transform: translateY(-4px); opacity: 1; }
 }
 
+/* Visualizaciones inline que Zeus emite */
+.zeus-viz {
+  margin: 8px 0;
+  padding: 8px 12px;
+  background: rgba(10, 14, 39, 0.5);
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.76rem;
+}
+
+.zeus-viz-sparkline .zeus-viz-svg {
+  flex-shrink: 0;
+}
+
+.zeus-viz-label {
+  font-size: 0.68rem;
+  color: var(--bos-text-muted);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.zeus-viz-value {
+  font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+  font-weight: 600;
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+}
+
+/* Metric card */
+.zeus-viz-metric {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(139, 92, 246, 0.04));
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 10px;
+  min-width: 110px;
+}
+
+.zeus-viz-metric-label {
+  font-size: 0.6rem;
+  color: var(--bos-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 500;
+}
+
+.zeus-viz-metric-value {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--bos-text);
+  font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+  line-height: 1.1;
+}
+
+.zeus-viz-metric-unit {
+  font-size: 0.7em;
+  color: var(--bos-text-muted);
+  margin-left: 2px;
+  font-weight: 500;
+}
+
+.zeus-viz-metric-delta {
+  font-size: 0.68rem;
+  font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+  font-weight: 600;
+}
+
+/* Compare bars */
+.zeus-viz-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 14px;
+}
+
+.zeus-viz-compare-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.76rem;
+}
+
+.zeus-viz-compare-label {
+  flex: 0 0 100px;
+  color: var(--bos-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zeus-viz-compare-bar-wrap {
+  flex: 1;
+  height: 8px;
+  background: rgba(17, 21, 51, 0.7);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.zeus-viz-compare-bar {
+  height: 100%;
+  transition: width 400ms ease-out;
+  border-radius: 4px;
+}
+
+.zeus-viz-compare-value {
+  flex: 0 0 50px;
+  text-align: right;
+  font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+  font-weight: 600;
+  font-size: 0.78rem;
+}
+
+/* Progress gauge */
+.zeus-viz-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 200px;
+  padding: 8px 14px;
+}
+
+.zeus-viz-progress-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(17, 21, 51, 0.7);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.zeus-viz-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 500ms ease-out;
+}
+
+.zeus-viz-progress-value {
+  font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+  font-size: 0.72rem;
+  color: var(--bos-text-muted);
+}
+
 /* Follow-up sugerencias */
 .zeus-followups {
   display: flex;
