@@ -704,10 +704,17 @@ async function processForceGraduateDirectives() {
         continue;
       }
 
-      // Validacion minima: debe tener al menos 1 compra y ROAS >= 2x
+      // Validacion — alineada con guardrails de Zeus (Abril 2026):
+      // Force_graduate DEBE ser mas estricto que natural grad (que es 3d + 2 purch + 3x ROAS)
+      // porque bypasses waiting time. Antes aceptaba 1 purch + 2x — demasiado laxo.
       const m = test.metrics || {};
-      if ((m.purchases || 0) < 1 || (m.roas || 0) < 2.0) {
-        logger.warn(`[TESTING-AGENT] force_graduate denegado: ${test.test_adset_name} no cumple minimos (${m.purchases || 0} compras, ${(m.roas || 0).toFixed(2)}x ROAS)`);
+      const daysActive = getDaysActive(test.launched_at);
+      if (daysActive < 3) {
+        logger.warn(`[TESTING-AGENT] force_graduate denegado: ${test.test_adset_name} solo ${daysActive.toFixed(1)}d activo (min 3d requerido)`);
+        continue;
+      }
+      if ((m.purchases || 0) < 3 || (m.roas || 0) < 3.0) {
+        logger.warn(`[TESTING-AGENT] force_graduate denegado: ${test.test_adset_name} no cumple minimos (${m.purchases || 0} compras vs 3+ requerido, ${(m.roas || 0).toFixed(2)}x ROAS vs 3x+ requerido)`);
         continue;
       }
 

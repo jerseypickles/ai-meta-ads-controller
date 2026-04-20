@@ -1082,6 +1082,17 @@ Rules:
   * If close_to_early_grad has tests with hours_to_grad <= 12, mention them in thoughts so we know what's coming
   * If close_to_kill is large (5+), Apollo may need to slow down generation OR pool needs cleaning
   * If slots_available_24h is high (8+), tell Prometheus to prepare next wave from ready pool
+- FORCE_GRADUATE GUARDRAIL (estricto — evita sample bias en graduaciones tempranas):
+  Natural graduation (Prometheus decide solo) requires: ROAS >= 3.0x + 2+ purchases + day 3+.
+  Force_graduate should be STRICTER than natural grad because it BYPASSES waiting time.
+  REQUIRED for force_graduate:
+    * test_age >= 3 days (NO force_graduate tests <3 días — incluso con ROAS alto)
+    * purchases_accumulated >= 3 (NO con 1-2 purchases — sample demasiado chico)
+    * ROAS >= 4x sostenido (>3x en natural grad)
+  NEVER force_graduate on "early novelty signal" with <3 días. "Early signal" vocabulary
+  belongs in thoughts/observations, not in force_graduate action. If you see 7x ROAS at
+  day 1.5 with 2 purchases, MENTION IT in thoughts but let Prometheus graduate naturally.
+  Los guardrails de sample size (no-use-word-stable) también aplican a force_graduate.
 - CRITICAL SAFETY: NEVER recommend pausing/killing an ad set unless it has $200+ spend 7d AND ROAS < 1.0x across ALL windows (today, 3d, 7d). If today ROAS is improving, recommend HOLD not pause. Low data = hold, not kill.
 - NEVER make aggressive decisions based on 1-3 days of data alone. Always check 7d AND 14d trends.
 - If 3d ROAS is better than 7d, the ad set is IMPROVING — do not pause it.
