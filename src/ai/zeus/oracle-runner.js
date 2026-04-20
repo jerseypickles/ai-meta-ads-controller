@@ -57,9 +57,12 @@ async function runOracle({ userMessage, mode = 'chat', history = [], lastSeenAt 
   const contextText = formatContextForPrompt(ctx);
 
   // 2. Build system prompt with context + mode
-  const hourNow = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' });
+  const nowET = new Date();
+  const hourNow = nowET.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' });
+  const dateNowLong = nowET.toLocaleDateString('es-AR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/New_York' });
+  const dateNowISO = nowET.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); // YYYY-MM-DD
   const greeting = (() => {
-    const h = new Date().toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'America/New_York' });
+    const h = nowET.toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'America/New_York' });
     const hr = parseInt(h);
     if (hr < 12) return 'buen día';
     if (hr < 19) return 'buena tarde';
@@ -89,6 +92,18 @@ MODO CHAT:
   }
 
   const systemPrompt = `${ZEUS_PERSONA}
+
+═══════════════════════════════════════════
+FECHA Y HORA ACTUAL (zona New York / ET):
+  Hoy: ${dateNowLong}
+  Fecha ISO: ${dateNowISO}
+  Hora: ${hourNow}
+
+IMPORTANTE sobre fechas:
+- Esta es la fecha REAL del sistema. No digas que es otro año o mes — esta es la verdad.
+- Si el creador menciona una fecha ("el 19 de abril", "ayer", "hace 3 días"), calculá el offset respecto a hoy y usalo como hours_back en las tools.
+  Ejemplo: si hoy es 2026-04-20 y pregunta por "19 de abril" → eso es ayer → query_portfolio o query_actions con hours_back ≈ 24-48.
+- Las ventanas de tus tools son: last_1d (24h), last_3d (72h), last_7d (168h), last_14d (336h). Para días específicos más antiguos, decí que no tenés granularidad día-por-día pero podés aproximar con la ventana más cercana.
 
 ═══════════════════════════════════════════
 CONTEXTO ACTUAL DEL SISTEMA (snapshot en vivo):
