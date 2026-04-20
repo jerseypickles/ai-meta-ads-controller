@@ -413,6 +413,50 @@
 .temporal-event.prometheus { background: var(--bos-danger); }
 .temporal-event.ares { background: var(--bos-electric); }
 
+/* Ticks programados (crons futuros + pasado cercano) */
+.temporal-schedule {
+  position: absolute;
+  top: 15%;
+  bottom: 15%;
+  width: 2px;
+  border-radius: 1px;
+  transform: translateX(-1px);
+  cursor: pointer;
+  transition: opacity 150ms;
+}
+
+.temporal-schedule.future {
+  opacity: 0.5;
+}
+
+.temporal-schedule.future::after {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
+  border-top: 4px solid currentColor;
+}
+
+.temporal-schedule.recent {
+  opacity: 0.25;
+  border-style: dashed;
+}
+
+.temporal-schedule:hover {
+  opacity: 0.9;
+}
+
+.temporal-schedule.zeus { background: var(--bos-synapse); color: var(--bos-synapse); }
+.temporal-schedule.athena { background: var(--bos-bio); color: var(--bos-bio); }
+.temporal-schedule.apollo { background: var(--bos-warn); color: var(--bos-warn); }
+.temporal-schedule.prometheus { background: var(--bos-danger); color: var(--bos-danger); }
+.temporal-schedule.ares { background: var(--bos-electric); color: var(--bos-electric); }
+
 .temporal-now-line {
   position: absolute;
   top: 0;
