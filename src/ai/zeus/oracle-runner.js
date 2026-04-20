@@ -220,7 +220,8 @@ ${modeInstructions}`;
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     let response;
     try {
-      response = await claude.messages.create({
+      // STREAMING real — emite text_delta token por token durante la generación
+      const streamObj = claude.messages.stream({
         model: MODEL,
         max_tokens: MAX_TOKENS,
         thinking: { type: 'adaptive' },
@@ -229,6 +230,29 @@ ${modeInstructions}`;
         tools: TOOL_DEFINITIONS,
         messages
       });
+
+      // Eventos en vivo mientras Claude genera
+      streamObj.on('streamEvent', (event) => {
+        try {
+          if (event.type === 'content_block_start') {
+            const block = event.content_block;
+            if (block.type === 'thinking') {
+              onEvent('thinking', {});
+            } else if (block.type === 'tool_use') {
+              onEvent('tool_use_start', { tool: block.name, input: {} });
+            }
+          } else if (event.type === 'content_block_delta') {
+            const delta = event.delta;
+            if (delta.type === 'text_delta' && delta.text) {
+              finalText += delta.text;
+              onEvent('text_delta', { text: delta.text });
+            }
+            // thinking_delta e input_json_delta los ignoramos en vivo — se ven en el stop
+          }
+        } catch (_) {}
+      });
+
+      response = await streamObj.finalMessage();
     } catch (err) {
       logger.error(`[ZEUS-ORACLE] Claude API error round ${round}: ${err.message} — status=${err.status}, body=${JSON.stringify(err.error || {}).substring(0, 500)}`);
       onEvent('api_error', { error: err.message });
@@ -246,23 +270,15 @@ ${modeInstructions}`;
     let hadToolUse = false;
 
     for (const block of response.content) {
-      if (block.type === 'thinking') {
-        // Preservá el bloque de thinking para el próximo turno (requisito de Anthropic)
-        assistantContent.push(block);
-        onEvent('thinking', { text: block.thinking?.substring(0, 200) });
-      } else if (block.type === 'redacted_thinking') {
+      if (block.type === 'thinking' || block.type === 'redacted_thinking') {
+        // Preservá thinking para próximo turno (requisito de Anthropic)
         assistantContent.push(block);
       } else if (block.type === 'text') {
+        // Text ya se emitió via streamEvent; solo lo preservamos para el próximo turno
         assistantContent.push(block);
-        finalText += block.text;
-        onEvent('text_delta', { text: block.text });
       } else if (block.type === 'tool_use') {
         hadToolUse = true;
         assistantContent.push(block);
-        onEvent('tool_use_start', {
-          tool: block.name,
-          input: block.input
-        });
 
         let toolResult;
         let resultSummary;
@@ -286,7 +302,6 @@ ${modeInstructions}`;
           summary: resultSummary
         });
 
-        // Append assistant + tool_result to messages for next round
         messages.push({ role: 'assistant', content: assistantContent });
         messages.push({
           role: 'user',
@@ -296,33 +311,30 @@ ${modeInstructions}`;
             content: JSON.stringify(toolResult).substring(0, 8000)
           }]
         });
-        break; // salir del for, next round ejecutará
+        break;
       }
     }
 
-    if (!hadToolUse) {
-      // Finalizamos — no hay tool use, la respuesta está completa
-      break;
-    }
+    if (!hadToolUse) break;
   }
 
-  // Safety net: si el loop terminó sin texto (thinking-only, token limit, etc)
-  // intentamos UN round extra sin thinking para obligar respuesta.
+  // Safety net: si el loop terminó sin texto, fallback streameado sin thinking
   if (!finalText || finalText.trim().length === 0) {
     logger.warn(`[ZEUS-ORACLE] Loop terminó sin texto — tokens=${tokensUsed}, tools=${toolCallsExecuted.length}. Intentando fallback sin thinking...`);
     try {
-      const fallbackResponse = await claude.messages.create({
+      const fallbackStream = claude.messages.stream({
         model: MODEL,
         max_tokens: 2000,
-        system: systemPrompt + '\n\nIMPORTANTE: Respondé ahora directamente con texto. No invoques más tools. Si necesitás ser breve, es mejor que vacío.',
+        system: systemPrompt + '\n\nIMPORTANTE: Respondé ahora directamente con texto. No invoques más tools.',
         messages
       });
-      for (const block of fallbackResponse.content) {
-        if (block.type === 'text') {
-          finalText += block.text;
-          onEvent('text_delta', { text: block.text });
+      fallbackStream.on('streamEvent', (event) => {
+        if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta' && event.delta.text) {
+          finalText += event.delta.text;
+          onEvent('text_delta', { text: event.delta.text });
         }
-      }
+      });
+      const fallbackResponse = await fallbackStream.finalMessage();
       tokensUsed += (fallbackResponse.usage?.input_tokens || 0) + (fallbackResponse.usage?.output_tokens || 0);
     } catch (fallbackErr) {
       logger.error(`[ZEUS-ORACLE] Fallback también falló: ${fallbackErr.message}`);

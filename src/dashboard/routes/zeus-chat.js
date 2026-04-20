@@ -55,9 +55,12 @@ router.get('/greeting/stream', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
+  // Chunk de padding inicial para que proxies abran el stream inmediatamente
+  res.write(': ' + ' '.repeat(2048) + '\n\n');
 
   const sendEvent = (type, data) => {
     res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+    if (typeof res.flush === 'function') res.flush();
   };
 
   try {
@@ -116,9 +119,12 @@ router.get('/chat/stream', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
+  // Chunk de padding inicial para que proxies abran el stream inmediatamente
+  res.write(': ' + ' '.repeat(2048) + '\n\n');
 
   const sendEvent = (type, data) => {
     res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+    if (typeof res.flush === 'function') res.flush();
   };
 
   try {
