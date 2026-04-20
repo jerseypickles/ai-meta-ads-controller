@@ -70,7 +70,17 @@ async function generatePlan(horizon, options = {}) {
     quarterly: 'trimestral (próximos 90 días)'
   }[horizon];
 
+  const todayISO = new Date().toISOString().substring(0, 10);
+  const periodStartISO = bounds.period_start.toISOString().substring(0, 10);
+  const periodEndISO = bounds.period_end.toISOString().substring(0, 10);
+
   const prompt = `Genera un plan estratégico ${horizonLabel} para Jersey Pickles.
+
+═══ FECHAS (CRÍTICO — usá AÑO ACTUAL) ═══
+- HOY es: ${todayISO}
+- Período del plan: ${periodStartISO} al ${periodEndISO}
+- TODAS las fechas de goals y milestones DEBEN estar entre ${periodStartISO} y ${periodEndISO}
+- USA SIEMPRE el año actual. NO uses años del pasado.
 
 NORTH STAR METRIC (métrica que guía todo):
 - Métrica: ${northStar.metric}
@@ -123,6 +133,26 @@ Respondé SOLO con el JSON.`;
     { $set: { status: 'superseded' } }
   );
 
+  // Validador de fechas — clampea al período si Opus genera fechas fuera de rango
+  // (o si usa año equivocado por knowledge cutoff)
+  const clampDate = (d) => {
+    if (!d) return null;
+    const parsed = new Date(d);
+    if (isNaN(parsed.getTime())) return null;
+    if (parsed < bounds.period_start) {
+      // Si fecha está en el pasado, ajustar al mismo mes/día pero año actual
+      const adjusted = new Date(bounds.period_start);
+      adjusted.setMonth(parsed.getMonth(), parsed.getDate());
+      if (adjusted < bounds.period_start || adjusted > bounds.period_end) {
+        // Si sigue fuera de rango, poner a mediados del período
+        return new Date((bounds.period_start.getTime() + bounds.period_end.getTime()) / 2);
+      }
+      return adjusted;
+    }
+    if (parsed > bounds.period_end) return bounds.period_end;
+    return parsed;
+  };
+
   const plan = await ZeusStrategicPlan.create({
     horizon,
     period_start: bounds.period_start,
@@ -135,11 +165,11 @@ Respondé SOLO con el JSON.`;
       target: g.target,
       current: g.current ?? null,
       priority: g.priority || 'medium',
-      by_date: g.by_date ? new Date(g.by_date) : null
+      by_date: clampDate(g.by_date)
     })),
     milestones: (parsed.milestones || []).slice(0, 5).map(m => ({
       description: m.description,
-      by_date: m.by_date ? new Date(m.by_date) : null,
+      by_date: clampDate(m.by_date),
       status: 'pending'
     })),
     risks: (parsed.risks || []).slice(0, 4).map(r => ({

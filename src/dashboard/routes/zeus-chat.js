@@ -5,6 +5,7 @@ const logger = require('../../utils/logger');
 const ZeusChatMessage = require('../../db/models/ZeusChatMessage');
 const ZeusCodeRecommendation = require('../../db/models/ZeusCodeRecommendation');
 const ZeusPreference = require('../../db/models/ZeusPreference');
+const ZeusStrategicPlan = require('../../db/models/ZeusStrategicPlan');
 const SystemConfig = require('../../db/models/SystemConfig');
 const { runOracle } = require('../../ai/zeus/oracle-runner');
 
@@ -407,6 +408,87 @@ router.post('/authorities/disable', async (req, res) => {
     if (!category) return res.status(400).json({ error: 'category requerido' });
     const { disableAuthority } = require('../../ai/zeus/execution-gate');
     await disableAuthority(category, reason);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ GET /strategic-plans — lista planes (weekly/monthly/quarterly) ═══
+router.get('/strategic-plans', async (req, res) => {
+  try {
+    const { horizon, status } = req.query;
+    const filter = {};
+    if (horizon && horizon !== 'all') filter.horizon = horizon;
+    if (status && status !== 'all') filter.status = status;
+    else filter.status = { $in: ['draft', 'active'] };
+
+    const plans = await ZeusStrategicPlan.find(filter)
+      .sort({ generated_at: -1 })
+      .limit(20)
+      .lean();
+
+    res.json({ plans });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ GET /strategic-plans/:id ═══
+router.get('/strategic-plans/:id', async (req, res) => {
+  try {
+    const plan = await ZeusStrategicPlan.findById(req.params.id).lean();
+    if (!plan) return res.status(404).json({ error: 'Plan no encontrado' });
+    res.json(plan);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ POST /strategic-plans/:id/approve ═══
+router.post('/strategic-plans/:id/approve', async (req, res) => {
+  try {
+    const { adjustments } = req.body || {};
+    // Supersedar cualquier plan activo del mismo horizon
+    const plan = await ZeusStrategicPlan.findById(req.params.id);
+    if (!plan) return res.status(404).json({ error: 'Plan no encontrado' });
+
+    await ZeusStrategicPlan.updateMany(
+      { horizon: plan.horizon, status: 'active', _id: { $ne: plan._id } },
+      { $set: { status: 'superseded' } }
+    );
+
+    plan.status = 'active';
+    plan.approved_by_creator = true;
+    plan.approved_at = new Date();
+    if (adjustments) plan.creator_adjustments = adjustments;
+    await plan.save();
+
+    res.json({ ok: true, plan });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ POST /strategic-plans/generate ═══
+router.post('/strategic-plans/generate', async (req, res) => {
+  try {
+    const { horizon } = req.body || {};
+    if (!['weekly', 'monthly', 'quarterly'].includes(horizon)) {
+      return res.status(400).json({ error: 'horizon inválido' });
+    }
+    const { generatePlan } = require('../../ai/zeus/strategic-planner');
+    const plan = await generatePlan(horizon);
+    res.json({ ok: true, plan });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ DELETE /strategic-plans/:id ═══
+router.delete('/strategic-plans/:id', async (req, res) => {
+  try {
+    await ZeusStrategicPlan.findByIdAndDelete(req.params.id);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

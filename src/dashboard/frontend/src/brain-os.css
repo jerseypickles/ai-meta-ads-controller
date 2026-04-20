@@ -1132,6 +1132,316 @@
   color: var(--bos-text);
 }
 
+/* Panel de planes estratégicos */
+.zeus-plans-panel {
+  overflow: hidden;
+  background: rgba(10, 14, 39, 0.7);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  max-height: 580px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.zeus-plans-header {
+  padding: 12px 16px;
+  background: rgba(96, 165, 250, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.zeus-plans-title {
+  font-size: 0.72rem;
+  color: #93c5fd;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 6px;
+}
+
+.zeus-plans-filter {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.zeus-plans-filter-btn {
+  padding: 3px 10px;
+  font-size: 0.62rem;
+  background: rgba(17, 21, 51, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--bos-text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  text-transform: lowercase;
+}
+
+.zeus-plans-filter-btn.active {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.4);
+  color: #93c5fd;
+}
+
+.zeus-plans-regen-btn {
+  padding: 3px 8px;
+  font-size: 0.6rem;
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  color: #a78bfa;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.zeus-plans-regen-btn:hover {
+  background: rgba(139, 92, 246, 0.2);
+}
+
+.zeus-plans-empty {
+  padding: 24px 20px;
+  text-align: center;
+  color: var(--bos-text-dim);
+  font-size: 0.72rem;
+  font-style: italic;
+  line-height: 1.5;
+}
+
+.zeus-plan-card {
+  background: rgba(17, 21, 51, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 3px solid #60a5fa;
+  border-radius: 8px;
+  margin: 10px 14px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.zeus-plan-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.zeus-plan-horizon {
+  padding: 2px 6px;
+  background: rgba(96, 165, 250, 0.08);
+  border-radius: 4px;
+}
+
+.zeus-plan-status {
+  padding: 2px 6px;
+  border: 1px solid;
+  border-radius: 4px;
+}
+
+.zeus-plan-period {
+  color: var(--bos-text-muted);
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 0.62rem;
+  font-weight: 500;
+}
+
+.zeus-plan-spacer { flex: 1; }
+
+.zeus-plan-iconbtn {
+  background: none;
+  border: none;
+  color: var(--bos-text-dim);
+  font-size: 1rem;
+  cursor: pointer;
+}
+.zeus-plan-iconbtn:hover { color: #ef4444; }
+
+.zeus-plan-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.74rem;
+  padding: 6px 10px;
+  background: rgba(10, 14, 39, 0.4);
+  border-radius: 6px;
+}
+
+.zeus-plan-section-label {
+  font-size: 0.58rem;
+  color: var(--bos-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+
+.zeus-plan-ns {
+  color: #fbbf24;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+}
+
+.zeus-plan-summary {
+  font-size: 0.8rem;
+  color: var(--bos-text);
+  line-height: 1.5;
+  padding: 6px 0;
+}
+
+.zeus-plan-toggle {
+  background: none;
+  border: none;
+  color: var(--bos-text-muted);
+  font-size: 0.68rem;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+}
+.zeus-plan-toggle:hover { color: var(--bos-text); }
+
+.zeus-plan-detail {
+  padding-top: 8px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.zeus-plan-narrative {
+  font-size: 0.76rem;
+  line-height: 1.55;
+  padding: 8px 10px;
+  background: rgba(10, 14, 39, 0.5);
+  border-radius: 6px;
+}
+
+.zeus-plan-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.zeus-plan-block-title {
+  font-size: 0.62rem;
+  color: var(--bos-text);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.zeus-plan-goal {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(10, 14, 39, 0.4);
+  border-radius: 6px;
+  font-size: 0.74rem;
+}
+
+.zeus-plan-priority-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+
+.zeus-plan-goal-main code {
+  background: rgba(59, 130, 246, 0.12);
+  color: #93c5fd;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82em;
+}
+
+.zeus-plan-goal-date {
+  font-size: 0.62rem;
+  color: var(--bos-text-dim);
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.zeus-plan-milestone {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(10, 14, 39, 0.4);
+  border-radius: 6px;
+  font-size: 0.74rem;
+}
+
+.zeus-plan-ms-status {
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+.zeus-plan-ms-status.achieved { color: #10b981; }
+.zeus-plan-ms-status.missed { color: #ef4444; }
+.zeus-plan-ms-status.pending { color: var(--bos-text-muted); }
+
+.zeus-plan-risk {
+  padding: 8px 10px;
+  background: rgba(10, 14, 39, 0.4);
+  border-radius: 6px;
+  border-left: 2px solid #fbbf24;
+  font-size: 0.74rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.zeus-plan-risk-head {
+  display: flex;
+  gap: 4px;
+}
+
+.zeus-plan-risk-desc {
+  color: var(--bos-text);
+  line-height: 1.4;
+}
+
+.zeus-plan-risk-mit {
+  color: var(--bos-text-muted);
+  font-size: 0.68rem;
+  padding-left: 8px;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  line-height: 1.5;
+}
+
+.zeus-plan-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.zeus-plan-btn {
+  padding: 6px 14px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.zeus-plan-btn-approve {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+}
+
+.zeus-plan-meta {
+  font-size: 0.6rem;
+  color: var(--bos-text-dim);
+  text-align: right;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
 /* Panel de memoria */
 .zeus-memory-panel {
   overflow: hidden;

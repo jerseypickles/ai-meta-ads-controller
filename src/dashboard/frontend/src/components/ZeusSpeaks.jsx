@@ -560,6 +560,9 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   const [codeRecsFilter, setCodeRecsFilter] = useState('pending');
   const [showMemory, setShowMemory] = useState(false);
   const [preferences, setPreferences] = useState([]);
+  const [showPlans, setShowPlans] = useState(false);
+  const [plans, setPlans] = useState([]);
+  const [plansHorizon, setPlansHorizon] = useState('all');
   const scrollRef = useRef(null);
   const esRef = useRef(null);
   const streamingTextRef = useRef('');
@@ -645,6 +648,42 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
     if (showMemory) loadPreferences();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showMemory]);
+
+  async function loadPlans() {
+    try {
+      const params = plansHorizon !== 'all' ? { horizon: plansHorizon } : {};
+      const res = await api.get('/api/zeus/strategic-plans', { params });
+      setPlans(res.data.plans || []);
+    } catch (err) { console.error(err); }
+  }
+
+  async function approvePlan(planId) {
+    try {
+      await api.post(`/api/zeus/strategic-plans/${planId}/approve`);
+      await loadPlans();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function deletePlan(planId) {
+    if (!window.confirm('Borrar este plan?')) return;
+    try {
+      await api.delete(`/api/zeus/strategic-plans/${planId}`);
+      await loadPlans();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function regeneratePlan(horizon) {
+    if (!window.confirm(`Regenerar plan ${horizon}? El actual se va a supersedear cuando apruebes el nuevo.`)) return;
+    try {
+      await api.post('/api/zeus/strategic-plans/generate', { horizon });
+      await loadPlans();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  useEffect(() => {
+    if (showPlans) loadPlans();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPlans, plansHorizon]);
 
   // Load counts al abrir drawer (para el badge del 💡)
   useEffect(() => {
@@ -820,7 +859,20 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
             <button
               className="zeus-drawer-icon-btn"
               onClick={() => {
+                setShowPlans(!showPlans);
+                setShowMemory(false);
+                setShowCodeRecs(false);
+                setShowConversationList(false);
+              }}
+              title="Planes estratégicos"
+            >
+              🗺️
+            </button>
+            <button
+              className="zeus-drawer-icon-btn"
+              onClick={() => {
                 setShowMemory(!showMemory);
+                setShowPlans(false);
                 setShowCodeRecs(false);
                 setShowConversationList(false);
               }}
@@ -863,6 +915,57 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
             <button className="zeus-drawer-close" onClick={onClose}>×</button>
           </div>
         </div>
+
+        {/* Panel de planes estratégicos */}
+        <AnimatePresence>
+          {showPlans && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="zeus-plans-panel"
+            >
+              <div className="zeus-plans-header">
+                <div className="zeus-plans-title">🗺️ Planes estratégicos</div>
+                <div className="zeus-plans-filter">
+                  {['all', 'weekly', 'monthly', 'quarterly'].map(h => (
+                    <button
+                      key={h}
+                      onClick={() => setPlansHorizon(h)}
+                      className={`zeus-plans-filter-btn ${plansHorizon === h ? 'active' : ''}`}
+                    >
+                      {h === 'all' ? 'todos' : h}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+                  {['weekly', 'monthly', 'quarterly'].map(h => (
+                    <button
+                      key={h}
+                      onClick={() => regeneratePlan(h)}
+                      className="zeus-plans-regen-btn"
+                      title={`Regenerar plan ${h}`}
+                    >
+                      ↻ {h}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {plans.length === 0 ? (
+                <div className="zeus-plans-empty">No hay planes para este filtro. Los crons los generan los lunes (weekly), día 1 de mes (monthly), y día 1 de Q (quarterly). También podés regenerar a mano con los botones ↻.</div>
+              ) : (
+                plans.map(p => (
+                  <PlanCard
+                    key={p._id}
+                    plan={p}
+                    onApprove={() => approvePlan(p._id)}
+                    onDelete={() => deletePlan(p._id)}
+                  />
+                ))
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Panel de memoria */}
         <AnimatePresence>
@@ -1062,6 +1165,158 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
         </div>
       </motion.div>
     </>
+  );
+}
+
+function PlanCard({ plan, onApprove, onDelete }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const fmtDate = (d) => {
+    if (!d) return '—';
+    return new Date(d).toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' });
+  };
+
+  const horizonColors = {
+    weekly: '#60a5fa',
+    monthly: '#a78bfa',
+    quarterly: '#f472b6'
+  };
+  const statusBadge = {
+    draft: { c: '#fbbf24', l: 'DRAFT' },
+    active: { c: '#10b981', l: 'ACTIVE' },
+    superseded: { c: '#6b7280', l: 'SUPERSEDED' },
+    archived: { c: '#6b7280', l: 'ARCHIVED' }
+  }[plan.status] || { c: '#6b7280', l: plan.status };
+
+  const priorityColors = {
+    critical: '#ef4444',
+    high: '#f97316',
+    medium: '#fbbf24',
+    low: '#60a5fa'
+  };
+
+  const riskColors = {
+    critical: '#ef4444',
+    high: '#f97316',
+    medium: '#fbbf24',
+    low: '#60a5fa'
+  };
+
+  return (
+    <div className="zeus-plan-card" style={{ borderLeftColor: horizonColors[plan.horizon] || '#60a5fa' }}>
+      <div className="zeus-plan-head">
+        <span className="zeus-plan-horizon" style={{ color: horizonColors[plan.horizon] }}>
+          {plan.horizon.toUpperCase()}
+        </span>
+        <span className="zeus-plan-status" style={{ color: statusBadge.c, borderColor: statusBadge.c + '40' }}>
+          {statusBadge.l}
+        </span>
+        <span className="zeus-plan-period">
+          {fmtDate(plan.period_start)} → {fmtDate(plan.period_end)}
+        </span>
+        <span className="zeus-plan-spacer" />
+        <button className="zeus-plan-iconbtn" onClick={onDelete} title="Borrar">×</button>
+      </div>
+
+      {plan.north_star?.metric && (
+        <div className="zeus-plan-section">
+          <span className="zeus-plan-section-label">⭐ North Star:</span>
+          <span className="zeus-plan-ns">
+            {plan.north_star.metric}
+            {plan.north_star.target != null && ` → ${plan.north_star.target}`}
+            {plan.north_star.direction && ` (${plan.north_star.direction})`}
+          </span>
+        </div>
+      )}
+
+      {plan.summary && (
+        <div className="zeus-plan-summary">{plan.summary}</div>
+      )}
+
+      <button className="zeus-plan-toggle" onClick={() => setExpanded(!expanded)}>
+        {expanded ? '▾ Ocultar detalle' : '▸ Ver detalle completo'}
+      </button>
+
+      {expanded && (
+        <div className="zeus-plan-detail">
+          {plan.narrative && (
+            <div className="zeus-plan-narrative zeus-markdown">
+              <ZeusMarkdown>{plan.narrative}</ZeusMarkdown>
+            </div>
+          )}
+
+          {(plan.goals || []).length > 0 && (
+            <div className="zeus-plan-block">
+              <div className="zeus-plan-block-title">🎯 Goals</div>
+              {plan.goals.map((g, i) => (
+                <div key={i} className="zeus-plan-goal">
+                  <span className="zeus-plan-priority-dot" style={{ background: priorityColors[g.priority] }} />
+                  <div style={{ flex: 1 }}>
+                    <div className="zeus-plan-goal-main">
+                      <code>{g.metric}</code>
+                      {g.current != null && <span style={{ color: 'var(--bos-text-muted)' }}> {g.current} →</span>}
+                      <span style={{ color: '#93c5fd', fontWeight: 600 }}> {g.target}</span>
+                    </div>
+                    <div className="zeus-plan-goal-date">by {fmtDate(g.by_date)} · {g.priority}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {(plan.milestones || []).length > 0 && (
+            <div className="zeus-plan-block">
+              <div className="zeus-plan-block-title">🏁 Milestones</div>
+              {plan.milestones.map((m, i) => (
+                <div key={i} className="zeus-plan-milestone">
+                  <span className={`zeus-plan-ms-status ${m.status}`}>{m.status === 'achieved' ? '✓' : m.status === 'missed' ? '✗' : '○'}</span>
+                  <div style={{ flex: 1 }}>
+                    <div>{m.description}</div>
+                    <div className="zeus-plan-goal-date">by {fmtDate(m.by_date)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {(plan.risks || []).length > 0 && (
+            <div className="zeus-plan-block">
+              <div className="zeus-plan-block-title">⚠️ Risks</div>
+              {plan.risks.map((r, i) => (
+                <div key={i} className="zeus-plan-risk" style={{ borderLeftColor: riskColors[r.impact] }}>
+                  <div className="zeus-plan-risk-head">
+                    <span style={{ fontSize: '0.55rem', padding: '1px 5px', background: riskColors[r.likelihood] + '20', color: riskColors[r.likelihood], borderRadius: 3 }}>
+                      {r.likelihood} prob
+                    </span>
+                    <span style={{ fontSize: '0.55rem', padding: '1px 5px', background: riskColors[r.impact] + '20', color: riskColors[r.impact], borderRadius: 3 }}>
+                      {r.impact} impact
+                    </span>
+                  </div>
+                  <div className="zeus-plan-risk-desc">{r.description}</div>
+                  {r.mitigation && (
+                    <div className="zeus-plan-risk-mit">→ {r.mitigation}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {plan.status === 'draft' && (
+        <div className="zeus-plan-actions">
+          <button className="zeus-plan-btn zeus-plan-btn-approve" onClick={onApprove}>
+            ✓ Aprobar plan
+          </button>
+        </div>
+      )}
+      {plan.approved_at && (
+        <div className="zeus-plan-meta">
+          Aprobado {fmtDate(plan.approved_at)}
+          {plan.creator_adjustments && ` · ${plan.creator_adjustments.substring(0, 80)}`}
+        </div>
+      )}
+    </div>
   );
 }
 
