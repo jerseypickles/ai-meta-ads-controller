@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { getAgentPerformance } from '../../api';
+import api from '../../api';
 
 const ATHENA_COLOR = '#60a5fa';
 
@@ -46,10 +46,10 @@ export default function AthenaPanel() {
 
   async function loadData() {
     try {
-      const res = await getAgentPerformance(8).catch(() => null);
-      setData(res);
+      const res = await api.get('/api/agent/activity', { timeout: 20000 });
+      setData(res.data);
     } catch (err) {
-      console.error(err);
+      console.error('Athena activity error:', err);
     } finally {
       setLoading(false);
     }
