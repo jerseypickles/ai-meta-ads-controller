@@ -1,54 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
-const OpenAI = require('openai');
-const config = require('../../../config');
 const logger = require('../../utils/logger');
 const ZeusChatMessage = require('../../db/models/ZeusChatMessage');
 const SystemConfig = require('../../db/models/SystemConfig');
 const { runOracle } = require('../../ai/zeus/oracle-runner');
-
-const OPENAI_VOICES = ['onyx', 'echo', 'ash', 'sage', 'verse', 'coral', 'alloy', 'ballad'];
-const DEFAULT_OPENAI_VOICE = 'onyx';
-
-// ElevenLabs voice IDs curados para Zeus (hombre, tono CEO)
-// Podés sobreescribir con env var ELEVENLABS_VOICE_ID
-const DEFAULT_ELEVENLABS_VOICE_ID = 'ErXwobaYiN019PkySvjV'; // "Antoni" — español warm masculine
-const DEFAULT_ELEVENLABS_MODEL = 'eleven_multilingual_v2';
-
-function getElevenLabsConfig() {
-  const apiKey = process.env.ELEVENLABS_API_KEY;
-  if (!apiKey) return null;
-  return {
-    apiKey,
-    voiceId: process.env.ELEVENLABS_VOICE_ID || DEFAULT_ELEVENLABS_VOICE_ID,
-    model: process.env.ELEVENLABS_MODEL || DEFAULT_ELEVENLABS_MODEL
-  };
-}
-
-function getOpenAIKey() {
-  return config.openai?.apiKey || process.env.OPENAI_API_KEY;
-}
-
-// ═══ GET /voice/diagnostics — info de qué provider está activo ═══
-router.get('/voice/diagnostics', async (req, res) => {
-  const openaiKey = getOpenAIKey();
-  const elevenConfig = getElevenLabsConfig();
-  res.json({
-    active_provider: elevenConfig ? 'elevenlabs' : (openaiKey ? 'openai' : 'browser_speech'),
-    elevenlabs: {
-      set: !!elevenConfig,
-      voice_id: elevenConfig?.voiceId || null,
-      model: elevenConfig?.model || null
-    },
-    openai: {
-      set: !!openaiKey,
-      key_length: openaiKey ? openaiKey.length : 0,
-      voices: OPENAI_VOICES,
-      default_voice: DEFAULT_OPENAI_VOICE
-    }
-  });
-});
 
 const LAST_SEEN_KEY = 'zeus_oracle_last_seen';
 const GREETING_GAP_HOURS = 2;
@@ -259,88 +215,5 @@ router.get('/chat/conversations', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-// ═══ POST /tts — ElevenLabs primario, OpenAI fallback ═══
-router.post('/tts', async (req, res) => {
-  try {
-    const { text, voice } = req.body || {};
-    if (!text || typeof text !== 'string') {
-      return res.status(400).json({ error: 'text requerido' });
-    }
-    const clean = text.trim().substring(0, 4000);
-    if (!clean) return res.status(400).json({ error: 'text vacío' });
-
-    // Intento 1: ElevenLabs
-    const elevenConfig = getElevenLabsConfig();
-    if (elevenConfig) {
-      try {
-        const buffer = await synthesizeElevenLabs(clean, elevenConfig);
-        res.setHeader('Content-Type', 'audio/mpeg');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('X-TTS-Provider', 'elevenlabs');
-        return res.send(buffer);
-      } catch (elevenErr) {
-        logger.warn(`[ZEUS-CHAT] ElevenLabs failed, intentando OpenAI: ${elevenErr.message}`);
-      }
-    }
-
-    // Intento 2: OpenAI
-    const openaiKey = getOpenAIKey();
-    if (openaiKey) {
-      try {
-        const selectedVoice = OPENAI_VOICES.includes(voice) ? voice : DEFAULT_OPENAI_VOICE;
-        const client = new OpenAI({ apiKey: openaiKey });
-        const response = await client.audio.speech.create({
-          model: 'tts-1-hd',
-          voice: selectedVoice,
-          input: clean,
-          response_format: 'mp3',
-          speed: 1.0
-        });
-        const buffer = Buffer.from(await response.arrayBuffer());
-        res.setHeader('Content-Type', 'audio/mpeg');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('X-TTS-Provider', 'openai');
-        return res.send(buffer);
-      } catch (openaiErr) {
-        logger.error(`[ZEUS-CHAT] OpenAI TTS también falló: ${openaiErr.message}`);
-        return res.status(500).json({ error: openaiErr.message });
-      }
-    }
-
-    return res.status(503).json({ error: 'No hay provider de TTS configurado (ELEVENLABS_API_KEY u OPENAI_API_KEY)' });
-  } catch (err) {
-    logger.error(`[ZEUS-CHAT] /tts error: ${err.message}`);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-async function synthesizeElevenLabs(text, { apiKey, voiceId, model }) {
-  const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'xi-api-key': apiKey,
-      'Content-Type': 'application/json',
-      'Accept': 'audio/mpeg'
-    },
-    body: JSON.stringify({
-      text,
-      model_id: model,
-      voice_settings: {
-        stability: 0.5,
-        similarity_boost: 0.75,
-        style: 0.3,
-        use_speaker_boost: true
-      }
-    })
-  });
-  if (!resp.ok) {
-    const errText = await resp.text().catch(() => '');
-    throw new Error(`ElevenLabs ${resp.status}: ${errText.substring(0, 200)}`);
-  }
-  const arrayBuffer = await resp.arrayBuffer();
-  return Buffer.from(arrayBuffer);
-}
 
 module.exports = router;
