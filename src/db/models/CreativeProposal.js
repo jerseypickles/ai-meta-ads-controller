@@ -33,6 +33,10 @@ const creativeProposalSchema = new mongoose.Schema({
   framing: { type: String, default: '', index: true },      // auto-extraido del headline: curiosity | upgrade | obsession | transformation | question | bold-claim | other
   hook_type: { type: String, default: '', index: true },    // question | statement | exclamation | number
   dna_hash: { type: String, default: '', index: true },     // hash deterministico: "style|angle|scene|product|hook"
+  // Fase 3 — evolution tracking: que estrategia genero este creativo
+  evolution_strategy: { type: String, enum: ['random', 'exploit', 'mutate', 'crossover', 'explore'], default: 'random', index: true },
+  parent_dna_hashes: [{ type: String }],   // linaje: si mutate/crossover, hashes de los padres
+  generation: { type: Number, default: 0, index: true },  // 0 = random, 1+ = producto de evolucion
 
   // Status
   status: {

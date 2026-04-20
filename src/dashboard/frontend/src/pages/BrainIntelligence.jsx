@@ -12,7 +12,7 @@ import {
   getAgentActivity, runAccountAgent, getAgentAdsetDetail, getAgentThoughts, getAgentPerformance,
   generateCopyForUpload, uploadAndCreateAd,
   getProducts, createProduct, deleteProduct, addProductImages, getProductImageUrl, runCreativeAgentApi,
-  getCreativeProposals, approveCreativeProposal, rejectCreativeProposal, getProposalImageUrl, sendProposalFeedback, getApolloIntelligence, getDNALab, updateProduct, deleteProductImage,
+  getCreativeProposals, approveCreativeProposal, rejectCreativeProposal, getProposalImageUrl, sendProposalFeedback, getApolloIntelligence, getDNALab, setApolloEvolutionRatio, updateProduct, deleteProductImage,
   getTestRuns, killTestRun, runTestingAgentApi, getTestImageUrl,
   getZeusIntelligence, runZeusApi, getZeusThoughts, getZeusConversations,
   getAresIntelligence, runAresApi
@@ -1419,6 +1419,99 @@ function ApolloPanel({ products, proposals, readyProposals, historyProposals, lo
 
       {apolloSubTab === 'dna' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Evolution Control — feature flag slider */}
+          {dnaData?.evolution && (
+            <div style={{ background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.08), rgba(139, 92, 246, 0.02))', borderRadius: 'var(--radius-md)', padding: '16px 20px', border: '1px solid rgba(139, 92, 246, 0.3)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <span style={{ fontSize: '1.1rem' }}>⚡</span>
+                <div style={{ fontWeight: 700, color: '#8b5cf6' }}>Apollo Evolution Control</div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                  Feature flag: {Math.round(dnaData.evolution.active_ratio * 100)}% evolutionary
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                {[
+                  { v: 0, l: '0%', h: 'Legacy random' },
+                  { v: 0.2, l: '20%', h: 'Gradual intro' },
+                  { v: 0.5, l: '50%', h: 'A/B test' },
+                  { v: 0.8, l: '80%', h: 'Mostly evolutionary' },
+                  { v: 1.0, l: '100%', h: 'Full evolutionary' }
+                ].map(o => {
+                  const isActive = Math.abs((dnaData.evolution.active_ratio || 0) - o.v) < 0.01;
+                  return (
+                    <button key={o.v}
+                      onClick={async () => {
+                        if (!window.confirm(`Cambiar Apollo evolution a ${o.l} (${o.h})?`)) return;
+                        try {
+                          await setApolloEvolutionRatio(o.v);
+                          const params = { sort: dnaSort, min_samples: dnaMinSamples, limit: 50 };
+                          Object.entries(dnaFilters).forEach(([k, v]) => { if (v) params[k] = v; });
+                          const fresh = await getDNALab(params);
+                          setDnaData(fresh);
+                        } catch (err) { alert('Error: ' + err.message); }
+                      }}
+                      style={{
+                        flex: 1, padding: '10px 12px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+                        border: isActive ? '2px solid #8b5cf6' : '1px solid var(--border-color)',
+                        background: isActive ? 'rgba(139, 92, 246, 0.15)' : 'var(--bg-secondary)',
+                        color: 'var(--text-primary)', fontSize: '0.8rem', fontWeight: isActive ? 700 : 500
+                      }}>
+                      <div>{o.l}</div>
+                      <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', marginTop: 2 }}>{o.h}</div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Space metrics */}
+              {dnaData.evolution.dna_space && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 12 }}>
+                  {[
+                    { l: 'Entropy', v: dnaData.evolution.dna_space.normalized_entropy ?? 0, sub: dnaData.evolution.dna_space.convergence_status },
+                    { l: 'DNAs únicos', v: dnaData.evolution.dna_space.unique_dnas ?? 0, sub: 'testing' },
+                    { l: 'Dominant DNA', v: (dnaData.evolution.dna_space.dominant_dna_pct ?? 0) + '%', sub: 'del total spend' },
+                    { l: 'Total tests', v: dnaData.evolution.dna_space.total_tests ?? 0, sub: 'en DNA space' }
+                  ].map((s, i) => (
+                    <div key={i} style={{ background: 'var(--bg-secondary)', borderRadius: 6, padding: 8, textAlign: 'center' }}>
+                      <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#8b5cf6' }}>{s.v}</div>
+                      <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>{s.l}</div>
+                      <div style={{ fontSize: '0.55rem', color: 'var(--text-muted)', opacity: 0.7, marginTop: 2 }}>{s.sub}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Strategy breakdown ultimos 7d */}
+              {dnaData.evolution.proposals_last_7d?.strategy_ratios && (
+                <div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: 6 }}>
+                    Strategy mix (últimos 7d, {dnaData.evolution.proposals_last_7d.total} proposals):
+                  </div>
+                  <div style={{ display: 'flex', height: 20, borderRadius: 10, overflow: 'hidden' }}>
+                    {[
+                      { k: 'random', c: '#6b7280' },
+                      { k: 'exploit', c: '#10b981' },
+                      { k: 'mutate', c: '#f59e0b' },
+                      { k: 'crossover', c: '#8b5cf6' },
+                      { k: 'explore', c: '#3b82f6' }
+                    ].map(s => {
+                      const pct = dnaData.evolution.proposals_last_7d.strategy_ratios[s.k] || 0;
+                      if (pct === 0) return null;
+                      return <div key={s.k} style={{ width: pct + '%', background: s.c, fontSize: '0.6rem', color: 'white', textAlign: 'center', lineHeight: '20px' }} title={`${s.k}: ${pct}%`}>{pct > 8 ? pct + '%' : ''}</div>;
+                    })}
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, marginTop: 6, fontSize: '0.62rem', color: 'var(--text-muted)', flexWrap: 'wrap' }}>
+                    {['random', 'exploit', 'mutate', 'crossover', 'explore'].map(k => {
+                      const pct = dnaData.evolution.proposals_last_7d.strategy_ratios[k] || 0;
+                      const count = dnaData.evolution.proposals_last_7d.by_strategy[k] || 0;
+                      return <span key={k}>● {k}: {pct}% ({count})</span>;
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Header + Stats globales */}
           <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '16px 20px', border: '1px solid rgba(139, 92, 246, 0.2)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>

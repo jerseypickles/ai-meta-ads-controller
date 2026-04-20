@@ -345,6 +345,11 @@ export const getDNALab = async (params = {}) => {
   return response.data;
 };
 
+export const setApolloEvolutionRatio = async (ratio) => {
+  const response = await api.post('/api/creative-agent/evolution/ratio', { ratio });
+  return response.data;
+};
+
 export const updateProduct = async (productId, data) => {
   const response = await api.patch(`/api/creative-agent/products/${productId}`, data);
   return response.data;

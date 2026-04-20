@@ -12,6 +12,7 @@ const MetricSnapshot = require('../../db/models/MetricSnapshot');
 const { getLatestSnapshots, getAdsForAdSet } = require('../../db/queries');
 const ZeusDirective = require('../../db/models/ZeusDirective');
 const { buildDNA } = require('../creative/dna-helper');
+const { shouldEvolveThisGeneration, evolveNextDNA, registerEvolutionaryDNA } = require('../creative/evolution-engine');
 
 const claude = new Anthropic({ apiKey: config.claude.apiKey });
 
@@ -637,12 +638,52 @@ async function runCreativeAgent() {
       }
 
       for (const scenePick of scenePicks) {
-        const scene = scenePick.scene;
-        const sceneShort = scenePick.short;
+        let scene = scenePick.scene;
+        let sceneShort = scenePick.short;
 
         // Pick random style and copy angle (ajustados por Zeus)
-        const style = weightedPick(adjustedStyles);
-        const copyAngle = weightedPick(adjustedAngles);
+        let style = weightedPick(adjustedStyles);
+        let copyAngle = weightedPick(adjustedAngles);
+
+        // ═══ FASE 3 — EVOLUTION CHECK ═══
+        // Con feature flag apollo_evolution_ratio, algunas generaciones usan DNA-driven
+        // en vez de random. Por default flag=0 → siempre random (legacy).
+        let evolutionInfo = null;
+        const evolve = await shouldEvolveThisGeneration();
+        if (evolve) {
+          const result = await evolveNextDNA();
+          if (result && result.dimensions) {
+            const evoDims = result.dimensions;
+            // Override scene si evolution sugiere una del pool
+            if (evoDims.scene && evoDims.scene !== 'unknown') {
+              const matchedScene = rankedScenes.find(s => s.short === evoDims.scene || s.scene.includes(evoDims.scene));
+              if (matchedScene) {
+                scene = matchedScene.scene;
+                sceneShort = matchedScene.short;
+              }
+            }
+            // Override style si valido
+            if (evoDims.style && evoDims.style !== 'unknown') {
+              const matchedStyle = adjustedStyles.find(s => s.key === evoDims.style);
+              if (matchedStyle) style = matchedStyle;
+            }
+            // Override angle si valido
+            if (evoDims.copy_angle && evoDims.copy_angle !== 'unknown') {
+              const matchedAngle = adjustedAngles.find(a => a.key === evoDims.copy_angle);
+              if (matchedAngle) copyAngle = matchedAngle;
+            }
+            // NOTA: product NO se override cuando ad set ya lo determinó (business constraint).
+            //       El DNA del proposal va a tener el product del ad set, no el de evolution.
+            evolutionInfo = result;
+            logger.info(`[CREATIVE-AGENT] EVOLUTION: ${result.strategy} — ${result.rationale}`);
+            // Register new DNA si fue mutation/crossover (puede ser DNA inedito)
+            if (['mutate', 'crossover'].includes(result.strategy)) {
+              await registerEvolutionaryDNA(result);
+            }
+          } else {
+            logger.debug(`[CREATIVE-AGENT] Evolution attempted pero sin result — fallback a random`);
+          }
+        }
 
         // Build prompt — custom template o generico
         let prompt;
@@ -675,6 +716,15 @@ async function runCreativeAgent() {
           headline: copy.headline
         });
 
+        // Evolution metadata (Fase 3)
+        const evolutionStrategy = evolutionInfo?.strategy || 'random';
+        const parentHashes = [];
+        if (evolutionInfo?.source_dna?.dna_hash) parentHashes.push(evolutionInfo.source_dna.dna_hash);
+        if (evolutionInfo?.source_dnas) {
+          for (const p of evolutionInfo.source_dnas) if (p.dna_hash) parentHashes.push(p.dna_hash);
+        }
+        const generationNumber = parentHashes.length > 0 ? 1 : 0;
+
         await CreativeProposal.create({
           adset_id: adsetId,
           adset_name: adsetName,
@@ -693,6 +743,9 @@ async function runCreativeAgent() {
           framing: dna.framing,
           hook_type: dna.hook_type,
           dna_hash: dna.dna_hash,
+          evolution_strategy: evolutionStrategy,
+          parent_dna_hashes: parentHashes,
+          generation: generationNumber,
           status: 'ready'
         });
 

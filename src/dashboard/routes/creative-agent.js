@@ -460,12 +460,38 @@ router.get('/dna', async (req, res) => {
     const totalSpend = allDnas.reduce((s, d) => s + (d.fitness?.total_spend || 0), 0);
     const totalRevenue = allDnas.reduce((s, d) => s + (d.fitness?.total_revenue || 0), 0);
 
+    // Evolution metrics (Fase 4 observability)
+    const { computeDNASpaceMetrics, getEvolutionRatio } = require('../../ai/creative/evolution-engine');
+    const evolutionRatio = await getEvolutionRatio();
+    const dnaSpaceMetrics = await computeDNASpaceMetrics();
+
+    // Breakdown de proposals por estrategia (ultimos 7d)
+    const CreativeProposal = require('../../db/models/CreativeProposal');
+    const sevenDaysAgo = new Date(Date.now() - 7 * 86400000);
+    const strategyBreakdown = await CreativeProposal.aggregate([
+      { $match: { created_at: { $gte: sevenDaysAgo } } },
+      { $group: { _id: '$evolution_strategy', count: { $sum: 1 } } }
+    ]);
+    const strategyCounts = { random: 0, exploit: 0, mutate: 0, crossover: 0, explore: 0 };
+    for (const r of strategyBreakdown) {
+      if (r._id) strategyCounts[r._id] = r.count;
+    }
+    const totalProposals7d = Object.values(strategyCounts).reduce((s, n) => s + n, 0);
+
+    // Linaje: contar DNAs por generation
+    const generationBreakdown = await CreativeDNA.aggregate([
+      { $match: { 'fitness.tests_total': { $gte: 1 } } },
+      { $group: { _id: '$generation', count: { $sum: 1 } } },
+      { $sort: { _id: 1 } }
+    ]);
+
     res.json({
       dnas: dnas.map(d => ({
         dna_hash: d.dna_hash,
         dimensions: d.dimensions,
         fitness: d.fitness,
         generation: d.generation,
+        parent_dnas: d.parent_dnas,
         created_via: d.created_via,
         last_test_at: d.fitness?.last_test_at,
         first_seen_at: d.first_seen_at
@@ -480,11 +506,48 @@ router.get('/dna', async (req, res) => {
         total_revenue: Math.round(totalRevenue),
         aggregate_roas: totalSpend > 0 ? Math.round((totalRevenue / totalSpend) * 100) / 100 : 0
       },
+      // Fase 4 — evolution metrics
+      evolution: {
+        active_ratio: evolutionRatio,                        // 0.0 - 1.0 feature flag actual
+        mode: evolutionRatio === 0 ? 'disabled' : evolutionRatio === 1 ? 'full' : 'gradual',
+        dna_space: dnaSpaceMetrics,                          // entropy + convergence status
+        proposals_last_7d: {
+          total: totalProposals7d,
+          by_strategy: strategyCounts,
+          strategy_ratios: totalProposals7d > 0 ? {
+            random: Math.round((strategyCounts.random / totalProposals7d) * 100),
+            exploit: Math.round((strategyCounts.exploit / totalProposals7d) * 100),
+            mutate: Math.round((strategyCounts.mutate / totalProposals7d) * 100),
+            crossover: Math.round((strategyCounts.crossover / totalProposals7d) * 100),
+            explore: Math.round((strategyCounts.explore / totalProposals7d) * 100)
+          } : null
+        },
+        generations: generationBreakdown.map(g => ({ generation: g._id, dnas: g.count }))
+      },
       filter_applied: filter,
       sort_applied: sort
     });
   } catch (err) {
     logger.error(`[CREATIVE-AGENT] Error en /dna: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/creative-agent/evolution/ratio — ajustar feature flag de Apollo evolution
+ * Body: { ratio: 0.0 - 1.0 }
+ */
+router.post('/evolution/ratio', async (req, res) => {
+  try {
+    const SystemConfig = require('../../db/models/SystemConfig');
+    const ratio = parseFloat(req.body?.ratio);
+    if (isNaN(ratio) || ratio < 0 || ratio > 1) {
+      return res.status(400).json({ error: 'ratio debe ser número entre 0.0 y 1.0' });
+    }
+    await SystemConfig.set('apollo_evolution_ratio', ratio, 'apollo_evolution');
+    logger.info(`[CREATIVE-AGENT] Evolution ratio actualizado: ${ratio}`);
+    res.json({ success: true, new_ratio: ratio });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
