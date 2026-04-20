@@ -6,6 +6,11 @@ import MorningBriefing from '../components/MorningBriefing';
 import NeuralCommandCenter from '../components/NeuralCommandCenter';
 import TemporalSpine from '../components/TemporalSpine';
 import DNAGenomeSpace from '../components/DNAGenomeSpace';
+import ZeusPanel from '../components/agents/ZeusPanel';
+import AthenaPanel from '../components/agents/AthenaPanel';
+import ApolloPanel from '../components/agents/ApolloPanel';
+import PrometheusPanel from '../components/agents/PrometheusPanel';
+import AresPanel from '../components/agents/AresPanel';
 
 export default function BrainOS() {
   const [selectedAgent, setSelectedAgent] = useState(null);
@@ -93,57 +98,50 @@ export default function BrainOS() {
 }
 
 function AgentDetailPanel({ agent, onClose }) {
-  const agentInfo = {
-    zeus: { icon: '⚡', name: 'Zeus', role: 'CEO Strategic', desc: 'Analiza cuenta completa cada 6h. Opus 4.7. Emite directivas para los 4 agentes. 4 ciclos/día.' },
-    athena: { icon: '🦉', name: 'Athena', role: 'Account Manager', desc: 'Gestiona ABO production cada 2h. Sonnet 4.6. 13 tools: scale, pause, reactivate. Excluye [TEST] y [Ares].' },
-    apollo: { icon: '☀️', name: 'Apollo', role: 'Creator', desc: 'Genera creativos 3x/día. Gemini 3 + Claude. Persiste DNA completo. Fase 3 evolution ready (flag 0%).' },
-    prometheus: { icon: '🔥', name: 'Prometheus', role: 'Tester', desc: 'Testea creativos en [TESTING] campaign 5x/día. Procedural. Graduate ≥3x ROAS + 2 purch. Kill agresivo.' },
-    ares: { icon: '⚔️', name: 'Ares', role: 'Portfolio Manager', desc: '3 CBOs (Production, Rising, Medición). Criterios endurecidos. Retirement auto. Futuro: migración a Claude.' }
+  const panels = {
+    zeus: <ZeusPanel />,
+    athena: <AthenaPanel />,
+    apollo: <ApolloPanel />,
+    prometheus: <PrometheusPanel />,
+    ares: <AresPanel />
   };
-
-  const info = agentInfo[agent] || { icon: '?', name: agent, role: '', desc: '' };
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: '2.4rem' }}>{info.icon}</span>
-          <div>
-            <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--bos-text)' }}>{info.name}</div>
-            <div style={{ fontSize: '0.78rem', color: 'var(--bos-text-muted)' }}>{info.role}</div>
-          </div>
-        </div>
-        <button
-          onClick={onClose}
-          style={{
-            background: 'transparent', border: 'none',
-            color: 'var(--bos-text-muted)', fontSize: '1.5rem',
-            cursor: 'pointer', padding: 8
-          }}
-        >
-          ✕
-        </button>
-      </div>
-      <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.2)', borderRadius: 12, padding: 16, fontSize: '0.85rem', color: 'var(--bos-text)', lineHeight: 1.6 }}>
-        {info.desc}
-      </div>
+      {/* Close button — floating top right */}
+      <button
+        onClick={onClose}
+        style={{
+          position: 'absolute',
+          top: 20,
+          right: 20,
+          background: 'rgba(17, 21, 51, 0.9)',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+          color: 'var(--bos-text-muted)',
+          fontSize: '1.2rem',
+          cursor: 'pointer',
+          width: 36,
+          height: 36,
+          borderRadius: 18,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 5,
+          transition: 'all 0.2s'
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.color = 'var(--bos-text)';
+          e.currentTarget.style.borderColor = 'var(--bos-synapse)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.color = 'var(--bos-text-muted)';
+          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+        }}
+      >
+        ✕
+      </button>
 
-      <div style={{ marginTop: 24 }}>
-        <div style={{ fontSize: '0.7rem', color: 'var(--bos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
-          Ver detalle completo
-        </div>
-        <button
-          onClick={() => { window.location.href = '/brain-legacy?tab=' + agent; }}
-          style={{
-            background: 'linear-gradient(90deg, var(--bos-synapse), var(--bos-electric))',
-            color: 'white', border: 'none', borderRadius: 10,
-            padding: '12px 20px', fontSize: '0.85rem', fontWeight: 600,
-            cursor: 'pointer', width: '100%'
-          }}
-        >
-          Abrir panel completo de {info.name} →
-        </button>
-      </div>
+      {panels[agent] || <div className="bos-loading">Panel no disponible</div>}
     </div>
   );
 }
