@@ -9,8 +9,11 @@ const CreativeProposal = require('../../db/models/CreativeProposal');
 const ActionLog = require('../../db/models/ActionLog');
 const ZeusDirective = require('../../db/models/ZeusDirective');
 const BrainInsight = require('../../db/models/BrainInsight');
+const BrainMemory = require('../../db/models/BrainMemory');
+const SafetyEvent = require('../../db/models/SafetyEvent');
+const AICreation = require('../../db/models/AICreation');
 const SystemConfig = require('../../db/models/SystemConfig');
-const { getLatestSnapshots } = require('../../db/queries');
+const { getLatestSnapshots, getSnapshotHistory, getOverviewHistory } = require('../../db/queries');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Tool definitions (Anthropic format)
@@ -123,6 +126,91 @@ const TOOL_DEFINITIONS = [
     input_schema: {
       type: 'object',
       properties: {
+        limit: { type: 'number', default: 15 }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'query_adset_detail',
+    description: 'Zoom-in completo a UN ad set específico: métricas actuales + historia últimos 30 días + tests asociados + acciones ejecutadas + memoria del brain. Usa esta cuando el usuario pregunte por algo específico.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        adset_query: { type: 'string', description: 'ID o substring del nombre del ad set' },
+        days_back: { type: 'number', default: 14, description: 'Cuántos días de historia traer' }
+      },
+      required: ['adset_query']
+    }
+  },
+  {
+    name: 'query_overview_history',
+    description: 'Time-series día-por-día del portfolio completo: spend, revenue, ROAS, CPA diarios. Úsalo para responder "cómo fue el día X", "cómo venimos la semana", trends.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        days_back: { type: 'number', default: 14, description: 'Número de días hacia atrás (max 90)' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'query_time_series',
+    description: 'Time-series día-por-día de UNA entidad específica. Útil para trackear evolución de un ad set o campaña.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        entity_id: { type: 'string', description: 'Entity ID de Meta' },
+        days_back: { type: 'number', default: 14, description: 'Días hacia atrás' }
+      },
+      required: ['entity_id']
+    }
+  },
+  {
+    name: 'query_brain_memory',
+    description: 'Memoria que el Brain tiene sobre una entidad: patrones aprendidos, preferencias, historial de acciones, notas.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        entity_id: { type: 'string', description: 'Entity ID o name substring' }
+      },
+      required: ['entity_id']
+    }
+  },
+  {
+    name: 'query_safety_events',
+    description: 'Eventos de safety: kill switch triggers, anomalías detectadas, cooldown hits. Histórico de "qué se evitó hacer y por qué".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        days_back: { type: 'number', default: 7 },
+        severity: { type: 'string', enum: ['all', 'critical', 'high', 'medium'], default: 'all' },
+        limit: { type: 'number', default: 15 }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'query_creative_proposals',
+    description: 'Pipeline de creativos de Apollo: proposals generadas, ready, testing, graduados, killed. Filtros por status y ventana temporal.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['all', 'pending', 'ready', 'testing', 'graduated', 'killed', 'rejected'], default: 'all' },
+        hours_back: { type: 'number', default: 48 },
+        limit: { type: 'number', default: 20 }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'query_ai_creations',
+    description: 'Entidades creadas por AI (ad sets, ads) con su ciclo de vida: learning/testing/scaling/killed + verdict measurable a 1d/3d/7d.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        phase: { type: 'string', enum: ['all', 'learning', 'testing', 'scaling', 'killed', 'graduated'], default: 'all' },
+        days_back: { type: 'number', default: 14 },
         limit: { type: 'number', default: 15 }
       },
       required: []
@@ -386,6 +474,201 @@ async function handleQueryDuplications(input) {
   }));
 }
 
+async function handleQueryAdsetDetail(input) {
+  const days = Math.min(input.days_back || 14, 90);
+  const snapshots = await getLatestSnapshots('adset');
+
+  // Resolver entity por id o por nombre
+  let match = snapshots.find(s => s.entity_id === input.adset_query);
+  if (!match) {
+    const q = (input.adset_query || '').toLowerCase();
+    match = snapshots.find(s => (s.entity_name || '').toLowerCase().includes(q));
+  }
+  if (!match) return { error: `No encontré un ad set con query "${input.adset_query}"` };
+
+  // History día-por-día
+  const history = await getSnapshotHistory(match.entity_id, days).catch(() => []);
+
+  // Actions ejecutadas sobre este adset
+  const actions = await ActionLog.find({ entity_id: match.entity_id, success: true })
+    .sort({ executed_at: -1 }).limit(20).lean();
+
+  // Tests con este adset como source
+  const tests = await TestRun.find({ source_adset_id: match.entity_id })
+    .sort({ launched_at: -1 }).limit(10).lean();
+
+  // Memoria del brain
+  const memory = await BrainMemory.findOne({ entity_id: match.entity_id }).lean();
+
+  const m7 = match.metrics?.last_7d || {};
+  const m14 = match.metrics?.last_14d || {};
+  return {
+    entity: {
+      id: match.entity_id,
+      name: match.entity_name,
+      campaign: match.campaign_name,
+      status: match.status,
+      daily_budget: match.daily_budget,
+      learning_stage: match.learning_stage
+    },
+    current_metrics: {
+      roas_7d: +(m7.roas || 0).toFixed(2),
+      spend_7d: Math.round(m7.spend || 0),
+      purchases_7d: m7.purchases || 0,
+      cpa_7d: m7.purchases > 0 ? +(m7.spend / m7.purchases).toFixed(2) : null,
+      frequency: +(m7.frequency || 0).toFixed(2),
+      ctr: +(m7.ctr || 0).toFixed(2),
+      roas_14d: +(m14.roas || 0).toFixed(2)
+    },
+    daily_history: history.slice(-days).map(h => ({
+      date: h.date,
+      spend: Math.round(h.spend || 0),
+      roas: +(h.roas || 0).toFixed(2),
+      purchases: h.purchases || 0
+    })),
+    recent_actions: actions.slice(0, 10).map(a => ({
+      action: a.action, agent: a.agent_type, executed_at: a.executed_at,
+      reasoning: a.reasoning?.substring(0, 150),
+      impact_7d: a.impact_7d ? { roas_delta: a.impact_7d.roas_delta } : null
+    })),
+    tests: tests.map(t => ({
+      phase: t.phase, launched_at: t.launched_at,
+      roas: t.metrics?.roas, purchases: t.metrics?.purchases,
+      source_adset: t.source_adset_name
+    })),
+    brain_memory: memory ? {
+      notes: memory.notes?.substring(0, 300),
+      action_count: memory.action_history?.length || 0,
+      last_updated: memory.last_updated_at
+    } : null
+  };
+}
+
+async function handleQueryOverviewHistory(input) {
+  const days = Math.min(input.days_back || 14, 90);
+  const history = await getOverviewHistory(days).catch(() => []);
+  return history.map(h => ({
+    date: h.date,
+    spend: Math.round(h.spend || 0),
+    revenue: Math.round(h.revenue || 0),
+    roas: +(h.roas || 0).toFixed(2),
+    purchases: h.purchases || 0,
+    cpa: h.purchases > 0 ? +(h.spend / h.purchases).toFixed(2) : null
+  }));
+}
+
+async function handleQueryTimeSeries(input) {
+  if (!input.entity_id) return { error: 'entity_id requerido' };
+  const days = Math.min(input.days_back || 14, 90);
+  const history = await getSnapshotHistory(input.entity_id, days).catch(() => []);
+  return {
+    entity_id: input.entity_id,
+    days_back: days,
+    series: history.map(h => ({
+      date: h.date,
+      spend: Math.round(h.spend || 0),
+      roas: +(h.roas || 0).toFixed(2),
+      purchases: h.purchases || 0,
+      frequency: +(h.frequency || 0).toFixed(2)
+    }))
+  };
+}
+
+async function handleQueryBrainMemory(input) {
+  if (!input.entity_id) return { error: 'entity_id requerido' };
+
+  // Intentar match exacto por id
+  let memory = await BrainMemory.findOne({ entity_id: input.entity_id }).lean();
+
+  // Si no, buscar por substring en nombre
+  if (!memory) {
+    const regex = new RegExp(input.entity_id.substring(0, 30), 'i');
+    memory = await BrainMemory.findOne({ entity_name: regex }).lean();
+  }
+
+  if (!memory) return { error: `Sin memoria para "${input.entity_id}"` };
+
+  return {
+    entity_id: memory.entity_id,
+    entity_name: memory.entity_name,
+    entity_type: memory.entity_type,
+    notes: memory.notes,
+    patterns: memory.patterns,
+    preferences: memory.preferences,
+    recent_actions: (memory.action_history || []).slice(-10).map(a => ({
+      action: a.action,
+      date: a.date,
+      outcome: a.outcome
+    })),
+    last_updated: memory.last_updated_at
+  };
+}
+
+async function handleQuerySafetyEvents(input) {
+  const days = input.days_back || 7;
+  const since = new Date(Date.now() - days * 86400000);
+  const filter = { created_at: { $gte: since } };
+  if (input.severity && input.severity !== 'all') filter.severity = input.severity;
+
+  const events = await SafetyEvent.find(filter)
+    .sort({ created_at: -1 })
+    .limit(Math.min(input.limit || 15, 40))
+    .lean();
+
+  return events.map(e => ({
+    type: e.event_type,
+    severity: e.severity,
+    entity: e.entity_name,
+    reason: e.reason?.substring(0, 200),
+    action_taken: e.action_taken,
+    created_at: e.created_at
+  }));
+}
+
+async function handleQueryCreativeProposals(input) {
+  const hours = input.hours_back || 48;
+  const since = new Date(Date.now() - hours * 3600000);
+  const filter = { created_at: { $gte: since } };
+  if (input.status && input.status !== 'all') filter.status = input.status;
+
+  const proposals = await CreativeProposal.find(filter)
+    .sort({ created_at: -1 })
+    .limit(Math.min(input.limit || 20, 50))
+    .lean();
+
+  return proposals.map(p => ({
+    headline: p.headline,
+    status: p.status,
+    product: p.product_name,
+    scene: p.scene_short,
+    evolution_strategy: p.evolution_strategy,
+    created_at: p.created_at,
+    rejection_reason: p.rejection_reason
+  }));
+}
+
+async function handleQueryAICreations(input) {
+  const days = input.days_back || 14;
+  const since = new Date(Date.now() - days * 86400000);
+  const filter = { created_at: { $gte: since } };
+  if (input.phase && input.phase !== 'all') filter.lifecycle_phase = input.phase;
+
+  const creations = await AICreation.find(filter)
+    .sort({ created_at: -1 })
+    .limit(Math.min(input.limit || 15, 40))
+    .lean();
+
+  return creations.map(c => ({
+    type: c.creation_type,
+    entity_name: c.entity_name,
+    phase: c.lifecycle_phase,
+    verdict: c.verdict,
+    created_at: c.created_at,
+    measured_1d: c.impact_1d ? { roas: c.impact_1d.roas, purchases: c.impact_1d.purchases } : null,
+    measured_7d: c.impact_7d ? { roas: c.impact_7d.roas, purchases: c.impact_7d.purchases } : null
+  }));
+}
+
 const TOOL_HANDLERS = {
   query_portfolio: handleQueryPortfolio,
   query_adsets: handleQueryAdsets,
@@ -395,7 +678,14 @@ const TOOL_HANDLERS = {
   query_directives: handleQueryDirectives,
   query_insights: handleQueryInsights,
   query_hypotheses: handleQueryHypotheses,
-  query_duplications: handleQueryDuplications
+  query_duplications: handleQueryDuplications,
+  query_adset_detail: handleQueryAdsetDetail,
+  query_overview_history: handleQueryOverviewHistory,
+  query_time_series: handleQueryTimeSeries,
+  query_brain_memory: handleQueryBrainMemory,
+  query_safety_events: handleQuerySafetyEvents,
+  query_creative_proposals: handleQueryCreativeProposals,
+  query_ai_creations: handleQueryAICreations
 };
 
 async function executeTool(toolName, input) {
