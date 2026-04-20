@@ -89,6 +89,7 @@ router.get('/greeting/stream', async (req, res) => {
       conversation_id: conversationId,
       role: 'system_greeting',
       content: result.text,
+      followups: result.followups || [],
       tool_calls: result.tool_calls,
       context_snapshot: result.context_snapshot,
       tokens_used: result.tokens_used,
@@ -167,6 +168,7 @@ router.get('/chat/stream', async (req, res) => {
       conversation_id,
       role: 'assistant',
       content: result.text,
+      followups: result.followups || [],
       tool_calls: result.tool_calls,
       tokens_used: result.tokens_used,
       ai_model: result.model

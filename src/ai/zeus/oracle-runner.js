@@ -11,6 +11,7 @@ const { buildOracleContext, formatContextForPrompt } = require('./oracle-context
 const claude = new Anthropic({ apiKey: config.claude.apiKey });
 const MODEL = 'claude-opus-4-7';
 const MAX_TOOL_ROUNDS = 10;
+const THINKING_BUDGET_TOKENS = 6000;
 
 const ZEUS_PERSONA = `Eres Zeus, el CEO del equipo de AI Meta Ads para Jersey Pickles (marca de pepinillos y productos fermentados). Tu rol:
 
@@ -34,15 +35,36 @@ USO DE TOOLS — SÉ AGRESIVO Y PROACTIVO:
 - Usá los tools específicos cuando aplique: query_ads para ads individuales, query_campaigns para detalle de campañas, query_recommendations para ver qué hay pending approval, query_products para info del ProductBank, query_strategic_directives para guía de largo plazo, query_agent_conversations para ver qué se dicen los agentes entre ellos.
 
 FORMATO DE RESPUESTA (IMPORTANTE):
-- Escribí en markdown. Usá **negrita** para números clave, *itálicas* para nombres de entidades, listas con - para enumerar.
-- Usá párrafos cortos (2-3 oraciones máx) separados por línea en blanco.
-- Si enumerás métricas, hacelo en lista:
-  - **Spend 7d**: $X
-  - **ROAS**: Yx
-  - **Compras**: Z
-- Para nombres de ad sets/campañas usá \`código\` (backticks).
-- NO uses headers ## grandes. Respondé natural, no como un reporte.
-- Sé conciso pero completo. Evitá respuestas de 15 líneas cuando 5 alcanzan.
+- Escribí en markdown. Usá **negrita** para números clave, *itálicas* para énfasis.
+- Párrafos cortos (2-3 oraciones máx) separados por línea en blanco.
+- Enumerás métricas en lista con bullets.
+- NO uses headers ## grandes. Respondé natural, no como reporte corporativo.
+- Sé conciso pero completo. 5 líneas mejor que 15 si el mensaje pasa igual.
+
+ENLACES INLINE (CRÍTICO):
+Cuando menciones entidades concretas, SIEMPRE usá markdown links con protocolo zeus:// para que el creador pueda abrir el panel correspondiente:
+
+- Ad set: \`[nombre del adset](zeus://adset/entity_id)\`
+- Ad individual: \`[nombre del ad](zeus://ad/entity_id)\`
+- Campaña: \`[nombre de campaña](zeus://campaign/entity_id)\`
+- Test de Prometheus: \`[test name](zeus://test/test_id)\`
+- DNA: \`[DNA descripción](zeus://dna/dna_hash)\`
+- Producto: \`[producto](zeus://product/product_slug)\`
+- Recomendación: \`[rec](zeus://rec/rec_id)\`
+- Agentes (para abrir su panel): \`[Athena](zeus://agent/athena)\` · \`[Apollo](zeus://agent/apollo)\` · \`[Prometheus](zeus://agent/prometheus)\` · \`[Ares](zeus://agent/ares)\`
+
+Los IDs los sacás de los tools. Si no tenés ID concreto, usá *itálicas* para el nombre. Pero si sí lo tenés, SIEMPRE formato link.
+
+FOLLOW-UPS (IMPORTANTE):
+Al final de CADA respuesta (excepto saludo automático diario), terminá con un bloque de 3 follow-ups que el creador podría querer explorar. Formato exacto:
+
+---FOLLOWUPS---
+- Primera sugerencia (corta, accionable, máx 8 palabras)
+- Segunda sugerencia
+- Tercera sugerencia
+---END---
+
+Buenos follow-ups: "qué ads tiene adentro", "compará con la semana pasada", "ver los killed del día", "explorar el DNA ganador". El frontend los renderiza como botones clickeables para que el creador avance la conversación con un click.
 
 PROACTIVIDAD:
 - Después de responder lo preguntado, SUGERÍ algo adyacente si vale la pena. "También noté que X, querés que te detalle?"
@@ -140,7 +162,11 @@ ${modeInstructions}`;
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const response = await claude.messages.create({
       model: MODEL,
-      max_tokens: 2048,
+      max_tokens: 4096,
+      thinking: {
+        type: 'enabled',
+        budget_tokens: THINKING_BUDGET_TOKENS
+      },
       system: systemPrompt,
       tools: TOOL_DEFINITIONS,
       messages
@@ -152,7 +178,13 @@ ${modeInstructions}`;
     let hadToolUse = false;
 
     for (const block of response.content) {
-      if (block.type === 'text') {
+      if (block.type === 'thinking') {
+        // Preservá el bloque de thinking para el próximo turno (requisito de Anthropic)
+        assistantContent.push(block);
+        onEvent('thinking', { text: block.thinking?.substring(0, 200) });
+      } else if (block.type === 'redacted_thinking') {
+        assistantContent.push(block);
+      } else if (block.type === 'text') {
         assistantContent.push(block);
         finalText += block.text;
         onEvent('text_delta', { text: block.text });
@@ -206,15 +238,41 @@ ${modeInstructions}`;
     }
   }
 
+  // Parsear follow-ups del final del texto
+  const { cleanText, followups } = extractFollowups(finalText);
+  if (followups.length > 0) {
+    onEvent('followups', { items: followups });
+  }
+
   onEvent('done', { tokens_used: tokensUsed, tool_calls: toolCallsExecuted.length });
 
   return {
-    text: finalText,
+    text: cleanText,
+    followups,
     tool_calls: toolCallsExecuted,
     tokens_used: tokensUsed,
     model: MODEL,
     context_snapshot: ctx
   };
+}
+
+/**
+ * Extrae un bloque ---FOLLOWUPS--- ... ---END--- del final del texto.
+ * Devuelve el texto limpio + lista de follow-ups.
+ */
+function extractFollowups(text) {
+  const regex = /---FOLLOWUPS---\s*([\s\S]*?)\s*---END---\s*$/;
+  const match = text.match(regex);
+  if (!match) return { cleanText: text, followups: [] };
+
+  const block = match[1];
+  const lines = block.split('\n')
+    .map(l => l.replace(/^\s*[-*]\s*/, '').trim())
+    .filter(Boolean)
+    .slice(0, 5);
+
+  const cleanText = text.replace(regex, '').trim();
+  return { cleanText, followups: lines };
 }
 
 function summarizeToolResult(tool, result) {

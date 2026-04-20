@@ -15,6 +15,9 @@ const zeusChatMessageSchema = new mongoose.Schema({
 
   content: { type: String, default: '' },
 
+  // Follow-ups sugeridos que Zeus generó para esta respuesta
+  followups: [{ type: String }],
+
   // Tool calls que hizo Zeus para responder (solo para role=assistant)
   tool_calls: [{
     tool: { type: String },

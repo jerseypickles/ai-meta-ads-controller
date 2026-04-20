@@ -91,6 +91,9 @@ export default function ZeusSpeaks() {
             localStorage.setItem(LS_CONV_KEY, data.conversation_id);
           }
         },
+        thinking: () => {
+          // Ya se muestra el orb pulsando; no cambiamos mode
+        },
         text_delta: (data) => {
           setStreamingText(prev => prev + (data.text || ''));
         },
@@ -102,6 +105,7 @@ export default function ZeusSpeaks() {
             t.tool === data.tool && t.status === 'running' ? { ...t, status: 'done', summary: data.summary } : t
           ));
         },
+        followups: () => { /* saludo típicamente no usa followups */ },
         error: () => {
           setStreaming(false);
           setMode('error');
@@ -288,7 +292,7 @@ function ZeusHero({ text, toolActivity, streaming, onCollapse, onReply }) {
         </div>
 
         <div className="zeus-hero-text zeus-markdown">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+          <ZeusMarkdown>{text}</ZeusMarkdown>
           {streaming && <span className="zeus-cursor">▌</span>}
         </div>
 
@@ -340,6 +344,56 @@ function ZeusHero({ text, toolActivity, streaming, onCollapse, onReply }) {
   );
 }
 
+/**
+ * Handler global para links zeus:// — navega al panel correspondiente.
+ * Se dispara un custom event que BrainOS escucha y abre el panel.
+ */
+function handleZeusLink(url) {
+  const m = url.match(/^zeus:\/\/([^/]+)\/(.+)$/);
+  if (!m) return false;
+  const [, kind, id] = m;
+
+  window.dispatchEvent(new CustomEvent('zeus-navigate', {
+    detail: { kind, id }
+  }));
+  return true;
+}
+
+function ZeusMarkdown({ children }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ href, children, ...props }) => {
+          if (href && href.startsWith('zeus://')) {
+            return (
+              <a
+                href="#"
+                className="zeus-entity-link"
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleZeusLink(href);
+                }}
+                {...props}
+              >
+                {children}
+              </a>
+            );
+          }
+          return <a href={href} target="_blank" rel="noreferrer" {...props}>{children}</a>;
+        }
+      }}
+    >
+      {children || ''}
+    </ReactMarkdown>
+  );
+}
+
+function stripFollowupsBlock(text) {
+  if (!text) return text;
+  return text.replace(/---FOLLOWUPS---[\s\S]*?---END---\s*$/, '').trim();
+}
+
 function formatConvDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -389,8 +443,10 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [thinking, setThinking] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const [toolActivity, setToolActivity] = useState([]);
+  const [pendingFollowups, setPendingFollowups] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(!!conversationId);
   const [showConversationList, setShowConversationList] = useState(false);
   const [conversationList, setConversationList] = useState([]);
@@ -398,6 +454,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   const esRef = useRef(null);
   const streamingTextRef = useRef('');
   const toolActivityRef = useRef([]);
+  const followupsRef = useRef([]);
   const initialHandledRef = useRef(false);
 
   async function loadConversationList() {
@@ -427,6 +484,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
 
   useEffect(() => { streamingTextRef.current = streamingText; }, [streamingText]);
   useEffect(() => { toolActivityRef.current = toolActivity; }, [toolActivity]);
+  useEffect(() => { followupsRef.current = pendingFollowups; }, [pendingFollowups]);
 
   useEffect(() => {
     if (conversationId) loadHistory(conversationId);
@@ -466,8 +524,10 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
     if (!msg || streaming) return;
     if (override == null) setInput('');
     setStreaming(true);
+    setThinking(false);
     setStreamingText('');
     setToolActivity([]);
+    setPendingFollowups([]);
 
     setMessages(prev => [...prev, { role: 'user', content: msg, _local: true, created_at: new Date() }]);
 
@@ -480,7 +540,11 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
           onNewConversation(data.conversation_id);
         }
       },
-      text_delta: (data) => setStreamingText(prev => prev + (data.text || '')),
+      thinking: () => setThinking(true),
+      text_delta: (data) => {
+        setThinking(false);
+        setStreamingText(prev => prev + (data.text || ''));
+      },
       tool_use_start: (data) => {
         setToolActivity(prev => [...prev, { tool: data.tool, status: 'running' }]);
       },
@@ -489,20 +553,35 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
           t.tool === data.tool && t.status === 'running' ? { ...t, status: 'done', summary: data.summary } : t
         ));
       },
+      followups: (data) => {
+        setPendingFollowups(data.items || []);
+      },
       end: () => {
         setMessages(prev => {
           const next = [...prev.filter(m => !m._local)];
           next.push({ role: 'user', content: msg, created_at: new Date() });
-          next.push({ role: 'assistant', content: streamingTextRef.current || '', created_at: new Date(), tool_calls: toolActivityRef.current });
+          // El finalText que mandó el server ya viene SIN el bloque ---FOLLOWUPS---
+          // pero streamingText lo acumuló todo; limpiamos aquí:
+          const cleanText = stripFollowupsBlock(streamingTextRef.current || '');
+          next.push({
+            role: 'assistant',
+            content: cleanText,
+            followups: followupsRef.current,
+            created_at: new Date(),
+            tool_calls: toolActivityRef.current
+          });
           return next;
         });
         setStreamingText('');
         setToolActivity([]);
         setStreaming(false);
+        setThinking(false);
+        // pendingFollowups se mantiene para que sigan visibles
         es.close();
       },
       error: () => {
         setStreaming(false);
+        setThinking(false);
         es.close();
       }
     });
@@ -607,13 +686,25 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
               )}
 
               {messages.map((m, i) => (
-                <MessageBubble key={i} message={m} />
+                <MessageBubble
+                  key={i}
+                  message={m}
+                  onFollowup={(q) => sendMessage(q)}
+                />
               ))}
 
               {streaming && (
                 <div className="zeus-msg zeus-msg-assistant">
                   <div className="zeus-msg-avatar">⚡</div>
                   <div className="zeus-msg-content">
+                    {thinking && !streamingText && (
+                      <div className="zeus-thinking-indicator">
+                        <span className="zeus-thinking-dot" />
+                        <span className="zeus-thinking-dot" />
+                        <span className="zeus-thinking-dot" />
+                        <span style={{ marginLeft: 6 }}>pensando profundamente...</span>
+                      </div>
+                    )}
                     {toolActivity.length > 0 && (
                       <div className="zeus-msg-tools">
                         {toolActivity.map((t, i) => (
@@ -624,11 +715,28 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                         ))}
                       </div>
                     )}
-                    <div className="zeus-msg-text zeus-markdown">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamingText}</ReactMarkdown>
-                      <span className="zeus-cursor">▌</span>
-                    </div>
+                    {streamingText && (
+                      <div className="zeus-msg-text zeus-markdown">
+                        <ZeusMarkdown>{stripFollowupsBlock(streamingText)}</ZeusMarkdown>
+                        <span className="zeus-cursor">▌</span>
+                      </div>
+                    )}
                   </div>
+                </div>
+              )}
+
+              {/* Follow-up suggestions debajo del último mensaje */}
+              {!streaming && pendingFollowups.length > 0 && (
+                <div className="zeus-followups">
+                  {pendingFollowups.map((f, i) => (
+                    <button
+                      key={i}
+                      className="zeus-followup-btn"
+                      onClick={() => { setPendingFollowups([]); sendMessage(f); }}
+                    >
+                      {f}
+                    </button>
+                  ))}
                 </div>
               )}
             </>
@@ -662,9 +770,10 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   );
 }
 
-function MessageBubble({ message }) {
+function MessageBubble({ message, onFollowup }) {
   const isUser = message.role === 'user';
   const isGreeting = message.role === 'system_greeting';
+  const followups = !isUser ? (message.followups || []) : [];
 
   return (
     <div className={`zeus-msg ${isUser ? 'zeus-msg-user' : 'zeus-msg-assistant'}`}>
@@ -683,10 +792,19 @@ function MessageBubble({ message }) {
         <div className="zeus-msg-text zeus-markdown">
           {isUser
             ? message.content
-            : <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || ''}</ReactMarkdown>}
+            : <ZeusMarkdown>{stripFollowupsBlock(message.content || '')}</ZeusMarkdown>}
         </div>
         {isGreeting && (
           <div className="zeus-msg-meta">saludo automático</div>
+        )}
+        {followups.length > 0 && onFollowup && (
+          <div className="zeus-followups zeus-followups-inline">
+            {followups.map((f, i) => (
+              <button key={i} className="zeus-followup-btn" onClick={() => onFollowup(f)}>
+                {f}
+              </button>
+            ))}
+          </div>
         )}
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import '../brain-os.css';
 import ZeusSpeaks from '../components/ZeusSpeaks';
@@ -14,6 +14,31 @@ import AresPanel from '../components/agents/AresPanel';
 export default function BrainOS() {
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [showGenome, setShowGenome] = useState(false);
+
+  useEffect(() => {
+    function handleNavigate(e) {
+      const { kind, id } = e.detail || {};
+      if (!kind) return;
+
+      const agentMap = {
+        agent: id,
+        adset: 'athena',       // ad sets viven en el panel de Athena
+        ad: 'athena',
+        campaign: 'athena',
+        test: 'prometheus',
+        dna: 'apollo',
+        product: 'apollo',
+        rec: 'zeus',
+      };
+
+      const targetAgent = agentMap[kind];
+      if (targetAgent && ['zeus', 'athena', 'apollo', 'prometheus', 'ares'].includes(targetAgent)) {
+        setSelectedAgent(targetAgent);
+      }
+    }
+    window.addEventListener('zeus-navigate', handleNavigate);
+    return () => window.removeEventListener('zeus-navigate', handleNavigate);
+  }, []);
 
   return (
     <div className="brain-os">
