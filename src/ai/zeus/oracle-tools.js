@@ -21,6 +21,7 @@ const ZeusCodeRecommendation = require('../../db/models/ZeusCodeRecommendation')
 const ZeusPreference = require('../../db/models/ZeusPreference');
 const ZeusWatcher = require('../../db/models/ZeusWatcher');
 const ZeusRecommendationOutcome = require('../../db/models/ZeusRecommendationOutcome');
+const ZeusHypothesis = require('../../db/models/ZeusHypothesis');
 const { getLatestSnapshots, getSnapshotHistory, getOverviewHistory } = require('../../db/queries');
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -478,6 +479,53 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       properties: {
         include_triggered: { type: 'boolean', default: false }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'form_hypothesis',
+    description: 'Creá una hipótesis testeable — algo específico que creés y querés validar con experimentos. Ej: "scenes con gente outperforman las que no". Zeus la rastrea en su lifecycle completo.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        statement: { type: 'string', description: 'Afirmación clara y testeable' },
+        prediction: { type: 'string', description: 'Qué esperás que pase si es cierta (ej "ROAS +20%")' },
+        category: { type: 'string', enum: ['creative', 'targeting', 'budget', 'timing', 'copy', 'scene', 'product', 'meta_pattern', 'other'], default: 'other' },
+        prior_before: { type: 'number', default: 0.5, description: '0-1, tu creencia inicial' },
+        variable_tested: { type: 'string', description: 'La variable que se compara' },
+        control_value: { type: 'string' },
+        treatment_value: { type: 'string' },
+        min_samples_needed: { type: 'number', default: 6 },
+        target_days: { type: 'number', default: 14, description: 'En cuántos días esperás conclusión' }
+      },
+      required: ['statement']
+    }
+  },
+  {
+    name: 'commission_hypothesis_test',
+    description: 'Comisiona tests específicos a Prometheus (u observaciones) para validar una hipótesis. Crea una directiva target=prometheus con datos estructurados.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        hypothesis_id: { type: 'string', description: 'ID de la ZeusHypothesis' },
+        test_instructions: { type: 'string', description: 'Qué testear específicamente' },
+        proposals_to_assign: { type: 'array', items: { type: 'string' }, description: 'IDs de CreativeProposals a asignar como control o treatment' },
+        treatment_adsets: { type: 'array', items: { type: 'string' }, description: 'IDs de adsets treatment' },
+        control_adsets: { type: 'array', items: { type: 'string' }, description: 'IDs de adsets control' }
+      },
+      required: ['hypothesis_id', 'test_instructions']
+    }
+  },
+  {
+    name: 'list_hypotheses',
+    description: 'Lista hipótesis activas + recientemente concluidas. Útil al inicio de respuestas para contextualizar con lo que estás aprendiendo.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['all', 'proposed', 'testing', 'confirmed', 'rejected', 'inconclusive'], default: 'all' },
+        category: { type: 'string' },
+        limit: { type: 'number', default: 15 }
       },
       required: []
     }
@@ -1239,6 +1287,112 @@ const ZEUS_SELF_FILES = [
   'src/safety/anomaly-detector.js'
 ];
 
+async function handleFormHypothesis(input) {
+  if (!input.statement) return { error: 'statement requerido' };
+  try {
+    const targetDays = input.target_days || 14;
+    const h = await ZeusHypothesis.create({
+      statement: input.statement,
+      prediction: input.prediction || '',
+      category: input.category || 'other',
+      prior_before: input.prior_before ?? 0.5,
+      variable_tested: input.variable_tested || '',
+      control_value: input.control_value || '',
+      treatment_value: input.treatment_value || '',
+      min_samples_needed: input.min_samples_needed || 6,
+      target_conclusion_date: new Date(Date.now() + targetDays * 86400000),
+      status: 'proposed',
+      generated_by: 'zeus'
+    });
+    return {
+      ok: true,
+      hypothesis_id: h._id.toString(),
+      summary: `Hipótesis creada: "${input.statement.substring(0, 80)}" (prior ${Math.round((input.prior_before ?? 0.5) * 100)}%)`
+    };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function handleCommissionHypothesisTest(input) {
+  if (!input.hypothesis_id || !input.test_instructions) {
+    return { error: 'hypothesis_id y test_instructions requeridos' };
+  }
+  try {
+    const h = await ZeusHypothesis.findById(input.hypothesis_id);
+    if (!h) return { error: 'Hypothesis no encontrada' };
+
+    // Asignar tests al grupo
+    const newTests = [];
+    if (input.treatment_adsets) {
+      for (const id of input.treatment_adsets) {
+        newTests.push({ ref_id: id, ref_type: 'adset', group: 'treatment', assigned_at: new Date() });
+      }
+    }
+    if (input.control_adsets) {
+      for (const id of input.control_adsets) {
+        newTests.push({ ref_id: id, ref_type: 'adset', group: 'control', assigned_at: new Date() });
+      }
+    }
+    if (input.proposals_to_assign) {
+      for (const id of input.proposals_to_assign) {
+        newTests.push({ ref_id: id, ref_type: 'creative_proposal', group: 'treatment', assigned_at: new Date() });
+      }
+    }
+
+    h.commissioned_tests.push(...newTests);
+    h.status = 'testing';
+    h.test_started_at = h.test_started_at || new Date();
+    await h.save();
+
+    // Crear directiva para Prometheus con las instrucciones
+    const dir = await ZeusDirective.create({
+      directive: `[HIPÓTESIS ${h._id}] ${input.test_instructions}`,
+      directive_type: 'insight',
+      target_agent: 'prometheus',
+      data: {
+        hypothesis_id: h._id.toString(),
+        test_instructions: input.test_instructions,
+        source: 'hypothesis_engine'
+      },
+      confidence: 0.9,
+      category: 'test_signal',
+      active: true
+    });
+
+    return {
+      ok: true,
+      summary: `Test comisionado para hipótesis. ${newTests.length} refs asignados. Directiva ${dir._id} creada para Prometheus.`
+    };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function handleListHypotheses(input) {
+  const filter = {};
+  if (input.status && input.status !== 'all') filter.status = input.status;
+  if (input.category) filter.category = input.category;
+
+  const hyps = await ZeusHypothesis.find(filter)
+    .sort({ created_at: -1 })
+    .limit(Math.min(input.limit || 15, 40))
+    .lean();
+
+  return hyps.map(h => ({
+    id: h._id.toString(),
+    statement: h.statement,
+    prediction: h.prediction,
+    status: h.status,
+    category: h.category,
+    prior_before: h.prior_before,
+    prior_after: h.prior_after,
+    samples_done: (h.commissioned_tests || []).length,
+    created_at: h.created_at,
+    concluded_at: h.concluded_at
+  }));
+}
+
 async function handleQueryCalibration(input) {
   const { getCalibrationStats } = require('./learner');
   const opts = {};
@@ -1547,7 +1701,10 @@ const TOOL_HANDLERS = {
   list_watchers: handleListWatchers,
   query_calibration: handleQueryCalibration,
   track_recommendation: handleTrackRecommendation,
-  mark_recommendation_applied: handleMarkRecommendationApplied
+  mark_recommendation_applied: handleMarkRecommendationApplied,
+  form_hypothesis: handleFormHypothesis,
+  commission_hypothesis_test: handleCommissionHypothesisTest,
+  list_hypotheses: handleListHypotheses
 };
 
 async function executeTool(toolName, input) {

@@ -522,7 +522,10 @@ function toolLabel(tool) {
     list_watchers: '👁️ revisando watchers',
     query_calibration: '📊 revisando mi track record',
     track_recommendation: '📊 trackeando recomendación',
-    mark_recommendation_applied: '📊 marcando aplicada'
+    mark_recommendation_applied: '📊 marcando aplicada',
+    form_hypothesis: '🔬 formulando hipótesis',
+    commission_hypothesis_test: '🔬 comisionando test',
+    list_hypotheses: '🔬 revisando hipótesis'
   };
   return labels[tool] || tool;
 }

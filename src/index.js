@@ -929,6 +929,18 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'zeus-learner' });
   logger.info('  [*] Zeus learner — diario 3am ET (post-mortems 7/30/90d)');
 
+  // Semanal domingos 10am ET: hypothesis review bayesiano
+  cron.schedule('0 10 * * 0', async () => {
+    try {
+      const { runHypothesisReview } = require('./ai/zeus/hypothesis-engine');
+      const result = await runHypothesisReview();
+      logger.info(`[ZEUS-HYPOTHESIS-CRON] ${JSON.stringify(result)}`);
+    } catch (err) {
+      logger.error(`[ZEUS-HYPOTHESIS-CRON] ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'zeus-hypothesis-review' });
+  logger.info('  [*] Zeus hypothesis review — domingos 10am ET (bayesian updates)');
+
   // Cada hora: Detección de anomalías por entidad (Meta necesita tiempo para atribuir conversiones)
   cron.schedule('0 * * * *', jobAnomalyDetection, {
     timezone: TIMEZONE,
