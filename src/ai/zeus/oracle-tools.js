@@ -677,13 +677,18 @@ async function handleQueryDirectives(input) {
     .limit(30)
     .lean();
   return directives.map(d => ({
+    id: d._id.toString(),                         // usalo con deactivate_directive
     directive: d.directive,
     type: d.directive_type,
     target_agent: d.target_agent,
     confidence: Math.round((d.confidence || 0) * 100),
-    scope: d.scope,
-    reasoning: d.reasoning?.substring(0, 200),
-    created_at: d.created_at
+    category: d.category,
+    active: d.active,
+    executed: d.executed,
+    source: d.data?.source || 'learner',          // 'chat' si la creó el creador via chat
+    reasoning: (d.data?.reasoning || d.reasoning || '').toString().substring(0, 200),
+    created_at: d.created_at,
+    expires_at: d.expires_at
   }));
 }
 
