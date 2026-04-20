@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import api from '../api';
 
 const LS_CONV_KEY = 'zeus_oracle_conversation_id';
@@ -280,8 +282,8 @@ function ZeusHero({ text, toolActivity, streaming, onCollapse, onReply }) {
           </button>
         </div>
 
-        <div className="zeus-hero-text">
-          {text}
+        <div className="zeus-hero-text zeus-markdown">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
           {streaming && <span className="zeus-cursor">▌</span>}
         </div>
 
@@ -335,22 +337,28 @@ function ZeusHero({ text, toolActivity, streaming, onCollapse, onReply }) {
 
 function toolLabel(tool) {
   const labels = {
-    query_portfolio: 'revisando el portfolio',
-    query_adsets: 'consultando ad sets',
-    query_tests: 'mirando los tests',
-    query_dnas: 'analizando DNAs',
-    query_actions: 'revisando acciones',
-    query_directives: 'checando directivas',
-    query_insights: 'leyendo insights',
-    query_hypotheses: 'revisando hipótesis',
-    query_duplications: 'mirando duplicaciones',
-    query_adset_detail: 'zoom a un ad set',
-    query_overview_history: 'historia del portfolio',
+    query_portfolio: 'portfolio',
+    query_adsets: 'ad sets',
+    query_tests: 'tests',
+    query_dnas: 'DNAs',
+    query_actions: 'acciones',
+    query_directives: 'directivas',
+    query_insights: 'insights',
+    query_hypotheses: 'hipótesis',
+    query_duplications: 'duplicaciones',
+    query_adset_detail: 'detalle ad set',
+    query_overview_history: 'historia portfolio',
     query_time_series: 'serie temporal',
-    query_brain_memory: 'memoria del brain',
-    query_safety_events: 'eventos de safety',
-    query_creative_proposals: 'pipeline de creativos',
-    query_ai_creations: 'creaciones AI'
+    query_brain_memory: 'memoria',
+    query_safety_events: 'safety',
+    query_creative_proposals: 'creativos',
+    query_ai_creations: 'creaciones AI',
+    query_ads: 'ads',
+    query_campaigns: 'campañas',
+    query_recommendations: 'recomendaciones',
+    query_products: 'productos',
+    query_strategic_directives: 'estratégia',
+    query_agent_conversations: 'comunicación agentes'
   };
   return labels[tool] || tool;
 }
@@ -511,6 +519,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
 
               {streaming && (
                 <div className="zeus-msg zeus-msg-assistant">
+                  <div className="zeus-msg-avatar">⚡</div>
                   <div className="zeus-msg-content">
                     {toolActivity.length > 0 && (
                       <div className="zeus-msg-tools">
@@ -522,8 +531,8 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                         ))}
                       </div>
                     )}
-                    <div className="zeus-msg-text">
-                      {streamingText}
+                    <div className="zeus-msg-text zeus-markdown">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamingText}</ReactMarkdown>
                       <span className="zeus-cursor">▌</span>
                     </div>
                   </div>
@@ -566,6 +575,7 @@ function MessageBubble({ message }) {
 
   return (
     <div className={`zeus-msg ${isUser ? 'zeus-msg-user' : 'zeus-msg-assistant'}`}>
+      {!isUser && <div className="zeus-msg-avatar">⚡</div>}
       <div className="zeus-msg-content">
         {!isUser && (message.tool_calls?.length > 0) && (
           <div className="zeus-msg-tools">
@@ -577,11 +587,13 @@ function MessageBubble({ message }) {
             ))}
           </div>
         )}
-        <div className="zeus-msg-text">{message.content}</div>
+        <div className="zeus-msg-text zeus-markdown">
+          {isUser
+            ? message.content
+            : <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || ''}</ReactMarkdown>}
+        </div>
         {isGreeting && (
-          <div style={{ fontSize: '0.58rem', color: 'var(--bos-text-dim)', marginTop: 6, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-            · saludo automático ·
-          </div>
+          <div className="zeus-msg-meta">saludo automático</div>
         )}
       </div>
     </div>

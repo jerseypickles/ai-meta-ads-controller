@@ -8,10 +8,14 @@ const CreativeDNA = require('../../db/models/CreativeDNA');
 const CreativeProposal = require('../../db/models/CreativeProposal');
 const ActionLog = require('../../db/models/ActionLog');
 const ZeusDirective = require('../../db/models/ZeusDirective');
+const ZeusConversation = require('../../db/models/ZeusConversation');
 const BrainInsight = require('../../db/models/BrainInsight');
 const BrainMemory = require('../../db/models/BrainMemory');
+const BrainRecommendation = require('../../db/models/BrainRecommendation');
 const SafetyEvent = require('../../db/models/SafetyEvent');
 const AICreation = require('../../db/models/AICreation');
+const ProductBank = require('../../db/models/ProductBank');
+const StrategicDirective = require('../../db/models/StrategicDirective');
 const SystemConfig = require('../../db/models/SystemConfig');
 const { getLatestSnapshots, getSnapshotHistory, getOverviewHistory } = require('../../db/queries');
 
@@ -212,6 +216,83 @@ const TOOL_DEFINITIONS = [
         phase: { type: 'string', enum: ['all', 'learning', 'testing', 'scaling', 'killed', 'graduated'], default: 'all' },
         days_back: { type: 'number', default: 14 },
         limit: { type: 'number', default: 15 }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'query_ads',
+    description: 'Ads individuales (creativas dentro de ad sets). Filtros por adset, ROAS, spend. Devuelve métricas 7d + creative info.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        parent_adset_id: { type: 'string', description: 'Filtrar solo ads de un ad set específico' },
+        min_roas: { type: 'number' },
+        min_spend_7d: { type: 'number' },
+        sort_by: { type: 'string', enum: ['roas', 'spend', 'purchases'], default: 'roas' },
+        limit: { type: 'number', default: 20 }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'query_campaigns',
+    description: 'Campañas con detalle: nombre, objetivo, bid strategy, CBO/ABO, status, budget, performance agregado.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name_contains: { type: 'string' },
+        active_only: { type: 'boolean', default: true },
+        limit: { type: 'number', default: 20 }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'query_recommendations',
+    description: 'BrainRecommendations: recomendaciones pendientes de aprobación del creador + histórico ejecutadas con follow-up phases.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['all', 'pending', 'approved', 'rejected', 'executed'], default: 'pending' },
+        hours_back: { type: 'number', default: 48 },
+        limit: { type: 'number', default: 15 }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'query_products',
+    description: 'ProductBank: productos registrados con PNG refs, custom prompts, performance por producto y por escena.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        active_only: { type: 'boolean', default: true }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'query_strategic_directives',
+    description: 'Directivas estratégicas de largo plazo + strategic insights que alimentan a Zeus.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        active_only: { type: 'boolean', default: true },
+        limit: { type: 'number', default: 10 }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'query_agent_conversations',
+    description: 'Comunicaciones entre Zeus y los demás agentes (directivas enviadas, reports, acknowledgments, alerts).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        from_agent: { type: 'string', enum: ['zeus', 'athena', 'apollo', 'prometheus', 'ares', 'any'], default: 'any' },
+        hours_back: { type: 'number', default: 24 },
+        limit: { type: 'number', default: 20 }
       },
       required: []
     }
@@ -669,6 +750,155 @@ async function handleQueryAICreations(input) {
   }));
 }
 
+async function handleQueryAds(input) {
+  const snapshots = await getLatestSnapshots('ad');
+  let list = snapshots.filter(s => s.status === 'ACTIVE');
+  if (input.parent_adset_id) list = list.filter(s => s.parent_adset_id === input.parent_adset_id);
+  if (typeof input.min_roas === 'number') list = list.filter(s => (s.metrics?.last_7d?.roas || 0) >= input.min_roas);
+  if (typeof input.min_spend_7d === 'number') list = list.filter(s => (s.metrics?.last_7d?.spend || 0) >= input.min_spend_7d);
+
+  const sortBy = input.sort_by || 'roas';
+  list.sort((a, b) => {
+    const am = a.metrics?.last_7d || {}, bm = b.metrics?.last_7d || {};
+    if (sortBy === 'spend') return (bm.spend || 0) - (am.spend || 0);
+    if (sortBy === 'purchases') return (bm.purchases || 0) - (am.purchases || 0);
+    return (bm.roas || 0) - (am.roas || 0);
+  });
+
+  return list.slice(0, Math.min(input.limit || 20, 40)).map(s => {
+    const m = s.metrics?.last_7d || {};
+    return {
+      name: s.entity_name,
+      id: s.entity_id,
+      adset_id: s.parent_adset_id,
+      adset_name: s.parent_adset_name,
+      spend_7d: Math.round(m.spend || 0),
+      roas_7d: +(m.roas || 0).toFixed(2),
+      purchases_7d: m.purchases || 0,
+      ctr: +(m.ctr || 0).toFixed(2),
+      frequency: +(m.frequency || 0).toFixed(2)
+    };
+  });
+}
+
+async function handleQueryCampaigns(input) {
+  const snapshots = await getLatestSnapshots('campaign');
+  let list = input.active_only === false ? snapshots : snapshots.filter(s => s.status === 'ACTIVE');
+  if (input.name_contains) {
+    const q = input.name_contains.toLowerCase();
+    list = list.filter(s => (s.entity_name || '').toLowerCase().includes(q));
+  }
+
+  return list.slice(0, Math.min(input.limit || 20, 40)).map(s => {
+    const m = s.metrics?.last_7d || {};
+    return {
+      name: s.entity_name,
+      id: s.entity_id,
+      objective: s.objective,
+      bid_strategy: s.bid_strategy,
+      budget_mode: s.budget_mode,
+      daily_budget: s.daily_budget,
+      status: s.status,
+      spend_7d: Math.round(m.spend || 0),
+      roas_7d: +(m.roas || 0).toFixed(2),
+      purchases_7d: m.purchases || 0
+    };
+  });
+}
+
+async function handleQueryRecommendations(input) {
+  const filter = {};
+  if (input.status && input.status !== 'all') filter.status = input.status;
+  if (input.hours_back) {
+    filter.created_at = { $gte: new Date(Date.now() - input.hours_back * 3600000) };
+  }
+
+  const recs = await BrainRecommendation.find(filter)
+    .sort({ created_at: -1 })
+    .limit(Math.min(input.limit || 15, 40))
+    .lean();
+
+  return recs.map(r => ({
+    entity_type: r.entity_type,
+    entity_name: r.entity_name,
+    action_type: r.action_type,
+    rationale: r.rationale?.substring(0, 300),
+    priority: r.priority,
+    status: r.status,
+    confidence: r.confidence,
+    expected_impact: r.expected_impact,
+    created_at: r.created_at,
+    approved_at: r.approved_at,
+    executed_at: r.executed_at,
+    follow_up_phase: r.follow_up_phase,
+    impact_measured: r.impact_measured
+  }));
+}
+
+async function handleQueryProducts(input) {
+  const filter = input.active_only === false ? {} : { active: true };
+  const products = await ProductBank.find(filter).lean();
+  return products.map(p => ({
+    name: p.product_name,
+    slug: p.product_slug,
+    url: p.link_url,
+    description: p.product_description?.substring(0, 300),
+    prompt_type: p.prompt_type,
+    has_custom_prompt: !!p.custom_prompt_template,
+    reference_count: (p.png_references || []).length,
+    performance: {
+      ads_created: p.performance?.total_ads_created || 0,
+      avg_roas: +(p.performance?.avg_roas || 0).toFixed(2),
+      total_spend: Math.round(p.performance?.total_spend || 0),
+      best_scene: p.performance?.best_scene,
+      worst_scene: p.performance?.worst_scene
+    },
+    top_scenes: (p.scene_performance || []).slice(0, 5).map(s => ({
+      scene: s.scene,
+      avg_roas: +(s.avg_roas || 0).toFixed(2),
+      ads_created: s.ads_created
+    }))
+  }));
+}
+
+async function handleQueryStrategicDirectives(input) {
+  const filter = input.active_only === false ? {} : { status: { $in: ['active', 'pending'] } };
+  const dirs = await StrategicDirective.find(filter)
+    .sort({ created_at: -1 })
+    .limit(Math.min(input.limit || 10, 30))
+    .lean();
+
+  return dirs.map(d => ({
+    directive: d.directive,
+    rationale: d.rationale?.substring(0, 300),
+    status: d.status,
+    target_entity_type: d.target_entity_type,
+    target_entity: d.target_entity_name,
+    priority: d.priority,
+    created_at: d.created_at,
+    expires_at: d.expires_at
+  }));
+}
+
+async function handleQueryAgentConversations(input) {
+  const hours = input.hours_back || 24;
+  const filter = { created_at: { $gte: new Date(Date.now() - hours * 3600000) } };
+  if (input.from_agent && input.from_agent !== 'any') filter.from = input.from_agent;
+
+  const convs = await ZeusConversation.find(filter)
+    .sort({ created_at: -1 })
+    .limit(Math.min(input.limit || 20, 50))
+    .lean();
+
+  return convs.map(c => ({
+    from: c.from,
+    to: c.to,
+    type: c.type,
+    message: c.message?.substring(0, 300),
+    created_at: c.created_at
+  }));
+}
+
 const TOOL_HANDLERS = {
   query_portfolio: handleQueryPortfolio,
   query_adsets: handleQueryAdsets,
@@ -685,7 +915,13 @@ const TOOL_HANDLERS = {
   query_brain_memory: handleQueryBrainMemory,
   query_safety_events: handleQuerySafetyEvents,
   query_creative_proposals: handleQueryCreativeProposals,
-  query_ai_creations: handleQueryAICreations
+  query_ai_creations: handleQueryAICreations,
+  query_ads: handleQueryAds,
+  query_campaigns: handleQueryCampaigns,
+  query_recommendations: handleQueryRecommendations,
+  query_products: handleQueryProducts,
+  query_strategic_directives: handleQueryStrategicDirectives,
+  query_agent_conversations: handleQueryAgentConversations
 };
 
 async function executeTool(toolName, input) {
