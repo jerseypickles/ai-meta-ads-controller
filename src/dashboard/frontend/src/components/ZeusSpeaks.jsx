@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import api from '../api';
 
@@ -214,21 +215,24 @@ export default function ZeusSpeaks() {
         </motion.button>
       )}
 
-      {/* Drawer */}
-      <AnimatePresence>
-        {drawerOpen && (
-          <ZeusDrawer
-            conversationId={conversationId}
-            onNewConversation={(id) => {
-              setConversationId(id);
-              localStorage.setItem(LS_CONV_KEY, id);
-            }}
-            onClose={() => { setDrawerOpen(false); setPendingInitialMessage(null); }}
-            initialMessage={pendingInitialMessage}
-            onInitialMessageConsumed={() => setPendingInitialMessage(null)}
-          />
-        )}
-      </AnimatePresence>
+      {/* Drawer — rendereado en portal al body para escapar overflow/transform de ancestros */}
+      {createPortal(
+        <AnimatePresence>
+          {drawerOpen && (
+            <ZeusDrawer
+              conversationId={conversationId}
+              onNewConversation={(id) => {
+                setConversationId(id);
+                localStorage.setItem(LS_CONV_KEY, id);
+              }}
+              onClose={() => { setDrawerOpen(false); setPendingInitialMessage(null); }}
+              initialMessage={pendingInitialMessage}
+              onInitialMessageConsumed={() => setPendingInitialMessage(null)}
+            />
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
     </>
   );
 }
