@@ -503,7 +503,9 @@ function toolLabel(tool) {
     propose_code_change: '💡 guardando recomendación',
     remember_preference: '💭 recordando',
     forget_preference: '💭 olvidando',
-    list_preferences: '💭 revisando memoria'
+    list_preferences: '💭 revisando memoria',
+    create_directive: '📣 emitiendo directiva',
+    deactivate_directive: '📣 desactivando directiva'
   };
   return labels[tool] || tool;
 }

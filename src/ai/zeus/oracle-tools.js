@@ -431,6 +431,36 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'create_directive',
+    description: 'Creá una directiva operativa en el sistema que los agentes (Athena, Apollo, Prometheus, Ares) leerán en sus próximos ciclos. Usala cuando el creador te pida que el equipo actúe de cierta forma. Ejemplos: "decile a Ares que no duplique nada hasta las 17:00 por billing issue", "pedile a Apollo que solo genere escena X esta semana", "que Prometheus pause todos los tests nuevos hasta mañana".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        directive: { type: 'string', description: 'El texto de la directiva (imperativo, claro, corto). Ej: "No duplicar ningún ad set hasta las 17:00 ET del día de hoy por billing pending con Meta."' },
+        directive_type: { type: 'string', enum: ['prioritize', 'avoid', 'adjust', 'alert', 'insight', 'pause_clone'], description: 'prioritize=hacé esto; avoid=no hagas esto; adjust=ajustá umbral/config; alert=atención; insight=info; pause_clone=pausar clones específicos' },
+        target_agent: { type: 'string', enum: ['apollo', 'prometheus', 'athena', 'ares', 'all'], description: 'Qué agente debe leerla' },
+        reasoning: { type: 'string', description: 'Por qué esta directiva (el contexto que la motiva)' },
+        confidence: { type: 'number', default: 0.9, description: '0-1, típicamente alto cuando viene del creador' },
+        expires_in_hours: { type: 'number', description: 'Si la directiva tiene ventana temporal (ej billing freeze), poné cuántas horas desde ahora. null = no expira.' },
+        category: { type: 'string', enum: ['creative_pattern', 'test_signal', 'account_pattern', 'cross_agent', 'general'], default: 'general' },
+        data: { type: 'object', description: 'Datos estructurados opcionales para que el agente consuma (ej { min_roas: 3.5, until: "17:00" })', additionalProperties: true }
+      },
+      required: ['directive', 'directive_type', 'target_agent', 'reasoning']
+    }
+  },
+  {
+    name: 'deactivate_directive',
+    description: 'Desactivá una directiva existente (marcar active=false). Úsala cuando el creador diga que algo ya no aplica o cuando la ventana temporal expiró.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        directive_id: { type: 'string', description: 'ID de la directiva a desactivar (sacalo de query_directives)' },
+        reason: { type: 'string', description: 'Por qué se desactiva' }
+      },
+      required: ['directive_id']
+    }
+  },
+  {
     name: 'propose_code_change',
     description: 'Persiste una recomendación concreta de cambio al código. Úsala cuando hayas detectado algo específico (threshold mal calibrado, bug, optimización) con evidencia de los datos. No la uses para comentarios generales — solo cuando tenés un cambio concreto que proponer, file:line específicos, y justificación numérica. El creador lo va a ver como card para revisar/aceptar/rechazar.',
     input_schema: {
@@ -1099,6 +1129,51 @@ const ZEUS_SELF_FILES = [
   'src/safety/anomaly-detector.js'
 ];
 
+async function handleCreateDirective(input) {
+  if (!input.directive || !input.directive_type || !input.target_agent || !input.reasoning) {
+    return { error: 'directive, directive_type, target_agent y reasoning son requeridos' };
+  }
+  try {
+    const expiresAt = input.expires_in_hours
+      ? new Date(Date.now() + input.expires_in_hours * 3600000)
+      : null;
+    const dir = await ZeusDirective.create({
+      directive: input.directive,
+      directive_type: input.directive_type,
+      target_agent: input.target_agent,
+      data: { ...(input.data || {}), reasoning: input.reasoning, source: 'chat' },
+      confidence: input.confidence ?? 0.9,
+      based_on_samples: 0,
+      category: input.category || 'general',
+      active: true,
+      persistent: false,
+      expires_at: expiresAt
+    });
+    return {
+      ok: true,
+      id: dir._id.toString(),
+      summary: `Directiva creada para ${input.target_agent}: "${input.directive.substring(0, 80)}${input.directive.length > 80 ? '...' : ''}"${expiresAt ? ` (expira ${expiresAt.toISOString()})` : ''}`
+    };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function handleDeactivateDirective(input) {
+  if (!input.directive_id) return { error: 'directive_id requerido' };
+  try {
+    const dir = await ZeusDirective.findByIdAndUpdate(
+      input.directive_id,
+      { $set: { active: false, last_validated_at: new Date() } },
+      { new: true }
+    );
+    if (!dir) return { error: 'Directiva no encontrada' };
+    return { ok: true, summary: `Directiva desactivada: ${dir.directive.substring(0, 80)}` };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
 async function handleRememberPreference(input) {
   if (!input.key || !input.value) return { error: 'key y value requeridos' };
   try {
@@ -1219,7 +1294,9 @@ const TOOL_HANDLERS = {
   propose_code_change: handleProposeCodeChange,
   remember_preference: handleRememberPreference,
   forget_preference: handleForgetPreference,
-  list_preferences: handleListPreferences
+  list_preferences: handleListPreferences,
+  create_directive: handleCreateDirective,
+  deactivate_directive: handleDeactivateDirective
 };
 
 async function executeTool(toolName, input) {
