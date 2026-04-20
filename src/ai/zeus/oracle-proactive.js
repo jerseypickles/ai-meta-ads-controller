@@ -189,7 +189,26 @@ async function runProactiveCycle() {
     const lastCheck = lastCheckRaw?.at ? new Date(lastCheckRaw.at) : new Date(Date.now() - 30 * 60000);
     const now = new Date();
 
-    const signals = await detectSignals(lastCheck);
+    // Chequear watchers (condiciones que el creador pidió monitorear)
+    let watcherSignals = [];
+    try {
+      const { checkWatchers } = require('./watchers');
+      const triggered = await checkWatchers();
+      for (const t of triggered) {
+        watcherSignals.push({
+          kind: 'watcher_triggered',
+          severity: 'high',
+          watcher_description: t.watcher.description,
+          condition_type: t.watcher.condition_type,
+          trigger_data: t.data,
+          watcher_conversation_id: t.watcher.conversation_id
+        });
+      }
+    } catch (err) {
+      logger.error(`[ZEUS-PROACTIVE] watchers check failed: ${err.message}`);
+    }
+
+    const signals = [...watcherSignals, ...await detectSignals(lastCheck)];
     if (signals.length === 0) {
       await SystemConfig.set(LAST_CHECK_KEY, { at: now.toISOString() });
       return { signals: 0, sent: false };

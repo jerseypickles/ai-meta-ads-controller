@@ -19,6 +19,7 @@ const StrategicDirective = require('../../db/models/StrategicDirective');
 const SystemConfig = require('../../db/models/SystemConfig');
 const ZeusCodeRecommendation = require('../../db/models/ZeusCodeRecommendation');
 const ZeusPreference = require('../../db/models/ZeusPreference');
+const ZeusWatcher = require('../../db/models/ZeusWatcher');
 const { getLatestSnapshots, getSnapshotHistory, getOverviewHistory } = require('../../db/queries');
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -426,6 +427,56 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       properties: {
         category: { type: 'string', enum: ['all', 'priority', 'style', 'strategic', 'operational', 'habit', 'constraint', 'other'], default: 'all' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'create_watcher',
+    description: 'Creá un watcher — condición que Zeus monitorea cada 30min y dispara un ping proactivo al chat cuando se cumple. Usala cuando el creador pida "avisame cuando X" o "monitoreá Y". Ejemplos: "avisame cuando vuelva a gastar" → delivery_resumed; "pingame si ROAS cae bajo 2x" → roas_below con threshold=2; "decime si este adset llega a $100" → adset_spend_above.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        condition_type: {
+          type: 'string',
+          enum: ['delivery_resumed', 'spend_above', 'roas_above', 'roas_below', 'adset_spend_above', 'adset_roas_above', 'test_graduates', 'test_count'],
+          description: 'Tipo de condición'
+        },
+        description: {
+          type: 'string',
+          description: 'Descripción humana de qué monitorea (ej: "Cuando el spend_today cruce $100 después del billing freeze")'
+        },
+        amount: { type: 'number', description: 'Para spend_above/adset_spend_above: monto en USD' },
+        threshold: { type: 'number', description: 'Para roas_*/test_count: valor a cruzar' },
+        window: { type: 'string', enum: ['last_1d', 'last_7d', 'last_14d'], description: 'Para roas_*: ventana temporal' },
+        adset_id: { type: 'string', description: 'Para adset_*: entity_id del adset' },
+        count: { type: 'number', description: 'Para test_graduates: cantidad mínima' },
+        min_spend_today: { type: 'number', description: 'Para delivery_resumed: mínimo de spend hoy para considerar reanudado (default 100)' },
+        op: { type: 'string', enum: ['gte', 'lte', 'eq'], description: 'Para test_count' },
+        expires_in_hours: { type: 'number', description: 'Cuántas horas desde ahora permanece activo. null = no expira (recomendado max 48)' },
+        conversation_id: { type: 'string', description: 'ID de la conversación actual (para pingear ahí). Si no se pasa, usa la última activa.' }
+      },
+      required: ['condition_type', 'description']
+    }
+  },
+  {
+    name: 'cancel_watcher',
+    description: 'Cancela un watcher activo. Úsala si el creador dice "cancelá el aviso" o cuando ya no aplica.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        watcher_id: { type: 'string', description: 'ID del watcher' }
+      },
+      required: ['watcher_id']
+    }
+  },
+  {
+    name: 'list_watchers',
+    description: 'Lista watchers activos + los últimos que dispararon. Úsala si el creador pregunta qué estás monitoreando.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        include_triggered: { type: 'boolean', default: false }
       },
       required: []
     }
@@ -1148,6 +1199,80 @@ async function handleQueryDeliveryHealth() {
   return await checkDeliveryHealth();
 }
 
+async function handleCreateWatcher(input) {
+  if (!input.condition_type || !input.description) {
+    return { error: 'condition_type y description requeridos' };
+  }
+  try {
+    const params = {};
+    ['amount', 'threshold', 'window', 'adset_id', 'count', 'min_spend_today', 'op']
+      .forEach(k => { if (input[k] !== undefined) params[k] = input[k]; });
+
+    const expiresAt = input.expires_in_hours
+      ? new Date(Date.now() + input.expires_in_hours * 3600000)
+      : null;
+
+    // Si no viene conversation_id, usar la última activa
+    let conversationId = input.conversation_id || null;
+    if (!conversationId) {
+      const ZeusChatMessage = require('../../db/models/ZeusChatMessage');
+      const last = await ZeusChatMessage.findOne().sort({ created_at: -1 }).select('conversation_id').lean();
+      conversationId = last?.conversation_id || null;
+    }
+
+    const watcher = await ZeusWatcher.create({
+      condition_type: input.condition_type,
+      condition_params: params,
+      description: input.description,
+      conversation_id: conversationId,
+      created_via: 'chat',
+      active: true,
+      expires_at: expiresAt
+    });
+    return {
+      ok: true,
+      id: watcher._id.toString(),
+      summary: `Watcher creado: ${input.description}${expiresAt ? ` (expira ${expiresAt.toISOString()})` : ''}`
+    };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function handleCancelWatcher(input) {
+  if (!input.watcher_id) return { error: 'watcher_id requerido' };
+  try {
+    const w = await ZeusWatcher.findByIdAndUpdate(
+      input.watcher_id,
+      { $set: { active: false } },
+      { new: true }
+    );
+    if (!w) return { error: 'Watcher no encontrado' };
+    return { ok: true, summary: `Watcher cancelado: ${w.description}` };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function handleListWatchers(input) {
+  const filter = input.include_triggered ? {} : { active: true };
+  const watchers = await ZeusWatcher.find(filter)
+    .sort({ created_at: -1 })
+    .limit(30)
+    .lean();
+  return watchers.map(w => ({
+    id: w._id.toString(),
+    condition_type: w.condition_type,
+    description: w.description,
+    params: w.condition_params,
+    active: w.active,
+    triggered_at: w.triggered_at,
+    trigger_result: w.trigger_result,
+    expires_at: w.expires_at,
+    created_at: w.created_at
+  }));
+}
+
 async function handleCreateDirective(input) {
   if (!input.directive || !input.directive_type || !input.target_agent || !input.reasoning) {
     return { error: 'directive, directive_type, target_agent y reasoning son requeridos' };
@@ -1316,7 +1441,10 @@ const TOOL_HANDLERS = {
   list_preferences: handleListPreferences,
   create_directive: handleCreateDirective,
   deactivate_directive: handleDeactivateDirective,
-  query_delivery_health: handleQueryDeliveryHealth
+  query_delivery_health: handleQueryDeliveryHealth,
+  create_watcher: handleCreateWatcher,
+  cancel_watcher: handleCancelWatcher,
+  list_watchers: handleListWatchers
 };
 
 async function executeTool(toolName, input) {

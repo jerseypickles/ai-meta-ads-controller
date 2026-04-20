@@ -238,22 +238,32 @@ export default function ZeusSpeaks() {
         )}
       </AnimatePresence>
 
-      {/* Floating action button + preview de mensaje proactivo */}
+      {/* Top banner — anuncio mini arriba del dashboard cuando hay proactive sin leer */}
+      <AnimatePresence>
+        {unreadPreview && unreadCount > 0 && !drawerOpen && (
+          <motion.button
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ type: 'spring', damping: 22, stiffness: 280 }}
+            onClick={() => setDrawerOpen(true)}
+            className="zeus-top-banner"
+          >
+            <span className="zeus-top-banner-icon">⚡</span>
+            <span className="zeus-top-banner-label">Zeus</span>
+            <span className="zeus-top-banner-text">{unreadPreview.preview}</span>
+            {unreadCount > 1 && (
+              <span className="zeus-top-banner-count">+{unreadCount - 1}</span>
+            )}
+            <span className="zeus-top-banner-cta">abrir ⟶</span>
+          </motion.button>
+        )}
+      </AnimatePresence>
+
+      {/* Floating action button */}
       {!drawerOpen && mode !== 'loading' && (
         <div className="zeus-fab-wrap">
-          {unreadPreview && unreadCount > 0 && (
-            <motion.button
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setDrawerOpen(true)}
-              className="zeus-unread-preview"
-              title="Abrir chat"
-            >
-              <span className="zeus-unread-preview-label">Zeus:</span>
-              <span className="zeus-unread-preview-text">{unreadPreview.preview}</span>
-            </motion.button>
-          )}
+          {/* preview removido — ahora usamos el top banner arriba */}
           <motion.button
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -506,7 +516,10 @@ function toolLabel(tool) {
     list_preferences: '💭 revisando memoria',
     create_directive: '📣 emitiendo directiva',
     deactivate_directive: '📣 desactivando directiva',
-    query_delivery_health: '🩺 chequeando salud de delivery'
+    query_delivery_health: '🩺 chequeando salud de delivery',
+    create_watcher: '👁️ creando watcher',
+    cancel_watcher: '👁️ cancelando watcher',
+    list_watchers: '👁️ revisando watchers'
   };
   return labels[tool] || tool;
 }
@@ -1152,7 +1165,7 @@ function MessageBubble({ message, onFollowup }) {
           <div className="zeus-msg-meta">saludo automático</div>
         )}
         {message.proactive && (
-          <div className="zeus-msg-meta zeus-msg-meta-proactive">⚡ Zeus te avisa</div>
+          <div className="zeus-msg-meta zeus-msg-meta-proactive">⚡ proactivo</div>
         )}
         {followups.length > 0 && onFollowup && (
           <div className="zeus-followups zeus-followups-inline">
