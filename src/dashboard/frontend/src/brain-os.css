@@ -1054,6 +1054,261 @@
   color: var(--bos-text);
 }
 
+/* Panel de recomendaciones de código */
+.zeus-coderecs-panel {
+  overflow: hidden;
+  background: rgba(10, 14, 39, 0.7);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  max-height: 480px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.zeus-coderecs-header {
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(251, 191, 36, 0.04);
+}
+
+.zeus-coderecs-title {
+  font-size: 0.72rem;
+  color: #fbbf24;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.zeus-coderecs-filter {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.zeus-coderecs-filter-btn {
+  padding: 3px 8px;
+  font-size: 0.62rem;
+  background: rgba(17, 21, 51, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--bos-text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+}
+
+.zeus-coderecs-filter-btn.active {
+  background: rgba(251, 191, 36, 0.15);
+  border-color: rgba(251, 191, 36, 0.4);
+  color: #fbbf24;
+}
+
+.zeus-coderecs-empty {
+  padding: 24px 20px;
+  text-align: center;
+  color: var(--bos-text-dim);
+  font-size: 0.76rem;
+  font-style: italic;
+}
+
+.zeus-coderec-card {
+  background: rgba(17, 21, 51, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 3px solid #fbbf24;
+  border-radius: 8px;
+  margin: 10px 14px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.zeus-coderec-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.zeus-coderec-cat {
+  color: var(--bos-text);
+}
+
+.zeus-coderec-severity, .zeus-coderec-status {
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+}
+
+.zeus-coderec-spacer {
+  flex: 1;
+}
+
+.zeus-coderec-iconbtn {
+  background: none;
+  border: none;
+  color: var(--bos-text-dim);
+  font-size: 1rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.zeus-coderec-iconbtn:hover { color: #ef4444; }
+
+.zeus-coderec-path {
+  font-size: 0.72rem;
+  color: var(--bos-text-muted);
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+}
+
+.zeus-coderec-path code {
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.zeus-coderec-rationale {
+  font-size: 0.78rem;
+  color: var(--bos-text);
+  line-height: 1.5;
+}
+
+.zeus-coderec-evidence, .zeus-coderec-impact {
+  font-size: 0.72rem;
+  color: var(--bos-text-muted);
+  padding: 6px 10px;
+  background: rgba(10, 14, 39, 0.5);
+  border-radius: 6px;
+  line-height: 1.5;
+}
+
+.zeus-coderec-evidence-label {
+  color: #fbbf24;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.58rem;
+  margin-right: 6px;
+}
+
+.zeus-coderec-toggle {
+  background: none;
+  border: none;
+  color: var(--bos-text-muted);
+  font-size: 0.7rem;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+}
+
+.zeus-coderec-toggle:hover { color: var(--bos-text); }
+
+.zeus-coderec-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.zeus-coderec-difflabel {
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.zeus-coderec-difflabel-old { color: #ef4444; }
+.zeus-coderec-difflabel-new { color: #10b981; }
+
+.zeus-coderec-code {
+  font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  font-size: 0.72rem;
+  padding: 8px 10px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.zeus-coderec-code-old {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: #fecaca;
+}
+
+.zeus-coderec-code-new {
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  color: #bbf7d0;
+}
+
+.zeus-coderec-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.zeus-coderec-btn {
+  padding: 5px 12px;
+  font-size: 0.68rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.zeus-coderec-btn-accept {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+}
+
+.zeus-coderec-btn-reject {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.1);
+  color: var(--bos-text-muted);
+}
+
+.zeus-coderec-btn-apply {
+  background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+  color: white;
+}
+
+.zeus-coderec-btn:hover {
+  filter: brightness(1.15);
+}
+
+/* Badge en icon button (para el 💡) */
+.zeus-icon-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  background: #ef4444;
+  color: white;
+  border-radius: 8px;
+  font-size: 0.56rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 2px var(--bos-bg-deep);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.zeus-drawer-icon-btn {
+  position: relative;
+}
+
 /* Panel de conversaciones desplegable */
 .zeus-conversations-panel {
   overflow: hidden;

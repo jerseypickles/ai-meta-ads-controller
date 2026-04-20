@@ -499,7 +499,8 @@ function toolLabel(tool) {
     code_overview: '📂 overview del código',
     list_code_files: '📄 listando archivos',
     read_code_file: '📖 leyendo código',
-    grep_code: '🔍 buscando en código'
+    grep_code: '🔍 buscando en código',
+    propose_code_change: '💡 guardando recomendación'
   };
   return labels[tool] || tool;
 }
@@ -519,6 +520,10 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   const [loadingHistory, setLoadingHistory] = useState(!!conversationId);
   const [showConversationList, setShowConversationList] = useState(false);
   const [conversationList, setConversationList] = useState([]);
+  const [showCodeRecs, setShowCodeRecs] = useState(false);
+  const [codeRecs, setCodeRecs] = useState([]);
+  const [codeRecsCounts, setCodeRecsCounts] = useState({});
+  const [codeRecsFilter, setCodeRecsFilter] = useState('pending');
   const scrollRef = useRef(null);
   const esRef = useRef(null);
   const streamingTextRef = useRef('');
@@ -550,6 +555,45 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
     onNewConversation(null);
     localStorage.removeItem(LS_CONV_KEY);
   }
+
+  async function loadCodeRecs() {
+    try {
+      const params = codeRecsFilter !== 'all' ? { status: codeRecsFilter } : {};
+      const res = await api.get('/api/zeus/code-recs', { params });
+      setCodeRecs(res.data.recs || []);
+      setCodeRecsCounts(res.data.counts || {});
+    } catch (err) { console.error(err); }
+  }
+
+  async function updateRecStatus(id, status) {
+    try {
+      await api.patch(`/api/zeus/code-recs/${id}`, { status });
+      await loadCodeRecs();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function deleteRec(id) {
+    if (!window.confirm('Borrar esta recomendación?')) return;
+    try {
+      await api.delete(`/api/zeus/code-recs/${id}`);
+      await loadCodeRecs();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  useEffect(() => {
+    if (showCodeRecs) loadCodeRecs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showCodeRecs, codeRecsFilter]);
+
+  // Load counts al abrir drawer (para el badge del 💡)
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await api.get('/api/zeus/code-recs', { params: { limit: 1 } });
+        setCodeRecsCounts(res.data.counts || {});
+      } catch (_) {}
+    })();
+  }, []);
 
   useEffect(() => { streamingTextRef.current = streamingText; }, [streamingText]);
   useEffect(() => { toolActivityRef.current = toolActivity; }, [toolActivity]);
@@ -713,8 +757,22 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
             <button
               className="zeus-drawer-icon-btn"
               onClick={() => {
+                setShowCodeRecs(!showCodeRecs);
+                setShowConversationList(false);
+              }}
+              title="Recomendaciones de código"
+            >
+              💡
+              {codeRecsCounts.pending > 0 && (
+                <span className="zeus-icon-badge">{codeRecsCounts.pending > 9 ? '9+' : codeRecsCounts.pending}</span>
+              )}
+            </button>
+            <button
+              className="zeus-drawer-icon-btn"
+              onClick={() => {
                 if (!showConversationList) loadConversationList();
                 setShowConversationList(!showConversationList);
+                setShowCodeRecs(false);
               }}
               title="Conversaciones"
             >
@@ -730,6 +788,52 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
             <button className="zeus-drawer-close" onClick={onClose}>×</button>
           </div>
         </div>
+
+        {/* Panel de recomendaciones de código */}
+        <AnimatePresence>
+          {showCodeRecs && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="zeus-coderecs-panel"
+            >
+              <div className="zeus-coderecs-header">
+                <div className="zeus-coderecs-title">💡 Recomendaciones de Zeus</div>
+                <div className="zeus-coderecs-filter">
+                  {['pending', 'accepted', 'rejected', 'applied', 'all'].map(f => (
+                    <button
+                      key={f}
+                      onClick={() => setCodeRecsFilter(f)}
+                      className={`zeus-coderecs-filter-btn ${codeRecsFilter === f ? 'active' : ''}`}
+                    >
+                      {f === 'all' ? 'todas' : f}
+                      {codeRecsCounts[f] > 0 && f !== 'all' && ` · ${codeRecsCounts[f]}`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {codeRecs.length === 0 ? (
+                <div className="zeus-coderecs-empty">
+                  {codeRecsFilter === 'pending'
+                    ? 'No hay recomendaciones pendientes. Zeus te las dejará acá cuando detecte mejoras concretas.'
+                    : `No hay recomendaciones ${codeRecsFilter}.`}
+                </div>
+              ) : (
+                codeRecs.map(rec => (
+                  <CodeRecCard
+                    key={rec._id}
+                    rec={rec}
+                    onAccept={() => updateRecStatus(rec._id, 'accepted')}
+                    onReject={() => updateRecStatus(rec._id, 'rejected')}
+                    onApply={() => updateRecStatus(rec._id, 'applied')}
+                    onDelete={() => deleteRec(rec._id)}
+                  />
+                ))
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Panel de conversaciones */}
         <AnimatePresence>
@@ -847,6 +951,93 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
         </div>
       </motion.div>
     </>
+  );
+}
+
+function CodeRecCard({ rec, onAccept, onReject, onApply, onDelete }) {
+  const [expanded, setExpanded] = useState(false);
+  const severityColors = {
+    critical: '#ef4444',
+    high: '#f97316',
+    medium: '#fbbf24',
+    low: '#60a5fa'
+  };
+  const categoryIcons = {
+    threshold: '📊',
+    bug: '🐛',
+    optimization: '⚡',
+    dead_code: '🗑️',
+    refactor: '🔧',
+    safety: '🛡️',
+    naming: '🏷️',
+    other: '💡'
+  };
+  const statusColors = {
+    pending: '#fbbf24',
+    accepted: '#10b981',
+    rejected: '#6b7280',
+    applied: '#8b5cf6'
+  };
+
+  return (
+    <div className="zeus-coderec-card" style={{ borderLeftColor: severityColors[rec.severity] }}>
+      <div className="zeus-coderec-head">
+        <span className="zeus-coderec-cat">{categoryIcons[rec.category] || '💡'} {rec.category}</span>
+        <span className="zeus-coderec-severity" style={{ color: severityColors[rec.severity] }}>{rec.severity}</span>
+        <span className="zeus-coderec-status" style={{ color: statusColors[rec.status] }}>{rec.status}</span>
+        <span className="zeus-coderec-spacer" />
+        <button className="zeus-coderec-iconbtn" onClick={onDelete} title="Borrar">×</button>
+      </div>
+      <div className="zeus-coderec-path">
+        <code>{rec.file_path}{rec.line_start ? `:${rec.line_start}${rec.line_end && rec.line_end !== rec.line_start ? '-' + rec.line_end : ''}` : ''}</code>
+      </div>
+      <div className="zeus-coderec-rationale">{rec.rationale}</div>
+      <div className="zeus-coderec-evidence">
+        <span className="zeus-coderec-evidence-label">Evidencia:</span> {rec.evidence_summary}
+      </div>
+      {(rec.current_code || rec.proposed_code) && (
+        <>
+          <button
+            className="zeus-coderec-toggle"
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? '▾' : '▸'} Ver diff
+          </button>
+          {expanded && (
+            <div className="zeus-coderec-diff">
+              {rec.current_code && (
+                <div>
+                  <div className="zeus-coderec-difflabel zeus-coderec-difflabel-old">— actual</div>
+                  <pre className="zeus-coderec-code zeus-coderec-code-old">{rec.current_code}</pre>
+                </div>
+              )}
+              {rec.proposed_code && (
+                <div>
+                  <div className="zeus-coderec-difflabel zeus-coderec-difflabel-new">+ propuesto</div>
+                  <pre className="zeus-coderec-code zeus-coderec-code-new">{rec.proposed_code}</pre>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+      {rec.expected_impact && (
+        <div className="zeus-coderec-impact">
+          <span className="zeus-coderec-evidence-label">Impacto esperado:</span> {rec.expected_impact}
+        </div>
+      )}
+      {rec.status === 'pending' && (
+        <div className="zeus-coderec-actions">
+          <button className="zeus-coderec-btn zeus-coderec-btn-reject" onClick={onReject}>Rechazar</button>
+          <button className="zeus-coderec-btn zeus-coderec-btn-accept" onClick={onAccept}>Aceptar</button>
+        </div>
+      )}
+      {rec.status === 'accepted' && (
+        <div className="zeus-coderec-actions">
+          <button className="zeus-coderec-btn zeus-coderec-btn-apply" onClick={onApply}>Marcar como aplicada</button>
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -17,6 +17,7 @@ const AICreation = require('../../db/models/AICreation');
 const ProductBank = require('../../db/models/ProductBank');
 const StrategicDirective = require('../../db/models/StrategicDirective');
 const SystemConfig = require('../../db/models/SystemConfig');
+const ZeusCodeRecommendation = require('../../db/models/ZeusCodeRecommendation');
 const { getLatestSnapshots, getSnapshotHistory, getOverviewHistory } = require('../../db/queries');
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -389,6 +390,27 @@ const TOOL_DEFINITIONS = [
         context_lines: { type: 'number', default: 1, description: 'Líneas de contexto antes/después del match' }
       },
       required: ['pattern']
+    }
+  },
+  {
+    name: 'propose_code_change',
+    description: 'Persiste una recomendación concreta de cambio al código. Úsala cuando hayas detectado algo específico (threshold mal calibrado, bug, optimización) con evidencia de los datos. No la uses para comentarios generales — solo cuando tenés un cambio concreto que proponer, file:line específicos, y justificación numérica. El creador lo va a ver como card para revisar/aceptar/rechazar.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        file_path: { type: 'string', description: 'Path relativo al root (ej "src/ai/agent/testing-agent.js")' },
+        line_start: { type: 'number', description: 'Primera línea del bloque afectado' },
+        line_end: { type: 'number', description: 'Última línea del bloque afectado (puede ser igual a line_start)' },
+        current_code: { type: 'string', description: 'Snippet del código ACTUAL (lo que querés cambiar)' },
+        proposed_code: { type: 'string', description: 'Snippet del código PROPUESTO (como debería quedar)' },
+        rationale: { type: 'string', description: 'Por qué este cambio mejora el sistema (2-4 oraciones, markdown OK)' },
+        evidence_summary: { type: 'string', description: 'Resumen en 1-2 líneas de la evidencia de datos que soporta el cambio (ej: "de 40 tests killed últimos 30 días, 12 tenían ROAS 1.2-1.8 antes del kill — umbral está matando winners en zona gris")' },
+        evidence: { type: 'object', description: 'Data estructurada que soporta (métricas, counts, etc)', additionalProperties: true },
+        expected_impact: { type: 'string', description: 'Qué debería cambiar después del fix (opcional)' },
+        category: { type: 'string', enum: ['threshold', 'bug', 'optimization', 'dead_code', 'refactor', 'safety', 'naming', 'other'], default: 'other' },
+        severity: { type: 'string', enum: ['low', 'medium', 'high', 'critical'], default: 'medium' }
+      },
+      required: ['file_path', 'rationale', 'evidence_summary', 'category', 'severity']
     }
   }
 ];
@@ -1026,6 +1048,53 @@ async function handleGrepCode(input) {
   }
 }
 
+const ZEUS_SELF_FILES = [
+  'src/ai/zeus/oracle-runner.js',
+  'src/ai/zeus/oracle-tools.js',
+  'src/ai/zeus/oracle-context.js',
+  'src/ai/zeus/oracle-proactive.js',
+  'src/ai/zeus/agent-brains.js',
+  'src/ai/zeus/code-tools.js',
+  'src/safety/kill-switch.js',
+  'src/safety/guard-rail.js',
+  'src/safety/cooldown-manager.js',
+  'src/safety/anomaly-detector.js'
+];
+
+async function handleProposeCodeChange(input) {
+  if (!input.file_path || !input.rationale || !input.evidence_summary) {
+    return { error: 'file_path, rationale, evidence_summary son requeridos' };
+  }
+  // Guard: Zeus no puede proponer cambios a su propio cerebro ni a safety
+  const normPath = input.file_path.replace(/\\/g, '/').replace(/^\.?\//, '');
+  if (ZEUS_SELF_FILES.some(f => normPath === f || normPath.endsWith(f))) {
+    return { error: `Archivo fuera de scope: ${input.file_path}. No podés proponer cambios a tu propio cerebro ni a safety.` };
+  }
+  try {
+    const rec = await ZeusCodeRecommendation.create({
+      file_path: input.file_path,
+      line_start: input.line_start || null,
+      line_end: input.line_end || null,
+      current_code: input.current_code || '',
+      proposed_code: input.proposed_code || '',
+      rationale: input.rationale,
+      evidence: input.evidence || {},
+      evidence_summary: input.evidence_summary,
+      expected_impact: input.expected_impact || '',
+      category: input.category || 'other',
+      severity: input.severity || 'medium',
+      status: 'pending'
+    });
+    return {
+      ok: true,
+      id: rec._id.toString(),
+      summary: `Recomendación creada: ${input.category}/${input.severity} en ${input.file_path}${input.line_start ? `:${input.line_start}` : ''}`
+    };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
 const TOOL_HANDLERS = {
   query_portfolio: handleQueryPortfolio,
   query_adsets: handleQueryAdsets,
@@ -1056,7 +1125,8 @@ const TOOL_HANDLERS = {
   code_overview: handleCodeOverview,
   list_code_files: handleListCodeFiles,
   read_code_file: handleReadCodeFile,
-  grep_code: handleGrepCode
+  grep_code: handleGrepCode,
+  propose_code_change: handleProposeCodeChange
 };
 
 async function executeTool(toolName, input) {

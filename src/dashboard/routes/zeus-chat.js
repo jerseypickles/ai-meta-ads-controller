@@ -3,6 +3,7 @@ const router = express.Router();
 const crypto = require('crypto');
 const logger = require('../../utils/logger');
 const ZeusChatMessage = require('../../db/models/ZeusChatMessage');
+const ZeusCodeRecommendation = require('../../db/models/ZeusCodeRecommendation');
 const SystemConfig = require('../../db/models/SystemConfig');
 const { runOracle } = require('../../ai/zeus/oracle-runner');
 
@@ -262,6 +263,70 @@ router.post('/chat/mark-read', async (req, res) => {
     if (conversation_id) filter.conversation_id = conversation_id;
     const result = await ZeusChatMessage.updateMany(filter, { $set: { read_at: new Date() } });
     res.json({ marked: result.modifiedCount || 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ GET /code-recs — lista recomendaciones de código ═══
+router.get('/code-recs', async (req, res) => {
+  try {
+    const { status, category, severity, limit } = req.query;
+    const filter = {};
+    if (status && status !== 'all') filter.status = status;
+    if (category && category !== 'all') filter.category = category;
+    if (severity && severity !== 'all') filter.severity = severity;
+
+    const recs = await ZeusCodeRecommendation.find(filter)
+      .sort({ created_at: -1 })
+      .limit(Math.min(parseInt(limit) || 50, 200))
+      .lean();
+
+    // Counts por status para el panel
+    const counts = await ZeusCodeRecommendation.aggregate([
+      { $group: { _id: '$status', count: { $sum: 1 } } }
+    ]);
+    const countsByStatus = counts.reduce((acc, c) => { acc[c._id] = c.count; return acc; }, {});
+
+    res.json({ recs, counts: countsByStatus });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ GET /code-recs/:id — detalle ═══
+router.get('/code-recs/:id', async (req, res) => {
+  try {
+    const rec = await ZeusCodeRecommendation.findById(req.params.id).lean();
+    if (!rec) return res.status(404).json({ error: 'No encontrado' });
+    res.json(rec);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ PATCH /code-recs/:id — cambia status (accept/reject/apply) ═══
+router.patch('/code-recs/:id', async (req, res) => {
+  try {
+    const { status, review_note } = req.body || {};
+    if (!['pending', 'accepted', 'rejected', 'applied'].includes(status)) {
+      return res.status(400).json({ error: 'status inválido' });
+    }
+    const update = { status, reviewed_at: new Date() };
+    if (review_note !== undefined) update.review_note = review_note;
+    const rec = await ZeusCodeRecommendation.findByIdAndUpdate(req.params.id, { $set: update }, { new: true });
+    if (!rec) return res.status(404).json({ error: 'No encontrado' });
+    res.json(rec);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ DELETE /code-recs/:id ═══
+router.delete('/code-recs/:id', async (req, res) => {
+  try {
+    await ZeusCodeRecommendation.findByIdAndDelete(req.params.id);
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
