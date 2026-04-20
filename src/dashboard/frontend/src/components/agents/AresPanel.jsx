@@ -1,11 +1,26 @@
-import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { PanelHeader, Section, Stat, Empty, gridStyle } from './ZeusPanel';
-import api from '../../api';
+import { useState, useEffect, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { getAresIntelligence, runAresApi } from '../../api';
+
+const ARES_COLOR = '#ef4444';
+
+function formatDate(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  const diff = Date.now() - dt.getTime();
+  const h = Math.floor(diff / 3600000);
+  if (h < 1) return 'hace <1h';
+  if (h < 24) return `hace ${h}h`;
+  return `${dt.getDate()}/${dt.getMonth() + 1}`;
+}
+
+const roasColor = (r) => r >= 3 ? '#10b981' : r >= 1.5 ? '#f59e0b' : r > 0 ? '#ef4444' : 'var(--bos-text-dim)';
 
 export default function AresPanel() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [running, setRunning] = useState(false);
+  const [activeSection, setActiveSection] = useState('overview');
 
   useEffect(() => {
     loadData();
@@ -15,149 +30,709 @@ export default function AresPanel() {
 
   async function loadData() {
     try {
-      const res = await api.get('/api/ares/intelligence').catch(() => ({ data: {} }));
-      setData(res.data);
+      const res = await getAresIntelligence().catch(() => null);
+      setData(res || {});
     } catch (err) {
-      console.error(err);
+      console.error('Ares load error:', err);
     } finally {
       setLoading(false);
     }
   }
 
-  if (loading) return <div className="bos-loading">Cargando Ares...</div>;
+  async function handleRun() {
+    setRunning(true);
+    try { await runAresApi(); await loadData(); }
+    catch (err) { console.error(err); }
+    finally { setRunning(false); }
+  }
 
-  const cbos = [
-    { num: 1, name: 'Production', data: data?.cbo1, color: '#ef4444' },
-    { num: 2, name: 'Rising', data: data?.cbo2, color: '#f59e0b' },
-    { num: 3, name: 'Medición', data: data?.cbo3, color: '#8b5cf6' }
-  ];
+  if (loading && !data) {
+    return <div className="bos-loading">Sintetizando inteligencia de Ares...</div>;
+  }
+
+  const cbo = data?.cbo || {};
+  const cbo1 = data?.cbo1 || {};
+  const cbo2 = data?.cbo2 || {};
+  const cbo3 = data?.cbo3 || {};
+  const candidates = data?.candidates || [];
+  const dups = data?.recent_duplications || [];
+  const allClones = (cbo1.active_clones || 0) + (cbo2.active_clones || 0) + (cbo3.active_clones || 0);
 
   return (
     <div>
-      <PanelHeader icon="⚔️" name="ARES" role="Portfolio Manager · multi-CBO" color="var(--bos-electric)" />
-
-      {/* Aggregate stats */}
-      <div style={gridStyle(4)}>
-        <Stat label="Clones totales" value={data?.active_duplicates || 0} color="var(--bos-electric)" />
-        <Stat label="ROAS combined" value={data?.avg_roas || data?.cbo?.roas || '—'} color="var(--bos-bio)" />
-        <Stat label="Spend 7d" value={`$${data?.total_spend_7d || data?.cbo?.spend_7d || 0}`} color="var(--bos-text)" />
-        <Stat label="Candidatos" value={data?.candidates?.length || 0} color="var(--bos-warn)" />
+      {/* HERO */}
+      <div style={{
+        background: 'radial-gradient(ellipse at top left, rgba(239, 68, 68, 0.12) 0%, transparent 50%), radial-gradient(ellipse at bottom right, rgba(245, 158, 11, 0.08) 0%, transparent 50%)',
+        borderRadius: 16,
+        padding: '20px 24px',
+        marginBottom: 20,
+        border: '1px solid rgba(239, 68, 68, 0.2)'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <motion.div
+            initial={{ scale: 0.5, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: 'spring' }}
+            style={{
+              width: 64, height: 64, borderRadius: '50%',
+              background: `${ARES_COLOR}15`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              border: `2px solid ${ARES_COLOR}40`,
+              filter: `drop-shadow(0 0 20px ${ARES_COLOR})`,
+              fontSize: '2rem'
+            }}
+          >
+            ⚔️
+          </motion.div>
+          <div style={{ flex: 1 }}>
+            <div style={{
+              fontSize: '1.7rem',
+              fontWeight: 800,
+              background: 'linear-gradient(135deg, #ef4444, #dc2626, #f59e0b)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              lineHeight: 1
+            }}>
+              ARES
+            </div>
+            <div style={{
+              fontSize: '0.7rem',
+              color: 'var(--bos-text-muted)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.14em',
+              marginTop: 4
+            }}>
+              Duplicador · 3 campañas CBO (scale + rescate)
+            </div>
+          </div>
+          <div style={{ textAlign: 'right', marginRight: 14 }}>
+            <div style={{ fontSize: '0.58rem', color: 'var(--bos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>ROAS total</div>
+            <div style={{
+              fontSize: '1.9rem',
+              fontWeight: 800,
+              color: roasColor(cbo.roas || 0),
+              fontFamily: 'JetBrains Mono, monospace',
+              lineHeight: 1,
+              filter: `drop-shadow(0 0 12px ${roasColor(cbo.roas || 0)}60)`
+            }}>
+              {cbo.roas || 0}x
+            </div>
+          </div>
+          <button
+            onClick={handleRun}
+            disabled={running}
+            style={{
+              padding: '8px 20px',
+              background: `linear-gradient(90deg, ${ARES_COLOR}, #dc2626)`,
+              border: 'none',
+              borderRadius: 8,
+              color: 'white',
+              fontWeight: 700,
+              fontSize: '0.78rem',
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              cursor: running ? 'not-allowed' : 'pointer',
+              opacity: running ? 0.5 : 1
+            }}
+          >
+            {running ? 'Ejecutando...' : '⚡ Run Ares'}
+          </button>
+        </div>
       </div>
 
-      {/* 3 CBOs side by side */}
-      <Section title="Los 3 CBOs">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {cbos.map((cbo, i) => {
-            if (!cbo.data) return null;
-            const clones = cbo.data.adsets || [];
-            const withSpend = clones.filter(c => (c.spend_7d || 0) > 5).length;
-            return (
-              <motion.div
-                key={cbo.num}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.1 }}
-                style={{
-                  background: 'rgba(17, 21, 51, 0.5)',
-                  borderLeft: `4px solid ${cbo.color}`,
-                  borderRadius: 10,
-                  padding: '12px 16px'
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                  <div style={{
-                    fontSize: '0.7rem',
-                    fontWeight: 700,
-                    color: cbo.color,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.1em'
-                  }}>
-                    CBO {cbo.num} · {cbo.name}
-                  </div>
-                  <div style={{ flex: 1 }} />
-                  <div style={{
-                    fontSize: '1.3rem',
-                    fontWeight: 700,
-                    color: parseFloat(cbo.data.roas) >= 3 ? 'var(--bos-bio)' : 'var(--bos-warn)',
-                    fontFamily: 'JetBrains Mono, monospace',
-                    lineHeight: 1
-                  }}>
-                    {cbo.data.roas || 0}x
-                  </div>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, fontSize: '0.68rem', color: 'var(--bos-text-muted)' }}>
-                  <div>
-                    <div style={{ color: 'var(--bos-text)', fontFamily: 'JetBrains Mono, monospace', fontWeight: 600 }}>
-                      {cbo.data.active_clones || clones.length}
-                    </div>
-                    <div style={{ fontSize: '0.58rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                      clones
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ color: 'var(--bos-text)', fontFamily: 'JetBrains Mono, monospace', fontWeight: 600 }}>
-                      {withSpend}
-                    </div>
-                    <div style={{ fontSize: '0.58rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                      con spend
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ color: 'var(--bos-text)', fontFamily: 'JetBrains Mono, monospace', fontWeight: 600 }}>
-                      ${cbo.data.spend_7d || 0}
-                    </div>
-                    <div style={{ fontSize: '0.58rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                      spend 7d
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ color: 'var(--bos-text)', fontFamily: 'JetBrains Mono, monospace', fontWeight: 600 }}>
-                      {cbo.data.purchases_7d || 0}
-                    </div>
-                    <div style={{ fontSize: '0.58rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                      compras
-                    </div>
-                  </div>
-                </div>
-                {clones.length > 0 && (
-                  <div style={{ marginTop: 8, fontSize: '0.6rem', color: 'var(--bos-text-dim)' }}>
-                    Top: {clones.slice(0, 3).map(c => `${(c.adset_name || '?').substring(0, 30)} (${c.roas_7d}x)`).join(' · ')}
-                  </div>
-                )}
-              </motion.div>
-            );
-          })}
-        </div>
-      </Section>
-
-      {/* Candidates */}
-      <Section title="Candidatos a duplicar" count={data?.candidates?.length}>
-        {(!data?.candidates || data.candidates.length === 0) ? (
-          <Empty>Sin candidatos (criterios endurecidos: ROAS 3x/14d + $500 + 30 purch + SUCCESS)</Empty>
-        ) : (
-          data.candidates.slice(0, 5).map((c, i) => (
-            <div key={i} style={{
-              padding: '8px 12px',
-              background: 'rgba(10, 14, 39, 0.5)',
-              borderRadius: 6,
-              marginBottom: 6,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10
-            }}>
-              <span style={{ fontSize: '0.75rem', color: 'var(--bos-text)', flex: 1 }}>
-                {(c.entity_name || '?').substring(0, 40)}
-              </span>
-              <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--bos-bio)', fontFamily: 'JetBrains Mono, monospace' }}>
-                {c.roas_7d}x
-              </span>
-              <span style={{ fontSize: '0.62rem', color: 'var(--bos-text-muted)' }}>
-                ${c.spend_7d} · {c.purchases_7d}c
-              </span>
+      {/* Stats grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8, marginBottom: 16 }}>
+        {[
+          { v: allClones, l: 'Clones activos', c: ARES_COLOR },
+          { v: '$' + (cbo.revenue_7d || 0).toLocaleString(), l: 'Revenue 7d', c: '#10b981' },
+          { v: '$' + (cbo.spend_7d || 0).toLocaleString(), l: 'Spend 7d', c: '#f59e0b' },
+          { v: cbo.purchases_7d || 0, l: 'Compras 7d', c: '#60a5fa' },
+          { v: candidates.length, l: 'Candidatos', c: candidates.length > 0 ? '#10b981' : 'var(--bos-text-dim)' },
+          { v: data?.total_duplicated || 0, l: 'Total duplicados', c: '#8b5cf6' }
+        ].map((s, i) => (
+          <motion.div
+            key={i}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.04 }}
+            style={{
+              background: 'rgba(10, 14, 39, 0.6)',
+              border: '1px solid rgba(239, 68, 68, 0.1)',
+              borderRadius: 10,
+              padding: '10px 8px',
+              textAlign: 'center',
+              borderTop: `2px solid ${s.c}40`
+            }}
+          >
+            <div style={{ fontSize: '1.2rem', fontWeight: 700, color: s.c, fontFamily: 'JetBrains Mono, monospace', lineHeight: 1 }}>
+              {s.v}
             </div>
-          ))
+            <div style={{ fontSize: '0.56rem', color: 'var(--bos-text-muted)', marginTop: 5, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              {s.l}
+            </div>
+          </motion.div>
+        ))}
+      </div>
+
+      {/* Section tabs */}
+      <div style={{
+        display: 'flex',
+        gap: 4,
+        marginBottom: 16,
+        padding: 4,
+        background: 'rgba(10, 14, 39, 0.4)',
+        borderRadius: 10,
+        overflowX: 'auto'
+      }}>
+        {[
+          { k: 'overview', l: 'Resumen', c: ARES_COLOR },
+          { k: 'cbo1', l: 'CBO 1 · Probados', c: '#ef4444', n: cbo1.active_clones },
+          { k: 'cbo2', l: 'CBO 2 · Nuevos', c: '#f59e0b', n: cbo2.active_clones },
+          { k: 'cbo3', l: 'CBO 3 · Rescate', c: '#8b5cf6', n: cbo3.active_clones },
+          { k: 'candidates', l: 'Candidatos', c: '#10b981', n: candidates.length },
+          { k: 'history', l: 'Historial', c: '#6b7280', n: dups.length },
+          { k: 'criteria', l: 'Criterios', c: '#60a5fa' }
+        ].map(t => {
+          const active = activeSection === t.k;
+          return (
+            <button
+              key={t.k}
+              onClick={() => setActiveSection(t.k)}
+              style={{
+                flex: '1 1 auto',
+                padding: '8px 10px',
+                background: active ? `linear-gradient(135deg, ${t.c}25, ${t.c}12)` : 'transparent',
+                border: active ? `1px solid ${t.c}50` : '1px solid transparent',
+                borderRadius: 6,
+                color: active ? t.c : 'var(--bos-text-muted)',
+                fontSize: '0.66rem',
+                fontWeight: active ? 700 : 500,
+                cursor: 'pointer',
+                textTransform: 'uppercase',
+                letterSpacing: '0.07em',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {t.l} {t.n != null && t.n > 0 && <span style={{ opacity: 0.6, marginLeft: 3 }}>{t.n}</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Content */}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={activeSection}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          transition={{ duration: 0.25 }}
+        >
+          {activeSection === 'overview' && (
+            <OverviewSection
+              cbo1={cbo1} cbo2={cbo2} cbo3={cbo3}
+              candidates={candidates}
+              recentDups={dups.slice(0, 5)}
+              hasCBO3={!!data?.campaign_3_id}
+            />
+          )}
+          {activeSection === 'cbo1' && (
+            <CBODetailSection label="CBO 1 — Ganadores Probados" color="#ef4444" stats={cbo1} campaignId={data?.campaign_id} />
+          )}
+          {activeSection === 'cbo2' && (
+            <CBODetailSection label="CBO 2 — Nuevos Ganadores" color="#f59e0b" stats={cbo2} campaignId={data?.campaign_2_id} />
+          )}
+          {activeSection === 'cbo3' && (
+            <CBODetailSection label="CBO 3 — Medición / Rescate" color="#8b5cf6" stats={cbo3} campaignId={data?.campaign_3_id} />
+          )}
+          {activeSection === 'candidates' && (
+            <CandidatesSection candidates={candidates} />
+          )}
+          {activeSection === 'history' && (
+            <HistorySection dups={dups} />
+          )}
+          {activeSection === 'criteria' && (
+            <CriteriaSection />
+          )}
+        </motion.div>
+      </AnimatePresence>
+
+      {allClones === 0 && candidates.length === 0 && (
+        <div style={{
+          marginTop: 20,
+          padding: '20px 24px',
+          textAlign: 'center',
+          background: 'rgba(239, 68, 68, 0.05)',
+          border: '1px dashed rgba(239, 68, 68, 0.2)',
+          borderRadius: 12,
+          color: 'var(--bos-text-muted)',
+          fontSize: '0.8rem'
+        }}>
+          Ares está esperando ganadores. Criterios endurecidos: ROAS ≥ 3x sostenido 14d, $500+ spend, 30+ compras, 21+ días, 40+ learning conv o SUCCESS.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// OVERVIEW — 3 CBO cards + candidates preview
+// ═══════════════════════════════════════════════════════════════════════════
+
+function OverviewSection({ cbo1, cbo2, cbo3, candidates, recentDups, hasCBO3 }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* 3 CBO summary cards side-by-side */}
+      <div style={{ display: 'grid', gridTemplateColumns: hasCBO3 ? 'repeat(3, 1fr)' : 'repeat(2, 1fr)', gap: 10 }}>
+        <CBOSummaryCard label="CBO 1" sublabel="Probados" color="#ef4444" stats={cbo1} />
+        <CBOSummaryCard label="CBO 2" sublabel="Nuevos" color="#f59e0b" stats={cbo2} />
+        {hasCBO3 && <CBOSummaryCard label="CBO 3" sublabel="Rescate" color="#8b5cf6" stats={cbo3} />}
+      </div>
+
+      {/* Candidates ready to duplicate */}
+      {candidates.length > 0 && (
+        <div style={{
+          background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(16, 185, 129, 0.02))',
+          border: '1px solid rgba(16, 185, 129, 0.3)',
+          borderLeft: '3px solid #10b981',
+          borderRadius: 10,
+          padding: '14px 16px'
+        }}>
+          <SectionHeader label={`🎯 Candidatos listos · ${candidates.length}`} color="#10b981" />
+          {candidates.slice(0, 5).map((c, i) => (
+            <CandidateRow key={i} c={c} index={i} />
+          ))}
+          {candidates.length > 5 && (
+            <div style={{ fontSize: '0.66rem', color: 'var(--bos-text-muted)', textAlign: 'center', marginTop: 8, fontStyle: 'italic' }}>
+              +{candidates.length - 5} más · ver tab Candidatos
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Recent duplications */}
+      {recentDups.length > 0 && (
+        <div>
+          <SectionHeader label="Duplicaciones recientes" count={recentDups.length} color="#8b5cf6" />
+          {recentDups.map((d, i) => (
+            <DuplicationRow key={i} dup={d} index={i} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CBOSummaryCard({ label, sublabel, color, stats }) {
+  const clones = stats.active_clones || 0;
+  const dominantAdset = (stats.adsets || []).slice().sort((a, b) => b.roas_7d - a.roas_7d)[0];
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      style={{
+        background: `linear-gradient(135deg, ${color}12, ${color}04)`,
+        border: `1px solid ${color}30`,
+        borderTop: `3px solid ${color}`,
+        borderRadius: 12,
+        padding: '14px 16px'
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color, letterSpacing: '0.05em' }}>{label}</div>
+          <div style={{ fontSize: '0.6rem', color: 'var(--bos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{sublabel}</div>
+        </div>
+        <div style={{
+          fontSize: '1.6rem',
+          fontWeight: 800,
+          color: roasColor(stats.roas || 0),
+          fontFamily: 'JetBrains Mono, monospace',
+          lineHeight: 1
+        }}>
+          {stats.roas || 0}x
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, marginBottom: 10 }}>
+        {[
+          { l: 'Revenue', v: '$' + (stats.revenue_7d || 0).toLocaleString() },
+          { l: 'Spend', v: '$' + (stats.spend_7d || 0).toLocaleString() },
+          { l: 'Compras', v: stats.purchases_7d || 0 },
+          { l: 'CPA', v: stats.cpa ? '$' + stats.cpa : '—' }
+        ].map((s, i) => (
+          <div key={i} style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--bos-text)', fontFamily: 'JetBrains Mono, monospace' }}>{s.v}</div>
+            <div style={{ fontSize: '0.52rem', color: 'var(--bos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{s.l}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{
+        paddingTop: 8,
+        borderTop: `1px solid ${color}20`,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        fontSize: '0.66rem',
+        color: 'var(--bos-text-muted)'
+      }}>
+        <span>{clones} clon{clones !== 1 ? 'es' : ''} activo{clones !== 1 ? 's' : ''}</span>
+        {dominantAdset && (
+          <span style={{ color: roasColor(dominantAdset.roas_7d), fontFamily: 'JetBrains Mono, monospace' }}>
+            top · {dominantAdset.roas_7d}x
+          </span>
         )}
-      </Section>
+      </div>
+    </motion.div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CBO DETAIL — all adsets in a campaign with full breakdown
+// ═══════════════════════════════════════════════════════════════════════════
+
+function CBODetailSection({ label, color, stats, campaignId }) {
+  const [sortBy, setSortBy] = useState('roas');
+  const adsets = useMemo(() => {
+    const list = [...(stats.adsets || [])];
+    if (sortBy === 'roas') list.sort((a, b) => b.roas_7d - a.roas_7d);
+    else if (sortBy === 'spend') list.sort((a, b) => b.spend_7d - a.spend_7d);
+    else if (sortBy === 'purchases') list.sort((a, b) => b.purchases_7d - a.purchases_7d);
+    else if (sortBy === 'freq') list.sort((a, b) => b.frequency - a.frequency);
+    return list;
+  }, [stats, sortBy]);
+
+  if (!campaignId) {
+    return <Empty>Esta campaña CBO no está configurada en SystemConfig.</Empty>;
+  }
+  if (adsets.length === 0) {
+    return <Empty>Sin clones activos en {label}</Empty>;
+  }
+
+  return (
+    <div>
+      {/* Header with stats */}
+      <div style={{
+        background: `linear-gradient(135deg, ${color}10, ${color}03)`,
+        border: `1px solid ${color}30`,
+        borderRadius: 12,
+        padding: '14px 18px',
+        marginBottom: 12
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+          <div>
+            <div style={{ fontSize: '1rem', fontWeight: 700, color, letterSpacing: '0.04em' }}>{label}</div>
+            <div style={{ fontSize: '0.62rem', color: 'var(--bos-text-muted)', fontFamily: 'JetBrains Mono, monospace', marginTop: 3 }}>
+              ID {campaignId}
+            </div>
+          </div>
+          <div style={{
+            fontSize: '1.8rem',
+            fontWeight: 800,
+            color: roasColor(stats.roas || 0),
+            fontFamily: 'JetBrains Mono, monospace'
+          }}>
+            {stats.roas || 0}x
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
+          {[
+            { l: 'Clones', v: stats.active_clones || 0 },
+            { l: 'Revenue 7d', v: '$' + (stats.revenue_7d || 0).toLocaleString() },
+            { l: 'Spend 7d', v: '$' + (stats.spend_7d || 0).toLocaleString() },
+            { l: 'Compras 7d', v: stats.purchases_7d || 0 },
+            { l: 'CPA', v: stats.cpa ? '$' + stats.cpa : '—' }
+          ].map((s, i) => (
+            <div key={i} style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--bos-text)', fontFamily: 'JetBrains Mono, monospace' }}>{s.v}</div>
+              <div style={{ fontSize: '0.55rem', color: 'var(--bos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 2 }}>{s.l}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Sort controls */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10, alignItems: 'center' }}>
+        <span style={{ fontSize: '0.6rem', color: 'var(--bos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Ordenar:</span>
+        {[
+          { k: 'roas', l: 'ROAS' },
+          { k: 'spend', l: 'Spend' },
+          { k: 'purchases', l: 'Compras' },
+          { k: 'freq', l: 'Freq' }
+        ].map(s => (
+          <button
+            key={s.k}
+            onClick={() => setSortBy(s.k)}
+            style={{
+              padding: '3px 10px',
+              fontSize: '0.62rem',
+              borderRadius: 4,
+              border: sortBy === s.k ? `1px solid ${color}` : '1px solid rgba(255, 255, 255, 0.08)',
+              background: sortBy === s.k ? `${color}15` : 'transparent',
+              color: sortBy === s.k ? color : 'var(--bos-text-muted)',
+              cursor: 'pointer',
+              textTransform: 'uppercase',
+              letterSpacing: '0.06em',
+              fontWeight: sortBy === s.k ? 700 : 500
+            }}
+          >
+            {s.l}
+          </button>
+        ))}
+      </div>
+
+      {/* Adset table */}
+      <div style={{ background: 'rgba(17, 21, 51, 0.4)', borderRadius: 10, overflow: 'hidden' }}>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 80px 70px 70px 70px 70px',
+          gap: 10,
+          padding: '8px 14px',
+          background: 'rgba(10, 14, 39, 0.5)',
+          fontSize: '0.55rem',
+          color: 'var(--bos-text-muted)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.1em',
+          fontWeight: 700
+        }}>
+          <div>Ad set</div>
+          <div style={{ textAlign: 'right' }}>Budget</div>
+          <div style={{ textAlign: 'right' }}>Spend 7d</div>
+          <div style={{ textAlign: 'right' }}>Compras</div>
+          <div style={{ textAlign: 'right' }}>Freq</div>
+          <div style={{ textAlign: 'right' }}>ROAS</div>
+        </div>
+        {adsets.map((a, i) => (
+          <motion.div
+            key={i}
+            initial={{ opacity: 0, x: -6 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: Math.min(i * 0.02, 0.4) }}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 80px 70px 70px 70px 70px',
+              gap: 10,
+              padding: '8px 14px',
+              borderTop: '1px solid rgba(255, 255, 255, 0.04)',
+              fontSize: '0.72rem'
+            }}
+          >
+            <div style={{ color: 'var(--bos-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.adset_name}</div>
+            <div style={{ textAlign: 'right', color: 'var(--bos-text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>${a.daily_budget || '—'}</div>
+            <div style={{ textAlign: 'right', color: 'var(--bos-text)', fontFamily: 'JetBrains Mono, monospace' }}>${a.spend_7d}</div>
+            <div style={{ textAlign: 'right', color: a.purchases_7d > 0 ? '#10b981' : 'var(--bos-text-dim)', fontFamily: 'JetBrains Mono, monospace' }}>{a.purchases_7d}</div>
+            <div style={{ textAlign: 'right', color: a.frequency >= 2.5 ? '#f59e0b' : 'var(--bos-text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>{a.frequency}</div>
+            <div style={{ textAlign: 'right', color: roasColor(a.roas_7d), fontFamily: 'JetBrains Mono, monospace', fontWeight: 700 }}>{a.roas_7d}x</div>
+          </motion.div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CANDIDATES — ad sets ready for duplication
+// ═══════════════════════════════════════════════════════════════════════════
+
+function CandidatesSection({ candidates }) {
+  if (candidates.length === 0) {
+    return <Empty>Sin candidatos — ningún ad set cumple los criterios endurecidos aún</Empty>;
+  }
+  return (
+    <div>
+      <SectionHeader label="Ad sets cumplen criterios de Ares" count={candidates.length} color="#10b981" />
+      {candidates.map((c, i) => <CandidateRow key={i} c={c} index={i} />)}
+    </div>
+  );
+}
+
+function CandidateRow({ c, index }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -6 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: Math.min(index * 0.03, 0.4) }}
+      style={{
+        background: 'rgba(17, 21, 51, 0.5)',
+        borderLeft: '3px solid #10b981',
+        borderRadius: 6,
+        padding: '10px 14px',
+        marginBottom: 5,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 10
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: '0.78rem', color: 'var(--bos-text)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {c.entity_name}
+        </div>
+        <div style={{ fontSize: '0.62rem', color: 'var(--bos-text-muted)', marginTop: 3, fontFamily: 'JetBrains Mono, monospace' }}>
+          ${c.spend_7d} · {c.purchases_7d}c · freq {c.frequency}
+        </div>
+      </div>
+      <div style={{
+        fontSize: '1.15rem',
+        fontWeight: 700,
+        color: '#10b981',
+        fontFamily: 'JetBrains Mono, monospace',
+        filter: 'drop-shadow(0 0 8px rgba(16, 185, 129, 0.3))'
+      }}>
+        {c.roas_7d}x
+      </div>
+    </motion.div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HISTORY — past duplications with context
+// ═══════════════════════════════════════════════════════════════════════════
+
+function HistorySection({ dups }) {
+  if (dups.length === 0) return <Empty>Sin historial de duplicaciones</Empty>;
+  return (
+    <div>
+      <SectionHeader label="Duplicaciones ejecutadas" count={dups.length} color="#8b5cf6" />
+      {dups.map((d, i) => <DuplicationRow key={i} dup={d} index={i} />)}
+    </div>
+  );
+}
+
+function DuplicationRow({ dup, index }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -6 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: Math.min(index * 0.03, 0.4) }}
+      style={{
+        background: 'rgba(17, 21, 51, 0.5)',
+        borderLeft: '3px solid #8b5cf6',
+        borderRadius: 6,
+        padding: '10px 14px',
+        marginBottom: 5
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: '0.74rem', color: 'var(--bos-text)', fontWeight: 500 }}>
+            <span style={{ color: 'var(--bos-text-muted)' }}>{dup.original_name}</span>
+            <span style={{ margin: '0 6px', color: '#8b5cf6' }}>→</span>
+            <span>{dup.clone_name}</span>
+          </div>
+          {dup.reasoning && (
+            <div style={{ fontSize: '0.62rem', color: 'var(--bos-text-muted)', marginTop: 3, fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {dup.reasoning}
+            </div>
+          )}
+        </div>
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          <div style={{ fontSize: '0.9rem', fontWeight: 700, color: roasColor(dup.roas_at_dup || 0), fontFamily: 'JetBrains Mono, monospace' }}>
+            {(dup.roas_at_dup || 0).toFixed(1)}x
+          </div>
+          <div style={{ fontSize: '0.58rem', color: 'var(--bos-text-dim)', fontFamily: 'JetBrains Mono, monospace', marginTop: 2 }}>
+            {formatDate(dup.executed_at)}
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CRITERIA — hardened graduation rules doc
+// ═══════════════════════════════════════════════════════════════════════════
+
+function CriteriaSection() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ background: 'rgba(239, 68, 68, 0.06)', border: '1px solid rgba(239, 68, 68, 0.25)', borderRadius: 10, padding: '14px 18px' }}>
+        <SectionHeader label="⚔️ Criterios de duplicación (endurecidos abril 2026)" color={ARES_COLOR} />
+        <ul style={{ paddingLeft: 20, fontSize: '0.76rem', color: 'var(--bos-text-muted)', lineHeight: 1.8, margin: 0 }}>
+          <li><strong style={{ color: '#10b981' }}>ROAS ≥ 3.0x</strong> sostenido 14 días (fallback 7d)</li>
+          <li><strong style={{ color: '#10b981' }}>Spend ≥ $500</strong> en el período de medición</li>
+          <li><strong style={{ color: '#10b981' }}>≥ 30 compras</strong> totales</li>
+          <li><strong style={{ color: '#10b981' }}>Frequency &lt; 2.0</strong> (hay room para escalar)</li>
+          <li><strong style={{ color: '#10b981' }}>Learning SUCCESS</strong> o <strong>≥ 40 learning conversions</strong></li>
+          <li>Fast-track <strong style={{ color: '#ef4444' }}>disabled</strong> (100% fail rate histórico)</li>
+        </ul>
+      </div>
+
+      <div style={{ background: 'rgba(107, 114, 128, 0.06)', border: '1px solid rgba(107, 114, 128, 0.25)', borderRadius: 10, padding: '14px 18px' }}>
+        <SectionHeader label="🚫 Exclusiones automáticas" color="#6b7280" />
+        <ul style={{ paddingLeft: 20, fontSize: '0.74rem', color: 'var(--bos-text-muted)', lineHeight: 1.8, margin: 0 }}>
+          <li>Nombres con <code style={{ color: '#fbbf24', fontFamily: 'JetBrains Mono, monospace' }}>[TEST]</code>, <code style={{ color: '#fbbf24', fontFamily: 'JetBrains Mono, monospace' }}>AI -</code>, <code style={{ color: '#fbbf24', fontFamily: 'JetBrains Mono, monospace' }}>[ARES]</code></li>
+          <li>Ad sets con <code style={{ color: '#fbbf24', fontFamily: 'JetBrains Mono, monospace' }}>DONT TOUCH</code>, <code style={{ color: '#fbbf24', fontFamily: 'JetBrains Mono, monospace' }}>EXCLUDE</code>, <code style={{ color: '#fbbf24', fontFamily: 'JetBrains Mono, monospace' }}>MANUAL ONLY</code></li>
+          <li>Amazon / otras plataformas (<code style={{ color: '#fbbf24', fontFamily: 'JetBrains Mono, monospace' }}>AMAZON</code>)</li>
+          <li>Ya duplicados (se mira ActionLog)</li>
+        </ul>
+      </div>
+
+      <div style={{ background: 'rgba(139, 92, 246, 0.06)', border: '1px solid rgba(139, 92, 246, 0.25)', borderRadius: 10, padding: '14px 18px' }}>
+        <SectionHeader label="3 campañas CBO" color="#8b5cf6" />
+        <ul style={{ paddingLeft: 20, fontSize: '0.74rem', color: 'var(--bos-text-muted)', lineHeight: 1.8, margin: 0 }}>
+          <li><strong style={{ color: '#ef4444' }}>CBO 1 · Probados</strong>: winners con track record estable</li>
+          <li><strong style={{ color: '#f59e0b' }}>CBO 2 · Nuevos</strong>: clones recientes aún probándose</li>
+          <li><strong style={{ color: '#8b5cf6' }}>CBO 3 · Rescate / Medición</strong>: clones starved por CBO auction loser (experimento abril 2026 con $200/d)</li>
+        </ul>
+      </div>
+
+      <div style={{ background: 'rgba(16, 185, 129, 0.06)', border: '1px solid rgba(16, 185, 129, 0.25)', borderRadius: 10, padding: '14px 18px' }}>
+        <SectionHeader label="Budget por clon" color="#10b981" />
+        <div style={{ fontSize: '0.76rem', color: 'var(--bos-text-muted)', lineHeight: 1.7 }}>
+          Budget inicial: <strong style={{ color: '#10b981' }}>$30/día</strong>. El CBO optimiza la distribución entre clones según performance. Ares no ajusta budget directamente — Athena/Zeus lo hacen vía directivas.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+function SectionHeader({ label, count, color }) {
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 10,
+      fontSize: '0.65rem',
+      color: color || 'var(--bos-text-muted)',
+      textTransform: 'uppercase',
+      letterSpacing: '0.12em',
+      fontWeight: 700
+    }}>
+      <span>{label}</span>
+      {count != null && (
+        <span style={{
+          background: `${color || '#6b7280'}15`,
+          color: color || 'var(--bos-text-muted)',
+          padding: '2px 8px',
+          borderRadius: 10,
+          fontSize: '0.58rem',
+          fontFamily: 'JetBrains Mono, monospace'
+        }}>
+          {count}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function Empty({ children }) {
+  return (
+    <div style={{
+      padding: '24px',
+      textAlign: 'center',
+      color: 'var(--bos-text-dim)',
+      fontSize: '0.82rem',
+      fontStyle: 'italic',
+      background: 'rgba(10, 14, 39, 0.3)',
+      border: '1px dashed rgba(255, 255, 255, 0.08)',
+      borderRadius: 10
+    }}>
+      {children}
     </div>
   );
 }
