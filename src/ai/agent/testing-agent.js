@@ -746,8 +746,22 @@ async function runTestingAgent() {
   // Fase 0: Procesar force_graduate directives de Zeus (orden directa del CEO)
   const forceGraduated = await processForceGraduateDirectives();
 
-  // Fase 1: Lanzar tests nuevos
-  const launched = await launchTests();
+  // Chequear directivas avoid de Zeus — si existe, skipeamos launches pero
+  // seguimos monitoreando tests activos (no dejarlos huérfanos).
+  let launchBlocked = false;
+  try {
+    const { isAgentBlocked } = require('../zeus/directive-guard');
+    const block = await isAgentBlocked('prometheus');
+    if (block.blocked) {
+      logger.info(`[TESTING] Launches SKIP por directiva de Zeus: "${block.reason}"`);
+      launchBlocked = true;
+    }
+  } catch (err) {
+    logger.warn(`[TESTING] directive-guard check falló: ${err.message}`);
+  }
+
+  // Fase 1: Lanzar tests nuevos (salvo que Zeus haya bloqueado)
+  const launched = launchBlocked ? { launched: 0, results: [], blocked: true } : await launchTests();
 
   // Fase 2: Monitorear tests activos
   const { monitored, graduated, killed, expired } = await monitorTests();

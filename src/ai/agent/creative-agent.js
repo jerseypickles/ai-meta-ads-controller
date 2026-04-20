@@ -276,6 +276,24 @@ async function runCreativeAgent() {
   const cycleId = `creative_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   logger.info(`═══ Iniciando Creative Agent [${cycleId}] ═══`);
 
+  // Fase -1: Chequear directivas avoid activas de Zeus
+  try {
+    const { isAgentBlocked } = require('../zeus/directive-guard');
+    const block = await isAgentBlocked('apollo');
+    if (block.blocked) {
+      logger.info(`[APOLLO] Cycle SKIP por directiva de Zeus: "${block.reason}"`);
+      return {
+        skipped: true,
+        reason: block.reason,
+        directive_id: block.directive_id,
+        elapsed: '0s',
+        cycle_id: cycleId
+      };
+    }
+  } catch (err) {
+    logger.warn(`[APOLLO] directive-guard check falló: ${err.message}`);
+  }
+
   // 1. Expirar propuestas "ready" con mas de 48h sin ser tomadas por Testing Agent
   const staleReady = await CreativeProposal.updateMany(
     { status: 'ready', created_at: { $lt: new Date(Date.now() - 48 * 3600000) } },

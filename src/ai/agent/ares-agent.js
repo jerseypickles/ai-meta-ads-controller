@@ -657,6 +657,24 @@ async function runAresAgent() {
   const cycleId = `ares_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   logger.info(`═══ Iniciando Ares Agent [${cycleId}] ═══`);
 
+  // Fase -1: Chequear directivas 'avoid' activas de Zeus (ej billing freeze)
+  try {
+    const { isAgentBlocked } = require('../zeus/directive-guard');
+    const block = await isAgentBlocked('ares');
+    if (block.blocked) {
+      logger.info(`[ARES] Cycle SKIP por directiva de Zeus: "${block.reason}"${block.expires_at ? ` (expira ${new Date(block.expires_at).toISOString()})` : ''}`);
+      return {
+        skipped: true,
+        reason: block.reason,
+        directive_id: block.directive_id,
+        elapsed: '0s',
+        cycle_id: cycleId
+      };
+    }
+  } catch (err) {
+    logger.warn(`[ARES] directive-guard check falló, continúo: ${err.message}`);
+  }
+
   // Fase 1: Obtener o crear campana Ares
   let aresCampaignId;
   try {

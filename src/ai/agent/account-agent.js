@@ -1111,6 +1111,27 @@ async function runAccountAgent() {
   const mode = _getAgentMode();
   logger.info(`═══ Iniciando Account Agent [${cycleId}] modo=${mode} ═══`);
 
+  // Chequear directivas avoid de Zeus (ej billing freeze)
+  try {
+    const { isAgentBlocked } = require('../zeus/directive-guard');
+    const block = await isAgentBlocked('athena');
+    if (block.blocked) {
+      logger.info(`[ACCOUNT-AGENT] Cycle SKIP por directiva de Zeus: "${block.reason}"`);
+      return {
+        skipped: true,
+        reason: block.reason,
+        directive_id: block.directive_id,
+        managed: 0,
+        actions_taken: 0,
+        results: [],
+        elapsed: '0s',
+        cycle_id: cycleId
+      };
+    }
+  } catch (err) {
+    logger.warn(`[ACCOUNT-AGENT] directive-guard check falló: ${err.message}`);
+  }
+
   // Freshness guard
   const freshness = await getSnapshotFreshness('adset');
   if (!freshness.fresh) {
