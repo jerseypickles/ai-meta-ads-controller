@@ -520,6 +520,7 @@ function toolLabel(tool) {
     create_watcher: '👁️ creando watcher',
     cancel_watcher: '👁️ cancelando watcher',
     list_watchers: '👁️ revisando watchers',
+    query_code_recommendations: '💡 revisando mis code recs',
     query_calibration: '📊 revisando mi track record',
     track_recommendation: '📊 trackeando recomendación',
     mark_recommendation_applied: '📊 marcando aplicada',

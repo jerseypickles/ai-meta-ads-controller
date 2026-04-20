@@ -629,6 +629,20 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'query_code_recommendations',
+    description: 'Lista tus propias code recommendations (las que creaste con propose_code_change). Filtrable por status. Usala cuando el creador pregunte "qué recomendaciones de código me dejaste" o "qué aplicamos" — es tu propio panel 💡, no confundir con BrainRecommendations.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', enum: ['all', 'pending', 'accepted', 'rejected', 'applied'], default: 'all' },
+        category: { type: 'string' },
+        severity: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
+        limit: { type: 'number', default: 20 }
+      },
+      required: []
+    }
+  },
+  {
     name: 'query_calibration',
     description: 'Stats de calibración — cuántas recomendaciones hiciste de cada categoría y qué % realmente funcionaron vs no. Úsala al inicio de respuestas analíticas para CONOCER tu propio track record y ajustar confidence. También cuando el creador pregunte "¿qué tan bien vas acertando?".',
     input_schema: {
@@ -1642,6 +1656,43 @@ async function handleListHypotheses(input) {
   }));
 }
 
+async function handleQueryCodeRecommendations(input) {
+  const filter = {};
+  if (input.status && input.status !== 'all') filter.status = input.status;
+  if (input.category) filter.category = input.category;
+  if (input.severity) filter.severity = input.severity;
+
+  const recs = await ZeusCodeRecommendation.find(filter)
+    .sort({ created_at: -1 })
+    .limit(Math.min(input.limit || 20, 50))
+    .lean();
+
+  // Also include counts per status for context
+  const counts = await ZeusCodeRecommendation.aggregate([
+    { $group: { _id: '$status', count: { $sum: 1 } } }
+  ]);
+  const countsByStatus = counts.reduce((acc, c) => { acc[c._id] = c.count; return acc; }, {});
+
+  return {
+    counts_by_status: countsByStatus,
+    total_returned: recs.length,
+    recommendations: recs.map(r => ({
+      id: r._id.toString(),
+      file_path: r.file_path,
+      line_start: r.line_start,
+      line_end: r.line_end,
+      category: r.category,
+      severity: r.severity,
+      status: r.status,
+      rationale: r.rationale?.substring(0, 300),
+      evidence_summary: r.evidence_summary,
+      expected_impact: r.expected_impact,
+      created_at: r.created_at,
+      reviewed_at: r.reviewed_at
+    }))
+  };
+}
+
 async function handleQueryCalibration(input) {
   const { getCalibrationStats } = require('./learner');
   const opts = {};
@@ -1948,6 +1999,7 @@ const TOOL_HANDLERS = {
   create_watcher: handleCreateWatcher,
   cancel_watcher: handleCancelWatcher,
   list_watchers: handleListWatchers,
+  query_code_recommendations: handleQueryCodeRecommendations,
   query_calibration: handleQueryCalibration,
   track_recommendation: handleTrackRecommendation,
   mark_recommendation_applied: handleMarkRecommendationApplied,
