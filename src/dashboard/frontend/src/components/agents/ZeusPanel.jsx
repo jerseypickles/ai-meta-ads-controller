@@ -60,13 +60,14 @@ export default function ZeusPanel() {
       <div style={{
         background: 'radial-gradient(ellipse at center, rgba(251, 191, 36, 0.08) 0%, transparent 70%)',
         borderRadius: 16,
-        padding: '16px 0',
+        padding: '16px 0 0',
         marginBottom: 20,
         position: 'relative',
-        minHeight: 220
+        height: 340,
+        overflow: 'hidden'
       }}>
         <Suspense fallback={<div className="bos-loading">Sintetizando red neural...</div>}>
-          <div style={{ height: 200 }}>
+          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
             <ZeusOrb
               learningActive={false}
               directives={activeDirs}

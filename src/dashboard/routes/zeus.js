@@ -6,6 +6,7 @@ const TestRun = require('../../db/models/TestRun');
 const CreativeProposal = require('../../db/models/CreativeProposal');
 const ActionLog = require('../../db/models/ActionLog');
 const SystemConfig = require('../../db/models/SystemConfig');
+const BrainInsight = require('../../db/models/BrainInsight');
 
 const _zeusJobs = {};
 
@@ -122,6 +123,27 @@ router.get('/intelligence', async (req, res) => {
     const dataPoints = totalFinished * 3 + directives.length * 5;
     const intelligenceScore = Math.min(100, Math.round(dataPoints / 2));
 
+    // Thoughts (stream de consciencia) — BrainInsights de Zeus
+    const thoughts = await BrainInsight.find({
+      $or: [
+        { generated_by: 'zeus' },
+        { insight_type: { $in: ['brain_thinking', 'brain_activity', 'summary'] } }
+      ]
+    }).sort({ created_at: -1 }).limit(20).lean();
+
+    // Conversations — ZeusConversation
+    const ZeusConversation = require('../../db/models/ZeusConversation');
+    const conversations = await ZeusConversation.find()
+      .sort({ created_at: -1 })
+      .limit(30)
+      .lean();
+
+    // Hypotheses — BrainInsights type='hypothesis' de Zeus
+    const hypotheses = await BrainInsight.find({
+      insight_type: 'hypothesis',
+      generated_by: 'zeus'
+    }).sort({ created_at: -1 }).limit(15).lean();
+
     res.json({
       summary: summary?.summary || 'Zeus aun esta recopilando datos...',
       intelligence_score: intelligenceScore,
@@ -129,6 +151,9 @@ router.get('/intelligence', async (req, res) => {
         active: directives,
         total_ever: await ZeusDirective.countDocuments()
       },
+      thoughts,
+      conversations,
+      hypotheses,
       testing: {
         graduated, killed, expired,
         active: (testMap.learning?.count || 0) + (testMap.evaluating?.count || 0),
