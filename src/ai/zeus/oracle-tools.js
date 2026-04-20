@@ -18,6 +18,7 @@ const ProductBank = require('../../db/models/ProductBank');
 const StrategicDirective = require('../../db/models/StrategicDirective');
 const SystemConfig = require('../../db/models/SystemConfig');
 const ZeusCodeRecommendation = require('../../db/models/ZeusCodeRecommendation');
+const ZeusPreference = require('../../db/models/ZeusPreference');
 const { getLatestSnapshots, getSnapshotHistory, getOverviewHistory } = require('../../db/queries');
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -390,6 +391,43 @@ const TOOL_DEFINITIONS = [
         context_lines: { type: 'number', default: 1, description: 'Líneas de contexto antes/después del match' }
       },
       required: ['pattern']
+    }
+  },
+  {
+    name: 'remember_preference',
+    description: 'Guardá una preferencia/prioridad/fact del creador que debería persistir entre conversaciones. Úsala solo para cosas genuinamente estables (no para respuestas puntuales): prioridades de negocio, estilos de comunicación, decisiones estratégicas, fases actuales. Ejemplos: "creador prioriza CPA sobre ROAS durante fase de inversión", "responder en párrafos cortos", "no duplicar en CBO 1 hasta julio".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'Identificador único (snake_case): ej priority_metric, response_style, freeze_window' },
+        value: { type: 'string', description: 'La preferencia en sí, frase corta clara' },
+        category: { type: 'string', enum: ['priority', 'style', 'strategic', 'operational', 'habit', 'constraint', 'other'], default: 'other' },
+        context: { type: 'string', description: 'Por qué esta preferencia existe / de dónde salió' },
+        confidence: { type: 'number', default: 0.8, description: '0-1, qué tan seguro estás' }
+      },
+      required: ['key', 'value', 'category']
+    }
+  },
+  {
+    name: 'forget_preference',
+    description: 'Marca una preferencia como inactiva (la "olvida"). Úsala si el creador explícitamente dice que algo ya no aplica.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'Key de la preferencia a olvidar' }
+      },
+      required: ['key']
+    }
+  },
+  {
+    name: 'list_preferences',
+    description: 'Lista las preferencias actuales. Usala si el creador pregunta qué recordás de él o para auto-introspección.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        category: { type: 'string', enum: ['all', 'priority', 'style', 'strategic', 'operational', 'habit', 'constraint', 'other'], default: 'all' }
+      },
+      required: []
     }
   },
   {
@@ -1061,6 +1099,58 @@ const ZEUS_SELF_FILES = [
   'src/safety/anomaly-detector.js'
 ];
 
+async function handleRememberPreference(input) {
+  if (!input.key || !input.value) return { error: 'key y value requeridos' };
+  try {
+    const pref = await ZeusPreference.findOneAndUpdate(
+      { key: input.key },
+      {
+        $set: {
+          value: input.value,
+          category: input.category || 'other',
+          context: input.context || '',
+          confidence: input.confidence ?? 0.8,
+          active: true,
+          updated_at: new Date()
+        }
+      },
+      { upsert: true, new: true }
+    );
+    return { ok: true, key: pref.key, value: pref.value, summary: `Guardado: ${pref.key} = "${pref.value}"` };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function handleForgetPreference(input) {
+  if (!input.key) return { error: 'key requerido' };
+  try {
+    const updated = await ZeusPreference.findOneAndUpdate(
+      { key: input.key },
+      { $set: { active: false, updated_at: new Date() } },
+      { new: true }
+    );
+    if (!updated) return { error: `No encontré preferencia con key "${input.key}"` };
+    return { ok: true, summary: `Olvidado: ${input.key}` };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function handleListPreferences(input) {
+  const filter = { active: true };
+  if (input.category && input.category !== 'all') filter.category = input.category;
+  const prefs = await ZeusPreference.find(filter).sort({ category: 1, updated_at: -1 }).lean();
+  return prefs.map(p => ({
+    key: p.key,
+    value: p.value,
+    category: p.category,
+    context: p.context,
+    confidence: p.confidence,
+    created_at: p.created_at
+  }));
+}
+
 async function handleProposeCodeChange(input) {
   if (!input.file_path || !input.rationale || !input.evidence_summary) {
     return { error: 'file_path, rationale, evidence_summary son requeridos' };
@@ -1126,7 +1216,10 @@ const TOOL_HANDLERS = {
   list_code_files: handleListCodeFiles,
   read_code_file: handleReadCodeFile,
   grep_code: handleGrepCode,
-  propose_code_change: handleProposeCodeChange
+  propose_code_change: handleProposeCodeChange,
+  remember_preference: handleRememberPreference,
+  forget_preference: handleForgetPreference,
+  list_preferences: handleListPreferences
 };
 
 async function executeTool(toolName, input) {

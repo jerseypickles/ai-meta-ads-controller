@@ -8,6 +8,7 @@ const CreativeProposal = require('../../db/models/CreativeProposal');
 const ActionLog = require('../../db/models/ActionLog');
 const ZeusDirective = require('../../db/models/ZeusDirective');
 const BrainInsight = require('../../db/models/BrainInsight');
+const ZeusPreference = require('../../db/models/ZeusPreference');
 const SystemConfig = require('../../db/models/SystemConfig');
 const { getLatestSnapshots } = require('../../db/queries');
 
@@ -159,6 +160,20 @@ async function buildOracleContext(lastSeenAt = null) {
     }
   } catch (_) {}
 
+  // Preferencias persistentes del creador (memoria cross-conversación)
+  try {
+    const prefs = await ZeusPreference.find({ active: true })
+      .sort({ category: 1, confidence: -1, updated_at: -1 })
+      .limit(30)
+      .lean();
+    ctx.creator_preferences = prefs.map(p => ({
+      key: p.key,
+      value: p.value,
+      category: p.category,
+      confidence: p.confidence
+    }));
+  } catch (_) { ctx.creator_preferences = []; }
+
   return ctx;
 }
 
@@ -212,6 +227,19 @@ function formatContextForPrompt(ctx) {
   if (ctx.zeus_intelligence_summary) {
     lines.push(`\nRESUMEN DE APRENDIZAJE PROPIO:`);
     lines.push(`  ${ctx.zeus_intelligence_summary}`);
+  }
+
+  if (ctx.creator_preferences?.length) {
+    lines.push(`\nMEMORIA DEL CREADOR (preferencias persistentes — SIEMPRE respetalas):`);
+    const byCategory = {};
+    for (const p of ctx.creator_preferences) {
+      if (!byCategory[p.category]) byCategory[p.category] = [];
+      byCategory[p.category].push(`${p.key}: ${p.value}`);
+    }
+    for (const [cat, items] of Object.entries(byCategory)) {
+      lines.push(`  [${cat}]`);
+      for (const item of items) lines.push(`    - ${item}`);
+    }
   }
 
   return lines.join('\n');

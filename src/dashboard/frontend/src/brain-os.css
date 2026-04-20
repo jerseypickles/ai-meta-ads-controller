@@ -1054,6 +1054,110 @@
   color: var(--bos-text);
 }
 
+/* Panel de memoria */
+.zeus-memory-panel {
+  overflow: hidden;
+  background: rgba(10, 14, 39, 0.7);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  max-height: 420px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.zeus-memory-header {
+  padding: 12px 16px 8px;
+  background: rgba(139, 92, 246, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.zeus-memory-title {
+  font-size: 0.72rem;
+  color: #c4b5fd;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.zeus-memory-sub {
+  font-size: 0.66rem;
+  color: var(--bos-text-muted);
+  margin-top: 4px;
+}
+
+.zeus-memory-empty {
+  padding: 24px 20px;
+  text-align: center;
+  color: var(--bos-text-dim);
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
+.zeus-memory-item {
+  background: rgba(17, 21, 51, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 3px solid #a78bfa;
+  border-radius: 8px;
+  margin: 8px 14px;
+  padding: 10px 12px;
+}
+
+.zeus-memory-item.inactive {
+  opacity: 0.5;
+  border-left-color: #6b7280;
+}
+
+.zeus-memory-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.zeus-memory-cat {
+  font-size: 0.55rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  padding: 2px 6px;
+  background: rgba(139, 92, 246, 0.15);
+  color: #c4b5fd;
+  border-radius: 4px;
+}
+
+.zeus-memory-key {
+  font-size: 0.65rem;
+  color: var(--bos-text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.zeus-memory-spacer { flex: 1; }
+
+.zeus-memory-toggle, .zeus-memory-del {
+  background: none;
+  border: none;
+  color: var(--bos-text-muted);
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.zeus-memory-toggle:hover { color: #a78bfa; }
+.zeus-memory-del:hover { color: #ef4444; }
+
+.zeus-memory-value {
+  font-size: 0.78rem;
+  color: var(--bos-text);
+  line-height: 1.5;
+}
+
+.zeus-memory-context {
+  font-size: 0.68rem;
+  color: var(--bos-text-muted);
+  margin-top: 4px;
+  font-style: italic;
+}
+
 /* Panel de recomendaciones de código */
 .zeus-coderecs-panel {
   overflow: hidden;

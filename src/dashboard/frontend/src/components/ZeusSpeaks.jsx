@@ -500,7 +500,10 @@ function toolLabel(tool) {
     list_code_files: '📄 listando archivos',
     read_code_file: '📖 leyendo código',
     grep_code: '🔍 buscando en código',
-    propose_code_change: '💡 guardando recomendación'
+    propose_code_change: '💡 guardando recomendación',
+    remember_preference: '💭 recordando',
+    forget_preference: '💭 olvidando',
+    list_preferences: '💭 revisando memoria'
   };
   return labels[tool] || tool;
 }
@@ -524,6 +527,8 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   const [codeRecs, setCodeRecs] = useState([]);
   const [codeRecsCounts, setCodeRecsCounts] = useState({});
   const [codeRecsFilter, setCodeRecsFilter] = useState('pending');
+  const [showMemory, setShowMemory] = useState(false);
+  const [preferences, setPreferences] = useState([]);
   const scrollRef = useRef(null);
   const esRef = useRef(null);
   const streamingTextRef = useRef('');
@@ -584,6 +589,31 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
     if (showCodeRecs) loadCodeRecs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showCodeRecs, codeRecsFilter]);
+
+  async function loadPreferences() {
+    try {
+      const res = await api.get('/api/zeus/preferences');
+      setPreferences(res.data.preferences || []);
+    } catch (err) { console.error(err); }
+  }
+
+  async function deletePreference(id) {
+    if (!window.confirm('Borrar esta memoria?')) return;
+    try { await api.delete(`/api/zeus/preferences/${id}`); await loadPreferences(); }
+    catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function togglePreferenceActive(id, active) {
+    try {
+      await api.patch(`/api/zeus/preferences/${id}`, { active });
+      await loadPreferences();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  useEffect(() => {
+    if (showMemory) loadPreferences();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showMemory]);
 
   // Load counts al abrir drawer (para el badge del 💡)
   useEffect(() => {
@@ -646,6 +676,8 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
 
     const params = new URLSearchParams({ message: msg });
     if (conversationId) params.set('conversation_id', conversationId);
+    const uiContext = typeof window !== 'undefined' ? window.__zeusUiContext : null;
+    if (uiContext) params.set('ui_context', JSON.stringify(uiContext));
 
     const es = streamSSE(`/api/zeus/chat/stream?${params.toString()}`, {
       start: (data) => {
@@ -757,7 +789,19 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
             <button
               className="zeus-drawer-icon-btn"
               onClick={() => {
+                setShowMemory(!showMemory);
+                setShowCodeRecs(false);
+                setShowConversationList(false);
+              }}
+              title="Memoria de Zeus"
+            >
+              💭
+            </button>
+            <button
+              className="zeus-drawer-icon-btn"
+              onClick={() => {
                 setShowCodeRecs(!showCodeRecs);
+                setShowMemory(false);
                 setShowConversationList(false);
               }}
               title="Recomendaciones de código"
@@ -788,6 +832,42 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
             <button className="zeus-drawer-close" onClick={onClose}>×</button>
           </div>
         </div>
+
+        {/* Panel de memoria */}
+        <AnimatePresence>
+          {showMemory && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="zeus-memory-panel"
+            >
+              <div className="zeus-memory-header">
+                <div className="zeus-memory-title">💭 Lo que Zeus recuerda de vos</div>
+                <div className="zeus-memory-sub">Preferencias persistentes entre conversaciones. Zeus las inyecta en cada respuesta.</div>
+              </div>
+              {preferences.length === 0 ? (
+                <div className="zeus-memory-empty">Zeus aún no recuerda nada específico. Decíle cosas tipo "priorizá X sobre Y" y las aprenderá.</div>
+              ) : (
+                preferences.map(p => (
+                  <div key={p._id} className={`zeus-memory-item ${!p.active ? 'inactive' : ''}`}>
+                    <div className="zeus-memory-item-head">
+                      <span className="zeus-memory-cat">{p.category}</span>
+                      <span className="zeus-memory-key">{p.key}</span>
+                      <span className="zeus-memory-spacer" />
+                      <button className="zeus-memory-toggle" onClick={() => togglePreferenceActive(p._id, !p.active)} title={p.active ? 'Desactivar' : 'Reactivar'}>
+                        {p.active ? '●' : '○'}
+                      </button>
+                      <button className="zeus-memory-del" onClick={() => deletePreference(p._id)} title="Borrar">×</button>
+                    </div>
+                    <div className="zeus-memory-value">{p.value}</div>
+                    {p.context && <div className="zeus-memory-context">{p.context}</div>}
+                  </div>
+                ))
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Panel de recomendaciones de código */}
         <AnimatePresence>

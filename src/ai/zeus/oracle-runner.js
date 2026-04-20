@@ -129,6 +129,20 @@ PROACTIVIDAD:
 - Si ves algo crítico en el contexto (anomalías, ROAS desplomándose, clones muriendo), mencionálo SIN que te pregunten.
 - No esperes instrucciones para investigar — si algo huele raro, ya estás consultando.
 
+MEMORIA DEL CREADOR (persistente entre conversaciones):
+- En el contexto base tenés una sección "MEMORIA DEL CREADOR" con preferencias que aprendiste. SIEMPRE respetálas sin que te las recuerden.
+- Cuando el creador exprese una preferencia genuinamente estable (prioridad, estilo, decisión estratégica, fase operativa), invocá remember_preference. Ejemplos:
+  · "priorizá CPA sobre ROAS" → remember_preference(key=priority_metric, value="CPA sobre ROAS durante fase de inversión", category=priority)
+  · "respondeme corto" → remember_preference(key=response_style, value="conciso, 3-5 oraciones max", category=style)
+  · "no toques CBO 1 hasta julio" → remember_preference(key=freeze_cbo1_until_jul, value="...", category=constraint)
+- NO uses remember_preference para:
+  · Respuestas a preguntas puntuales (ej: "ROAS hoy es 3.2x" NO es preferencia)
+  · Datos del sistema (esos son consultables via tools)
+  · Preferencias temporales ("hoy estoy cansado")
+- Si el creador dice explícitamente "olvidá X", invocá forget_preference.
+- Si pregunta "qué recordás de mí?" → list_preferences.
+- Sé parsimonioso: mejor pocas memorias sólidas que muchas flojas.
+
 LÍMITES:
 - NO ejecutás acciones. Solo explicás y analizás. Si el creador quiere ejecutar algo, decí que por ahora no tenés esa capacidad pero sí podés recomendar qué haría Athena o Ares.
 - NO inventes números. Si un tool retorna vacío, decí que no hay data — pero primero intentá variantes (otra ventana temporal, otro filtro).
@@ -147,7 +161,7 @@ CONTEXTO DE NEGOCIO:
  * @param {Date|null} params.lastSeenAt
  * @param {function} params.onEvent — Callback (event_type, payload) para streaming SSE
  */
-async function runOracle({ userMessage, mode = 'chat', history = [], lastSeenAt = null, onEvent }) {
+async function runOracle({ userMessage, mode = 'chat', history = [], lastSeenAt = null, uiContext = null, onEvent }) {
   // 1. Build base context
   const ctx = await buildOracleContext(lastSeenAt);
   const contextText = formatContextForPrompt(ctx);
@@ -182,6 +196,22 @@ MODO CHAT:
 - Sé conciso. Si el creador pide detalle, extendé.`;
   }
 
+  // Describe el contexto actual de la UI (si vino)
+  let uiContextLine = '';
+  if (uiContext) {
+    const viewLabels = {
+      'brain_os_home': 'Brain OS (vista principal — Neural Command Center)',
+      'dna_genome_space': 'DNA Genome Space (explorador de genoma creativo)',
+      'agent_panel:zeus': 'panel de Zeus (vos mismo — tu intelligence/directivas)',
+      'agent_panel:athena': 'panel de Athena (account strategist)',
+      'agent_panel:apollo': 'panel de Apollo (creativos + DNAs + productos)',
+      'agent_panel:prometheus': 'panel de Prometheus (testing + graduations)',
+      'agent_panel:ares': 'panel de Ares (duplicación CBO)'
+    };
+    const label = viewLabels[uiContext.view] || uiContext.view;
+    uiContextLine = `\nEL CREADOR ESTÁ ACTUALMENTE VIENDO: ${label}.\nSi usa referencias como "este", "aquí", "lo que tengo abierto", probablemente se refiere a lo que está viendo en ese panel. Usá las tools para investigar lo relevante.\n`;
+  }
+
   const systemPrompt = `${ZEUS_PERSONA}
 
 ═══════════════════════════════════════════
@@ -201,7 +231,7 @@ CONTEXTO ACTUAL DEL SISTEMA (snapshot en vivo):
 
 ${contextText}
 ═══════════════════════════════════════════
-
+${uiContextLine}
 ${modeInstructions}`;
 
   // 3. Build messages

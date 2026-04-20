@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const logger = require('../../utils/logger');
 const ZeusChatMessage = require('../../db/models/ZeusChatMessage');
 const ZeusCodeRecommendation = require('../../db/models/ZeusCodeRecommendation');
+const ZeusPreference = require('../../db/models/ZeusPreference');
 const SystemConfig = require('../../db/models/SystemConfig');
 const { runOracle } = require('../../ai/zeus/oracle-runner');
 
@@ -128,10 +129,15 @@ router.get('/chat/stream', async (req, res) => {
   };
 
   try {
-    let { conversation_id, message } = req.query;
+    let { conversation_id, message, ui_context } = req.query;
     if (!message) {
       sendEvent('error', { error: 'message requerido' });
       return res.end();
+    }
+
+    let uiContext = null;
+    if (ui_context) {
+      try { uiContext = JSON.parse(ui_context); } catch (_) {}
     }
 
     if (!conversation_id) {
@@ -167,6 +173,7 @@ router.get('/chat/stream', async (req, res) => {
       mode: 'chat',
       history,
       lastSeenAt: new Date(),
+      uiContext,
       onEvent: sendEvent
     });
 
@@ -332,6 +339,44 @@ router.patch('/code-recs/:id', async (req, res) => {
 router.delete('/code-recs/:id', async (req, res) => {
   try {
     await ZeusCodeRecommendation.findByIdAndDelete(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ GET /preferences — memoria persistente del creador ═══
+router.get('/preferences', async (req, res) => {
+  try {
+    const { category, include_inactive } = req.query;
+    const filter = include_inactive ? {} : { active: true };
+    if (category && category !== 'all') filter.category = category;
+    const prefs = await ZeusPreference.find(filter).sort({ category: 1, updated_at: -1 }).lean();
+    res.json({ preferences: prefs });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ PATCH /preferences/:id — editar/reactivar ═══
+router.patch('/preferences/:id', async (req, res) => {
+  try {
+    const allowed = ['value', 'category', 'context', 'confidence', 'active'];
+    const update = {};
+    for (const k of allowed) if (k in req.body) update[k] = req.body[k];
+    update.updated_at = new Date();
+    const pref = await ZeusPreference.findByIdAndUpdate(req.params.id, { $set: update }, { new: true });
+    if (!pref) return res.status(404).json({ error: 'No encontrado' });
+    res.json(pref);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ DELETE /preferences/:id — olvidar del todo ═══
+router.delete('/preferences/:id', async (req, res) => {
+  try {
+    await ZeusPreference.findByIdAndDelete(req.params.id);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -905,6 +905,18 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'zeus-proactive' });
   logger.info('  [*] Zeus proactive — cada 30 min');
 
+  // Semanal domingos 9am ET: Zeus hace auditoría del código cruzando con data
+  cron.schedule('0 9 * * 0', async () => {
+    try {
+      const { runWeeklyAudit } = require('./ai/zeus/weekly-audit');
+      const result = await runWeeklyAudit();
+      logger.info(`[ZEUS-AUDIT-CRON] ${JSON.stringify(result).substring(0, 300)}`);
+    } catch (err) {
+      logger.error(`[ZEUS-AUDIT-CRON] ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'zeus-weekly-audit' });
+  logger.info('  [*] Zeus auditoría semanal — domingos 9am ET');
+
   // Cada hora: Detección de anomalías por entidad (Meta necesita tiempo para atribuir conversiones)
   cron.schedule('0 * * * *', jobAnomalyDetection, {
     timezone: TIMEZONE,

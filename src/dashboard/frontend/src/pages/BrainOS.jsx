@@ -15,6 +15,17 @@ export default function BrainOS() {
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [showGenome, setShowGenome] = useState(false);
 
+  // Exportamos el contexto actual del dashboard al window para que ZeusSpeaks
+  // lo pueda leer y mandar en cada request — Zeus sabe qué panel estás viendo.
+  useEffect(() => {
+    const ctx = selectedAgent
+      ? { view: `agent_panel:${selectedAgent}` }
+      : showGenome
+      ? { view: 'dna_genome_space' }
+      : { view: 'brain_os_home' };
+    window.__zeusUiContext = ctx;
+  }, [selectedAgent, showGenome]);
+
   useEffect(() => {
     function handleNavigate(e) {
       const { kind, id } = e.detail || {};
