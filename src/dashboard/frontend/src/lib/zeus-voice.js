@@ -2,7 +2,7 @@
  * Zeus Voice — TTS queue + STT (mic)
  *
  * TTS: chunka el texto streameado por frases completas, pide audio a /api/zeus/tts,
- * y reproduce en orden. Expone callbacks onPlayStart/onPlayEnd/onLevel (simple).
+ * y reproduce en orden. Fallback a speechSynthesis si OpenAI TTS falla.
  *
  * STT: wrapper del Web Speech API con start/stop/onTranscript.
  */
@@ -19,9 +19,6 @@ function getToken() {
 // TTS QUEUE
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Inline silent mp3 (~0.1s) para unlock autoplay en Safari
-const SILENT_MP3 = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQwAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAACAAACcQCAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgP///////////////////////////////////////////wAAAABMYXZjNTguMTMAAAAAAAAAAAAAAAAkAwYAAAAAAAACceBeTmcAAAAAAAAAAAAAAAAAAAAA//tQxAADB3AZLnUwABIAAA0gwAABE4n///6AP+Zh///lCEP/6IA0/+H/qB//BCEBgGAOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4//tSxDuDwAABpAAAACAAADSAAAAEDgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4DgOA4';
-
 export class ZeusVoice {
   constructor({ voice = 'onyx', onSpeakStart, onSpeakEnd, onQueueDrained } = {}) {
     this.voice = voice;
@@ -29,66 +26,105 @@ export class ZeusVoice {
     this.onSpeakEnd = onSpeakEnd || (() => {});
     this.onQueueDrained = onQueueDrained || (() => {});
 
-    // Buffer de texto streameado, se vacía por frases completas
     this._textBuffer = '';
-    // Queue de audios pendientes (blobs)
     this._audioQueue = [];
     this._playing = false;
     this._muted = false;
     this._unlocked = false;
+    this._unlocking = false;
     this._fetchesInFlight = 0;
     this._stopped = false;
-    this._useFallbackTTS = false; // Si OpenAI TTS falla, usamos speechSynthesis
+    this._useFallbackTTS = false;
 
-    this._audio = null; // Lazy-creado en unlock() dentro del gesto del usuario
+    this._audio = null;
+    this._audioContext = null;
+    this._preferredVoice = null;
+
+    // Pre-cargar voces (algunos browsers cargan async)
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      const loadVoices = () => {
+        this._preferredVoice = this._pickBrowserVoice();
+      };
+      loadVoices();
+      try {
+        window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
+      } catch (_) {
+        window.speechSynthesis.onvoiceschanged = loadVoices;
+      }
+    }
   }
 
-  /** Marca que el usuario interactuó — desbloquea autoplay. DEBE llamarse desde un event handler (click/keydown). */
+  /** Desbloquea audio — DEBE invocarse sincrónicamente desde un event handler. */
   unlock() {
-    if (this._unlocked) return;
+    if (this._unlocked || this._unlocking) return;
+    this._unlocking = true;
 
-    // Crear el Audio element DENTRO del gesto (Safari lo requiere)
-    if (!this._audio && typeof Audio !== 'undefined') {
-      this._audio = new Audio();
-      this._audio.preload = 'auto';
-      this._audio.addEventListener('ended', () => this._playNext());
-      this._audio.addEventListener('error', (e) => {
-        console.warn('Zeus audio error:', e);
-        this._playNext();
-      });
+    // 1. AudioContext — el pattern más confiable en Safari
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        this._audioContext = new AudioCtx();
+        if (this._audioContext.state === 'suspended') {
+          this._audioContext.resume().catch(() => {});
+        }
+        // Play un buffer silencioso — cuenta como interacción de audio
+        const buffer = this._audioContext.createBuffer(1, 1, 22050);
+        const source = this._audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.connect(this._audioContext.destination);
+        source.start(0);
+      }
+    } catch (err) {
+      console.warn('Zeus: AudioContext setup failed:', err.message);
     }
 
-    // Safari: reproducir un mp3 silencioso real dentro del gesto
-    if (this._audio) {
-      try {
-        this._audio.src = SILENT_MP3;
-        this._audio.muted = true;
-        const p = this._audio.play();
-        if (p?.then) {
-          p.then(() => {
-            this._audio.pause();
-            this._audio.muted = false;
-            this._audio.currentTime = 0;
-            this._unlocked = true;
-          }).catch((err) => {
-            console.warn('Zeus TTS unlock failed, fallback a speechSynthesis:', err.message);
-            this._useFallbackTTS = true;
-            this._unlocked = true;
-          });
-        } else {
-          this._audio.pause();
-          this._audio.muted = false;
-          this._unlocked = true;
-        }
-      } catch (err) {
-        console.warn('Zeus audio element setup failed:', err.message);
-        this._useFallbackTTS = true;
-        this._unlocked = true;
+    // 2. HTMLAudioElement para playback de mp3 streameado (OpenAI)
+    try {
+      if (!this._audio && typeof Audio !== 'undefined') {
+        this._audio = new Audio();
+        this._audio.preload = 'auto';
+        this._audio.addEventListener('ended', () => this._playNext());
+        this._audio.addEventListener('error', () => {
+          console.warn('Zeus audio error:', this._audio?.error);
+          this._playNext();
+        });
       }
-    } else {
-      this._unlocked = true;
+    } catch (err) {
+      console.warn('Zeus: audio element setup failed:', err.message);
       this._useFallbackTTS = true;
     }
+
+    // 3. Unlock speechSynthesis tirando una utterance silenciosa
+    try {
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        const silent = new SpeechSynthesisUtterance(' ');
+        silent.volume = 0;
+        window.speechSynthesis.speak(silent);
+      }
+    } catch (_) {}
+
+    this._unlocked = true;
+    this._unlocking = false;
+  }
+
+  _pickBrowserVoice() {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return null;
+    const voices = window.speechSynthesis.getVoices();
+    if (voices.length === 0) return null;
+
+    const malePatterns = /jorge|diego|juan|pablo|carlos|enrique|miguel|eduardo|francisco|roberto|alejandro|google español|spanish united/i;
+    const femalePatterns = /mónica|monica|paulina|marisol|esperanza|rosa|angela|carmen|isabel|luc[ií]a|mar[ií]a|sof[ií]a|lupe|female/i;
+
+    const explicitMale = voices.find(v => /^es/i.test(v.lang) && malePatterns.test(v.name));
+    if (explicitMale) return explicitMale;
+
+    const nonFemaleEs = voices.find(v => /^es/i.test(v.lang) && !femalePatterns.test(v.name));
+    if (nonFemaleEs) return nonFemaleEs;
+
+    const anyEs = voices.find(v => /^es/i.test(v.lang));
+    if (anyEs) return anyEs;
+
+    return voices[0] || null;
   }
 
   isUnlocked() {
@@ -97,8 +133,11 @@ export class ZeusVoice {
 
   setMuted(muted) {
     this._muted = !!muted;
-    if (muted && this._audio && !this._audio.paused) {
-      this._audio.pause();
+    if (muted) {
+      if (this._audio && !this._audio.paused) this._audio.pause();
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        try { window.speechSynthesis.cancel(); } catch (_) {}
+      }
     }
   }
 
@@ -138,17 +177,11 @@ export class ZeusVoice {
     this._stopped = false;
   }
 
-  /**
-   * Divide el buffer por frases completas (terminadas en . ! ? … \n) y
-   * encola cada frase. Deja el resto en el buffer.
-   */
   _flushCompleteSentences() {
-    // Regex: agrupa hasta un terminador inclusive, respetando comillas
     const regex = /[^.!?¡¿…\n]+[.!?¡¿…\n]+/g;
     const matches = this._textBuffer.match(regex) || [];
 
     if (matches.length === 0) {
-      // Safety valve: si el buffer se pasa de largo sin terminar oración, flusheá igual
       if (this._textBuffer.length > 200) {
         this._enqueueText(this._textBuffer.trim());
         this._textBuffer = '';
@@ -169,7 +202,6 @@ export class ZeusVoice {
   async _enqueueText(text) {
     if (this._muted || this._stopped) return;
 
-    // Si estamos en fallback, usar speechSynthesis directo
     if (this._useFallbackTTS) {
       this._speakWithBrowser(text);
       return;
@@ -179,10 +211,21 @@ export class ZeusVoice {
     try {
       const audioBlob = await this._fetchAudio(text);
       if (this._stopped) return;
-      this._audioQueue.push({ blob: audioBlob, text });
-      this._maybePlay();
+
+      // Preferir AudioContext (no tiene restricciones de autoplay una vez resumed)
+      if (this._audioContext) {
+        const arrayBuffer = await audioBlob.arrayBuffer();
+        const audioBuffer = await this._audioContext.decodeAudioData(arrayBuffer);
+        if (this._stopped) return;
+        this._audioQueue.push({ buffer: audioBuffer, text });
+        this._maybePlay();
+      } else {
+        // Fallback al HTMLAudioElement
+        this._audioQueue.push({ blob: audioBlob, text });
+        this._maybePlay();
+      }
     } catch (err) {
-      console.warn('Zeus TTS fetch failed, fallback a speechSynthesis:', err.message);
+      console.warn('Zeus TTS fetch/decode failed, fallback a speechSynthesis:', err.message);
       this._useFallbackTTS = true;
       this._speakWithBrowser(text);
     } finally {
@@ -209,34 +252,63 @@ export class ZeusVoice {
     return await res.blob();
   }
 
-  /** Fallback: usa el TTS del browser (Web Speech API). Menos calidad pero sin API. */
+  /** Fallback: TTS del browser. Mejor que silencio aunque sea más robótico. */
   _speakWithBrowser(text) {
     if (typeof window === 'undefined' || !window.speechSynthesis) {
       console.warn('Zeus: ni OpenAI TTS ni speechSynthesis disponibles');
       return;
     }
+    // Refrescar voz preferida por si las voces cargaron después del init
+    if (!this._preferredVoice) this._preferredVoice = this._pickBrowserVoice();
+
     const utter = new SpeechSynthesisUtterance(text);
     utter.lang = 'es-ES';
     utter.rate = 1.0;
-    utter.pitch = 0.9; // un poco más grave tipo Zeus
-    // Preferir voz masculina en español si existe
-    const voices = window.speechSynthesis.getVoices();
-    const preferred = voices.find(v => /es/i.test(v.lang) && /male|hombre|jorge|diego|enrique/i.test(v.name))
-                   || voices.find(v => /es/i.test(v.lang));
-    if (preferred) utter.voice = preferred;
+    utter.pitch = 0.85; // más grave tipo Zeus
+    if (this._preferredVoice) utter.voice = this._preferredVoice;
 
     utter.onstart = () => { this._playing = true; this.onSpeakStart(); };
-    utter.onend = () => { this._playing = false; this.onSpeakEnd(); if (this._audioQueue.length === 0 && this._fetchesInFlight === 0) this.onQueueDrained(); };
+    utter.onend = () => {
+      this._playing = false;
+      this.onSpeakEnd();
+      if (this._audioQueue.length === 0 && this._fetchesInFlight === 0) this.onQueueDrained();
+    };
     utter.onerror = () => { this._playing = false; this.onSpeakEnd(); };
     window.speechSynthesis.speak(utter);
   }
 
   _maybePlay() {
     if (this._playing || this._muted || this._stopped) return;
-    if (!this._audio) return;
     if (this._audioQueue.length === 0) return;
 
     const next = this._audioQueue.shift();
+
+    // Camino 1: AudioBuffer via AudioContext (Safari friendly)
+    if (next.buffer && this._audioContext) {
+      try {
+        const source = this._audioContext.createBufferSource();
+        source.buffer = next.buffer;
+        source.connect(this._audioContext.destination);
+        source.onended = () => this._playNext();
+        this._playing = true;
+        this.onSpeakStart();
+        source.start(0);
+        return;
+      } catch (err) {
+        console.warn('AudioContext playback failed:', err.message);
+      }
+    }
+
+    // Camino 2: HTMLAudioElement (fallback)
+    if (!this._audio || !next.blob) {
+      // Sin forma de reproducir — cae al fallback del browser
+      if (next.text) {
+        this._useFallbackTTS = true;
+        this._speakWithBrowser(next.text);
+      }
+      return;
+    }
+
     const url = URL.createObjectURL(next.blob);
     this._audio.src = url;
     this._playing = true;
@@ -248,7 +320,6 @@ export class ZeusVoice {
         this._playing = false;
         URL.revokeObjectURL(url);
         this._useFallbackTTS = true;
-        // Reproducir este texto con speechSynthesis como fallback
         if (next.text) this._speakWithBrowser(next.text);
       });
     }
@@ -310,9 +381,7 @@ export class ZeusMic {
         else interim += r[0].transcript;
       }
       if (interim) this.onPartial(interim);
-      if (final) {
-        this._lastFinal += final;
-      }
+      if (final) this._lastFinal += final;
     };
 
     this._recognition.onend = () => {
