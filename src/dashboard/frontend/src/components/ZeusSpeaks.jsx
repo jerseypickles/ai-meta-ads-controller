@@ -1170,10 +1170,42 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
 
 function PlanCard({ plan, onApprove, onDelete }) {
   const [expanded, setExpanded] = useState(false);
+  const [evaluating, setEvaluating] = useState(false);
 
   const fmtDate = (d) => {
     if (!d) return '—';
     return new Date(d).toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' });
+  };
+
+  async function triggerEvaluate() {
+    setEvaluating(true);
+    try {
+      await api.post(`/api/zeus/strategic-plans/${plan._id}/evaluate`);
+      window.location.reload();
+    } catch (err) { alert('Error: ' + err.message); }
+    finally { setEvaluating(false); }
+  }
+
+  async function markMilestone(index, status) {
+    try {
+      await api.post(`/api/zeus/strategic-plans/${plan._id}/milestones/${index}/mark`, { status });
+      window.location.reload();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  const goalStatusColors = {
+    achieved: '#10b981',
+    on_track: '#3b82f6',
+    behind: '#fbbf24',
+    off_track: '#f97316',
+    missed: '#ef4444',
+    unknown: '#6b7280'
+  };
+  const healthStatusColors = {
+    on_track: '#10b981',
+    behind: '#fbbf24',
+    off_track: '#f97316',
+    at_risk: '#ef4444'
   };
 
   const horizonColors = {
@@ -1233,6 +1265,34 @@ function PlanCard({ plan, onApprove, onDelete }) {
         <div className="zeus-plan-summary">{plan.summary}</div>
       )}
 
+      {/* Health score + evaluate button */}
+      {plan.last_evaluation && (
+        <div className="zeus-plan-health">
+          <div className="zeus-plan-health-label">Health</div>
+          <div className="zeus-plan-health-bar-wrap">
+            <div
+              className="zeus-plan-health-bar"
+              style={{
+                width: `${plan.last_evaluation.health_score || 0}%`,
+                background: healthStatusColors[plan.last_evaluation.health_status] || '#6b7280'
+              }}
+            />
+          </div>
+          <div className="zeus-plan-health-score" style={{ color: healthStatusColors[plan.last_evaluation.health_status] }}>
+            {plan.last_evaluation.health_score}/100
+          </div>
+          <div className="zeus-plan-health-status" style={{ color: healthStatusColors[plan.last_evaluation.health_status] }}>
+            {plan.last_evaluation.health_status?.replace('_', ' ')}
+          </div>
+        </div>
+      )}
+
+      {plan.status === 'active' && (
+        <button className="zeus-plan-eval-btn" onClick={triggerEvaluate} disabled={evaluating}>
+          {evaluating ? '...' : '↻ Evaluar ahora'}
+        </button>
+      )}
+
       <button className="zeus-plan-toggle" onClick={() => setExpanded(!expanded)}>
         {expanded ? '▾ Ocultar detalle' : '▸ Ver detalle completo'}
       </button>
@@ -1248,34 +1308,88 @@ function PlanCard({ plan, onApprove, onDelete }) {
           {(plan.goals || []).length > 0 && (
             <div className="zeus-plan-block">
               <div className="zeus-plan-block-title">🎯 Goals</div>
-              {plan.goals.map((g, i) => (
-                <div key={i} className="zeus-plan-goal">
-                  <span className="zeus-plan-priority-dot" style={{ background: priorityColors[g.priority] }} />
-                  <div style={{ flex: 1 }}>
-                    <div className="zeus-plan-goal-main">
-                      <code>{g.metric}</code>
-                      {g.current != null && <span style={{ color: 'var(--bos-text-muted)' }}> {g.current} →</span>}
-                      <span style={{ color: '#93c5fd', fontWeight: 600 }}> {g.target}</span>
+              {plan.goals.map((g, i) => {
+                const progress = Math.min(100, Math.max(0, g.progress_pct ?? 0));
+                const trajectory = Math.min(100, Math.max(0, g.trajectory_pct ?? 0));
+                const statusColor = goalStatusColors[g.status] || '#6b7280';
+                return (
+                  <div key={i} className="zeus-plan-goal">
+                    <span className="zeus-plan-priority-dot" style={{ background: priorityColors[g.priority] }} />
+                    <div style={{ flex: 1 }}>
+                      <div className="zeus-plan-goal-main">
+                        <code>{g.metric}</code>
+                        <span style={{ color: 'var(--bos-text-muted)', marginLeft: 6 }}>
+                          {g.current != null ? g.current.toLocaleString() : '?'} →
+                        </span>
+                        <span style={{ color: '#93c5fd', fontWeight: 600, marginLeft: 4 }}>
+                          {g.target?.toLocaleString()}
+                        </span>
+                        {g.status && g.status !== 'unknown' && (
+                          <span className="zeus-plan-goal-status" style={{ color: statusColor, borderColor: statusColor + '40' }}>
+                            {g.status.replace('_', ' ')}
+                          </span>
+                        )}
+                      </div>
+                      {/* Dual progress bar — progreso real vs trayectoria esperada */}
+                      {g.target != null && (
+                        <div className="zeus-plan-progress-wrap">
+                          <div className="zeus-plan-progress-track">
+                            {/* Trajectory marker (expected by now) */}
+                            {trajectory > 0 && trajectory < 100 && (
+                              <div
+                                className="zeus-plan-progress-expected"
+                                style={{ left: `${trajectory}%` }}
+                                title={`Trayectoria esperada: ${trajectory.toFixed(0)}%`}
+                              />
+                            )}
+                            <div
+                              className="zeus-plan-progress-bar"
+                              style={{ width: `${progress}%`, background: statusColor }}
+                            />
+                          </div>
+                          <span className="zeus-plan-progress-label">{progress.toFixed(0)}%</span>
+                        </div>
+                      )}
+                      <div className="zeus-plan-goal-date">by {fmtDate(g.by_date)} · {g.priority}</div>
                     </div>
-                    <div className="zeus-plan-goal-date">by {fmtDate(g.by_date)} · {g.priority}</div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
           {(plan.milestones || []).length > 0 && (
             <div className="zeus-plan-block">
               <div className="zeus-plan-block-title">🏁 Milestones</div>
-              {plan.milestones.map((m, i) => (
-                <div key={i} className="zeus-plan-milestone">
-                  <span className={`zeus-plan-ms-status ${m.status}`}>{m.status === 'achieved' ? '✓' : m.status === 'missed' ? '✗' : '○'}</span>
-                  <div style={{ flex: 1 }}>
-                    <div>{m.description}</div>
-                    <div className="zeus-plan-goal-date">by {fmtDate(m.by_date)}</div>
+              {plan.milestones.map((m, i) => {
+                const dueDate = m.by_date ? new Date(m.by_date) : null;
+                const isOverdue = dueDate && dueDate < new Date() && m.status === 'pending';
+                return (
+                  <div key={i} className={`zeus-plan-milestone ${isOverdue ? 'overdue' : ''}`}>
+                    <span className={`zeus-plan-ms-status ${m.status}`}>
+                      {m.status === 'achieved' ? '✓' : m.status === 'missed' ? '✗' : '○'}
+                    </span>
+                    <div style={{ flex: 1 }}>
+                      <div>{m.description}</div>
+                      <div className="zeus-plan-goal-date">by {fmtDate(m.by_date)}{isOverdue ? ' · OVERDUE' : ''}</div>
+                    </div>
+                    {plan.status === 'active' && m.status === 'pending' && (
+                      <div className="zeus-plan-ms-actions">
+                        <button
+                          className="zeus-plan-ms-btn achieved"
+                          onClick={() => markMilestone(i, 'achieved')}
+                          title="Marcar achieved"
+                        >✓</button>
+                        <button
+                          className="zeus-plan-ms-btn missed"
+                          onClick={() => markMilestone(i, 'missed')}
+                          title="Marcar missed"
+                        >✗</button>
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 

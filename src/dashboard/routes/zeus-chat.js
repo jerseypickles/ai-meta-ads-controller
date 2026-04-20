@@ -495,6 +495,66 @@ router.delete('/strategic-plans/:id', async (req, res) => {
   }
 });
 
+// ═══ POST /strategic-plans/:id/evaluate — trigger manual evaluación ═══
+router.post('/strategic-plans/:id/evaluate', async (req, res) => {
+  try {
+    const { evaluatePlan } = require('../../ai/zeus/plan-evaluator');
+    const plan = await ZeusStrategicPlan.findById(req.params.id);
+    if (!plan) return res.status(404).json({ error: 'Plan no encontrado' });
+    const evaluation = await evaluatePlan(plan.toObject());
+
+    // Persistir
+    plan.goals = evaluation.goals.map(g => ({
+      metric: g.metric,
+      target: g.target,
+      current: g.current,
+      baseline: g.baseline,
+      priority: g.priority,
+      by_date: g.by_date,
+      progress_pct: g.progress_pct,
+      trajectory_pct: g.trajectory_pct,
+      status: g.status
+    }));
+    plan.milestones = evaluation.milestones.map(m => ({
+      description: m.description,
+      by_date: m.by_date,
+      status: m.status,
+      achieved_at: m.achieved_at
+    }));
+    plan.last_evaluation = {
+      at: evaluation.evaluated_at,
+      health_score: evaluation.health_score,
+      health_status: evaluation.health_status,
+      summary: evaluation.summary
+    };
+    await plan.save();
+    res.json({ ok: true, plan, evaluation });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ POST /strategic-plans/:id/milestones/:index/mark — manual achieved/missed ═══
+router.post('/strategic-plans/:id/milestones/:index/mark', async (req, res) => {
+  try {
+    const { status } = req.body || {};
+    if (!['achieved', 'missed', 'pending'].includes(status)) {
+      return res.status(400).json({ error: 'status inválido' });
+    }
+    const plan = await ZeusStrategicPlan.findById(req.params.id);
+    if (!plan) return res.status(404).json({ error: 'Plan no encontrado' });
+    const idx = parseInt(req.params.index);
+    if (!plan.milestones[idx]) return res.status(404).json({ error: 'Milestone no encontrado' });
+
+    plan.milestones[idx].status = status;
+    plan.milestones[idx].achieved_at = status === 'achieved' ? new Date() : null;
+    await plan.save();
+    res.json({ ok: true, milestone: plan.milestones[idx] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ═══ DELETE /preferences/:id — olvidar del todo ═══
 router.delete('/preferences/:id', async (req, res) => {
   try {

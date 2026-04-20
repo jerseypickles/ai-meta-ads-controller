@@ -929,6 +929,18 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'zeus-learner' });
   logger.info('  [*] Zeus learner — diario 3am ET (post-mortems 7/30/90d)');
 
+  // Diario 4am ET: evaluación de planes activos (actualiza current/status de goals + health)
+  cron.schedule('0 4 * * *', async () => {
+    try {
+      const { runPlanEvaluationCron } = require('./ai/zeus/plan-evaluator');
+      const result = await runPlanEvaluationCron();
+      logger.info(`[PLAN-EVAL-CRON] evaluados=${result.evaluated}`);
+    } catch (err) {
+      logger.error(`[PLAN-EVAL-CRON] ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'zeus-plan-evaluator' });
+  logger.info('  [*] Zeus plan evaluator — diario 4am ET');
+
   // Lunes 8am ET: plan semanal
   cron.schedule('0 8 * * 1', async () => {
     try {

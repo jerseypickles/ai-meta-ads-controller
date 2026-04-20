@@ -30,8 +30,12 @@ const zeusStrategicPlanSchema = new mongoose.Schema({
     metric: String,
     target: Number,
     current: Number,
+    baseline: Number,
     by_date: Date,
     priority: { type: String, enum: ['critical', 'high', 'medium', 'low'], default: 'medium' },
+    progress_pct: Number,                         // 0-100, del baseline al target
+    trajectory_pct: Number,                       // 0-100, % de tiempo transcurrido
+    status: { type: String, enum: ['achieved', 'on_track', 'behind', 'off_track', 'missed', 'unknown'], default: 'unknown' },
     _id: false
   }],
 
@@ -72,7 +76,15 @@ const zeusStrategicPlanSchema = new mongoose.Schema({
 
   // Trazabilidad
   generated_at: { type: Date, default: Date.now },
-  superseded_by: { type: mongoose.Schema.Types.ObjectId, ref: 'ZeusStrategicPlan', default: null }
+  superseded_by: { type: mongoose.Schema.Types.ObjectId, ref: 'ZeusStrategicPlan', default: null },
+
+  // Última evaluación (populado por plan-evaluator cron diario)
+  last_evaluation: {
+    at: Date,
+    health_score: Number,              // 0-100
+    health_status: { type: String, enum: ['on_track', 'behind', 'off_track', 'at_risk'] },
+    summary: mongoose.Schema.Types.Mixed
+  }
 });
 
 zeusStrategicPlanSchema.index({ horizon: 1, status: 1, period_start: -1 });
