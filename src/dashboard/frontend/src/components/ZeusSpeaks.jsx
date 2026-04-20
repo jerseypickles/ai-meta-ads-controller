@@ -560,8 +560,6 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
         setMessages(prev => {
           const next = [...prev.filter(m => !m._local)];
           next.push({ role: 'user', content: msg, created_at: new Date() });
-          // El finalText que mandó el server ya viene SIN el bloque ---FOLLOWUPS---
-          // pero streamingText lo acumuló todo; limpiamos aquí:
           const cleanText = stripFollowupsBlock(streamingTextRef.current || '');
           next.push({
             role: 'assistant',
@@ -574,9 +572,9 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
         });
         setStreamingText('');
         setToolActivity([]);
+        setPendingFollowups([]);
         setStreaming(false);
         setThinking(false);
-        // pendingFollowups se mantiene para que sigan visibles
         es.close();
       },
       api_error: (data) => {
@@ -752,20 +750,6 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                 </div>
               )}
 
-              {/* Follow-up suggestions debajo del último mensaje */}
-              {!streaming && pendingFollowups.length > 0 && (
-                <div className="zeus-followups">
-                  {pendingFollowups.map((f, i) => (
-                    <button
-                      key={i}
-                      className="zeus-followup-btn"
-                      onClick={() => { setPendingFollowups([]); sendMessage(f); }}
-                    >
-                      {f}
-                    </button>
-                  ))}
-                </div>
-              )}
             </>
           )}
         </div>
