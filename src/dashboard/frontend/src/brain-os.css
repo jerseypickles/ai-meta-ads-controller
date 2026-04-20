@@ -880,6 +880,8 @@
   top: 0;
   right: 0;
   bottom: 0;
+  height: 100vh;
+  height: 100dvh; /* dynamic vh respeta toolbar en mobile */
   width: 460px;
   max-width: 92vw;
   background: var(--bos-bg-deep);
@@ -888,6 +890,7 @@
   display: flex;
   flex-direction: column;
   box-shadow: -20px 0 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
 }
 
 .zeus-drawer-header {
@@ -947,7 +950,8 @@
 }
 
 .zeus-drawer-messages {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding: 18px 20px;
   display: flex;
@@ -1022,11 +1026,12 @@
 }
 
 .zeus-drawer-input {
+  flex: 0 0 auto;
   display: flex;
   gap: 8px;
   padding: 14px 18px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(10, 14, 39, 0.6);
+  background: rgba(10, 14, 39, 0.9);
 }
 
 .zeus-drawer-input textarea {
