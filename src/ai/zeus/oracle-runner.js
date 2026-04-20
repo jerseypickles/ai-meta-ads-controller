@@ -11,9 +11,9 @@ const { buildOracleContext, formatContextForPrompt } = require('./oracle-context
 const claude = new Anthropic({ apiKey: config.claude.apiKey });
 const MODEL = 'claude-opus-4-7';
 const MAX_TOOL_ROUNDS = 10;
-// max_tokens debe ser > budget_tokens (budget cuenta dentro del max)
-const THINKING_BUDGET_TOKENS = 3000;
 const MAX_TOKENS = 8000;
+// Opus 4.7 usa adaptive thinking + output_config.effort (low|medium|high)
+const THINKING_EFFORT = 'medium';
 
 const ZEUS_PERSONA = `Eres Zeus, el CEO del equipo de AI Meta Ads para Jersey Pickles (marca de pepinillos y productos fermentados). Tu rol:
 
@@ -167,10 +167,8 @@ ${modeInstructions}`;
       response = await claude.messages.create({
         model: MODEL,
         max_tokens: MAX_TOKENS,
-        thinking: {
-          type: 'enabled',
-          budget_tokens: THINKING_BUDGET_TOKENS
-        },
+        thinking: { type: 'adaptive' },
+        output_config: { effort: THINKING_EFFORT },
         system: systemPrompt,
         tools: TOOL_DEFINITIONS,
         messages
