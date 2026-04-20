@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useNavigate } from 'react-router-dom';
 import '../brain-os.css';
 import MorningBriefing from '../components/MorningBriefing';
 import NeuralCommandCenter from '../components/NeuralCommandCenter';
@@ -15,18 +14,9 @@ import AresPanel from '../components/agents/AresPanel';
 export default function BrainOS() {
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [showGenome, setShowGenome] = useState(false);
-  const navigate = useNavigate();
 
   return (
     <div className="brain-os">
-      {/* Toggle para legacy dashboard */}
-      <button
-        className="legacy-toggle"
-        onClick={() => navigate('/brain-legacy')}
-      >
-        ⟵ Legacy dashboard
-      </button>
-
       <div className="brain-os-content">
         {/* Morning Briefing */}
         <MorningBriefing />

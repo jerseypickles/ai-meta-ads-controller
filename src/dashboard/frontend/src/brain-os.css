@@ -491,26 +491,6 @@
   z-index: 100;
 }
 
-/* Legacy button */
-.legacy-toggle {
-  position: fixed;
-  top: 16px;
-  right: 16px;
-  background: rgba(17, 21, 51, 0.9);
-  color: var(--bos-text-muted);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  padding: 8px 14px;
-  border-radius: 8px;
-  font-size: 0.72rem;
-  cursor: pointer;
-  z-index: 100;
-  backdrop-filter: blur(10px);
-}
-
-.legacy-toggle:hover {
-  color: var(--bos-text);
-  border-color: var(--bos-synapse);
-}
 
 /* Loading state */
 .bos-loading {
