@@ -42,7 +42,7 @@ router.post('/greeting/seen', async (req, res) => {
   }
 });
 
-// ═══ GET /greeting/stream?token=... — SSE streaming greeting ═══
+// ═══ GET /greeting/stream?token=&conversation_id=... — SSE streaming greeting ═══
 router.get('/greeting/stream', async (req, res) => {
   // SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
@@ -61,7 +61,17 @@ router.get('/greeting/stream', async (req, res) => {
     const hoursSince = lastSeen ? (Date.now() - lastSeen.getTime()) / 3600000 : null;
     const mode = (!lastSeen || hoursSince >= GREETING_GAP_HOURS) ? 'greeting_full' : 'greeting_short';
 
-    const conversationId = 'conv_' + crypto.randomBytes(8).toString('hex');
+    // Reusar conversation_id existente si el cliente lo pasa y es válido;
+    // si no, crear uno nuevo.
+    let conversationId = req.query.conversation_id || null;
+    if (conversationId) {
+      const exists = await ZeusChatMessage.findOne({ conversation_id: conversationId }).select('_id').lean();
+      if (!exists) conversationId = null;
+    }
+    if (!conversationId) {
+      conversationId = 'conv_' + crypto.randomBytes(8).toString('hex');
+    }
+
     sendEvent('start', { mode, conversation_id: conversationId });
 
     const result = await runOracle({

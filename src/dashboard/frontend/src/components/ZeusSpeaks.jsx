@@ -79,7 +79,12 @@ export default function ZeusSpeaks() {
       setStreamingText('');
       setToolActivity([]);
 
-      const es = streamSSE('/api/zeus/greeting/stream', {
+      const prevConv = localStorage.getItem(LS_CONV_KEY);
+      const greetingPath = prevConv
+        ? `/api/zeus/greeting/stream?conversation_id=${encodeURIComponent(prevConv)}`
+        : '/api/zeus/greeting/stream';
+
+      const es = streamSSE(greetingPath, {
         start: (data) => {
           if (data.conversation_id) {
             setConversationId(data.conversation_id);
@@ -335,6 +340,19 @@ function ZeusHero({ text, toolActivity, streaming, onCollapse, onReply }) {
   );
 }
 
+function formatConvDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  const diff = Date.now() - d.getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 60) return `hace ${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `hace ${h}h`;
+  const days = Math.floor(h / 24);
+  if (days < 7) return `hace ${days}d`;
+  return d.toLocaleDateString('es-AR', { day: 'numeric', month: 'short' });
+}
+
 function toolLabel(tool) {
   const labels = {
     query_portfolio: 'portfolio',
@@ -374,11 +392,38 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   const [streamingText, setStreamingText] = useState('');
   const [toolActivity, setToolActivity] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(!!conversationId);
+  const [showConversationList, setShowConversationList] = useState(false);
+  const [conversationList, setConversationList] = useState([]);
   const scrollRef = useRef(null);
   const esRef = useRef(null);
   const streamingTextRef = useRef('');
   const toolActivityRef = useRef([]);
   const initialHandledRef = useRef(false);
+
+  async function loadConversationList() {
+    try {
+      const res = await api.get('/api/zeus/chat/conversations');
+      setConversationList(res.data.conversations || []);
+    } catch (err) { console.error(err); }
+  }
+
+  function switchConversation(newId) {
+    setShowConversationList(false);
+    if (newId === conversationId) return;
+    onNewConversation(newId);
+    setMessages([]);
+    setStreamingText('');
+    setToolActivity([]);
+  }
+
+  function startNewConversation() {
+    setShowConversationList(false);
+    setMessages([]);
+    setStreamingText('');
+    setToolActivity([]);
+    onNewConversation(null);
+    localStorage.removeItem(LS_CONV_KEY);
+  }
 
   useEffect(() => { streamingTextRef.current = streamingText; }, [streamingText]);
   useEffect(() => { toolActivityRef.current = toolActivity; }, [toolActivity]);
@@ -491,8 +536,56 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
               </div>
             </div>
           </div>
-          <button className="zeus-drawer-close" onClick={onClose}>×</button>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            <button
+              className="zeus-drawer-icon-btn"
+              onClick={() => {
+                if (!showConversationList) loadConversationList();
+                setShowConversationList(!showConversationList);
+              }}
+              title="Conversaciones"
+            >
+              📁
+            </button>
+            <button
+              className="zeus-drawer-icon-btn"
+              onClick={startNewConversation}
+              title="Nueva conversación"
+            >
+              ＋
+            </button>
+            <button className="zeus-drawer-close" onClick={onClose}>×</button>
+          </div>
         </div>
+
+        {/* Panel de conversaciones */}
+        <AnimatePresence>
+          {showConversationList && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="zeus-conversations-panel"
+            >
+              {conversationList.length === 0 ? (
+                <div className="zeus-conversations-empty">No hay conversaciones previas</div>
+              ) : (
+                conversationList.map(c => (
+                  <button
+                    key={c.conversation_id}
+                    onClick={() => switchConversation(c.conversation_id)}
+                    className={`zeus-conversation-item ${c.conversation_id === conversationId ? 'active' : ''}`}
+                  >
+                    <div className="zeus-conv-preview">{c.preview || '(sin mensajes)'}</div>
+                    <div className="zeus-conv-meta">
+                      {c.message_count} mensajes · {formatConvDate(c.last_at)}
+                    </div>
+                  </button>
+                ))
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <div ref={scrollRef} className="zeus-drawer-messages">
           {loadingHistory ? (
