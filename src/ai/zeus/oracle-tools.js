@@ -431,6 +431,15 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'query_delivery_health',
+    description: 'Chequea la salud de entrega de Meta — detecta billing freeze, campañas que no gastan, drops masivos de spend, ad sets con 0 impressions, safety events recientes, anomalías críticas. USALA apenas el creador pregunte "cómo venimos" o "hay algún problema" o menciones billing/delivery. También ideal al comienzo del día.',
+    input_schema: {
+      type: 'object',
+      properties: {},
+      required: []
+    }
+  },
+  {
     name: 'create_directive',
     description: 'Creá una directiva operativa en el sistema que los agentes (Athena, Apollo, Prometheus, Ares) leerán en sus próximos ciclos. Usala cuando el creador te pida que el equipo actúe de cierta forma. Ejemplos: "decile a Ares que no duplique nada hasta las 17:00 por billing issue", "pedile a Apollo que solo genere escena X esta semana", "que Prometheus pause todos los tests nuevos hasta mañana".',
     input_schema: {
@@ -1129,6 +1138,11 @@ const ZEUS_SELF_FILES = [
   'src/safety/anomaly-detector.js'
 ];
 
+async function handleQueryDeliveryHealth() {
+  const { checkDeliveryHealth } = require('./delivery-health');
+  return await checkDeliveryHealth();
+}
+
 async function handleCreateDirective(input) {
   if (!input.directive || !input.directive_type || !input.target_agent || !input.reasoning) {
     return { error: 'directive, directive_type, target_agent y reasoning son requeridos' };
@@ -1296,7 +1310,8 @@ const TOOL_HANDLERS = {
   forget_preference: handleForgetPreference,
   list_preferences: handleListPreferences,
   create_directive: handleCreateDirective,
-  deactivate_directive: handleDeactivateDirective
+  deactivate_directive: handleDeactivateDirective,
+  query_delivery_health: handleQueryDeliveryHealth
 };
 
 async function executeTool(toolName, input) {

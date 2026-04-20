@@ -122,6 +122,25 @@ async function detectSignals(sinceDate) {
     });
   }
 
+  // 8. Meta delivery health — freeze, non-delivery, drops masivos
+  try {
+    const { checkDeliveryHealth } = require('./delivery-health');
+    const health = await checkDeliveryHealth();
+    if (health.status === 'critical' || health.status === 'degraded') {
+      for (const issue of health.issues) {
+        signals.push({
+          kind: `meta_${issue.kind}`,
+          severity: issue.severity,
+          detail: issue.detail,
+          metrics: issue.metrics || null,
+          entities: issue.entities || null
+        });
+      }
+    }
+  } catch (err) {
+    // noop — no bloqueamos el proactive por fallo en health check
+  }
+
   return signals;
 }
 

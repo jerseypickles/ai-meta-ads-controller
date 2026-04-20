@@ -1,0 +1,164 @@
+/**
+ * Delivery Health Check — detecta anomalías operacionales que suelen pasar
+ * desapercibidas: billing freeze, campañas que no gastan, drops de delivery,
+ * errores de Meta API, policy violations, etc.
+ *
+ * Se usa de dos formas:
+ * 1. En el proactive cron (cada 30min) para alertar sin que pregunten
+ * 2. Como tool de Zeus (query_delivery_health) para on-demand
+ */
+
+const SafetyEvent = require('../../db/models/SafetyEvent');
+const BrainInsight = require('../../db/models/BrainInsight');
+const { getLatestSnapshots } = require('../../db/queries');
+
+/**
+ * Chequeo completo de salud de entrega. Retorna reporte estructurado.
+ */
+async function checkDeliveryHealth() {
+  const now = Date.now();
+  const snapshots = await getLatestSnapshots('adset');
+  const active = snapshots.filter(s => s.status === 'ACTIVE');
+
+  if (active.length === 0) {
+    return { status: 'unknown', issues: [], detail: 'sin ad sets activos' };
+  }
+
+  // Agregados
+  const totalSpendToday = active.reduce((s, a) => s + (a.metrics?.today?.spend || 0), 0);
+  const totalSpend1d = active.reduce((s, a) => s + (a.metrics?.last_1d?.spend || 0), 0);
+  const totalSpend7d = active.reduce((s, a) => s + (a.metrics?.last_7d?.spend || 0), 0);
+  const avgDailySpend = totalSpend7d / 7;
+  const totalImpressionsToday = active.reduce((s, a) => s + (a.metrics?.today?.impressions || 0), 0);
+  const totalImpressions1d = active.reduce((s, a) => s + (a.metrics?.last_1d?.impressions || 0), 0);
+
+  const issues = [];
+
+  // ═══ Check 1: Portfolio freeze ═══
+  // Avg 7d > $100/día y hoy <15% del avg → muy probable freeze
+  if (avgDailySpend > 100 && totalSpendToday < avgDailySpend * 0.15) {
+    issues.push({
+      kind: 'portfolio_freeze',
+      severity: 'critical',
+      detail: `Portfolio spend today $${Math.round(totalSpendToday)} vs avg 7d $${Math.round(avgDailySpend)}/día — posible billing freeze o auth issue con Meta`,
+      metrics: {
+        spend_today: Math.round(totalSpendToday),
+        avg_daily_7d: Math.round(avgDailySpend),
+        ratio: totalSpendToday > 0 ? +(totalSpendToday / avgDailySpend).toFixed(3) : 0
+      }
+    });
+  }
+
+  // ═══ Check 2: Mass non-delivery ═══
+  // Ad sets que 7d>$50 y hoy no gastan nada
+  const notDelivering = active.filter(a =>
+    (a.metrics?.today?.spend || 0) < 0.5 &&
+    (a.metrics?.last_7d?.spend || 0) > 50 &&
+    (a.daily_budget || 0) > 0
+  );
+  if (notDelivering.length >= 5) {
+    issues.push({
+      kind: 'mass_non_delivery',
+      severity: notDelivering.length >= 10 ? 'critical' : 'high',
+      detail: `${notDelivering.length} ad sets activos no gastaron nada hoy (últimos 7d > $50 cada uno)`,
+      entities: notDelivering.slice(0, 8).map(a => ({
+        name: a.entity_name,
+        id: a.entity_id,
+        spend_7d: Math.round(a.metrics?.last_7d?.spend || 0),
+        daily_budget: a.daily_budget
+      }))
+    });
+  }
+
+  // ═══ Check 3: Individual big drops (>90% drop de spend ayer→hoy) ═══
+  const bigDrops = active.filter(a => {
+    const today = a.metrics?.today?.spend || 0;
+    const yesterday = a.metrics?.last_1d?.spend || 0;
+    return yesterday > 30 && today < yesterday * 0.1;
+  });
+  if (bigDrops.length >= 3) {
+    issues.push({
+      kind: 'delivery_drop',
+      severity: bigDrops.length >= 8 ? 'high' : 'medium',
+      detail: `${bigDrops.length} ad sets con >90% drop en spend hoy vs ayer`,
+      entities: bigDrops.slice(0, 5).map(a => ({
+        name: a.entity_name,
+        id: a.entity_id,
+        spend_yesterday: Math.round(a.metrics?.last_1d?.spend || 0),
+        spend_today: Math.round(a.metrics?.today?.spend || 0)
+      }))
+    });
+  }
+
+  // ═══ Check 4: Zero impressions while budget active ═══
+  const zeroImpressions = active.filter(a =>
+    (a.metrics?.today?.impressions || 0) === 0 &&
+    (a.daily_budget || 0) > 0 &&
+    (a.metrics?.last_7d?.impressions || 0) > 1000
+  );
+  if (zeroImpressions.length >= 5) {
+    issues.push({
+      kind: 'zero_impressions_active',
+      severity: 'high',
+      detail: `${zeroImpressions.length} ad sets activos con budget pero 0 impressions hoy`,
+      entities: zeroImpressions.slice(0, 5).map(a => ({
+        name: a.entity_name,
+        id: a.entity_id,
+        daily_budget: a.daily_budget
+      }))
+    });
+  }
+
+  // ═══ Check 5: Recent safety events críticos ═══
+  const recentCritical = await SafetyEvent.find({
+    created_at: { $gte: new Date(now - 4 * 3600000) },
+    severity: { $in: ['critical', 'high'] }
+  }).sort({ created_at: -1 }).limit(5).lean();
+  for (const ev of recentCritical) {
+    issues.push({
+      kind: 'safety_event',
+      severity: ev.severity,
+      detail: `${ev.event_type}${ev.entity_name ? ` en ${ev.entity_name}` : ''}: ${(ev.reason || '').substring(0, 200)}`,
+      event_type: ev.event_type,
+      created_at: ev.created_at
+    });
+  }
+
+  // ═══ Check 6: Anomalías críticas de BrainInsight ═══
+  const recentAnomalies = await BrainInsight.find({
+    insight_type: 'anomaly',
+    severity: { $in: ['critical', 'high'] },
+    created_at: { $gte: new Date(now - 2 * 3600000) }
+  }).limit(5).lean();
+  for (const a of recentAnomalies) {
+    issues.push({
+      kind: 'anomaly',
+      severity: a.severity,
+      detail: `${a.title}${a.entity_name ? ` — ${a.entity_name}` : ''}`,
+      anomaly_type: a.insight_type
+    });
+  }
+
+  // Status general
+  let status = 'healthy';
+  if (issues.some(i => i.severity === 'critical')) status = 'critical';
+  else if (issues.some(i => i.severity === 'high')) status = 'degraded';
+  else if (issues.length > 0) status = 'watch';
+
+  return {
+    status,
+    summary: {
+      active_adsets: active.length,
+      spend_today: Math.round(totalSpendToday),
+      spend_yesterday: Math.round(totalSpend1d),
+      avg_daily_7d: Math.round(avgDailySpend),
+      impressions_today: totalImpressionsToday,
+      impressions_yesterday: totalImpressions1d
+    },
+    issues,
+    issues_count: issues.length,
+    checked_at: new Date().toISOString()
+  };
+}
+
+module.exports = { checkDeliveryHealth };

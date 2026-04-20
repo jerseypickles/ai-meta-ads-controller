@@ -505,7 +505,8 @@ function toolLabel(tool) {
     forget_preference: '💭 olvidando',
     list_preferences: '💭 revisando memoria',
     create_directive: '📣 emitiendo directiva',
-    deactivate_directive: '📣 desactivando directiva'
+    deactivate_directive: '📣 desactivando directiva',
+    query_delivery_health: '🩺 chequeando salud de delivery'
   };
   return labels[tool] || tool;
 }
