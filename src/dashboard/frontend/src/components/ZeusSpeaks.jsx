@@ -55,6 +55,7 @@ export default function ZeusSpeaks() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerAutoMic, setDrawerAutoMic] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [zeusFullyDone, setZeusFullyDone] = useState(true);
   const [muted, setMuted] = useState(() => localStorage.getItem(LS_MUTED_KEY) === '1');
   const esRef = useRef(null);
   const voiceRef = useRef(null);
@@ -109,9 +110,9 @@ export default function ZeusSpeaks() {
   useEffect(() => {
     voiceRef.current = new ZeusVoice({
       voice: 'onyx',
-      onSpeakStart: () => setSpeaking(true),
+      onSpeakStart: () => { setSpeaking(true); setZeusFullyDone(false); },
       onSpeakEnd: () => setSpeaking(false),
-      onQueueDrained: () => setSpeaking(false)
+      onQueueDrained: () => { setSpeaking(false); setZeusFullyDone(true); }
     });
     voiceRef.current.setMuted(muted);
 
@@ -389,6 +390,7 @@ export default function ZeusSpeaks() {
             onToggleMute={toggleMute}
             speaking={speaking}
             autoStartMic={drawerAutoMic}
+            zeusFullyDone={zeusFullyDone}
           />
         )}
       </AnimatePresence>
@@ -492,7 +494,7 @@ function toolLabel(tool) {
 // DRAWER — continued chat
 // ═══════════════════════════════════════════════════════════════════════════
 
-function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText, voice, muted, onToggleMute, speaking, autoStartMic }) {
+function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText, voice, muted, onToggleMute, speaking, autoStartMic, zeusFullyDone }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -501,6 +503,8 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText, 
   const [loadingHistory, setLoadingHistory] = useState(!!conversationId);
   const [listening, setListening] = useState(false);
   const [partialTranscript, setPartialTranscript] = useState('');
+  // Modo conversación por voz — mic se auto-activa cuando Zeus termina
+  const [voiceMode, setVoiceMode] = useState(!!autoStartMic);
   const scrollRef = useRef(null);
   const esRef = useRef(null);
   const micRef = useRef(null);
@@ -516,13 +520,36 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText, 
   useEffect(() => {
     if (!autoStartMic) return;
     if (!ZeusMic.isSupported()) return;
-    // Pequeño delay para que el drawer termine de animar
     const t = setTimeout(() => {
       if (!listening && !streaming) toggleMic();
     }, 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoStartMic]);
+
+  // Auto-relanzar mic cuando Zeus termina de hablar (modo conversación continua)
+  useEffect(() => {
+    if (!voiceMode) return;
+    if (streaming) return;       // Zeus aún pensando
+    if (speaking) return;        // Zeus aún hablando
+    if (!zeusFullyDone) return;  // cola de audio no drenada
+    if (listening) return;       // ya escuchando
+    if (!ZeusMic.isSupported()) return;
+
+    const t = setTimeout(() => {
+      if (voiceMode && !streaming && !speaking && zeusFullyDone && !listening) {
+        toggleMic();
+      }
+    }, 700); // pausa corta para que el usuario no se superponga
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceMode, streaming, speaking, zeusFullyDone, listening]);
+
+  // Si el usuario tipea → salir de modo voz
+  useEffect(() => {
+    if (input.length > 0 && voiceMode) setVoiceMode(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [input]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -611,7 +638,8 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText, 
       return;
     }
 
-    // Unlock audio al mismo tiempo (primera interacción)
+    // Activar modo conversación por voz — el mic se auto-relanzará cuando Zeus termine
+    setVoiceMode(true);
     voice?.unlock();
     localStorage.setItem(LS_UNLOCKED_KEY, '1');
 
@@ -624,10 +652,20 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText, 
         if (t.trim()) sendMessage(t);
       },
       onEnd: () => setListening(false),
-      onError: (e) => { console.warn('Mic error:', e); setListening(false); }
+      onError: (e) => {
+        console.warn('Mic error:', e);
+        setListening(false);
+        // Si es no-speech o aborted, salimos de voice mode para no loopear vacío
+        if (e?.error === 'no-speech' || e?.error === 'aborted') setVoiceMode(false);
+      }
     });
     micRef.current = mic;
     mic.start();
+  }
+
+  function exitVoiceMode() {
+    setVoiceMode(false);
+    micRef.current?.stop();
   }
 
   // Refs for closure capture in end handler
@@ -657,20 +695,34 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText, 
         <div className="zeus-drawer-header">
           <div className="zeus-drawer-header-inner">
             <motion.div
-              className={`zeus-orb-drawer ${speaking ? 'zeus-orb-speaking' : ''}`}
-              animate={speaking ? { scale: [1, 1.12, 1] } : { scale: 1 }}
-              transition={speaking ? { duration: 0.8, repeat: Infinity } : {}}
+              className={`zeus-orb-drawer ${speaking ? 'zeus-orb-speaking' : listening ? 'zeus-orb-listening' : ''}`}
+              animate={(speaking || listening) ? { scale: [1, 1.12, 1] } : { scale: 1 }}
+              transition={(speaking || listening) ? { duration: 0.8, repeat: Infinity } : {}}
             >
               ⚡
             </motion.div>
             <div>
               <div className="zeus-drawer-title">Zeus</div>
               <div className="zeus-drawer-subtitle">
-                {speaking ? 'hablando...' : streaming ? 'pensando...' : 'Oracle · read-only'}
+                {listening ? '🎤 te escucho...' :
+                 speaking ? '🗣️ hablando...' :
+                 streaming ? '💭 pensando...' :
+                 voiceMode ? '⏸ tu turno' :
+                 'Oracle · read-only'}
               </div>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            {voiceMode && (
+              <button
+                className="zeus-mute-toggle"
+                onClick={exitVoiceMode}
+                title="Salir modo conversación por voz"
+                style={{ background: 'rgba(236, 72, 153, 0.2)', borderColor: 'rgba(236, 72, 153, 0.4)' }}
+              >
+                🔁
+              </button>
+            )}
             <button
               className={`zeus-mute-toggle ${muted ? 'muted' : ''}`}
               onClick={onToggleMute}
@@ -733,8 +785,8 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, greetingText, 
           <button
             onClick={toggleMic}
             disabled={streaming}
-            className={`zeus-mic-btn ${listening ? 'listening' : ''}`}
-            title={listening ? 'Detener grabación' : 'Hablar'}
+            className={`zeus-mic-btn ${listening ? 'listening' : ''} ${voiceMode ? 'voice-mode' : ''}`}
+            title={listening ? 'Detener grabación' : voiceMode ? 'Modo voz activo — hablá cuando Zeus termine' : 'Hablar (modo conversación)'}
           >
             {listening ? (
               <motion.span
