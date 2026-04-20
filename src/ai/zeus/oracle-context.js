@@ -9,6 +9,7 @@ const ActionLog = require('../../db/models/ActionLog');
 const ZeusDirective = require('../../db/models/ZeusDirective');
 const BrainInsight = require('../../db/models/BrainInsight');
 const ZeusPreference = require('../../db/models/ZeusPreference');
+const ZeusPlaybook = require('../../db/models/ZeusPlaybook');
 const SystemConfig = require('../../db/models/SystemConfig');
 const { getLatestSnapshots } = require('../../db/queries');
 
@@ -174,6 +175,20 @@ async function buildOracleContext(lastSeenAt = null) {
     }));
   } catch (_) { ctx.creator_preferences = []; }
 
+  // Playbooks activos — reglas operativas que Zeus escribió para sí mismo
+  try {
+    const playbooks = await ZeusPlaybook.find({ active: true })
+      .sort({ confidence: -1 })
+      .limit(15)
+      .lean();
+    ctx.own_playbooks = playbooks.map(p => ({
+      title: p.title,
+      trigger: p.trigger_pattern,
+      action: p.action,
+      confidence: Math.round((p.confidence || 0) * 100)
+    }));
+  } catch (_) { ctx.own_playbooks = []; }
+
   return ctx;
 }
 
@@ -239,6 +254,15 @@ function formatContextForPrompt(ctx) {
     for (const [cat, items] of Object.entries(byCategory)) {
       lines.push(`  [${cat}]`);
       for (const item of items) lines.push(`    - ${item}`);
+    }
+  }
+
+  if (ctx.own_playbooks?.length) {
+    lines.push(`\nTUS PROPIOS PLAYBOOKS (reglas que vos mismo escribiste, aplicá cuando el trigger matchee):`);
+    for (const pb of ctx.own_playbooks) {
+      lines.push(`  • ${pb.title} (conf ${pb.confidence}%)`);
+      lines.push(`    cuando: ${pb.trigger}`);
+      lines.push(`    →  ${pb.action}`);
     }
   }
 

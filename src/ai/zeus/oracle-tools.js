@@ -23,6 +23,8 @@ const ZeusWatcher = require('../../db/models/ZeusWatcher');
 const ZeusRecommendationOutcome = require('../../db/models/ZeusRecommendationOutcome');
 const ZeusHypothesis = require('../../db/models/ZeusHypothesis');
 const ZeusStrategicPlan = require('../../db/models/ZeusStrategicPlan');
+const ZeusJournalEntry = require('../../db/models/ZeusJournalEntry');
+const ZeusPlaybook = require('../../db/models/ZeusPlaybook');
 const { getLatestSnapshots, getSnapshotHistory, getOverviewHistory } = require('../../db/queries');
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -480,6 +482,32 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       properties: {
         include_triggered: { type: 'boolean', default: false }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'write_journal_entry',
+    description: 'Escribí un entry en tu diario personal. Usá para reflexionar sobre errores, lecciones, patterns que notás en tu razonamiento.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        entry_type: { type: 'string', enum: ['mistake', 'lesson', 'pattern', 'meta', 'observation'] },
+        title: { type: 'string' },
+        content: { type: 'string' },
+        importance: { type: 'string', enum: ['low', 'medium', 'high', 'critical'], default: 'medium' },
+        tags: { type: 'array', items: { type: 'string' } }
+      },
+      required: ['entry_type', 'title', 'content']
+    }
+  },
+  {
+    name: 'list_playbooks',
+    description: 'Lista tus playbooks activos — reglas operativas que vos mismo escribiste basado en tu aprendizaje. Úsalos como guía al tomar decisiones.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        category: { type: 'string' }
       },
       required: []
     }
@@ -1336,6 +1364,44 @@ const ZEUS_SELF_FILES = [
   'src/safety/anomaly-detector.js'
 ];
 
+async function handleWriteJournalEntry(input) {
+  if (!input.title || !input.content || !input.entry_type) {
+    return { error: 'entry_type, title, content requeridos' };
+  }
+  try {
+    const entry = await ZeusJournalEntry.create({
+      entry_type: input.entry_type,
+      title: input.title,
+      content: input.content,
+      importance: input.importance || 'medium',
+      tags: input.tags || []
+    });
+    return { ok: true, id: entry._id.toString(), summary: `Journal entry guardado: ${input.title.substring(0, 80)}` };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function handleListPlaybooks(input) {
+  const filter = { active: true };
+  if (input.category) filter.category = input.category;
+  const playbooks = await ZeusPlaybook.find(filter)
+    .sort({ category: 1, confidence: -1 })
+    .limit(40)
+    .lean();
+  return playbooks.map(p => ({
+    id: p._id.toString(),
+    title: p.title,
+    trigger_pattern: p.trigger_pattern,
+    action: p.action,
+    reasoning: p.action_reasoning,
+    evidence: p.evidence,
+    confidence: Math.round((p.confidence || 0) * 100),
+    category: p.category,
+    version: p.version
+  }));
+}
+
 async function handleQueryStrategicPlan(input) {
   const filter = { status: { $in: ['active', 'draft'] } };
   if (input.horizon && input.horizon !== 'all') filter.horizon = input.horizon;
@@ -1836,7 +1902,9 @@ const TOOL_HANDLERS = {
   query_strategic_plan: handleQueryStrategicPlan,
   generate_plan: handleGeneratePlan,
   approve_plan: handleApprovePlan,
-  set_north_star: handleSetNorthStar
+  set_north_star: handleSetNorthStar,
+  write_journal_entry: handleWriteJournalEntry,
+  list_playbooks: handleListPlaybooks
 };
 
 async function executeTool(toolName, input) {

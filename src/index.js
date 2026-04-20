@@ -959,6 +959,18 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'zeus-quarterly-plan' });
   logger.info('  [*] Zeus plan trimestral — día 1 de Q, 9am ET');
 
+  // Domingos 11am ET: Zeus self-reflection (journal + playbook updates)
+  cron.schedule('0 11 * * 0', async () => {
+    try {
+      const { runWeeklyReflection } = require('./ai/zeus/reflection-engine');
+      const result = await runWeeklyReflection();
+      logger.info(`[ZEUS-REFLECTION-CRON] ${JSON.stringify(result)}`);
+    } catch (err) {
+      logger.error(`[ZEUS-REFLECTION-CRON] ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'zeus-self-reflection' });
+  logger.info('  [*] Zeus self-reflection — domingos 11am ET (journal + playbook updates)');
+
   // Semanal domingos 10am ET: hypothesis review bayesiano
   cron.schedule('0 10 * * 0', async () => {
     try {
