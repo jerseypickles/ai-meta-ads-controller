@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   getCreativeProposals,
@@ -7,7 +7,13 @@ import {
   getProposalImageUrl,
   getDNALab,
   setApolloEvolutionRatio,
-  sendProposalFeedback
+  sendProposalFeedback,
+  createProduct,
+  deleteProduct,
+  addProductImages,
+  deleteProductImage,
+  updateProduct,
+  getProductImageUrl
 } from '../../api';
 
 const APOLLO_COLOR = '#fbbf24';
@@ -265,7 +271,7 @@ export default function ApolloPanel() {
             <EvolutionSection ratio={ratio} dnaSpace={dnaSpace} evolution={evolution} onChange={changeEvolutionRatio} />
           )}
           {activeSection === 'products' && (
-            <ProductsSection products={products} />
+            <ProductsSection products={products} onRefresh={loadAll} setLightbox={setLightboxImg} />
           )}
         </motion.div>
       </AnimatePresence>
@@ -971,50 +977,545 @@ function EvolutionSection({ ratio, dnaSpace, evolution, onChange }) {
 // PRODUCTS — list
 // ═══════════════════════════════════════════════════════════════════════════
 
-function ProductsSection({ products }) {
-  if (products.length === 0) return <Empty>Sin productos registrados</Empty>;
+function ProductsSection({ products, onRefresh, setLightbox }) {
+  const [editingPromptId, setEditingPromptId] = useState(null);
+  const [editingDescId, setEditingDescId] = useState(null);
+  const [showNewForm, setShowNewForm] = useState(false);
+
+  async function handleDelete(id) {
+    if (!window.confirm('Eliminar este producto? No se puede deshacer.')) return;
+    try { await deleteProduct(id); await onRefresh(); }
+    catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function handleDeleteImage(productId, filename) {
+    if (!window.confirm('Borrar esta imagen?')) return;
+    try { await deleteProductImage(productId, filename); await onRefresh(); }
+    catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function handleAddImages(productId, files) {
+    if (!files?.length) return;
+    try {
+      const fd = new FormData();
+      for (const f of files) fd.append('images', f);
+      await addProductImages(productId, fd);
+      await onRefresh();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
-      {products.map((p, i) => (
-        <motion.div
-          key={p._id}
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: i * 0.04 }}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* New product trigger */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <SectionHeader label={`Productos registrados · ${products.length}`} color="#10b981" />
+        <button
+          onClick={() => setShowNewForm(!showNewForm)}
           style={{
-            background: 'rgba(17, 21, 51, 0.55)',
-            border: '1px solid rgba(16, 185, 129, 0.15)',
-            borderRadius: 10,
-            padding: 12
+            padding: '8px 16px',
+            background: showNewForm ? 'rgba(239, 68, 68, 0.12)' : `linear-gradient(90deg, ${APOLLO_COLOR}, #f97316)`,
+            border: showNewForm ? '1px solid rgba(239, 68, 68, 0.3)' : 'none',
+            color: showNewForm ? '#ef4444' : '#000',
+            fontWeight: 700,
+            borderRadius: 8,
+            cursor: 'pointer',
+            fontSize: '0.72rem',
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em'
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-            {p.png_references?.[0] && (
-              <div style={{ width: 44, height: 44, borderRadius: 8, overflow: 'hidden', background: 'rgba(10, 14, 39, 0.5)', flexShrink: 0 }}>
-                {p.png_references[0].image_base64 ? (
-                  <img src={`data:${p.png_references[0].mime_type || 'image/png'};base64,${p.png_references[0].image_base64}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', fontSize: '1.4rem' }}>📦</div>
-                )}
-              </div>
-            )}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: '0.78rem', color: 'var(--bos-text)', fontWeight: 600 }}>{p.product_name}</div>
-              <div style={{ fontSize: '0.6rem', color: 'var(--bos-text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>{p.product_slug}</div>
-            </div>
-          </div>
-          <div style={{ fontSize: '0.62rem', color: 'var(--bos-text-muted)' }}>
-            {p.png_references?.length || 0} refs · {p.prompt_type === 'custom' ? 'custom prompt' : 'generic'}
-            {p.performance?.avg_roas && (
-              <span style={{ float: 'right', color: '#10b981', fontFamily: 'JetBrains Mono, monospace', fontWeight: 600 }}>
-                {p.performance.avg_roas}x avg
-              </span>
-            )}
-          </div>
-        </motion.div>
+          {showNewForm ? 'Cancelar' : '+ Nuevo producto'}
+        </button>
+      </div>
+
+      <AnimatePresence>
+        {showNewForm && (
+          <NewProductForm
+            onCancel={() => setShowNewForm(false)}
+            onCreated={async () => { setShowNewForm(false); await onRefresh(); }}
+          />
+        )}
+      </AnimatePresence>
+
+      {products.length === 0 && !showNewForm && <Empty>Sin productos registrados</Empty>}
+
+      {/* Product list */}
+      {products.map((p, i) => (
+        <ProductCard
+          key={p._id}
+          product={p}
+          index={i}
+          editingPrompt={editingPromptId === p._id}
+          editingDesc={editingDescId === p._id}
+          setEditingPrompt={(on) => setEditingPromptId(on ? p._id : null)}
+          setEditingDesc={(on) => setEditingDescId(on ? p._id : null)}
+          onDelete={() => handleDelete(p._id)}
+          onDeleteImage={(fn) => handleDeleteImage(p._id, fn)}
+          onAddImages={(files) => handleAddImages(p._id, files)}
+          onRefresh={onRefresh}
+          setLightbox={setLightbox}
+        />
       ))}
     </div>
   );
+}
+
+function ProductCard({ product, index, editingPrompt, editingDesc, setEditingPrompt, setEditingDesc, onDelete, onDeleteImage, onAddImages, onRefresh, setLightbox }) {
+  const p = product;
+  const [saving, setSaving] = useState(false);
+
+  async function savePrompt(tpl, type) {
+    setSaving(true);
+    try {
+      await updateProduct(p._id, { prompt_type: type, custom_prompt_template: tpl });
+      await onRefresh();
+      setEditingPrompt(false);
+    } catch (err) { alert('Error: ' + err.message); }
+    finally { setSaving(false); }
+  }
+
+  async function saveDescription(desc) {
+    setSaving(true);
+    try {
+      await updateProduct(p._id, { product_description: desc });
+      await onRefresh();
+      setEditingDesc(false);
+    } catch (err) { alert('Error: ' + err.message); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: Math.min(index * 0.04, 0.3) }}
+      style={{
+        background: 'rgba(17, 21, 51, 0.55)',
+        border: '1px solid rgba(16, 185, 129, 0.15)',
+        borderRadius: 12,
+        padding: 16
+      }}
+    >
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'start', justifyContent: 'space-between', marginBottom: 14, gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--bos-text)' }}>{p.product_name}</div>
+          <div style={{ fontSize: '0.66rem', color: 'var(--bos-text-muted)', marginTop: 3, fontFamily: 'JetBrains Mono, monospace' }}>
+            {p.product_slug} · <a href={p.link_url} target="_blank" rel="noreferrer" style={{ color: '#60a5fa', textDecoration: 'none' }}>{p.link_url}</a>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+          {p.performance?.avg_roas > 0 && (
+            <span style={{ fontSize: '0.68rem', color: '#10b981', background: 'rgba(16, 185, 129, 0.1)', padding: '3px 10px', borderRadius: 12, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>
+              {p.performance.avg_roas.toFixed(1)}x ROAS
+            </span>
+          )}
+          {p.performance?.total_spend > 0 && (
+            <span style={{ fontSize: '0.62rem', color: 'var(--bos-text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>
+              ${Math.round(p.performance.total_spend)}
+            </span>
+          )}
+          <button onClick={onDelete} style={{
+            background: 'rgba(239, 68, 68, 0.1)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            color: '#ef4444',
+            borderRadius: 6,
+            padding: '4px 10px',
+            cursor: 'pointer',
+            fontSize: '0.66rem',
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em',
+            fontWeight: 600
+          }}>Eliminar</button>
+        </div>
+      </div>
+
+      {/* Images */}
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: '0.6rem', color: 'var(--bos-text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          Referencias · {(p.png_references || []).length} {(p.png_references || []).length === 1 ? 'imagen' : 'imagenes'} — más referencias = mejor fidelidad de Gemini
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {(p.png_references || []).map((ref, i) => (
+            <div key={i} style={{ position: 'relative' }}>
+              <img
+                src={getProductImageUrl(p._id, ref.filename)}
+                alt={ref.type}
+                onClick={() => setLightbox?.(getProductImageUrl(p._id, ref.filename))}
+                style={{
+                  width: 110, height: 110, objectFit: 'cover', borderRadius: 8,
+                  border: '1px solid rgba(255, 255, 255, 0.08)', cursor: 'pointer'
+                }}
+              />
+              <span style={{
+                position: 'absolute', bottom: 4, left: 4, right: 4,
+                background: 'rgba(0,0,0,0.7)', color: '#fff', fontSize: '0.54rem',
+                padding: '2px 6px', borderRadius: 4, textAlign: 'center',
+                textTransform: 'uppercase', letterSpacing: '0.06em'
+              }}>{ref.type}</span>
+              <button onClick={() => onDeleteImage(ref.filename)} style={{
+                position: 'absolute', top: 4, right: 4, width: 20, height: 20,
+                borderRadius: '50%', background: 'rgba(239, 68, 68, 0.9)', border: 'none',
+                color: '#fff', fontSize: '0.7rem', cursor: 'pointer', display: 'flex',
+                alignItems: 'center', justifyContent: 'center', lineHeight: 1, padding: 0
+              }}>×</button>
+            </div>
+          ))}
+          <label style={{
+            width: 110, height: 110, borderRadius: 8, cursor: 'pointer',
+            border: '2px dashed rgba(251, 191, 36, 0.35)', display: 'flex',
+            flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            gap: 4, color: APOLLO_COLOR, fontSize: '0.65rem',
+            background: 'rgba(251, 191, 36, 0.04)'
+          }}>
+            <span style={{ fontSize: '1.4rem' }}>+</span>
+            <span>Agregar</span>
+            <input type="file" accept="image/png,image/jpeg" multiple style={{ display: 'none' }}
+              onChange={(e) => { onAddImages(e.target.files); e.target.value = ''; }}
+            />
+          </label>
+        </div>
+      </div>
+
+      {/* Description */}
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <span style={{ fontSize: '0.6rem', color: 'var(--bos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            Descripción (para Gemini)
+          </span>
+          {!editingDesc && (
+            <button onClick={() => setEditingDesc(true)} style={{ fontSize: '0.62rem', background: 'transparent', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', color: 'var(--bos-text-muted)' }}>
+              Editar
+            </button>
+          )}
+        </div>
+        {editingDesc ? (
+          <DescriptionEditor initial={p.product_description || ''} onSave={saveDescription} onCancel={() => setEditingDesc(false)} saving={saving} />
+        ) : (
+          <div style={{
+            fontSize: '0.74rem',
+            color: p.product_description ? 'var(--bos-text)' : 'var(--bos-text-dim)',
+            background: 'rgba(10, 14, 39, 0.5)',
+            borderRadius: 6,
+            padding: '8px 12px',
+            fontStyle: p.product_description ? 'normal' : 'italic'
+          }}>
+            {p.product_description || 'Sin descripción — click en Editar para añadir apariencia, colores, contenido.'}
+          </div>
+        )}
+      </div>
+
+      {/* Prompt type + template */}
+      <div style={{ marginBottom: (p.scene_performance || []).length > 0 ? 14 : 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <span style={{ fontSize: '0.6rem', color: 'var(--bos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Tipo de prompt</span>
+          <span style={{
+            fontSize: '0.58rem',
+            fontWeight: 700,
+            padding: '2px 8px',
+            borderRadius: 4,
+            background: p.prompt_type === 'custom' ? 'rgba(249, 115, 22, 0.15)' : 'rgba(59, 130, 246, 0.15)',
+            color: p.prompt_type === 'custom' ? '#f97316' : '#3b82f6',
+            letterSpacing: '0.08em'
+          }}>
+            {p.prompt_type === 'custom' ? 'CUSTOM' : 'STANDARD'}
+          </span>
+          {!editingPrompt && (
+            <button onClick={() => setEditingPrompt(true)} style={{ fontSize: '0.62rem', background: 'transparent', border: '1px solid rgba(255, 255, 255, 0.1)', borderRadius: 4, padding: '2px 8px', cursor: 'pointer', color: 'var(--bos-text-muted)', marginLeft: 'auto' }}>
+              {p.prompt_type === 'custom' ? 'Editar template' : 'Cambiar a custom'}
+            </button>
+          )}
+        </div>
+        {editingPrompt ? (
+          <PromptEditor
+            initialTpl={p.custom_prompt_template || ''}
+            initialType={p.prompt_type || 'standard'}
+            saving={saving}
+            onSave={savePrompt}
+            onCancel={() => setEditingPrompt(false)}
+          />
+        ) : (
+          p.prompt_type === 'custom' && p.custom_prompt_template && (
+            <div style={{
+              fontSize: '0.7rem',
+              color: 'var(--bos-text-muted)',
+              background: 'rgba(10, 14, 39, 0.5)',
+              borderRadius: 6,
+              padding: '8px 12px',
+              fontFamily: 'JetBrains Mono, monospace',
+              lineHeight: 1.5,
+              whiteSpace: 'pre-wrap',
+              maxHeight: 120,
+              overflow: 'auto'
+            }}>
+              {p.custom_prompt_template}
+            </div>
+          )
+        )}
+      </div>
+
+      {/* Scene performance */}
+      {(p.scene_performance || []).length > 0 && (
+        <div>
+          <div style={{ fontSize: '0.6rem', color: 'var(--bos-text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            Rendimiento por escena
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {(p.scene_performance || []).slice(0, 8).map((sp, i) => {
+              const c = sp.avg_roas >= 3 ? '#10b981' : sp.avg_roas >= 1.5 ? '#f59e0b' : '#6b7280';
+              return (
+                <span key={i} style={{
+                  fontSize: '0.64rem',
+                  padding: '3px 8px',
+                  borderRadius: 6,
+                  background: `${c}15`,
+                  color: c,
+                  border: `1px solid ${c}30`,
+                  fontFamily: 'JetBrains Mono, monospace'
+                }}>
+                  {(sp.scene || '').substring(0, 22)} · {sp.avg_roas.toFixed(1)}x
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+function DescriptionEditor({ initial, onSave, onCancel, saving }) {
+  const [val, setVal] = useState(initial);
+  return (
+    <div>
+      <textarea
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        placeholder="Ej: Frasco de vidrio con tapa negra, tomates enteros encurtidos en salmuera rojiza..."
+        rows={4}
+        style={{
+          width: '100%',
+          padding: '10px 12px',
+          background: 'rgba(10, 14, 39, 0.6)',
+          border: '1px solid rgba(251, 191, 36, 0.25)',
+          borderRadius: 6,
+          color: 'var(--bos-text)',
+          fontSize: '0.76rem',
+          resize: 'vertical',
+          fontFamily: 'inherit',
+          outline: 'none'
+        }}
+      />
+      <div style={{ display: 'flex', gap: 6, marginTop: 6, justifyContent: 'flex-end' }}>
+        <button onClick={onCancel} disabled={saving} style={editBtnStyle(false)}>Cancelar</button>
+        <button onClick={() => onSave(val)} disabled={saving} style={editBtnStyle(true)}>
+          {saving ? 'Guardando...' : 'Guardar'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PromptEditor({ initialTpl, initialType, onSave, onCancel, saving }) {
+  const [tpl, setTpl] = useState(initialTpl);
+  const [type, setType] = useState(initialType === 'custom' ? 'custom' : 'custom');
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+        <button onClick={() => setType('standard')} style={promptTypeBtn(type === 'standard')}>Standard</button>
+        <button onClick={() => setType('custom')} style={promptTypeBtn(type === 'custom')}>Custom template</button>
+      </div>
+      {type === 'custom' ? (
+        <>
+          <div style={{ fontSize: '0.62rem', color: 'var(--bos-text-muted)', marginBottom: 6, fontStyle: 'italic' }}>
+            Usa <code style={{ background: 'rgba(251, 191, 36, 0.15)', color: APOLLO_COLOR, padding: '1px 5px', borderRadius: 3, fontFamily: 'JetBrains Mono, monospace' }}>{'{SCENE}'}</code> como placeholder donde Apollo inserta la escena.
+          </div>
+          <textarea
+            value={tpl}
+            onChange={(e) => setTpl(e.target.value)}
+            placeholder="Ej: Close-up fotográfico de un frasco de Build Your Box en {SCENE}, iluminación cálida, textura clara del producto..."
+            rows={6}
+            style={{
+              width: '100%',
+              padding: '10px 12px',
+              background: 'rgba(10, 14, 39, 0.6)',
+              border: '1px solid rgba(249, 115, 22, 0.3)',
+              borderRadius: 6,
+              color: 'var(--bos-text)',
+              fontSize: '0.74rem',
+              resize: 'vertical',
+              fontFamily: 'JetBrains Mono, monospace',
+              lineHeight: 1.5,
+              outline: 'none'
+            }}
+          />
+        </>
+      ) : (
+        <div style={{
+          padding: '10px 12px',
+          background: 'rgba(10, 14, 39, 0.5)',
+          borderRadius: 6,
+          fontSize: '0.72rem',
+          color: 'var(--bos-text-muted)',
+          fontStyle: 'italic'
+        }}>
+          Apollo usará escenas genéricas + las referencias de este producto.
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 6, marginTop: 8, justifyContent: 'flex-end' }}>
+        <button onClick={onCancel} disabled={saving} style={editBtnStyle(false)}>Cancelar</button>
+        <button onClick={() => onSave(tpl, type)} disabled={saving || (type === 'custom' && !tpl.trim())} style={editBtnStyle(true)}>
+          {saving ? 'Guardando...' : 'Guardar'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function NewProductForm({ onCancel, onCreated }) {
+  const [name, setName] = useState('');
+  const [slug, setSlug] = useState('');
+  const [url, setUrl] = useState('https://jerseypickles.com');
+  const [description, setDescription] = useState('');
+  const [files, setFiles] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const fileRef = useRef(null);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!name || !slug || !files?.length) return;
+    setCreating(true);
+    try {
+      const fd = new FormData();
+      fd.append('product_name', name);
+      fd.append('product_slug', slug);
+      fd.append('link_url', url);
+      if (description) fd.append('product_description', description);
+      for (const f of files) fd.append('images', f);
+      await createProduct(fd);
+      await onCreated();
+    } catch (err) { alert('Error: ' + err.message); }
+    finally { setCreating(false); }
+  }
+
+  return (
+    <motion.form
+      initial={{ opacity: 0, y: -6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -6 }}
+      onSubmit={handleSubmit}
+      style={{
+        background: 'rgba(251, 191, 36, 0.04)',
+        border: '1px solid rgba(251, 191, 36, 0.25)',
+        borderRadius: 12,
+        padding: 16,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10
+      }}
+    >
+      <div style={{ fontSize: '0.72rem', color: APOLLO_COLOR, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+        Nuevo producto
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <Field label="Nombre del producto" required>
+          <input
+            value={name}
+            onChange={(e) => { setName(e.target.value); setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')); }}
+            placeholder="Hot Pickled Tomatoes"
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Slug" required>
+          <input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="hot-pickled-tomatoes" style={inputStyle} />
+        </Field>
+      </div>
+      <Field label="URL del producto">
+        <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://jerseypickles.com/..." style={inputStyle} />
+      </Field>
+      <Field label="Descripción (opcional)">
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Apariencia física, colores, contenido del frasco..." rows={3} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
+      </Field>
+      <Field label="Fotos de referencia (frente, lado, abierto — entre más, mejor)" required>
+        <label style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          padding: '16px', background: 'rgba(10, 14, 39, 0.5)',
+          border: '2px dashed rgba(251, 191, 36, 0.3)',
+          borderRadius: 6, cursor: 'pointer',
+          color: 'var(--bos-text-muted)',
+          fontSize: '0.78rem'
+        }}>
+          <span style={{ fontSize: '1.2rem' }}>📷</span>
+          {files?.length > 0 ? `${files.length} archivo(s) seleccionado(s)` : 'Click para seleccionar imágenes'}
+          <input type="file" ref={fileRef} accept="image/png,image/jpeg" multiple
+            onChange={(e) => setFiles(e.target.files)} style={{ display: 'none' }}
+          />
+        </label>
+      </Field>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <button type="button" onClick={onCancel} disabled={creating} style={editBtnStyle(false)}>Cancelar</button>
+        <button type="submit" disabled={creating || !name || !slug || !files?.length} style={{
+          ...editBtnStyle(true),
+          background: creating || !name || !slug || !files?.length ? 'rgba(107, 114, 128, 0.2)' : `linear-gradient(90deg, ${APOLLO_COLOR}, #f97316)`,
+          color: creating || !name || !slug || !files?.length ? 'var(--bos-text-dim)' : '#000'
+        }}>
+          {creating ? 'Creando...' : 'Crear producto'}
+        </button>
+      </div>
+    </motion.form>
+  );
+}
+
+function Field({ label, children, required }) {
+  return (
+    <div>
+      <label style={{ fontSize: '0.6rem', color: 'var(--bos-text-muted)', marginBottom: 4, display: 'block', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+        {label} {required && <span style={{ color: '#ef4444' }}>*</span>}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+const inputStyle = {
+  width: '100%',
+  padding: '8px 10px',
+  background: 'rgba(10, 14, 39, 0.6)',
+  border: '1px solid rgba(255, 255, 255, 0.08)',
+  borderRadius: 6,
+  color: 'var(--bos-text)',
+  fontSize: '0.78rem',
+  outline: 'none'
+};
+
+function editBtnStyle(primary) {
+  return {
+    padding: '6px 14px',
+    fontSize: '0.7rem',
+    fontWeight: 600,
+    border: primary ? 'none' : '1px solid rgba(255, 255, 255, 0.1)',
+    borderRadius: 6,
+    cursor: 'pointer',
+    background: primary ? 'linear-gradient(90deg, #fbbf24, #f97316)' : 'transparent',
+    color: primary ? '#000' : 'var(--bos-text-muted)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em'
+  };
+}
+
+function promptTypeBtn(active) {
+  return {
+    padding: '6px 14px',
+    fontSize: '0.66rem',
+    fontWeight: 700,
+    border: active ? '1px solid #f97316' : '1px solid rgba(255, 255, 255, 0.1)',
+    background: active ? 'rgba(249, 115, 22, 0.15)' : 'transparent',
+    color: active ? '#f97316' : 'var(--bos-text-muted)',
+    borderRadius: 6,
+    cursor: 'pointer',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em'
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
