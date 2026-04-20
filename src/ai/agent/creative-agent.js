@@ -550,6 +550,31 @@ async function runCreativeAgent() {
   const readyProps = await CreativeProposal.find({ status: 'ready', adset_id: { $ne: 'proactive' } }).select('adset_id').lean();
   for (const p of readyProps) readyProposalCounts[p.adset_id] = (readyProposalCounts[p.adset_id] || 0) + 1;
 
+  // ═══ FIX ANTI-SESGO POR PRODUCTO (abril 2026) ═══
+  // Bug detectado: 98% de generación últimas 24h iba a Hot Pickled Tomatoes.
+  // Causa: fallback a rankedProducts[0] (mejor avg_roas) cuando no hay match por nombre.
+  // Como los nombres de ad sets NO contienen el producto, TODO caía a Hot Tomatoes.
+  // Fix: tracking de cuántos proposals tiene cada producto en generación reciente,
+  //      el fallback elige el MENOS representado.
+  const recentProposalsByProduct = {};
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000);
+  const recentByProduct = await CreativeProposal.aggregate([
+    { $match: { created_at: { $gte: sevenDaysAgo } } },
+    { $group: { _id: '$product_id', count: { $sum: 1 } } }
+  ]);
+  for (const r of recentByProduct) {
+    if (r._id) recentProposalsByProduct[r._id.toString()] = r.count;
+  }
+  // Helper: elige el producto con menor conteo reciente (tie-break por ROAS)
+  const pickUnderrepresentedProduct = (candidates) => {
+    return [...candidates].sort((a, b) => {
+      const countA = recentProposalsByProduct[a._id.toString()] || 0;
+      const countB = recentProposalsByProduct[b._id.toString()] || 0;
+      if (countA !== countB) return countA - countB; // menor conteo gana
+      return (b.performance?.avg_roas || 0) - (a.performance?.avg_roas || 0);
+    })[0];
+  };
+
   const MAX_MATERIAL_PER_ADSET = 2; // max 2 entre tests + ready por ad set
 
   for (const memory of filtered) {
@@ -564,11 +589,16 @@ async function runCreativeAgent() {
     }
 
     try {
-      // Pick product — match by name first, fallback to best ROAS
+      // Pick product — match by name first, fallback a PRODUCTO MENOS REPRESENTADO
+      // (ya no rankedProducts[0] — eso causaba 98% Hot Tomatoes por defecto)
       let product = rankedProducts.find(p =>
         (adsetName || '').toLowerCase().includes(p.product_slug.toLowerCase()) ||
         (adsetName || '').toLowerCase().includes(p.product_name.toLowerCase())
-      ) || rankedProducts[0];
+      ) || pickUnderrepresentedProduct(rankedProducts);
+
+      // Despues de elegir, registrar en tracking (para siguientes ad sets en el mismo ciclo)
+      const productIdStr = product._id.toString();
+      recentProposalsByProduct[productIdStr] = (recentProposalsByProduct[productIdStr] || 0) + PROPOSALS_PER_ADSET;
 
       // Pick N different scenes for this ad set — rotate across ad sets
       const scenePicks = [];
