@@ -323,12 +323,26 @@ async function runCreativeAgent() {
     logger.error(`[CREATIVE-AGENT] Pre-scan error (continuing anyway): ${err.message}`);
   }
 
-  // 3. Check pool size — si ya hay suficientes reactivos, saltar esa parte (pero proactivos siempre)
-  const MAX_POOL_SIZE = 30;
+  // 3. Check pool size — sistema de umbrales (Abril 2026 fix)
+  // Pool overfill detectado: 104 ready proposals creciendo sin control.
+  // Apollo generaba 6+ proactivos/dia sin importar el pool → waste de tokens.
+  //
+  // Umbrales revisados:
+  //   >= HARD_MAX: skip TODO (reactive + proactive). Espera a que pool baje.
+  //   >= SOFT_MAX: skip reactive, permite mínimo proactive (rotación temática)
+  //   < SOFT_MAX:  generate normal segun ad sets que necesitan
+  //   < MIN:       generate agresivo para levantar pool
+  const HARD_MAX_POOL_SIZE = 60;   // freeze completo
+  const SOFT_MAX_POOL_SIZE = 40;   // freeze reactive, mínimo proactive
   const currentPool = await CreativeProposal.countDocuments({ status: 'ready' });
-  const skipReactive = currentPool >= MAX_POOL_SIZE;
+  const skipReactive = currentPool >= SOFT_MAX_POOL_SIZE;
+  const skipEverything = currentPool >= HARD_MAX_POOL_SIZE;
+  if (skipEverything) {
+    logger.info(`[CREATIVE-AGENT] Pool SATURADO (${currentPool} ready, hard max ${HARD_MAX_POOL_SIZE}) — skipping TODA generacion hasta que Prometheus consuma material`);
+    return { generated: 0, elapsed: `${((Date.now() - startTime) / 1000).toFixed(1)}s`, cycle_id: cycleId, reason: 'pool_saturated', pool_size: currentPool };
+  }
   if (skipReactive) {
-    logger.info(`[CREATIVE-AGENT] Pool lleno (${currentPool} ready, max ${MAX_POOL_SIZE}) — saltando generacion reactiva, pero generando proactivos`);
+    logger.info(`[CREATIVE-AGENT] Pool lleno (${currentPool} ready, soft max ${SOFT_MAX_POOL_SIZE}) — saltando reactive. Solo proactivos minimos para rotacion.`);
   }
 
   // 4. Check for ad sets needing creatives (excluir legacy/AMAZON/TEST)
@@ -775,12 +789,23 @@ async function runCreativeAgent() {
     }
   }
 
-  // ═══ GENERACION PROACTIVA — siempre generar algunos para ad sets nuevos ═══
-  const MIN_PROACTIVE_PER_CYCLE = 2; // 2 proactivos por ciclo — balanceado con pool de 54+
-  const MIN_POOL_SIZE = 10;
+  // ═══ GENERACION PROACTIVA — respeta umbrales de pool (Abril 2026 fix) ═══
+  // Antes: siempre generaba MIN_PROACTIVE_PER_CYCLE (2) regardless del pool size.
+  // Ahora: si pool >= SOFT_MAX → 0 proactivos. Si pool healthy → solo llega a target.
+  const MIN_POOL_SIZE = 10;       // pool minimo para evitar que se vacie
+  const TARGET_POOL_SIZE = 25;    // target de trabajo
   const readyCount = await CreativeProposal.countDocuments({ status: 'ready' });
-  const poolNeeded = Math.max(0, MIN_POOL_SIZE - readyCount - generated);
-  const proactiveNeeded = Math.max(MIN_PROACTIVE_PER_CYCLE, poolNeeded);
+  const poolNeeded = Math.max(0, TARGET_POOL_SIZE - readyCount - generated);
+
+  let proactiveNeeded;
+  if (readyCount >= SOFT_MAX_POOL_SIZE) {
+    proactiveNeeded = 0; // pool lleno, no generar más
+    logger.info(`[CREATIVE-AGENT] Pool >= SOFT_MAX (${readyCount} >= ${SOFT_MAX_POOL_SIZE}). Skip proactive completamente.`);
+  } else if (readyCount < MIN_POOL_SIZE) {
+    proactiveNeeded = Math.min(5, poolNeeded); // pool bajo, agresivo hasta 5
+  } else {
+    proactiveNeeded = Math.min(2, poolNeeded); // normal, max 2 per ciclo
+  }
 
   if (proactiveNeeded > 0 && rankedProducts.length > 0 && rankedScenes.length > 0) {
     logger.info(`[CREATIVE-AGENT] Pool bajo (${readyCount} + ${generated} generados). Generando ${proactiveNeeded} proactivos para escalar.`);
