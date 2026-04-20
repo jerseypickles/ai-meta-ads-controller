@@ -50,6 +50,7 @@ export default function ZeusSpeaks() {
   const [toolActivity, setToolActivity] = useState([]);
   const [streaming, setStreaming] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [pendingInitialMessage, setPendingInitialMessage] = useState(null);
   const esRef = useRef(null);
 
   useEffect(() => {
@@ -134,7 +135,11 @@ export default function ZeusSpeaks() {
             toolActivity={toolActivity}
             streaming={streaming}
             onCollapse={() => setMode('collapsed')}
-            onReply={() => { setMode('collapsed'); setDrawerOpen(true); }}
+            onReply={(msgMaybe) => {
+              setMode('collapsed');
+              setDrawerOpen(true);
+              if (msgMaybe) setPendingInitialMessage(msgMaybe);
+            }}
           />
         )}
 
@@ -218,7 +223,9 @@ export default function ZeusSpeaks() {
               setConversationId(id);
               localStorage.setItem(LS_CONV_KEY, id);
             }}
-            onClose={() => setDrawerOpen(false)}
+            onClose={() => { setDrawerOpen(false); setPendingInitialMessage(null); }}
+            initialMessage={pendingInitialMessage}
+            onInitialMessageConsumed={() => setPendingInitialMessage(null)}
           />
         )}
       </AnimatePresence>
@@ -231,6 +238,15 @@ export default function ZeusSpeaks() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function ZeusHero({ text, toolActivity, streaming, onCollapse, onReply }) {
+  const [input, setInput] = useState('');
+
+  function submit() {
+    const msg = input.trim();
+    if (!msg || streaming) return;
+    setInput('');
+    onReply(msg);
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: -12 }}
@@ -252,19 +268,12 @@ function ZeusHero({ text, toolActivity, streaming, onCollapse, onReply }) {
           <div style={{ flex: 1 }}>
             <div className="zeus-hero-title">ZEUS</div>
             <div className="zeus-hero-subtitle">
-              {streaming ? 'pensando...' : 'ha terminado'}
+              {streaming ? 'pensando...' : 'tu turno'}
             </div>
           </div>
-          {!streaming && (
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button className="zeus-hero-btn zeus-hero-btn-primary" onClick={onReply}>
-                Responder
-              </button>
-              <button className="zeus-hero-btn" onClick={onCollapse}>
-                Ocultar
-              </button>
-            </div>
-          )}
+          <button className="zeus-hero-btn" onClick={onCollapse} title="Ocultar hero">
+            Ocultar
+          </button>
         </div>
 
         <div className="zeus-hero-text">
@@ -290,6 +299,31 @@ function ZeusHero({ text, toolActivity, streaming, onCollapse, onReply }) {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Input inline — responder sin abrir drawer */}
+        <div className="zeus-hero-reply">
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            placeholder={streaming ? 'Esperá a que Zeus termine...' : 'Escribí tu respuesta y apretá Enter...'}
+            rows={1}
+            disabled={streaming}
+          />
+          <button
+            onClick={submit}
+            disabled={streaming || !input.trim()}
+            className="zeus-send-btn"
+            title="Enviar"
+          >
+            ⟶
+          </button>
+        </div>
       </div>
     </motion.div>
   );
@@ -321,7 +355,7 @@ function toolLabel(tool) {
 // DRAWER — chat de texto
 // ═══════════════════════════════════════════════════════════════════════════
 
-function ZeusDrawer({ conversationId, onNewConversation, onClose }) {
+function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage, onInitialMessageConsumed }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -332,6 +366,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose }) {
   const esRef = useRef(null);
   const streamingTextRef = useRef('');
   const toolActivityRef = useRef([]);
+  const initialHandledRef = useRef(false);
 
   useEffect(() => { streamingTextRef.current = streamingText; }, [streamingText]);
   useEffect(() => { toolActivityRef.current = toolActivity; }, [toolActivity]);
@@ -342,6 +377,16 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose }) {
     return () => { esRef.current?.close(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId]);
+
+  // Si el drawer se abrió con un initial message desde el hero, enviarlo auto
+  useEffect(() => {
+    if (!initialMessage || initialHandledRef.current) return;
+    if (loadingHistory) return;
+    initialHandledRef.current = true;
+    sendMessage(initialMessage);
+    onInitialMessageConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialMessage, loadingHistory]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -359,10 +404,10 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose }) {
     }
   }
 
-  async function sendMessage() {
-    const msg = input.trim();
+  async function sendMessage(override) {
+    const msg = (override != null ? override : input).trim();
     if (!msg || streaming) return;
-    setInput('');
+    if (override == null) setInput('');
     setStreaming(true);
     setStreamingText('');
     setToolActivity([]);
@@ -499,7 +544,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose }) {
             disabled={streaming}
           />
           <button
-            onClick={sendMessage}
+            onClick={() => sendMessage()}
             disabled={streaming || !input.trim()}
             className="zeus-send-btn"
           >

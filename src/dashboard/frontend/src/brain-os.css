@@ -646,6 +646,55 @@
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
+/* Inline reply area dentro del hero */
+.zeus-hero-reply {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.zeus-hero-reply textarea {
+  flex: 1;
+  background: rgba(10, 14, 39, 0.6);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 10px;
+  color: var(--bos-text);
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  font-family: inherit;
+  resize: none;
+  min-height: 42px;
+  max-height: 120px;
+  outline: none;
+  transition: border-color 150ms;
+}
+
+.zeus-hero-reply textarea:focus {
+  border-color: rgba(59, 130, 246, 0.6);
+}
+
+.zeus-hero-reply textarea:disabled {
+  opacity: 0.55;
+}
+
+.zeus-hero-reply .zeus-send-btn {
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  border: none;
+  color: white;
+  border-radius: 10px;
+  width: 46px;
+  font-size: 1rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.zeus-hero-reply .zeus-send-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .zeus-tool-chip {
   display: inline-flex;
   align-items: center;
