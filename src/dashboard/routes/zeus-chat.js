@@ -373,6 +373,46 @@ router.patch('/preferences/:id', async (req, res) => {
   }
 });
 
+// ═══ GET /authorities — lista execution authorities (Nivel 5) ═══
+router.get('/authorities', async (req, res) => {
+  try {
+    const { getAllAuthorities } = require('../../ai/zeus/execution-gate');
+    const authorities = await getAllAuthorities();
+    res.json({ authorities });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ POST /authorities/enable — habilita una categoría ═══
+router.post('/authorities/enable', async (req, res) => {
+  try {
+    const { category, min_confidence, min_calibration_samples, max_impact_per_exec, max_per_day, reason } = req.body || {};
+    if (!category) return res.status(400).json({ error: 'category requerido' });
+    const { enableAuthority } = require('../../ai/zeus/execution-gate');
+    const auth = await enableAuthority(category, {
+      min_confidence, min_calibration_samples, max_impact_per_exec, max_per_day,
+      enabled_by: 'creator_api', reason
+    });
+    res.json({ ok: true, authority: auth });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ POST /authorities/disable ═══
+router.post('/authorities/disable', async (req, res) => {
+  try {
+    const { category, reason } = req.body || {};
+    if (!category) return res.status(400).json({ error: 'category requerido' });
+    const { disableAuthority } = require('../../ai/zeus/execution-gate');
+    await disableAuthority(category, reason);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ═══ DELETE /preferences/:id — olvidar del todo ═══
 router.delete('/preferences/:id', async (req, res) => {
   try {

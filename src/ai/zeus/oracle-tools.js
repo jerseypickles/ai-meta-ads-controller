@@ -25,6 +25,7 @@ const ZeusHypothesis = require('../../db/models/ZeusHypothesis');
 const ZeusStrategicPlan = require('../../db/models/ZeusStrategicPlan');
 const ZeusJournalEntry = require('../../db/models/ZeusJournalEntry');
 const ZeusPlaybook = require('../../db/models/ZeusPlaybook');
+const ZeusExecutionAuthority = require('../../db/models/ZeusExecutionAuthority');
 const { getLatestSnapshots, getSnapshotHistory, getOverviewHistory } = require('../../db/queries');
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -484,6 +485,26 @@ const TOOL_DEFINITIONS = [
         include_triggered: { type: 'boolean', default: false }
       },
       required: []
+    }
+  },
+  {
+    name: 'query_execution_authority',
+    description: 'Revisa qué categorías de acción tenés autoridad autónoma (Nivel 5). Cada una tiene thresholds de calibración que debés cumplir para auto-ejecutar. Úsala si el creador pregunta qué podés hacer solo.',
+    input_schema: {
+      type: 'object',
+      properties: {},
+      required: []
+    }
+  },
+  {
+    name: 'check_execution_readiness',
+    description: 'Chequea si una categoría específica ya cumple threshold para ejecución autónoma (calibration + samples + safety). Útil para decirle al creador "todavía no tengo suficiente track record para auto-X".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        category: { type: 'string', enum: ['budget_adjust_small', 'budget_adjust_medium', 'pause_low_performer', 'duplicate_winner', 'apply_code_rec', 'create_test', 'update_directive'] }
+      },
+      required: ['category']
     }
   },
   {
@@ -1364,6 +1385,40 @@ const ZEUS_SELF_FILES = [
   'src/safety/anomaly-detector.js'
 ];
 
+async function handleQueryExecutionAuthority() {
+  const { getAllAuthorities } = require('./execution-gate');
+  const authorities = await getAllAuthorities();
+  return authorities.map(a => ({
+    category: a.category,
+    enabled: a.enabled,
+    min_confidence: a.min_confidence,
+    min_calibration_samples: a.min_calibration_samples,
+    max_impact_per_exec: a.max_impact_per_exec,
+    max_per_day: a.max_per_day,
+    daily_executions: a.daily_executions,
+    total_executions: a.total_executions,
+    last_executed_at: a.last_executed_at,
+    enabled_at: a.enabled_at
+  }));
+}
+
+async function handleCheckExecutionReadiness(input) {
+  if (!input.category) return { error: 'category requerido' };
+  const { checkAuthority } = require('./execution-gate');
+  const result = await checkAuthority(input.category);
+  return {
+    category: input.category,
+    ready: result.allowed,
+    reason: result.reason,
+    calibration: result.calibration || null,
+    authority: result.authority ? {
+      enabled: result.authority.enabled,
+      min_confidence: result.authority.min_confidence,
+      daily_cap: `${result.authority.daily_executions}/${result.authority.max_per_day}`
+    } : null
+  };
+}
+
 async function handleWriteJournalEntry(input) {
   if (!input.title || !input.content || !input.entry_type) {
     return { error: 'entry_type, title, content requeridos' };
@@ -1904,7 +1959,9 @@ const TOOL_HANDLERS = {
   approve_plan: handleApprovePlan,
   set_north_star: handleSetNorthStar,
   write_journal_entry: handleWriteJournalEntry,
-  list_playbooks: handleListPlaybooks
+  list_playbooks: handleListPlaybooks,
+  query_execution_authority: handleQueryExecutionAuthority,
+  check_execution_readiness: handleCheckExecutionReadiness
 };
 
 async function executeTool(toolName, input) {

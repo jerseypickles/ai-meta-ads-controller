@@ -531,7 +531,9 @@ function toolLabel(tool) {
     approve_plan: '🗺️ aprobando plan',
     set_north_star: '⭐ seteando north star',
     write_journal_entry: '📓 escribiendo journal',
-    list_playbooks: '📘 revisando mis playbooks'
+    list_playbooks: '📘 revisando mis playbooks',
+    query_execution_authority: '🔐 revisando autoridad ejecutiva',
+    check_execution_readiness: '🔐 chequeando si puedo ejecutar'
   };
   return labels[tool] || tool;
 }
