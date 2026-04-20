@@ -296,6 +296,50 @@ const TOOL_DEFINITIONS = [
       },
       required: []
     }
+  },
+  {
+    name: 'ask_athena',
+    description: 'Delegá a Athena (estratega de cuenta — scaling, pacing, pausas, adjustments) una pregunta concreta sobre decisiones a nivel account/adset. Athena consulta sus propios datos y responde con perspectiva de dominio.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: 'Pregunta específica para Athena' }
+      },
+      required: ['question']
+    }
+  },
+  {
+    name: 'ask_apollo',
+    description: 'Delegá a Apollo (director creativo — DNAs, pipeline, productos, evolution engine) una pregunta sobre creativos, combinaciones ganadoras, ángulos.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: 'Pregunta específica para Apollo' }
+      },
+      required: ['question']
+    }
+  },
+  {
+    name: 'ask_prometheus',
+    description: 'Delegá a Prometheus (ingeniero de testing — criterios de graduación, kills, qué testear) una pregunta sobre tests, fases, decisiones de testing.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: 'Pregunta específica para Prometheus' }
+      },
+      required: ['question']
+    }
+  },
+  {
+    name: 'ask_ares',
+    description: 'Delegá a Ares (duplicador CBO — 3 campañas: probados, nuevos, rescate) una pregunta sobre duplicaciones, candidatos, criterios de escala.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: 'Pregunta específica para Ares' }
+      },
+      required: ['question']
+    }
   }
 ];
 
@@ -899,6 +943,13 @@ async function handleQueryAgentConversations(input) {
   }));
 }
 
+async function handleAskAgent(agentKey, input) {
+  if (!input.question) return { error: 'question requerida' };
+  // Require lazily to evitar circular dep
+  const { askAgent } = require('./agent-brains');
+  return await askAgent(agentKey, input.question);
+}
+
 const TOOL_HANDLERS = {
   query_portfolio: handleQueryPortfolio,
   query_adsets: handleQueryAdsets,
@@ -921,7 +972,11 @@ const TOOL_HANDLERS = {
   query_recommendations: handleQueryRecommendations,
   query_products: handleQueryProducts,
   query_strategic_directives: handleQueryStrategicDirectives,
-  query_agent_conversations: handleQueryAgentConversations
+  query_agent_conversations: handleQueryAgentConversations,
+  ask_athena: (input) => handleAskAgent('athena', input),
+  ask_apollo: (input) => handleAskAgent('apollo', input),
+  ask_prometheus: (input) => handleAskAgent('prometheus', input),
+  ask_ares: (input) => handleAskAgent('ares', input)
 };
 
 async function executeTool(toolName, input) {

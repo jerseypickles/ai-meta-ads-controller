@@ -491,7 +491,11 @@ function toolLabel(tool) {
     query_recommendations: 'recomendaciones',
     query_products: 'productos',
     query_strategic_directives: 'estratégia',
-    query_agent_conversations: 'comunicación agentes'
+    query_agent_conversations: 'comunicación agentes',
+    ask_athena: '🦉 consultando a Athena',
+    ask_apollo: '☀️ consultando a Apollo',
+    ask_prometheus: '🔥 consultando a Prometheus',
+    ask_ares: '⚔️ consultando a Ares'
   };
   return labels[tool] || tool;
 }
