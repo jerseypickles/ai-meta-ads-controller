@@ -221,7 +221,15 @@ router.get('/briefing', async (req, res) => {
     if (cached && cached.generated_at) {
       const ageMin = (Date.now() - new Date(cached.generated_at).getTime()) / 60000;
       if (ageMin < CACHE_TTL_MIN && !req.query.force) {
-        return res.json({ ...cached.briefing, from_cache: true, age_min: Math.round(ageMin) });
+        // El briefing se cachea 15min pero el context lo re-generamos siempre
+        // para que el NeuralCommandCenter tenga data fresca de stats.
+        const freshContext = await gatherSystemContext().catch(() => cached.context);
+        return res.json({
+          ...cached.briefing,
+          context: freshContext || cached.context,
+          from_cache: true,
+          age_min: Math.round(ageMin)
+        });
       }
     }
 
