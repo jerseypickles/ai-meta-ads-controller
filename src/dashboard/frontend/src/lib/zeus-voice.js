@@ -27,14 +27,16 @@ export class ZeusVoice {
     this.onQueueDrained = onQueueDrained || (() => {});
 
     this._textBuffer = '';
-    this._audioQueue = [];
     this._playing = false;
     this._muted = false;
     this._unlocked = false;
     this._unlocking = false;
-    this._fetchesInFlight = 0;
     this._stopped = false;
-    this._permanentFallback = false; // solo si la key no sirve del todo (401/403)
+    this._permanentFallback = false;
+
+    // Promise chain: serializa playback aunque fetches sean en paralelo
+    this._playChain = Promise.resolve();
+    this._pendingChunks = 0;
 
     this._audio = null;
     this._audioContext = null;
@@ -163,12 +165,13 @@ export class ZeusVoice {
   stop() {
     this._stopped = true;
     this._textBuffer = '';
-    this._audioQueue = [];
+    this._pendingChunks = 0;
     if (this._audio && !this._audio.paused) this._audio.pause();
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       try { window.speechSynthesis.cancel(); } catch (_) {}
     }
     this._playing = false;
+    this._playChain = Promise.resolve();
   }
 
   reset() {
@@ -198,33 +201,110 @@ export class ZeusVoice {
     this._textBuffer = rest;
   }
 
-  async _enqueueText(text) {
+  _enqueueText(text) {
     if (this._muted || this._stopped) return;
 
-    if (this._permanentFallback) {
-      this._speakWithBrowser(text);
-      return;
-    }
+    this._pendingChunks += 1;
 
-    this._fetchesInFlight += 1;
-    try {
-      const audioBlob = await this._fetchAudio(text);
-      if (this._stopped) return;
-      console.info('[Zeus] TTS blob received, size:', audioBlob.size, 'bytes, type:', audioBlob.type);
-      this._audioQueue.push({ blob: audioBlob, text });
-      this._maybePlay();
-    } catch (err) {
-      console.warn('[Zeus] TTS fetch failed:', err.message);
-      if (/HTTP 401|HTTP 403|HTTP 404|HTTP 503/.test(err.message)) {
-        this._permanentFallback = true;
+    // Fetch arranca ya (paralelo con otros chunks) pero la reproducción
+    // se encadena secuencialmente vía _playChain.
+    const fetchPromise = this._permanentFallback
+      ? Promise.resolve(null)
+      : this._fetchAudio(text).catch(err => {
+          console.warn('[Zeus] TTS fetch failed:', err.message);
+          if (/HTTP 401|HTTP 403|HTTP 404|HTTP 503/.test(err.message)) {
+            this._permanentFallback = true;
+          }
+          return null; // null = fallback para este chunk
+        });
+
+    this._playChain = this._playChain
+      .then(async () => {
+        if (this._stopped || this._muted) return;
+        const blob = await fetchPromise;
+        if (this._stopped || this._muted) return;
+
+        if (!blob) {
+          // Fallback a speechSynthesis para este chunk específico
+          await this._speakWithBrowserAwait(text);
+          return;
+        }
+
+        await this._playBlobAwait(blob, text);
+      })
+      .catch(err => {
+        console.warn('[Zeus] chain error:', err.message);
+      })
+      .finally(() => {
+        this._pendingChunks -= 1;
+        if (this._pendingChunks === 0 && !this._textBuffer) {
+          this.onQueueDrained();
+        }
+      });
+  }
+
+  /** Play blob via HTMLAudioElement, retorna promise que resuelve cuando termina. */
+  _playBlobAwait(blob, text) {
+    return new Promise((resolve) => {
+      if (!this._audio) {
+        // Sin audio element, fallback
+        this._speakWithBrowserAwait(text).then(resolve);
+        return;
       }
-      this._speakWithBrowser(text);
-    } finally {
-      this._fetchesInFlight -= 1;
-      if (this._fetchesInFlight === 0 && this._audioQueue.length === 0 && !this._playing) {
-        this.onQueueDrained();
+
+      const url = URL.createObjectURL(blob);
+      const cleanup = () => {
+        this._audio.removeEventListener('ended', onEnd);
+        this._audio.removeEventListener('error', onError);
+        URL.revokeObjectURL(url);
+        this._playing = false;
+        this.onSpeakEnd();
+      };
+      const onEnd = () => { cleanup(); resolve(); };
+      const onError = () => { cleanup(); resolve(); };
+
+      this._audio.addEventListener('ended', onEnd);
+      this._audio.addEventListener('error', onError);
+      this._audio.src = url;
+      this._audio.volume = 1.0;
+      this._playing = true;
+      this.onSpeakStart();
+
+      const p = this._audio.play();
+      if (p?.catch) {
+        p.catch(err => {
+          console.warn('[Zeus] play() rejected:', err.name, err.message);
+          cleanup();
+          // Fallback a speechSynthesis para este chunk
+          this._speakWithBrowserAwait(text).then(resolve);
+        });
       }
-    }
+    });
+  }
+
+  /** speechSynthesis como promesa. */
+  _speakWithBrowserAwait(text) {
+    return new Promise((resolve) => {
+      if (this._muted || this._stopped) return resolve();
+      if (typeof window === 'undefined' || !window.speechSynthesis) {
+        console.warn('[Zeus] speechSynthesis no disponible');
+        return resolve();
+      }
+
+      if (!this._preferredVoice) this._preferredVoice = this._pickBrowserVoice();
+
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang = 'es-ES';
+      utter.rate = 1.0;
+      utter.pitch = 0.85;
+      if (this._preferredVoice) utter.voice = this._preferredVoice;
+
+      utter.onstart = () => { this._playing = true; this.onSpeakStart(); };
+      utter.onend = () => { this._playing = false; this.onSpeakEnd(); resolve(); };
+      utter.onerror = () => { this._playing = false; this.onSpeakEnd(); resolve(); };
+
+      window.speechSynthesis.speak(utter);
+    });
   }
 
   async _fetchAudio(text) {
@@ -243,99 +323,7 @@ export class ZeusVoice {
     return await res.blob();
   }
 
-  /** Fallback: TTS del browser. Mejor que silencio aunque sea más robótico. */
-  _speakWithBrowser(text) {
-    if (typeof window === 'undefined' || !window.speechSynthesis) {
-      console.warn('Zeus: ni OpenAI TTS ni speechSynthesis disponibles');
-      return;
-    }
-    // Refrescar voz preferida por si las voces cargaron después del init
-    if (!this._preferredVoice) this._preferredVoice = this._pickBrowserVoice();
 
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = 'es-ES';
-    utter.rate = 1.0;
-    utter.pitch = 0.85; // más grave tipo Zeus
-    if (this._preferredVoice) utter.voice = this._preferredVoice;
-
-    utter.onstart = () => { this._playing = true; this.onSpeakStart(); };
-    utter.onend = () => {
-      this._playing = false;
-      this.onSpeakEnd();
-      if (this._audioQueue.length === 0 && this._fetchesInFlight === 0) this.onQueueDrained();
-    };
-    utter.onerror = () => { this._playing = false; this.onSpeakEnd(); };
-    window.speechSynthesis.speak(utter);
-  }
-
-  _maybePlay() {
-    if (this._playing || this._muted || this._stopped) return;
-    if (this._audioQueue.length === 0) return;
-
-    const next = this._audioQueue.shift();
-
-    if (!this._audio || !next.blob) {
-      console.warn('[Zeus] No audio element o blob, fallback speechSynthesis');
-      if (next.text) this._speakWithBrowser(next.text);
-      return;
-    }
-
-    const url = URL.createObjectURL(next.blob);
-    this._audio.src = url;
-    this._audio.volume = 1.0;
-    this._playing = true;
-    this.onSpeakStart();
-
-    console.info('[Zeus] calling audio.play()');
-    const p = this._audio.play();
-    if (p?.then) {
-      p.then(() => {
-        console.info('[Zeus] audio.play() promise resolved');
-      }).catch(err => {
-        console.warn('[Zeus] audio.play() rejected:', err.name, err.message);
-        this._playing = false;
-        URL.revokeObjectURL(url);
-        // NotAllowedError significa Safari bloqueó — intentamos decodeAudioData como último recurso
-        if (this._audioContext && err.name === 'NotAllowedError') {
-          this._tryAudioContextPlay(next.blob, next.text);
-        } else if (next.text) {
-          this._speakWithBrowser(next.text);
-        }
-      });
-    }
-  }
-
-  async _tryAudioContextPlay(blob, text) {
-    try {
-      const arrayBuffer = await blob.arrayBuffer();
-      const audioBuffer = await this._audioContext.decodeAudioData(arrayBuffer.slice(0));
-      if (this._audioContext.state === 'suspended') {
-        await this._audioContext.resume();
-      }
-      const source = this._audioContext.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(this._audioContext.destination);
-      source.onended = () => this._playNext();
-      this._playing = true;
-      this.onSpeakStart();
-      console.info('[Zeus] fallback playback via AudioContext BufferSource');
-      source.start(0);
-    } catch (err) {
-      console.warn('[Zeus] AudioContext fallback también falló:', err.message);
-      this._playing = false;
-      if (text) this._speakWithBrowser(text);
-    }
-  }
-
-  _playNext() {
-    this._playing = false;
-    this.onSpeakEnd();
-    if (this._audioQueue.length > 0) {
-      this._maybePlay();
-    } else if (this._fetchesInFlight === 0) {
-      this.onQueueDrained();
-    }
-  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
