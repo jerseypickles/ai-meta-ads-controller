@@ -4,6 +4,7 @@ import { getToken } from './api';
 import Login from './pages/Login';
 import AdSetsManager from './pages/AdSetsManager';
 import BrainIntelligence from './pages/BrainIntelligence';
+import BrainOS from './pages/BrainOS';
 
 // AuthContext
 const AuthContext = createContext();
@@ -76,6 +77,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <BrainIntelligence />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/brain-os"
+            element={
+              <ProtectedRoute>
+                <BrainOS />
               </ProtectedRoute>
             }
           />
