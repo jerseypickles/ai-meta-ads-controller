@@ -20,6 +20,7 @@ const SystemConfig = require('../../db/models/SystemConfig');
 const ZeusCodeRecommendation = require('../../db/models/ZeusCodeRecommendation');
 const ZeusPreference = require('../../db/models/ZeusPreference');
 const ZeusWatcher = require('../../db/models/ZeusWatcher');
+const ZeusRecommendationOutcome = require('../../db/models/ZeusRecommendationOutcome');
 const { getLatestSnapshots, getSnapshotHistory, getOverviewHistory } = require('../../db/queries');
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -479,6 +480,50 @@ const TOOL_DEFINITIONS = [
         include_triggered: { type: 'boolean', default: false }
       },
       required: []
+    }
+  },
+  {
+    name: 'query_calibration',
+    description: 'Stats de calibración — cuántas recomendaciones hiciste de cada categoría y qué % realmente funcionaron vs no. Úsala al inicio de respuestas analíticas para CONOCER tu propio track record y ajustar confidence. También cuando el creador pregunte "¿qué tan bien vas acertando?".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        rec_type: { type: 'string', enum: ['code_change', 'directive', 'strategic', 'tactical', 'creative', 'budget', 'test', 'pause', 'scale', 'other'] },
+        category: { type: 'string' },
+        since_days: { type: 'number', default: 90, description: 'Ventana temporal hacia atrás' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'track_recommendation',
+    description: 'Registra una recomendación que vas a hacer para poder traquear su outcome real después. Invocá ESTO CUANDO hagas una recomendación concreta con predicción medible (ej: "bajar threshold X debería subir ROAS 10%"). Sin track, Zeus nunca aprende si acertó.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        rec_type: { type: 'string', enum: ['code_change', 'directive', 'strategic', 'tactical', 'creative', 'budget', 'test', 'pause', 'scale', 'other'] },
+        category: { type: 'string', description: 'Sub-categoría libre (ej "kill_threshold", "scale_winner")' },
+        predicted_impact: { type: 'string', description: 'Qué debería pasar si se aplica' },
+        predicted_direction: { type: 'string', enum: ['up', 'down', 'neutral'] },
+        predicted_magnitude: { type: 'string', description: 'Ej "+10% ROAS 7d"' },
+        entity_type: { type: 'string' },
+        entity_id: { type: 'string' },
+        entity_name: { type: 'string' },
+        baseline: { type: 'object', description: 'Métricas actuales (roas, spend, etc) para comparar después', additionalProperties: true },
+        applied: { type: 'boolean', default: false, description: 'true si ya se aplicó; false si solo es propuesta' }
+      },
+      required: ['rec_type', 'predicted_impact']
+    }
+  },
+  {
+    name: 'mark_recommendation_applied',
+    description: 'Marca una recomendación como aplicada AHORA. Inicia el countdown para post-mortems (7/30/90d). Usalo cuando el creador diga "lo apliqué" o "listo, hecho".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        outcome_id: { type: 'string', description: 'ID del ZeusRecommendationOutcome' }
+      },
+      required: ['outcome_id']
     }
   },
   {
@@ -1194,6 +1239,61 @@ const ZEUS_SELF_FILES = [
   'src/safety/anomaly-detector.js'
 ];
 
+async function handleQueryCalibration(input) {
+  const { getCalibrationStats } = require('./learner');
+  const opts = {};
+  if (input.rec_type) opts.rec_type = input.rec_type;
+  if (input.category) opts.category = input.category;
+  if (input.since_days) opts.since = Date.now() - input.since_days * 86400000;
+  return await getCalibrationStats(opts);
+}
+
+async function handleTrackRecommendation(input) {
+  if (!input.rec_type || !input.predicted_impact) {
+    return { error: 'rec_type y predicted_impact requeridos' };
+  }
+  try {
+    const crypto = require('crypto');
+    const rec_id = 'rec_' + crypto.randomBytes(8).toString('hex');
+    const outcome = await ZeusRecommendationOutcome.create({
+      rec_id,
+      rec_type: input.rec_type,
+      category: input.category || 'general',
+      predicted_impact: input.predicted_impact,
+      predicted_direction: input.predicted_direction || 'unknown',
+      predicted_magnitude: input.predicted_magnitude || '',
+      entity_type: input.entity_type || '',
+      entity_id: input.entity_id || '',
+      entity_name: input.entity_name || '',
+      baseline: input.baseline || {},
+      applied_at: input.applied ? new Date() : null
+    });
+    return {
+      ok: true,
+      outcome_id: outcome._id.toString(),
+      rec_id,
+      summary: `Recomendación trackeada${input.applied ? ' y marcada aplicada' : ' (pendiente)'} — post-mortem en 7d/30d/90d`
+    };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function handleMarkRecommendationApplied(input) {
+  if (!input.outcome_id) return { error: 'outcome_id requerido' };
+  try {
+    const outcome = await ZeusRecommendationOutcome.findByIdAndUpdate(
+      input.outcome_id,
+      { $set: { applied_at: new Date() } },
+      { new: true }
+    );
+    if (!outcome) return { error: 'Outcome no encontrado' };
+    return { ok: true, summary: `Marcada aplicada ${outcome.rec_id} — post-mortem en 7d/30d/90d` };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
 async function handleQueryDeliveryHealth() {
   const { checkDeliveryHealth } = require('./delivery-health');
   return await checkDeliveryHealth();
@@ -1444,7 +1544,10 @@ const TOOL_HANDLERS = {
   query_delivery_health: handleQueryDeliveryHealth,
   create_watcher: handleCreateWatcher,
   cancel_watcher: handleCancelWatcher,
-  list_watchers: handleListWatchers
+  list_watchers: handleListWatchers,
+  query_calibration: handleQueryCalibration,
+  track_recommendation: handleTrackRecommendation,
+  mark_recommendation_applied: handleMarkRecommendationApplied
 };
 
 async function executeTool(toolName, input) {

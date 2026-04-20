@@ -917,6 +917,18 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'zeus-weekly-audit' });
   logger.info('  [*] Zeus auditoría semanal — domingos 9am ET');
 
+  // Diario 3am ET: Zeus learner — post-mortems 7/30/90d de outcomes aplicados
+  cron.schedule('0 3 * * *', async () => {
+    try {
+      const { runPostMortemCron } = require('./ai/zeus/learner');
+      const result = await runPostMortemCron();
+      logger.info(`[ZEUS-LEARNER-CRON] ${JSON.stringify(result)}`);
+    } catch (err) {
+      logger.error(`[ZEUS-LEARNER-CRON] ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'zeus-learner' });
+  logger.info('  [*] Zeus learner — diario 3am ET (post-mortems 7/30/90d)');
+
   // Cada hora: Detección de anomalías por entidad (Meta necesita tiempo para atribuir conversiones)
   cron.schedule('0 * * * *', jobAnomalyDetection, {
     timezone: TIMEZONE,

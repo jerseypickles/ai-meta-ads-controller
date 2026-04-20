@@ -519,7 +519,10 @@ function toolLabel(tool) {
     query_delivery_health: '🩺 chequeando salud de delivery',
     create_watcher: '👁️ creando watcher',
     cancel_watcher: '👁️ cancelando watcher',
-    list_watchers: '👁️ revisando watchers'
+    list_watchers: '👁️ revisando watchers',
+    query_calibration: '📊 revisando mi track record',
+    track_recommendation: '📊 trackeando recomendación',
+    mark_recommendation_applied: '📊 marcando aplicada'
   };
   return labels[tool] || tool;
 }
