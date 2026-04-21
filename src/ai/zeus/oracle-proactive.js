@@ -138,7 +138,34 @@ async function detectSignals(sinceDate) {
       }
     }
   } catch (err) {
-    // noop — no bloqueamos el proactive por fallo en health check
+    // noop
+  }
+
+  // 9. Eventos estacionales entrando en anticipación (awareness pings)
+  try {
+    const { getUpcomingEvents } = require('./seasonal-calendar');
+    const events = await getUpcomingEvents(45);
+    for (const ev of events) {
+      // Ping en T-21, T-14, T-7, T-3 dependiendo de priority
+      const triggers = ev.priority === 'critical' ? [21, 14, 7, 3]
+                    : ev.priority === 'high'     ? [14, 7, 3]
+                    : ev.priority === 'medium'   ? [10, 3]
+                    :                              [7];
+      if (triggers.includes(ev.days_away)) {
+        signals.push({
+          kind: 'seasonal_event_approaching',
+          severity: ev.priority === 'critical' ? 'high' : 'medium',
+          event_name: ev.name,
+          date: ev.date,
+          days_away: ev.days_away,
+          priority: ev.priority,
+          messaging_theme: ev.messaging_theme,
+          detail: `${ev.name} en ${ev.days_away} días. ${ev.messaging_theme || ''}`
+        });
+      }
+    }
+  } catch (err) {
+    // noop
   }
 
   return signals;

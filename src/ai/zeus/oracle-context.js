@@ -189,6 +189,13 @@ async function buildOracleContext(lastSeenAt = null) {
     }));
   } catch (_) { ctx.own_playbooks = []; }
 
+  // Eventos estacionales próximos (awareness — no activación)
+  try {
+    const { getUpcomingEvents } = require('./seasonal-calendar');
+    const events = await getUpcomingEvents(60);
+    ctx.upcoming_seasonal_events = events.slice(0, 10);
+  } catch (_) { ctx.upcoming_seasonal_events = []; }
+
   return ctx;
 }
 
@@ -264,6 +271,20 @@ function formatContextForPrompt(ctx) {
       lines.push(`    cuando: ${pb.trigger}`);
       lines.push(`    →  ${pb.action}`);
     }
+  }
+
+  if (ctx.upcoming_seasonal_events?.length) {
+    lines.push(`\nCALENDARIO — EVENTOS QUE VIENEN (awareness):`);
+    for (const ev of ctx.upcoming_seasonal_events) {
+      const marker = ev.days_away < 0 ? `(hace ${Math.abs(ev.days_away)}d — cool-down)` :
+                     ev.days_away === 0 ? `(HOY)` :
+                     ev.days_away <= 7 ? `(en ${ev.days_away}d — PEAK INCOMING)` :
+                     ev.days_away <= (ev.anticipation_days || 14) ? `(en ${ev.days_away}d — anticipación)` :
+                     `(en ${ev.days_away}d — future)`;
+      lines.push(`  [${ev.priority}] ${ev.name} ${ev.date} ${marker}`);
+      if (ev.messaging_theme) lines.push(`    tema: ${ev.messaging_theme}`);
+    }
+    lines.push(`  Si algún evento entra en anticipación (≤ anticipation_days) mencionálo al creador y sugerí acción preparatoria — NO crees directivas automáticas salvo que te lo pida.`);
   }
 
   return lines.join('\n');

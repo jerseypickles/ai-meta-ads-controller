@@ -563,6 +563,9 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   const [showPlans, setShowPlans] = useState(false);
   const [plans, setPlans] = useState([]);
   const [plansHorizon, setPlansHorizon] = useState('all');
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [calendarUpcoming, setCalendarUpcoming] = useState([]);
+  const [calendarAll, setCalendarAll] = useState([]);
   const scrollRef = useRef(null);
   const esRef = useRef(null);
   const streamingTextRef = useRef('');
@@ -684,6 +687,26 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
     if (showPlans) loadPlans();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showPlans, plansHorizon]);
+
+  async function loadCalendar() {
+    try {
+      const res = await api.get('/api/zeus/seasonal-events', { params: { days_ahead: 120 } });
+      setCalendarUpcoming(res.data.upcoming || []);
+      setCalendarAll(res.data.all || []);
+    } catch (err) { console.error(err); }
+  }
+
+  async function toggleCalendarEvent(id) {
+    try {
+      await api.post(`/api/zeus/seasonal-events/${id}/toggle`);
+      await loadCalendar();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  useEffect(() => {
+    if (showCalendar) loadCalendar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showCalendar]);
 
   // Load counts al abrir drawer (para el badge del 💡)
   useEffect(() => {
@@ -863,10 +886,24 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                 setShowMemory(false);
                 setShowCodeRecs(false);
                 setShowConversationList(false);
+                setShowCalendar(false);
               }}
               title="Planes estratégicos"
             >
               🗺️
+            </button>
+            <button
+              className="zeus-drawer-icon-btn"
+              onClick={() => {
+                setShowCalendar(!showCalendar);
+                setShowPlans(false);
+                setShowMemory(false);
+                setShowCodeRecs(false);
+                setShowConversationList(false);
+              }}
+              title="Calendario estacional"
+            >
+              📅
             </button>
             <button
               className="zeus-drawer-icon-btn"
@@ -963,6 +1000,48 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                   />
                 ))
               )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Panel calendario estacional */}
+        <AnimatePresence>
+          {showCalendar && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="zeus-calendar-panel"
+            >
+              <div className="zeus-calendar-header">
+                <div className="zeus-calendar-title">📅 Calendario estacional</div>
+                <div className="zeus-calendar-sub">Zeus sabe lo que viene (awareness). No activa directivas automáticas — vos decidís cuándo arrancar.</div>
+              </div>
+
+              {calendarUpcoming.length === 0 ? (
+                <div className="zeus-calendar-empty">No hay eventos activados en los próximos 120 días. Activá abajo los que quieras que Zeus monitoree.</div>
+              ) : (
+                <div className="zeus-calendar-timeline">
+                  {calendarUpcoming.map((ev, i) => (
+                    <CalendarEventCard key={i} event={ev} />
+                  ))}
+                </div>
+              )}
+
+              <div className="zeus-calendar-all-title">Todos los eventos en el catálogo</div>
+              <div className="zeus-calendar-all-grid">
+                {calendarAll.map(ev => (
+                  <button
+                    key={ev._id}
+                    className={`zeus-calendar-toggle ${ev.activated ? 'activated' : ''} priority-${ev.priority}`}
+                    onClick={() => toggleCalendarEvent(ev._id)}
+                    title={ev.activated ? 'Desactivar' : 'Activar'}
+                  >
+                    <span className="zeus-cal-name">{ev.name}</span>
+                    <span className="zeus-cal-state">{ev.activated ? '● activo' : '○ off'}</span>
+                  </button>
+                ))}
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -1165,6 +1244,50 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
         </div>
       </motion.div>
     </>
+  );
+}
+
+function CalendarEventCard({ event }) {
+  const phaseLabel = {
+    peak: 'PEAK NOW',
+    anticipation: 'anticipación',
+    future: 'futuro',
+    cool_down: 'cool-down'
+  }[event.phase] || event.phase;
+
+  const prettyDate = (() => {
+    try {
+      const d = new Date(event.date + 'T00:00:00Z');
+      return d.toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' });
+    } catch { return event.date; }
+  })();
+
+  const daysLabel = event.days_away === 0
+    ? 'HOY'
+    : event.days_away < 0
+    ? `hace ${Math.abs(event.days_away)}d`
+    : `en ${event.days_away}d`;
+
+  return (
+    <div className={`zeus-cal-event priority-${event.priority} phase-${event.phase}`}>
+      <div className="zeus-cal-event-head">
+        <span className="zeus-cal-event-name">{event.name}</span>
+        <span className={`zeus-cal-event-days ${event.days_away <= 7 && event.days_away >= -1 ? 'imminent' : ''}`}>{daysLabel}</span>
+      </div>
+      <div className="zeus-cal-event-meta">
+        <span className="zeus-cal-event-date">{prettyDate}</span>
+        <span className="zeus-cal-event-sep">·</span>
+        <span className={`zeus-cal-event-phase phase-${event.phase}`}>{phaseLabel}</span>
+        <span className="zeus-cal-event-sep">·</span>
+        <span className={`zeus-cal-event-priority priority-${event.priority}`}>{event.priority}</span>
+      </div>
+      {event.messaging_theme && (
+        <div className="zeus-cal-event-theme">{event.messaging_theme}</div>
+      )}
+      {event.description && (
+        <div className="zeus-cal-event-desc">{event.description}</div>
+      )}
+    </div>
   );
 }
 

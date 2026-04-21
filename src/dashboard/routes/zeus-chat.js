@@ -573,4 +573,34 @@ router.delete('/preferences/:id', async (req, res) => {
   }
 });
 
+// ═══ GET /seasonal-events — lista calendario ═══
+router.get('/seasonal-events', async (req, res) => {
+  try {
+    const SeasonalEvent = require('../../db/models/SeasonalEvent');
+    const { getUpcomingEvents } = require('../../ai/zeus/seasonal-calendar');
+    const [all, upcoming] = await Promise.all([
+      SeasonalEvent.find({}).sort({ priority: 1, month: 1, day: 1 }).lean(),
+      getUpcomingEvents(parseInt(req.query.days_ahead) || 120)
+    ]);
+    res.json({ all, upcoming });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ POST /seasonal-events/:id/toggle — activar/desactivar un evento ═══
+router.post('/seasonal-events/:id/toggle', async (req, res) => {
+  try {
+    const SeasonalEvent = require('../../db/models/SeasonalEvent');
+    const ev = await SeasonalEvent.findById(req.params.id);
+    if (!ev) return res.status(404).json({ error: 'No encontrado' });
+    ev.activated = !ev.activated;
+    ev.updated_at = new Date();
+    await ev.save();
+    res.json({ ok: true, event: ev });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
