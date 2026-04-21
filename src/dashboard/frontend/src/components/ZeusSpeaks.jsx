@@ -570,6 +570,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   const [archProposals, setArchProposals] = useState([]);
   const [archCounts, setArchCounts] = useState({});
   const [archFilter, setArchFilter] = useState('draft');
+  const [showPalette, setShowPalette] = useState(false);
   const scrollRef = useRef(null);
   const esRef = useRef(null);
   const streamingTextRef = useRef('');
@@ -923,88 +924,18 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
               </div>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center', position: 'relative' }}>
             <button
-              className="zeus-drawer-icon-btn"
-              onClick={() => {
-                setShowPlans(!showPlans);
-                setShowMemory(false);
-                setShowCodeRecs(false);
-                setShowConversationList(false);
-                setShowCalendar(false);
-                setShowArchitecture(false);
-              }}
-              title="Planes estratégicos"
+              className={`zeus-drawer-icon-btn zeus-palette-btn ${showPalette ? 'active' : ''}`}
+              onClick={() => setShowPalette(!showPalette)}
+              title="Paneles de Zeus"
             >
-              🗺️
-            </button>
-            <button
-              className="zeus-drawer-icon-btn"
-              onClick={() => {
-                setShowCalendar(!showCalendar);
-                setShowPlans(false);
-                setShowMemory(false);
-                setShowCodeRecs(false);
-                setShowConversationList(false);
-                setShowArchitecture(false);
-              }}
-              title="Calendario estacional"
-            >
-              📅
-            </button>
-            <button
-              className="zeus-drawer-icon-btn"
-              onClick={() => {
-                setShowArchitecture(!showArchitecture);
-                setShowCalendar(false);
-                setShowPlans(false);
-                setShowMemory(false);
-                setShowCodeRecs(false);
-                setShowConversationList(false);
-              }}
-              title="Propuestas arquitectónicas (Lens 3)"
-            >
-              🏛️
-              {archCounts.draft > 0 && (
-                <span className="zeus-icon-badge">{archCounts.draft > 9 ? '9+' : archCounts.draft}</span>
+              ☰
+              {(codeRecsCounts.pending + (archCounts.draft || 0)) > 0 && (
+                <span className="zeus-icon-badge">
+                  {Math.min(99, codeRecsCounts.pending + (archCounts.draft || 0))}
+                </span>
               )}
-            </button>
-            <button
-              className="zeus-drawer-icon-btn"
-              onClick={() => {
-                setShowMemory(!showMemory);
-                setShowPlans(false);
-                setShowCodeRecs(false);
-                setShowConversationList(false);
-              }}
-              title="Memoria de Zeus"
-            >
-              💭
-            </button>
-            <button
-              className="zeus-drawer-icon-btn"
-              onClick={() => {
-                setShowCodeRecs(!showCodeRecs);
-                setShowMemory(false);
-                setShowConversationList(false);
-              }}
-              title="Recomendaciones de código"
-            >
-              💡
-              {codeRecsCounts.pending > 0 && (
-                <span className="zeus-icon-badge">{codeRecsCounts.pending > 9 ? '9+' : codeRecsCounts.pending}</span>
-              )}
-            </button>
-            <button
-              className="zeus-drawer-icon-btn"
-              onClick={() => {
-                if (!showConversationList) loadConversationList();
-                setShowConversationList(!showConversationList);
-                setShowCodeRecs(false);
-              }}
-              title="Conversaciones"
-            >
-              📁
             </button>
             <button
               className="zeus-drawer-icon-btn"
@@ -1014,6 +945,33 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
               ＋
             </button>
             <button className="zeus-drawer-close" onClick={onClose}>×</button>
+            <AnimatePresence>
+              {showPalette && (
+                <ZeusPalette
+                  onClose={() => setShowPalette(false)}
+                  codeRecsPending={codeRecsCounts.pending || 0}
+                  archDrafts={archCounts.draft || 0}
+                  onSelect={(key) => {
+                    setShowPlans(false);
+                    setShowCalendar(false);
+                    setShowArchitecture(false);
+                    setShowMemory(false);
+                    setShowCodeRecs(false);
+                    setShowConversationList(false);
+                    if (key === 'plans') setShowPlans(true);
+                    else if (key === 'calendar') setShowCalendar(true);
+                    else if (key === 'architecture') setShowArchitecture(true);
+                    else if (key === 'memory') setShowMemory(true);
+                    else if (key === 'coderecs') setShowCodeRecs(true);
+                    else if (key === 'conversations') {
+                      loadConversationList();
+                      setShowConversationList(true);
+                    }
+                    setShowPalette(false);
+                  }}
+                />
+              )}
+            </AnimatePresence>
           </div>
         </div>
 
@@ -1359,6 +1317,68 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
             {streaming ? '...' : '⟶'}
           </button>
         </div>
+      </motion.div>
+    </>
+  );
+}
+
+function ZeusPalette({ onClose, onSelect, codeRecsPending, archDrafts }) {
+  const items = [
+    {
+      group: 'Lo que Zeus usa para pensar',
+      entries: [
+        { key: 'memory', emoji: '💭', label: 'Memoria', desc: 'Preferencias persistentes' },
+        { key: 'calendar', emoji: '📅', label: 'Calendario', desc: 'Eventos estacionales' },
+        { key: 'conversations', emoji: '📁', label: 'Conversaciones', desc: 'Historial de chats' }
+      ]
+    },
+    {
+      group: 'Lo que Zeus produce',
+      entries: [
+        { key: 'plans', emoji: '🗺️', label: 'Planes', desc: 'Weekly / Monthly / Quarterly' },
+        { key: 'coderecs', emoji: '💡', label: 'Code Recs', desc: 'Sugerencias de cambios', badge: codeRecsPending },
+        { key: 'architecture', emoji: '🏛️', label: 'Arquitectura', desc: 'Propuestas estructurales', badge: archDrafts }
+      ]
+    }
+  ];
+
+  return (
+    <>
+      <div className="zeus-palette-backdrop" onClick={onClose} />
+      <motion.div
+        initial={{ opacity: 0, y: -6, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: -6, scale: 0.98 }}
+        transition={{ duration: 0.12 }}
+        className="zeus-palette"
+      >
+        {items.map(g => (
+          <div key={g.group} className="zeus-palette-group">
+            <div className="zeus-palette-group-title">{g.group}</div>
+            <div className="zeus-palette-grid">
+              {g.entries.map(e => (
+                <button
+                  key={e.key}
+                  className="zeus-palette-item"
+                  onClick={() => onSelect(e.key)}
+                >
+                  <span className="zeus-palette-emoji">{e.emoji}</span>
+                  <div className="zeus-palette-item-body">
+                    <div className="zeus-palette-item-label">
+                      {e.label}
+                      {e.badge > 0 && (
+                        <span className="zeus-palette-badge">
+                          {e.badge > 9 ? '9+' : e.badge}
+                        </span>
+                      )}
+                    </div>
+                    <div className="zeus-palette-item-desc">{e.desc}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
       </motion.div>
     </>
   );
