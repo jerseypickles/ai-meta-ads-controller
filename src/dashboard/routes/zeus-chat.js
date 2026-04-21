@@ -183,7 +183,7 @@ router.get('/chat/stream', async (req, res) => {
     });
 
     // Persist assistant response
-    await ZeusChatMessage.create({
+    const savedAssistant = await ZeusChatMessage.create({
       conversation_id,
       role: 'assistant',
       content: result.text,
@@ -192,6 +192,20 @@ router.get('/chat/stream', async (req, res) => {
       tokens_used: result.tokens_used,
       ai_model: result.model
     });
+
+    // Post-hoc self-audit (async, non-blocking) — Hilo B / Fase 1
+    try {
+      const { auditResponsePostHoc } = require('../../ai/zeus/response-auditor');
+      // Fire-and-forget; errores internos se loggean dentro del auditor.
+      auditResponsePostHoc({
+        userMessage: message,
+        assistantResponse: result.text,
+        conversation_id,
+        message_id: savedAssistant._id
+      }).catch(err => logger.warn(`[ZEUS-CHAT] post-hoc audit dispatch failed: ${err.message}`));
+    } catch (auditErr) {
+      logger.warn(`[ZEUS-CHAT] post-hoc audit require/dispatch failed: ${auditErr.message}`);
+    }
 
     sendEvent('end', { conversation_id });
   } catch (err) {
@@ -817,6 +831,167 @@ router.post('/agent-stances/briefing/:agent', async (req, res) => {
     const stance = await runMorningBriefing(req.params.agent);
     res.json({ ok: true, stance });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ Response Calibration (Hilo B) ═══
+
+// GET /api/zeus/calibration/entries — listar journal entries con filtros
+//   query: ?type=reference_response|anti_reference_response|trap_execution|audit_report&limit=50
+router.get('/calibration/entries', async (req, res) => {
+  try {
+    const ZeusJournalEntry = require('../../db/models/ZeusJournalEntry');
+    const { type, principle, limit } = req.query;
+    const filter = {};
+    if (type && type !== 'all') filter.entry_type = type;
+    if (principle) filter.violated_principles = principle;
+    const entries = await ZeusJournalEntry.find(filter)
+      .sort({ created_at: -1 })
+      .limit(Math.min(parseInt(limit) || 50, 200))
+      .lean();
+    // Counts por tipo para el panel
+    const counts = await ZeusJournalEntry.aggregate([
+      { $group: { _id: '$entry_type', count: { $sum: 1 } } }
+    ]);
+    const countsMap = counts.reduce((acc, c) => { acc[c._id] = c.count; return acc; }, {});
+    res.json({ entries, counts: countsMap });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/zeus/calibration/entries/:id
+router.get('/calibration/entries/:id', async (req, res) => {
+  try {
+    const ZeusJournalEntry = require('../../db/models/ZeusJournalEntry');
+    const entry = await ZeusJournalEntry.findById(req.params.id).lean();
+    if (!entry) return res.status(404).json({ error: 'no encontrado' });
+    res.json(entry);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/zeus/calibration/entries/:id/promote — marcar un entry como reference o anti-reference manualmente
+router.post('/calibration/entries/:id/promote', async (req, res) => {
+  try {
+    const ZeusJournalEntry = require('../../db/models/ZeusJournalEntry');
+    const { mark, principles, failure_mode, correction_learned } = req.body || {};
+    // mark: 'reference' | 'anti_reference' | 'clear'
+    const entry = await ZeusJournalEntry.findById(req.params.id);
+    if (!entry) return res.status(404).json({ error: 'no encontrado' });
+    if (mark === 'reference') {
+      entry.is_reference_response = true;
+      entry.is_anti_reference_response = false;
+      if (entry.entry_type !== 'reference_response') entry.entry_type = 'reference_response';
+      if (Array.isArray(principles)) entry.principles_exemplified = principles;
+    } else if (mark === 'anti_reference') {
+      entry.is_anti_reference_response = true;
+      entry.is_reference_response = false;
+      if (entry.entry_type !== 'anti_reference_response') entry.entry_type = 'anti_reference_response';
+      if (Array.isArray(principles)) entry.violated_principles = principles;
+      if (failure_mode) entry.failure_mode = failure_mode;
+      if (correction_learned) entry.correction_learned = correction_learned;
+    } else if (mark === 'clear') {
+      entry.is_reference_response = false;
+      entry.is_anti_reference_response = false;
+    }
+    await entry.save();
+    res.json(entry);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/zeus/calibration/entries/:id
+router.delete('/calibration/entries/:id', async (req, res) => {
+  try {
+    const ZeusJournalEntry = require('../../db/models/ZeusJournalEntry');
+    await ZeusJournalEntry.findByIdAndDelete(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/zeus/calibration/traps — listar trampas con filtros
+router.get('/calibration/traps', async (req, res) => {
+  try {
+    const ZeusTrap = require('../../db/models/ZeusTrap');
+    const { status, outcome, limit } = req.query;
+    const filter = {};
+    if (status && status !== 'all') filter.status = status;
+    if (outcome && outcome !== 'all') filter.outcome = outcome;
+    const traps = await ZeusTrap.find(filter)
+      .sort({ created_at: -1 })
+      .limit(Math.min(parseInt(limit) || 40, 100))
+      .lean();
+    // Counts últimos 90d
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 86400000);
+    const countsAgg = await ZeusTrap.aggregate([
+      { $match: { executed_at: { $gte: ninetyDaysAgo } } },
+      { $group: { _id: '$outcome', count: { $sum: 1 } } }
+    ]);
+    const counts90d = countsAgg.reduce((acc, c) => { acc[c._id || 'pending'] = c.count; return acc; }, {});
+    res.json({ traps, counts_90d: counts90d });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/zeus/calibration/traps — crear trampa
+router.post('/calibration/traps', async (req, res) => {
+  try {
+    const ZeusTrap = require('../../db/models/ZeusTrap');
+    const { content, expected_contradiction, source, created_by, category, expected_tool_invocation } = req.body || {};
+    if (!content || !expected_contradiction) return res.status(400).json({ error: 'content y expected_contradiction requeridos' });
+    if (!['creator', 'team', 'adversarial_llm'].includes(source)) return res.status(400).json({ error: 'source inválido' });
+    const trap = await ZeusTrap.create({
+      content,
+      expected_contradiction,
+      source,
+      created_by: created_by || '',
+      category: category || '',
+      expected_tool_invocation: expected_tool_invocation || ''
+    });
+    res.json({ ok: true, trap });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/zeus/calibration/traps/:id/execute — ejecutar trampa
+router.post('/calibration/traps/:id/execute', async (req, res) => {
+  try {
+    const { executeTrap } = require('../../ai/zeus/trap-runner');
+    const trap = await executeTrap(req.params.id);
+    res.json({ ok: true, trap });
+  } catch (err) {
+    logger.error(`[CALIBRATION] execute trap ${req.params.id} failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/zeus/calibration/traps/:id
+router.delete('/calibration/traps/:id', async (req, res) => {
+  try {
+    const ZeusTrap = require('../../db/models/ZeusTrap');
+    await ZeusTrap.findByIdAndDelete(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/zeus/calibration/audit/run — trigger manual de la auditoría trimestral
+router.post('/calibration/audit/run', async (req, res) => {
+  try {
+    const { runQuarterlyAudit } = require('../../ai/zeus/response-auditor');
+    const report = await runQuarterlyAudit({ manual: true });
+    res.json({ ok: true, report });
+  } catch (err) {
+    logger.error(`[CALIBRATION] manual audit failed: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });

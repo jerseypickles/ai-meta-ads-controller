@@ -916,6 +916,19 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'stance-verdict' });
   logger.info('  [*] Stance verdict — diario 5am ET (calibración retroactiva)');
 
+  // Hilo B — auditoría trimestral de calibración de respuesta (principio + trampas + anti-refs)
+  // Corre 9am ET el 1ro de feb/may/ago/nov (cada inicio de trimestre)
+  cron.schedule('0 9 1 2,5,8,11 *', async () => {
+    try {
+      const { runQuarterlyAudit } = require('./ai/zeus/response-auditor');
+      const report = await runQuarterlyAudit();
+      logger.info(`[CALIBRATION-AUDIT] report ${report._id} — flags=${(report.audit_payload?.flags || []).length}`);
+    } catch (err) {
+      logger.error(`[CALIBRATION-AUDIT] ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'calibration-audit' });
+  logger.info('  [*] Calibration audit — trimestral 1ro de feb/may/ago/nov 9am ET');
+
   // Cada 15 min (offset 7 min para no chocar con kill switch): Platform Circuit Breaker
   // Detecta billing freeze / mass WITH_ISSUES / zero delivery y activa modo degradado
   cron.schedule('7,22,37,52 * * * *', async () => {

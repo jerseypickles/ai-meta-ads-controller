@@ -620,6 +620,13 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   const [showStances, setShowStances] = useState(false);
   const [stancesCurrent, setStancesCurrent] = useState({});
   const [stancesHistory, setStancesHistory] = useState({});
+  // Hilo B — panel 📓 de calibración de respuesta
+  const [showCalibration, setShowCalibration] = useState(false);
+  const [calibTab, setCalibTab] = useState('anti_refs'); // anti_refs | references | traps | audits
+  const [calibEntries, setCalibEntries] = useState([]);
+  const [calibCounts, setCalibCounts] = useState({});
+  const [calibTraps, setCalibTraps] = useState([]);
+  const [calibTrapCounts, setCalibTrapCounts] = useState({});
   const scrollRef = useRef(null);
   const esRef = useRef(null);
   const streamingTextRef = useRef('');
@@ -863,6 +870,77 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
     if (showStances) loadStances();
   }, [showStances]);
 
+  // Hilo B — calibración de respuesta
+  async function loadCalibrationEntries(tab) {
+    try {
+      if (tab === 'traps') {
+        const res = await api.get('/api/zeus/calibration/traps');
+        setCalibTraps(res.data.traps || []);
+        setCalibTrapCounts(res.data.counts_90d || {});
+        return;
+      }
+      const typeMap = {
+        anti_refs: 'anti_reference_response',
+        references: 'reference_response',
+        audits: 'audit_report'
+      };
+      const type = typeMap[tab];
+      const res = await api.get('/api/zeus/calibration/entries', { params: { type, limit: 50 } });
+      setCalibEntries(res.data.entries || []);
+      setCalibCounts(res.data.counts || {});
+    } catch (err) {
+      console.error('loadCalibrationEntries', err);
+    }
+  }
+
+  async function createTrap() {
+    const content = window.prompt('Contenido de la trampa (afirmación plausible pero falsa que le dirías al chat):');
+    if (!content) return;
+    const expected = window.prompt('Contradicción esperada (cuál sería la respuesta correcta con data):');
+    if (!expected) return;
+    const source = window.prompt('Fuente (creator / team / adversarial_llm):', 'creator') || 'creator';
+    const category = window.prompt('Categoría opcional (ej: performance_claim, causal_attribution):', '') || '';
+    try {
+      await api.post('/api/zeus/calibration/traps', { content, expected_contradiction: expected, source, category, created_by: 'creator' });
+      await loadCalibrationEntries('traps');
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function executeTrap(trapId) {
+    if (!window.confirm('Ejecutar trampa? Zeus la va a procesar como mensaje normal y se evalúa la respuesta. Toma ~30-60s.')) return;
+    try {
+      await api.post(`/api/zeus/calibration/traps/${trapId}/execute`);
+      await loadCalibrationEntries('traps');
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function deleteTrap(trapId) {
+    if (!window.confirm('Borrar trampa?')) return;
+    try {
+      await api.delete(`/api/zeus/calibration/traps/${trapId}`);
+      await loadCalibrationEntries('traps');
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function promoteEntry(entryId, mark) {
+    try {
+      await api.post(`/api/zeus/calibration/entries/${entryId}/promote`, { mark });
+      await loadCalibrationEntries(calibTab);
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function runManualAudit() {
+    if (!window.confirm('Correr auditoría trimestral ahora sobre los últimos 90d?')) return;
+    try {
+      await api.post('/api/zeus/calibration/audit/run');
+      await loadCalibrationEntries('audits');
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  useEffect(() => {
+    if (showCalibration) loadCalibrationEntries(calibTab);
+  }, [showCalibration, calibTab]);
+
   // Load counts al abrir drawer (para el badge del 💡 y 🏛️ y drafts de memoria)
   useEffect(() => {
     (async () => {
@@ -1101,12 +1179,14 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                     setShowCodeRecs(false);
                     setShowConversationList(false);
                     setShowStances(false);
+                    setShowCalibration(false);
                     if (key === 'plans') setShowPlans(true);
                     else if (key === 'calendar') setShowCalendar(true);
                     else if (key === 'architecture') setShowArchitecture(true);
                     else if (key === 'memory') setShowMemory(true);
                     else if (key === 'coderecs') setShowCodeRecs(true);
                     else if (key === 'stances') setShowStances(true);
+                    else if (key === 'calibration') setShowCalibration(true);
                     else if (key === 'conversations') {
                       loadConversationList();
                       setShowConversationList(true);
@@ -1292,6 +1372,99 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                     onBriefNow={() => triggerBriefing(agent)}
                   />
                 ))
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Panel Calibración — Hilo B (references / anti-refs / trampas / auditorías) */}
+        <AnimatePresence>
+          {showCalibration && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="zeus-calib-panel"
+            >
+              <div className="zeus-calib-header">
+                <div className="zeus-calib-title">📓 Calibración de respuesta</div>
+                <div className="zeus-calib-sub">Archive de golden / anti-refs + trampas + auditoría trimestral. Detecta drift empíricamente.</div>
+                <div className="zeus-calib-tabs">
+                  <button
+                    className={`zeus-calib-tab ${calibTab === 'anti_refs' ? 'active' : ''}`}
+                    onClick={() => setCalibTab('anti_refs')}
+                  >Anti-refs {calibCounts.anti_reference_response ? `(${calibCounts.anti_reference_response})` : ''}</button>
+                  <button
+                    className={`zeus-calib-tab ${calibTab === 'references' ? 'active' : ''}`}
+                    onClick={() => setCalibTab('references')}
+                  >References {calibCounts.reference_response ? `(${calibCounts.reference_response})` : ''}</button>
+                  <button
+                    className={`zeus-calib-tab ${calibTab === 'traps' ? 'active' : ''}`}
+                    onClick={() => setCalibTab('traps')}
+                  >Trampas {calibTrapCounts.passed || calibTrapCounts.failed ? `(${(calibTrapCounts.passed || 0)}✓/${(calibTrapCounts.failed || 0)}✗)` : ''}</button>
+                  <button
+                    className={`zeus-calib-tab ${calibTab === 'audits' ? 'active' : ''}`}
+                    onClick={() => setCalibTab('audits')}
+                  >Auditorías {calibCounts.audit_report ? `(${calibCounts.audit_report})` : ''}</button>
+                </div>
+              </div>
+
+              {calibTab === 'anti_refs' && (
+                <>
+                  {calibEntries.length === 0 ? (
+                    <div className="zeus-calib-empty">Sin anti-refs acumuladas. El auditor post-hoc se dispara después de cada respuesta a juicio del creador.</div>
+                  ) : (
+                    calibEntries.map(e => (
+                      <AntiRefCard key={e._id} entry={e} onPromote={(mark) => promoteEntry(e._id, mark)} />
+                    ))
+                  )}
+                </>
+              )}
+
+              {calibTab === 'references' && (
+                <>
+                  {calibEntries.length === 0 ? (
+                    <div className="zeus-calib-empty">Sin golden references todavía. Marcá una respuesta notable de Zeus como reference desde los anti-refs u otras entries.</div>
+                  ) : (
+                    calibEntries.map(e => (
+                      <RefCard key={e._id} entry={e} />
+                    ))
+                  )}
+                </>
+              )}
+
+              {calibTab === 'traps' && (
+                <>
+                  <div className="zeus-calib-toolbar">
+                    <button className="zeus-calib-btn" onClick={createTrap}>+ plantar trampa</button>
+                    {(calibTrapCounts.passed != null || calibTrapCounts.failed != null) && (
+                      <span className="zeus-calib-stats">90d: {calibTrapCounts.passed || 0} passed · {calibTrapCounts.failed || 0} failed</span>
+                    )}
+                  </div>
+                  {calibTraps.length === 0 ? (
+                    <div className="zeus-calib-empty">Sin trampas registradas. Plantá una para falsificar el principio "resistí validar por default".</div>
+                  ) : (
+                    calibTraps.map(t => (
+                      <TrapCard key={t._id} trap={t} onExecute={() => executeTrap(t._id)} onDelete={() => deleteTrap(t._id)} />
+                    ))
+                  )}
+                </>
+              )}
+
+              {calibTab === 'audits' && (
+                <>
+                  <div className="zeus-calib-toolbar">
+                    <button className="zeus-calib-btn" onClick={runManualAudit}>↻ correr auditoría ahora</button>
+                    <span className="zeus-calib-stats">cron automático: 9am ET, 1ro de feb/may/ago/nov</span>
+                  </div>
+                  {calibEntries.length === 0 ? (
+                    <div className="zeus-calib-empty">Sin auditorías todavía. La próxima ejecuta naturalmente al inicio del trimestre, o dispará manual arriba.</div>
+                  ) : (
+                    calibEntries.map(e => (
+                      <AuditCard key={e._id} entry={e} />
+                    ))
+                  )}
+                </>
               )}
             </motion.div>
           )}
@@ -1591,7 +1764,8 @@ function ZeusPalette({ onClose, onSelect, codeRecsPending, archDrafts, prefDraft
     {
       group: 'Estado mental del equipo',
       entries: [
-        { key: 'stances', emoji: '🎯', label: 'Stances', desc: 'Postura del día de cada agente' }
+        { key: 'stances', emoji: '🎯', label: 'Stances', desc: 'Postura del día de cada agente' },
+        { key: 'calibration', emoji: '📓', label: 'Calibración', desc: 'Golden / anti-refs / trampas / auditorías' }
       ]
     }
   ];
@@ -2434,6 +2608,236 @@ function StanceCard({ agent, stance, history, onOverride, onRenew, onBriefNow })
               </div>
             ))
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══ Hilo B — cards de calibración ═══
+
+const PRINCIPLE_LABELS = {
+  resist_validation: 'resistió validación',
+  separate_measurable_from_intuition: 'separó medible/intuición',
+  declared_no_counterfactual: 'declaró sin contrafactual',
+  contradicted_creator_judgment: 'contradijo juicio',
+  asked_before_asserting: 'pidió verificación',
+  validation_bias: 'validó por default',
+  accepted_unverified_factual: 'aceptó sin verificar',
+  uncontested_causal_assumption: 'causalidad no señalada',
+  suppressed_disagreement: 'suprimió desacuerdo',
+  missing_counterfactual: 'sin contrafactual',
+  template_execution_without_thinking: 'forma sin fondo'
+};
+
+function fmtCalibDate(d) {
+  if (!d) return '—';
+  const date = new Date(d);
+  const now = Date.now();
+  const diffMs = now - date.getTime();
+  const hrs = diffMs / 3600000;
+  if (hrs < 1) return `hace ${Math.round(diffMs / 60000)}m`;
+  if (hrs < 48) return `hace ${Math.round(hrs)}h`;
+  return date.toLocaleDateString('es-AR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function AntiRefCard({ entry, onPromote }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="zeus-calib-card anti-ref">
+      <div className="zeus-calib-card-head" onClick={() => setExpanded(!expanded)}>
+        <span className="zeus-calib-icon">✗</span>
+        <span className="zeus-calib-card-title">{entry.title}</span>
+        <span className="zeus-calib-card-date">{fmtCalibDate(entry.created_at)}</span>
+        <span className="zeus-calib-expand">{expanded ? '▾' : '▸'}</span>
+      </div>
+      <div className="zeus-calib-principles">
+        {(entry.violated_principles || []).map(p => (
+          <span key={p} className="zeus-calib-principle violated">{PRINCIPLE_LABELS[p] || p}</span>
+        ))}
+      </div>
+      {expanded && (
+        <div className="zeus-calib-card-body">
+          {entry.failure_mode && <div className="zeus-calib-field"><span className="zeus-calib-label">failure mode:</span> <code>{entry.failure_mode}</code></div>}
+          {entry.correction_learned && <div className="zeus-calib-field"><span className="zeus-calib-label">corrección:</span> {entry.correction_learned}</div>}
+          {entry.original_user_message && (
+            <div className="zeus-calib-excerpt">
+              <span className="zeus-calib-label">creador dijo:</span>
+              <blockquote>{entry.original_user_message}</blockquote>
+            </div>
+          )}
+          {entry.original_assistant_response && (
+            <div className="zeus-calib-excerpt">
+              <span className="zeus-calib-label">zeus respondió:</span>
+              <blockquote>{entry.original_assistant_response}</blockquote>
+            </div>
+          )}
+          {entry.content && <div className="zeus-calib-content">{entry.content}</div>}
+          <div className="zeus-calib-actions">
+            <button className="zeus-calib-btn subtle" onClick={() => onPromote('clear')}>descartar (no es anti-ref)</button>
+            <button className="zeus-calib-btn subtle" onClick={() => onPromote('reference')}>promover a golden</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RefCard({ entry }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="zeus-calib-card reference">
+      <div className="zeus-calib-card-head" onClick={() => setExpanded(!expanded)}>
+        <span className="zeus-calib-icon">★</span>
+        <span className="zeus-calib-card-title">{entry.title}</span>
+        <span className="zeus-calib-card-date">{fmtCalibDate(entry.created_at)}</span>
+        <span className="zeus-calib-expand">{expanded ? '▾' : '▸'}</span>
+      </div>
+      <div className="zeus-calib-principles">
+        {(entry.principles_exemplified || []).map(p => (
+          <span key={p} className="zeus-calib-principle exemplified">{PRINCIPLE_LABELS[p] || p}</span>
+        ))}
+      </div>
+      {expanded && (
+        <div className="zeus-calib-card-body">
+          {entry.original_user_message && (
+            <div className="zeus-calib-excerpt">
+              <span className="zeus-calib-label">creador dijo:</span>
+              <blockquote>{entry.original_user_message}</blockquote>
+            </div>
+          )}
+          {entry.original_assistant_response && (
+            <div className="zeus-calib-excerpt">
+              <span className="zeus-calib-label">zeus respondió:</span>
+              <blockquote>{entry.original_assistant_response}</blockquote>
+            </div>
+          )}
+          {entry.content && <div className="zeus-calib-content">{entry.content}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TrapCard({ trap, onExecute, onDelete }) {
+  const [expanded, setExpanded] = useState(false);
+  const outcomeColor = trap.outcome === 'passed' ? '#10b981' : trap.outcome === 'failed' ? '#ef4444' : '#6b7280';
+  const outcomeLabel = trap.outcome || (trap.status === 'pending' ? 'pendiente' : 'sin outcome');
+  return (
+    <div className={`zeus-calib-card trap ${trap.status}`}>
+      <div className="zeus-calib-card-head" onClick={() => setExpanded(!expanded)}>
+        <span className="zeus-calib-icon" style={{ color: outcomeColor }}>
+          {trap.outcome === 'passed' ? '✓' : trap.outcome === 'failed' ? '✗' : '◷'}
+        </span>
+        <span className="zeus-calib-card-title">{trap.content.substring(0, 80)}{trap.content.length > 80 ? '…' : ''}</span>
+        <span className="zeus-calib-trap-outcome" style={{ color: outcomeColor, borderColor: outcomeColor + '55' }}>{outcomeLabel}</span>
+        <span className="zeus-calib-card-date">{fmtCalibDate(trap.executed_at || trap.created_at)}</span>
+        <span className="zeus-calib-expand">{expanded ? '▾' : '▸'}</span>
+      </div>
+      <div className="zeus-calib-trap-meta">
+        <span className="zeus-calib-trap-src">{trap.source}</span>
+        {trap.category && <span className="zeus-calib-trap-cat">{trap.category}</span>}
+        {trap.match_score != null && <span>score {(trap.match_score).toFixed(2)}</span>}
+      </div>
+      {expanded && (
+        <div className="zeus-calib-card-body">
+          <div className="zeus-calib-field">
+            <span className="zeus-calib-label">contenido:</span>
+            <blockquote>{trap.content}</blockquote>
+          </div>
+          <div className="zeus-calib-field">
+            <span className="zeus-calib-label">contradicción esperada:</span>
+            <blockquote>{trap.expected_contradiction}</blockquote>
+          </div>
+          {trap.zeus_response && (
+            <div className="zeus-calib-field">
+              <span className="zeus-calib-label">respuesta de Zeus:</span>
+              <blockquote>{trap.zeus_response.substring(0, 600)}{trap.zeus_response.length > 600 ? '…' : ''}</blockquote>
+            </div>
+          )}
+          {trap.match_reasoning && (
+            <div className="zeus-calib-field">
+              <span className="zeus-calib-label">evaluación:</span> {trap.match_reasoning}
+            </div>
+          )}
+          <div className="zeus-calib-actions">
+            {trap.status === 'pending' && (
+              <button className="zeus-calib-btn" onClick={onExecute}>ejecutar</button>
+            )}
+            <button className="zeus-calib-btn subtle" onClick={onDelete}>borrar</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AuditCard({ entry }) {
+  const [expanded, setExpanded] = useState(false);
+  const payload = entry.audit_payload || {};
+  const flags = payload.flags || [];
+  const hasRedFlag = flags.some(f => f.level === 'red');
+  const hasAmberFlag = flags.some(f => f.level === 'amber');
+  const borderColor = hasRedFlag ? '#ef4444' : hasAmberFlag ? '#fbbf24' : '#10b981';
+  return (
+    <div className="zeus-calib-card audit" style={{ borderLeftColor: borderColor }}>
+      <div className="zeus-calib-card-head" onClick={() => setExpanded(!expanded)}>
+        <span className="zeus-calib-icon">📊</span>
+        <span className="zeus-calib-card-title">{entry.title}</span>
+        {flags.length > 0 && (
+          <span className="zeus-calib-flag-count" style={{ color: borderColor, borderColor: borderColor + '55' }}>
+            {flags.length} flag{flags.length !== 1 ? 's' : ''}
+          </span>
+        )}
+        <span className="zeus-calib-card-date">{fmtCalibDate(entry.created_at)}</span>
+        <span className="zeus-calib-expand">{expanded ? '▾' : '▸'}</span>
+      </div>
+      {expanded && (
+        <div className="zeus-calib-card-body">
+          {payload.diagnosis && payload.diagnosis.length > 0 && (
+            <div className="zeus-calib-field">
+              <span className="zeus-calib-label">diagnóstico:</span>
+              <ul>{payload.diagnosis.map((d, i) => <li key={i}>{d}</li>)}</ul>
+            </div>
+          )}
+          {payload.traps && (
+            <div className="zeus-calib-audit-block">
+              <span className="zeus-calib-label">trampas:</span> {payload.traps.total} total
+              {payload.traps.total > 0 && (
+                <> · ✓ {payload.traps.passed} passed · ✗ {payload.traps.failed} failed · acc {(payload.traps.falsification_accuracy * 100).toFixed(0)}%</>
+              )}
+              {payload.traps.long_gaps > 0 && <> · {payload.traps.long_gaps} gap(s) &gt;21d</>}
+            </div>
+          )}
+          {payload.anti_references && (
+            <div className="zeus-calib-audit-block">
+              <span className="zeus-calib-label">anti-refs:</span> {payload.anti_references.total}
+              {(payload.anti_references.top_principles || []).length > 0 && (
+                <div className="zeus-calib-principles">
+                  {payload.anti_references.top_principles.map(tp => (
+                    <span key={tp.principle} className="zeus-calib-principle violated">
+                      {PRINCIPLE_LABELS[tp.principle] || tp.principle} × {tp.count}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {payload.reference_responses && (
+            <div className="zeus-calib-audit-block">
+              <span className="zeus-calib-label">golden refs:</span> {payload.reference_responses.total}
+            </div>
+          )}
+          {flags.length > 0 && (
+            <div className="zeus-calib-audit-flags">
+              {flags.map((f, i) => (
+                <div key={i} className={`zeus-calib-flag flag-${f.level}`}>
+                  <span className="zeus-calib-flag-level">[{f.level}]</span> {f.text}
+                </div>
+              ))}
+            </div>
+          )}
+          {entry.content && <div className="zeus-calib-content">{entry.content}</div>}
         </div>
       )}
     </div>
