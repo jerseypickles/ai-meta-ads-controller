@@ -330,6 +330,18 @@ router.patch('/code-recs/:id', async (req, res) => {
     if (review_note !== undefined) update.review_note = review_note;
     const rec = await ZeusCodeRecommendation.findByIdAndUpdate(req.params.id, { $set: update }, { new: true });
     if (!rec) return res.status(404).json({ error: 'No encontrado' });
+
+    // Trigger verificación automática cuando se marca 'applied'
+    if (status === 'applied') {
+      try {
+        const { onCodeRecApplied } = require('../../ai/zeus/rec-verifier');
+        const verification = await onCodeRecApplied(rec);
+        return res.json({ ...rec.toObject(), verification });
+      } catch (verifyErr) {
+        logger.error(`[REC-VERIFY] ${verifyErr.message}`);
+      }
+    }
+
     res.json(rec);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -649,7 +661,17 @@ router.post('/architecture-proposals/:id/mark-built', async (req, res) => {
     p.status = 'built';
     p.built_at = new Date();
     await p.save();
-    res.json({ ok: true, proposal: p });
+
+    // Trigger verificación automática (architectural)
+    let verification = null;
+    try {
+      const { onArchitectureBuilt } = require('../../ai/zeus/rec-verifier');
+      verification = await onArchitectureBuilt(p);
+    } catch (verifyErr) {
+      logger.error(`[ARCH-VERIFY] ${verifyErr.message}`);
+    }
+
+    res.json({ ok: true, proposal: p, verification });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

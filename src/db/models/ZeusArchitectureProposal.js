@@ -61,6 +61,17 @@ const zeusArchitectureProposalSchema = new mongoose.Schema({
 
   // Tracking post-build (L1 loop)
   built_at: { type: Date, default: null },
+  build_verification: {
+    status: {
+      type: String,
+      enum: ['verified', 'partial', 'not_found', 'skipped', null],
+      default: null
+    },
+    notes: { type: String, default: '' },
+    checked_at: { type: Date, default: null },
+    files_found: [String],                          // archivos que Zeus identificó como evidencia del build
+    files_expected: [String]                        // archivos que esperaba encontrar
+  },
   outcome_tracking: {
     measured_at_7d: Date,
     measured_at_30d: Date,

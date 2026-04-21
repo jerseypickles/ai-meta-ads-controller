@@ -65,6 +65,18 @@ const zeusCodeRecSchema = new mongoose.Schema({
   },
   audit_run_id: { type: mongoose.Schema.Types.ObjectId, ref: 'ZeusAuditRun', default: null, index: true },
 
+  // Verificación automática al marcar 'applied'
+  verification: {
+    syntactic_status: {
+      type: String,
+      enum: ['verified', 'not_applied', 'diverged', 'file_not_found', 'skipped', null],
+      default: null
+    },
+    syntactic_notes: { type: String, default: '' },
+    syntactic_checked_at: { type: Date, default: null },
+    outcome_tracking_id: { type: mongoose.Schema.Types.ObjectId, ref: 'ZeusRecommendationOutcome', default: null }
+  },
+
   created_at: { type: Date, default: Date.now, index: true }
 });
 

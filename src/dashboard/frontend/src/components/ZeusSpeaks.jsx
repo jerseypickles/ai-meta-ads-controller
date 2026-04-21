@@ -1474,9 +1474,35 @@ function ArchitectureCard({ proposal, onDecide, onMarkBuilt }) {
           )}
 
           {proposal.built_at && (
-            <div className="zeus-arch-built-done">
-              ✓ Construida {new Date(proposal.built_at).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' })}
-            </div>
+            <>
+              <div className="zeus-arch-built-done">
+                ✓ Construida {new Date(proposal.built_at).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' })}
+              </div>
+              {proposal.build_verification?.status && (
+                <div className={`zeus-arch-verify verdict-${proposal.build_verification.status}`}>
+                  <span className="zeus-arch-verify-icon">
+                    {proposal.build_verification.status === 'verified' ? '✓' :
+                     proposal.build_verification.status === 'partial' ? '◐' : '⚠'}
+                  </span>
+                  <div className="zeus-arch-verify-body">
+                    <div className="zeus-arch-verify-verdict">
+                      Build verification: <b>{proposal.build_verification.status}</b>
+                    </div>
+                    {proposal.build_verification.notes && (
+                      <div className="zeus-arch-verify-notes">{proposal.build_verification.notes}</div>
+                    )}
+                    {proposal.build_verification.files_found?.length > 0 && (
+                      <div className="zeus-arch-verify-files">
+                        <span className="zeus-arch-label">Evidencia:</span>{' '}
+                        {proposal.build_verification.files_found.slice(0, 3).map((f, i) => (
+                          <code key={i} className="zeus-arch-verify-file">{f}</code>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
@@ -1898,6 +1924,22 @@ function CodeRecCard({ rec, onAccept, onReject, onApply, onDelete }) {
       {rec.status === 'accepted' && (
         <div className="zeus-coderec-actions">
           <button className="zeus-coderec-btn zeus-coderec-btn-apply" onClick={onApply}>Marcar como aplicada</button>
+        </div>
+      )}
+      {rec.status === 'applied' && rec.verification?.syntactic_status && (
+        <div className={`zeus-coderec-verification verdict-${rec.verification.syntactic_status}`}>
+          <span className="zeus-coderec-verification-icon">
+            {rec.verification.syntactic_status === 'verified' ? '✓' :
+             rec.verification.syntactic_status === 'skipped' ? '—' : '⚠'}
+          </span>
+          <div className="zeus-coderec-verification-body">
+            <div className="zeus-coderec-verification-verdict">
+              Verificación: <b>{rec.verification.syntactic_status.replace('_', ' ')}</b>
+            </div>
+            {rec.verification.syntactic_notes && (
+              <div className="zeus-coderec-verification-notes">{rec.verification.syntactic_notes}</div>
+            )}
+          </div>
         </div>
       )}
     </div>

@@ -3161,3 +3161,105 @@
 
 .zeus-arch-expand { font-size: 0.8rem; opacity: 0.6; }
 
+/* ═══ Verification badges (rec-verifier) ═══ */
+
+.zeus-coderec-verification {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  border: 1px solid;
+}
+
+.zeus-coderec-verification.verdict-verified {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.35);
+  color: rgba(255, 255, 255, 0.85);
+}
+.zeus-coderec-verification.verdict-verified .zeus-coderec-verification-icon { color: #6ee7b7; }
+
+.zeus-coderec-verification.verdict-not_applied,
+.zeus-coderec-verification.verdict-diverged,
+.zeus-coderec-verification.verdict-file_not_found {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.35);
+  color: rgba(255, 255, 255, 0.85);
+}
+.zeus-coderec-verification.verdict-not_applied .zeus-coderec-verification-icon,
+.zeus-coderec-verification.verdict-diverged .zeus-coderec-verification-icon,
+.zeus-coderec-verification.verdict-file_not_found .zeus-coderec-verification-icon {
+  color: #fca5a5;
+}
+
+.zeus-coderec-verification.verdict-skipped {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.zeus-coderec-verification-icon {
+  font-weight: 700;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+  width: 16px;
+  text-align: center;
+}
+
+.zeus-coderec-verification-body { flex: 1; }
+.zeus-coderec-verification-verdict { font-size: 0.72rem; }
+.zeus-coderec-verification-verdict b { text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.68rem; }
+.zeus-coderec-verification-notes {
+  font-size: 0.68rem;
+  margin-top: 3px;
+  opacity: 0.75;
+  line-height: 1.4;
+}
+
+/* Architecture verification */
+.zeus-arch-verify {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  border: 1px solid;
+}
+.zeus-arch-verify.verdict-verified {
+  background: rgba(16, 185, 129, 0.08);
+  border-color: rgba(16, 185, 129, 0.35);
+}
+.zeus-arch-verify.verdict-verified .zeus-arch-verify-icon { color: #6ee7b7; }
+.zeus-arch-verify.verdict-partial {
+  background: rgba(251, 191, 36, 0.08);
+  border-color: rgba(251, 191, 36, 0.35);
+}
+.zeus-arch-verify.verdict-partial .zeus-arch-verify-icon { color: #fcd34d; }
+.zeus-arch-verify.verdict-not_found {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.35);
+}
+.zeus-arch-verify.verdict-not_found .zeus-arch-verify-icon { color: #fca5a5; }
+
+.zeus-arch-verify-icon { flex-shrink: 0; width: 16px; text-align: center; font-weight: 700; font-size: 0.9rem; }
+.zeus-arch-verify-body { flex: 1; }
+.zeus-arch-verify-verdict { font-size: 0.72rem; color: rgba(255, 255, 255, 0.85); }
+.zeus-arch-verify-verdict b { text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.68rem; }
+.zeus-arch-verify-notes { font-size: 0.68rem; margin-top: 3px; color: rgba(255, 255, 255, 0.65); line-height: 1.4; }
+.zeus-arch-verify-files { margin-top: 4px; }
+.zeus-arch-verify-file {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 0.62rem;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-right: 4px;
+  color: rgba(255, 255, 255, 0.7);
+}
+

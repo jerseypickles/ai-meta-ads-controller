@@ -141,6 +141,51 @@ async function detectSignals(sinceDate) {
     // noop
   }
 
+  // 12. Verificaciones fallidas — recs marcadas applied pero código no cambió
+  try {
+    const ZeusCodeRecommendation = require('../../db/models/ZeusCodeRecommendation');
+    const failed = await ZeusCodeRecommendation.find({
+      status: 'applied',
+      'verification.syntactic_status': { $in: ['not_applied', 'diverged', 'file_not_found'] },
+      'verification.syntactic_checked_at': { $gte: sinceDate }
+    }).sort({ 'verification.syntactic_checked_at': -1 }).limit(3).lean();
+    for (const rec of failed) {
+      signals.push({
+        kind: 'rec_verification_failed',
+        severity: 'high',
+        rec_id: String(rec._id),
+        file: rec.file_path,
+        verdict: rec.verification.syntactic_status,
+        rationale: (rec.rationale || '').substring(0, 150),
+        detail: rec.verification.syntactic_notes || ''
+      });
+    }
+  } catch (err) {
+    // noop
+  }
+
+  // 13. Architecture builds con verificación no-ok
+  try {
+    const ZeusArchitectureProposal = require('../../db/models/ZeusArchitectureProposal');
+    const failedBuilds = await ZeusArchitectureProposal.find({
+      status: 'built',
+      'build_verification.status': { $in: ['partial', 'not_found'] },
+      'build_verification.checked_at': { $gte: sinceDate }
+    }).sort({ 'build_verification.checked_at': -1 }).limit(2).lean();
+    for (const p of failedBuilds) {
+      signals.push({
+        kind: 'architecture_build_verify_failed',
+        severity: 'high',
+        title: p.bottleneck?.title || '',
+        chosen_option: p.creator_decision,
+        verdict: p.build_verification.status,
+        detail: p.build_verification.notes || ''
+      });
+    }
+  } catch (err) {
+    // noop
+  }
+
   // 11. Architecture proposals nuevos high/critical (Lens 3)
   try {
     const ZeusArchitectureProposal = require('../../db/models/ZeusArchitectureProposal');
