@@ -59,6 +59,19 @@ const zeusArchitectureProposalSchema = new mongoose.Schema({
   creator_note: { type: String, default: '' },
   decided_at: { type: Date, default: null },
 
+  // Crítica adversaria (devil's advocate) auto-generada cuando nace el proposal
+  devils_critique: {
+    attacks: [{
+      kind: String,
+      attack: String,
+      severity: String,
+      _id: false
+    }],
+    overall_verdict: String,
+    summary: String,
+    generated_at: Date
+  },
+
   // Tracking post-build (L1 loop)
   built_at: { type: Date, default: null },
   build_verification: {

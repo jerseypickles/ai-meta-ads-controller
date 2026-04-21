@@ -154,6 +154,17 @@ async function runPostMortemCron() {
     }
 
     logger.info(`[ZEUS-LEARNER] Post-mortem: 7d=${results.measured_7d}, 30d=${results.measured_30d}, 90d=${results.measured_90d}, err=${results.errors}`);
+
+    // Episodic memory backfill — cuando un outcome tiene 30d medido, lo convertimos
+    // en episodio con embedding para que Zeus pueda razonar por analogía después.
+    try {
+      const { backfillPendingEpisodes } = require('./episodic-memory');
+      const ep = await backfillPendingEpisodes(20);
+      if (ep.created > 0) results.episodes_created = ep.created;
+    } catch (err) {
+      logger.warn(`[ZEUS-LEARNER] episodic backfill falló: ${err.message}`);
+    }
+
     return results;
   } catch (err) {
     logger.error(`[ZEUS-LEARNER] Post-mortem failed: ${err.message}`);

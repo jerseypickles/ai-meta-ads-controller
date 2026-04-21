@@ -238,6 +238,25 @@ async function runArchitectReflection(triggerContext = { kind: 'weekly_reflectio
       status: 'draft'
     });
     proposalDocs.push(doc);
+
+    // Devil's Advocate automático — cada proposal recibe crítica adversaria
+    try {
+      const { critique } = require('./devils-advocate');
+      const recText = `Bottleneck: ${p.bottleneck.title}\n${p.bottleneck.description}\n\nOpciones:\n${p.options.map(o => `${o.label}: ${o.approach} — ${o.description} (cost ${o.cost}, risk ${o.risk}, EV ${o.expected_value})`).join('\n')}\n\nRecomendada: ${p.recommended}. Razón: ${p.reasoning}`;
+      const c = await critique(recText, { evidence: p.bottleneck.evidence_summary, system_state: state });
+      if (c && !c.error) {
+        doc.devils_critique = {
+          attacks: c.attacks || [],
+          overall_verdict: c.overall_verdict,
+          summary: c.summary,
+          generated_at: new Date()
+        };
+        await doc.save();
+        logger.info(`[LENS3-ARCHITECT] devil's advocate on proposal ${doc._id}: ${c.overall_verdict} (${c.attacks?.length || 0} attacks)`);
+      }
+    } catch (err) {
+      logger.warn(`[LENS3-ARCHITECT] devil's advocate falló para proposal ${doc._id}: ${err.message}`);
+    }
   }
 
   const finishedAt = new Date();

@@ -755,6 +755,32 @@ const TOOL_DEFINITIONS = [
     name: 'query_portfolio_capacity',
     description: 'Consulta capacidad del portfolio — cuántos ad sets activos, ratio en LEARNING, scales/duplications hoy, utilización vs límites estructurales. Úsala antes de recomendar duplicaciones masivas, scale-ups, o para dimensionar cuánto más el sistema puede crecer sin canibalización.',
     input_schema: { type: 'object', properties: {}, required: [] }
+  },
+  {
+    name: 'query_similar_episodes',
+    description: 'Memoria episódica — busca los episodios pasados más parecidos a una situación actual. Usála cuando el creador pregunte "¿esto ya lo vimos antes?" o cuando querés razonar por analogía ("esto me recuerda a cuando..."). Los episodios son casos concretos con outcomes medidos, no reglas generales. Si retorna con similarity alta y verdict=failure, es una alarma fuerte.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        description: { type: 'string', description: 'Descripción en lenguaje natural de la situación actual a comparar con episodios pasados' },
+        top_k: { type: 'number', default: 3, description: 'Cuántos episodios retornar (1-5)' },
+        category: { type: 'string', description: 'Filtrar por categoría: scale, pause, duplicate, kill, directive_change, freeze_response, test_graduation, strategic_pivot, anomaly_resolution, other' },
+        min_importance: { type: 'number', default: 0, description: '0-1, solo retrievear episodios con importance >= este valor' }
+      },
+      required: ['description']
+    }
+  },
+  {
+    name: 'get_devils_advocate',
+    description: 'Invocá al Devil\'s Advocate — un agente adversario que ataca una recomendación o decisión que estás por tomar. Úsalo cuando: (1) tu confidence sobre una acción es baja, (2) las stakes son altas (>$500 impactados), (3) el creador pide "critícalo". El devil\'s advocate NO es constructivo — busca el agujero más grave. Vos después decidís si los ataques son válidos o ruido. Hay 4 verdicts posibles: reject / proceed_with_risk / needs_more_data / no_real_issue_found.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        recommendation: { type: 'string', description: 'La recomendación o decisión a atacar (texto completo)' },
+        context: { type: 'object', description: 'Datos de soporte — métricas, historial, supuestos clave', additionalProperties: true }
+      },
+      required: ['recommendation']
+    }
   }
 ];
 
@@ -2025,7 +2051,9 @@ const TOOL_HANDLERS = {
   query_execution_authority: handleQueryExecutionAuthority,
   check_execution_readiness: handleCheckExecutionReadiness,
   query_platform_health: handleQueryPlatformHealth,
-  query_portfolio_capacity: handleQueryPortfolioCapacity
+  query_portfolio_capacity: handleQueryPortfolioCapacity,
+  query_similar_episodes: handleQuerySimilarEpisodes,
+  get_devils_advocate: handleGetDevilsAdvocate
 };
 
 async function handleQueryPlatformHealth() {
@@ -2051,6 +2079,37 @@ async function handleQueryPortfolioCapacity() {
   try {
     const { assessCapacity } = require('./portfolio-capacity');
     return await assessCapacity();
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function handleQuerySimilarEpisodes(input) {
+  if (!input.description) return { error: 'description requerido' };
+  try {
+    const { findSimilarEpisodes } = require('./episodic-memory');
+    const episodes = await findSimilarEpisodes(input.description, {
+      topK: Math.max(1, Math.min(5, input.top_k || 3)),
+      category: input.category || null,
+      minImportance: input.min_importance || 0
+    });
+    return {
+      count: episodes.length,
+      episodes,
+      note: episodes.length === 0
+        ? 'No hay episodios similares con similarity >0.5 — situación sin analogía clara en memoria.'
+        : undefined
+    };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function handleGetDevilsAdvocate(input) {
+  if (!input.recommendation) return { error: 'recommendation requerido' };
+  try {
+    const { critique } = require('./devils-advocate');
+    return await critique(input.recommendation, input.context || {});
   } catch (err) {
     return { error: err.message };
   }
