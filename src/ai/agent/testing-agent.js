@@ -761,7 +761,10 @@ async function runTestingAgent() {
   }
 
   // Fase 1: Lanzar tests nuevos (salvo que Zeus haya bloqueado)
-  const launched = launchBlocked ? { launched: 0, results: [], blocked: true } : await launchTests();
+  const launchResult = launchBlocked ? { launched: 0, results: [], blocked: true } : await launchTests();
+  // Normaliza a número — launchTests() retorna number, el path bloqueado retorna objeto
+  const launchedCount = typeof launchResult === 'number' ? launchResult : (launchResult?.launched ?? 0);
+  const launchedSuffix = launchBlocked ? ' (blocked por directiva Zeus)' : '';
 
   // Fase 2: Monitorear tests activos
   const { monitored, graduated, killed, expired } = await monitorTests();
@@ -771,7 +774,7 @@ async function runTestingAgent() {
 
   const elapsed = `${((Date.now() - startTime) / 1000).toFixed(1)}s`;
 
-  logger.info(`═══ Testing Agent completado [${cycleId}]: ${launched} lanzados, ${monitored} monitoreados (${graduated} graduados, ${killed} killed, ${expired} expired), pool: ${readyPool} ready — ${elapsed} ═══`);
+  logger.info(`═══ Testing Agent completado [${cycleId}]: ${launchedCount} lanzados${launchedSuffix}, ${monitored} monitoreados (${graduated} graduados, ${killed} killed, ${expired} expired), pool: ${readyPool} ready — ${elapsed} ═══`);
 
   // Reportar a Zeus con inteligencia real — clasificando por nivel de evidencia
   try {
@@ -834,7 +837,7 @@ async function runTestingAgent() {
       .sort((a, b) => b.avg_roas - a.avg_roas);
 
     // Construir mensaje
-    let msg = `Ciclo completado: ${launched} lanzados, ${monitored} monitoreados.`;
+    let msg = `Ciclo completado: ${launchedCount} lanzados${launchedSuffix}, ${monitored} monitoreados.`;
     if (forceGraduated > 0) msg += ` ${forceGraduated} FORCE-GRADUATED por orden de Zeus.`;
     if (graduated > 0) msg += ` ${graduated} GRADUADOS.`;
     if (killed > 0) msg += ` ${killed} killed.`;
@@ -887,7 +890,7 @@ async function runTestingAgent() {
     await ZeusConversation.create({
       from: 'prometheus', to: 'zeus', type: 'report', message: msg, cycle_id: cycleId,
       context: {
-        launched, monitored, graduated, killed, expired, pool: readyPool,
+        launched: launchedCount, launch_blocked: launchBlocked, monitored, graduated, killed, expired, pool: readyPool,
         validated_winners: validatedWinners.map(t => ({
           name: t.test_adset_name,
           roas: t.metrics?.roas || 0,
@@ -911,7 +914,8 @@ async function runTestingAgent() {
   }
 
   return {
-    launched,
+    launched: launchedCount,
+    launch_blocked: launchBlocked,
     monitored,
     graduated,
     killed,
