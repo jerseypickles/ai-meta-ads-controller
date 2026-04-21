@@ -1207,7 +1207,9 @@ async function runAccountAgent() {
       from: 'athena', to: 'zeus', type: 'report', message: msg, cycle_id: cycleId,
       context: { managed: activeAdSets.length, actions: totalActions, scales: scales.length, pauses: pauses.length, holds: holds.length, directives_received: activeDirectives.length }
     });
-  } catch (_) {}
+  } catch (err) {
+    logger.warn(`[ACCOUNT-AGENT] No se pudo persistir cycle report a Zeus: ${err.message}`);
+  }
 
   return { managed: activeAdSets.length, actions_taken: totalActions, results, elapsed, cycle_id: cycleId, mode };
 }
@@ -1332,7 +1334,11 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
       return nameWords.some(w => w.length > 3 && dirText.includes(w)) ||
         (d.data?.action === 'scale_up' && dirText.includes('scale'));
     });
-  } catch (_) {}
+  } catch (err) {
+    // Fail-safe: si la query falla, mantenemos hasZeusScaleDirective=false (conservador: no bypass cooldown).
+    // Log para que el fallo no quede invisible y Zeus pueda diagnosticar si sus directivas no se aplican.
+    logger.warn(`[ACCOUNT-AGENT] Zeus PRIORITIZE check failed for ${adSetName}: ${err.message}`);
+  }
 
   if (mode === 'full') {
     const cooldown = await _isOnAgentCooldown(adSetId);
@@ -1388,7 +1394,12 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
     const ZeusDirective = require('../../db/models/ZeusDirective');
     const zeusCount = await ZeusDirective.countDocuments({ target_agent: { $in: ['athena', 'all'] }, active: true });
     zeusHasDirectives = zeusCount > 0;
-  } catch (_) {}
+  } catch (err) {
+    // Fail-open: si la query falla, asumimos que SÍ hay directivas → no skipeamos el ad set.
+    // Peor evaluar de más que ignorar silenciosamente una directiva de Zeus.
+    logger.warn(`[ACCOUNT-AGENT] ZeusDirective query failed, assuming directives exist (fail-open): ${err.message}`);
+    zeusHasDirectives = true;
+  }
 
   // Smart skip: si ad set esta estable/improving Y fue checkeado hace < 12h Y no hay plan pendiente urgente
   if (mode === 'full' && !zeusHasDirectives && lastCheck) {
@@ -1432,7 +1443,13 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
         directives.map(d => `- [${d.directive_type.toUpperCase()}] ${d.directive}`).join('\n') +
         '\nZeus is the CEO. PRIORITIZE = act now. ALERT = respect. These override HOLD.';
     }
-  } catch (_) {}
+  } catch (err) {
+    // Crítico: si falla, Athena no recibe las directivas de Zeus en el prompt.
+    // Logeamos para evidencia + señalizamos el fallo en el prompt mismo para que Athena
+    // sepa que NO debería asumir ausencia de directivas = "no hay nada que respetar".
+    logger.warn(`[ACCOUNT-AGENT] Zeus directives load failed for ${adSetName}: ${err.message}`);
+    zeusContext = '\n\n## ZEUS DIRECTIVES\n[⚠ error loading Zeus directives — proceed conservatively, do NOT assume absence of directives]';
+  }
 
   const systemPromptWithZeus = AGENT_SYSTEM_PROMPT + zeusContext;
 
