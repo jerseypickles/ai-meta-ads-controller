@@ -141,6 +141,28 @@ async function detectSignals(sinceDate) {
     // noop
   }
 
+  // 11. Architecture proposals nuevos high/critical (Lens 3)
+  try {
+    const ZeusArchitectureProposal = require('../../db/models/ZeusArchitectureProposal');
+    const archProposals = await ZeusArchitectureProposal.find({
+      severity: { $in: ['critical', 'high'] },
+      status: 'draft',
+      created_at: { $gte: sinceDate }
+    }).sort({ created_at: -1 }).limit(2).lean();
+    for (const p of archProposals) {
+      signals.push({
+        kind: 'architecture_proposal',
+        severity: p.severity,
+        title: p.bottleneck?.title || '',
+        recommended: p.recommended,
+        options_count: p.options?.length || 0,
+        summary: (p.bottleneck?.description || '').substring(0, 180)
+      });
+    }
+  } catch (err) {
+    // noop
+  }
+
   // 10. Findings críticos del code-sentinel (vulnerability scanner)
   try {
     const ZeusCodeRecommendation = require('../../db/models/ZeusCodeRecommendation');

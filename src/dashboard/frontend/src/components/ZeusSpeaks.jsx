@@ -566,6 +566,10 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   const [showCalendar, setShowCalendar] = useState(false);
   const [calendarUpcoming, setCalendarUpcoming] = useState([]);
   const [calendarAll, setCalendarAll] = useState([]);
+  const [showArchitecture, setShowArchitecture] = useState(false);
+  const [archProposals, setArchProposals] = useState([]);
+  const [archCounts, setArchCounts] = useState({});
+  const [archFilter, setArchFilter] = useState('draft');
   const scrollRef = useRef(null);
   const esRef = useRef(null);
   const streamingTextRef = useRef('');
@@ -708,12 +712,53 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showCalendar]);
 
-  // Load counts al abrir drawer (para el badge del 💡)
+  async function loadArchitecture() {
+    try {
+      const params = archFilter !== 'all' ? { status: archFilter } : {};
+      const res = await api.get('/api/zeus/architecture-proposals', { params });
+      setArchProposals(res.data.proposals || []);
+      setArchCounts(res.data.counts || {});
+    } catch (err) { console.error(err); }
+  }
+
+  async function decideArchProposal(id, decision, note = '') {
+    try {
+      await api.post(`/api/zeus/architecture-proposals/${id}/decide`, { decision, note });
+      await loadArchitecture();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function markArchBuilt(id) {
+    if (!window.confirm('Marcar como "built" — construida y desplegada?')) return;
+    try {
+      await api.post(`/api/zeus/architecture-proposals/${id}/mark-built`);
+      await loadArchitecture();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function generateArchProposal() {
+    if (!window.confirm('Disparar una reflexión arquitectónica ahora? Toma ~30s.')) return;
+    try {
+      await api.post('/api/zeus/architecture-proposals/generate');
+      await loadArchitecture();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  useEffect(() => {
+    if (showArchitecture) loadArchitecture();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showArchitecture, archFilter]);
+
+  // Load counts al abrir drawer (para el badge del 💡 y 🏛️)
   useEffect(() => {
     (async () => {
       try {
         const res = await api.get('/api/zeus/code-recs', { params: { limit: 1 } });
         setCodeRecsCounts(res.data.counts || {});
+      } catch (_) {}
+      try {
+        const res = await api.get('/api/zeus/architecture-proposals', { params: { status: 'all' } });
+        setArchCounts(res.data.counts || {});
       } catch (_) {}
     })();
   }, []);
@@ -887,6 +932,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                 setShowCodeRecs(false);
                 setShowConversationList(false);
                 setShowCalendar(false);
+                setShowArchitecture(false);
               }}
               title="Planes estratégicos"
             >
@@ -900,10 +946,28 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                 setShowMemory(false);
                 setShowCodeRecs(false);
                 setShowConversationList(false);
+                setShowArchitecture(false);
               }}
               title="Calendario estacional"
             >
               📅
+            </button>
+            <button
+              className="zeus-drawer-icon-btn"
+              onClick={() => {
+                setShowArchitecture(!showArchitecture);
+                setShowCalendar(false);
+                setShowPlans(false);
+                setShowMemory(false);
+                setShowCodeRecs(false);
+                setShowConversationList(false);
+              }}
+              title="Propuestas arquitectónicas (Lens 3)"
+            >
+              🏛️
+              {archCounts.draft > 0 && (
+                <span className="zeus-icon-badge">{archCounts.draft > 9 ? '9+' : archCounts.draft}</span>
+              )}
             </button>
             <button
               className="zeus-drawer-icon-btn"
@@ -1042,6 +1106,59 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                   </button>
                 ))}
               </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Panel arquitectura (Lens 3) */}
+        <AnimatePresence>
+          {showArchitecture && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="zeus-architecture-panel"
+            >
+              <div className="zeus-architecture-header">
+                <div className="zeus-architecture-title">🏛️ Propuestas arquitectónicas</div>
+                <div className="zeus-architecture-sub">Bottlenecks estructurales — Zeus propone opciones, vos decidís.</div>
+                <div className="zeus-architecture-filter">
+                  {['draft', 'accepted', 'rejected', 'built', 'all'].map(f => (
+                    <button
+                      key={f}
+                      onClick={() => setArchFilter(f)}
+                      className={`zeus-architecture-filter-btn ${archFilter === f ? 'active' : ''}`}
+                    >
+                      {f === 'all' ? 'todas' : f}
+                      {archCounts[f] > 0 && f !== 'all' && ` · ${archCounts[f]}`}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={generateArchProposal}
+                  className="zeus-architecture-gen-btn"
+                  title="Disparar reflexión arquitectónica manual (toma ~30s)"
+                >
+                  ↻ Generar ahora
+                </button>
+              </div>
+
+              {archProposals.length === 0 ? (
+                <div className="zeus-architecture-empty">
+                  {archFilter === 'draft'
+                    ? 'No hay propuestas pendientes. Zeus las genera los domingos 11:30am — o dispará una manual con ↻.'
+                    : `No hay propuestas con estado ${archFilter}.`}
+                </div>
+              ) : (
+                archProposals.map(p => (
+                  <ArchitectureCard
+                    key={p._id}
+                    proposal={p}
+                    onDecide={(decision, note) => decideArchProposal(p._id, decision, note)}
+                    onMarkBuilt={() => markArchBuilt(p._id)}
+                  />
+                ))
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -1247,6 +1364,126 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   );
 }
 
+function ArchitectureCard({ proposal, onDecide, onMarkBuilt }) {
+  const [expanded, setExpanded] = useState(false);
+  const [selected, setSelected] = useState(proposal.recommended || '');
+  const [note, setNote] = useState('');
+
+  const isDraft = proposal.status === 'draft';
+  const isAccepted = proposal.status === 'accepted';
+
+  return (
+    <div className={`zeus-arch-card severity-${proposal.severity} status-${proposal.status}`}>
+      <div className="zeus-arch-head" onClick={() => setExpanded(!expanded)}>
+        <div className="zeus-arch-title-row">
+          <span className={`zeus-arch-severity-dot severity-${proposal.severity}`} />
+          <span className="zeus-arch-title">{proposal.bottleneck?.title || 'Sin título'}</span>
+        </div>
+        <div className="zeus-arch-meta">
+          <span className={`zeus-arch-status-badge status-${proposal.status}`}>{proposal.status}</span>
+          <span className="zeus-arch-trigger">{proposal.triggered_by}</span>
+          <span className="zeus-arch-expand">{expanded ? '▾' : '▸'}</span>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="zeus-arch-body">
+          <div className="zeus-arch-desc">{proposal.bottleneck?.description}</div>
+          {proposal.bottleneck?.evidence_summary && (
+            <div className="zeus-arch-evidence">
+              <span className="zeus-arch-label">Evidencia:</span> {proposal.bottleneck.evidence_summary}
+            </div>
+          )}
+
+          <div className="zeus-arch-options">
+            {(proposal.options || []).map(opt => (
+              <label
+                key={opt.label}
+                className={`zeus-arch-option ${selected === opt.label ? 'selected' : ''} ${proposal.recommended === opt.label ? 'recommended' : ''}`}
+              >
+                <div className="zeus-arch-option-head">
+                  <input
+                    type="radio"
+                    name={`arch-${proposal._id}`}
+                    value={opt.label}
+                    checked={selected === opt.label}
+                    onChange={() => setSelected(opt.label)}
+                    disabled={!isDraft}
+                  />
+                  <span className="zeus-arch-option-label">{opt.label}</span>
+                  <span className="zeus-arch-option-approach">{opt.approach}</span>
+                  {proposal.recommended === opt.label && (
+                    <span className="zeus-arch-rec-badge">recomendada</span>
+                  )}
+                </div>
+                {opt.description && <div className="zeus-arch-option-desc">{opt.description}</div>}
+                <div className="zeus-arch-tradeoffs">
+                  <span>cost: <b className={`val-${opt.cost}`}>{opt.cost}</b></span>
+                  <span>risk: <b className={`val-${opt.risk}`}>{opt.risk}</b></span>
+                  <span>EV: <b className={`val-${opt.expected_value}`}>{opt.expected_value}</b></span>
+                  {opt.effort_days != null && <span>effort: <b>{opt.effort_days}d</b></span>}
+                </div>
+                {opt.notes && <div className="zeus-arch-option-notes">{opt.notes}</div>}
+              </label>
+            ))}
+          </div>
+
+          {proposal.reasoning && (
+            <div className="zeus-arch-reasoning">
+              <span className="zeus-arch-label">Recomendación de Zeus:</span> {proposal.reasoning}
+            </div>
+          )}
+
+          {isDraft && (
+            <div className="zeus-arch-decide">
+              <input
+                type="text"
+                placeholder="Nota opcional sobre la decisión..."
+                value={note}
+                onChange={e => setNote(e.target.value)}
+                className="zeus-arch-note-input"
+              />
+              <div className="zeus-arch-decide-btns">
+                <button
+                  onClick={() => selected && onDecide(selected, note)}
+                  disabled={!selected}
+                  className="zeus-arch-accept-btn"
+                >
+                  Aceptar opción {selected || '...'}
+                </button>
+                <button
+                  onClick={() => onDecide('no-op', note)}
+                  className="zeus-arch-noop-btn"
+                >
+                  No-op (re-evaluar después)
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isAccepted && !proposal.built_at && (
+            <div className="zeus-arch-built-cta">
+              <div className="zeus-arch-built-note">
+                Decisión registrada: <b>{proposal.creator_decision}</b>
+                {proposal.creator_note && <> — {proposal.creator_note}</>}
+              </div>
+              <button onClick={onMarkBuilt} className="zeus-arch-built-btn">
+                ✓ Marcar como construida
+              </button>
+            </div>
+          )}
+
+          {proposal.built_at && (
+            <div className="zeus-arch-built-done">
+              ✓ Construida {new Date(proposal.built_at).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CalendarEventCard({ event }) {
   const phaseLabel = {
     peak: 'PEAK NOW',
@@ -1422,6 +1659,29 @@ function PlanCard({ plan, onApprove, onDelete }) {
 
       {expanded && (
         <div className="zeus-plan-detail">
+          {plan.code_readiness?.entries?.length > 0 && (
+            <div className="zeus-plan-readiness">
+              <div className="zeus-plan-readiness-title">
+                🔍 Code readiness — {plan.code_readiness.summary || `${plan.code_readiness.entries.filter(e => e.capable).length}/${plan.code_readiness.entries.length} goals listos`}
+              </div>
+              {plan.code_readiness.entries.map((e, i) => (
+                <div key={i} className={`zeus-plan-readiness-entry ${e.capable ? 'capable' : 'gap'}`}>
+                  <span className="zeus-plan-readiness-icon">{e.capable ? '✓' : '⚠'}</span>
+                  <div className="zeus-plan-readiness-body">
+                    <div className="zeus-plan-readiness-goal">
+                      <code>{e.goal_metric}</code>
+                      {e.agent && <span className="zeus-plan-readiness-agent"> · {e.agent}</span>}
+                    </div>
+                    {e.file && <div className="zeus-plan-readiness-file">{e.file}</div>}
+                    {!e.capable && e.gap_description && (
+                      <div className="zeus-plan-readiness-gap">{e.gap_description}</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           {plan.narrative && (
             <div className="zeus-plan-narrative zeus-markdown">
               <ZeusMarkdown>{plan.narrative}</ZeusMarkdown>

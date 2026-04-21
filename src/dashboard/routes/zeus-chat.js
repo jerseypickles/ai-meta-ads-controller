@@ -603,4 +603,66 @@ router.post('/seasonal-events/:id/toggle', async (req, res) => {
   }
 });
 
+// ═══ Architecture Proposals (Lens 3) ═══
+router.get('/architecture-proposals', async (req, res) => {
+  try {
+    const ZeusArchitectureProposal = require('../../db/models/ZeusArchitectureProposal');
+    const { status } = req.query;
+    const query = status && status !== 'all' ? { status } : {};
+    const proposals = await ZeusArchitectureProposal.find(query)
+      .sort({ created_at: -1 })
+      .limit(50)
+      .lean();
+    const counts = await ZeusArchitectureProposal.aggregate([
+      { $group: { _id: '$status', count: { $sum: 1 } } }
+    ]);
+    const countsMap = counts.reduce((acc, c) => { acc[c._id] = c.count; return acc; }, {});
+    res.json({ proposals, counts: countsMap });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/architecture-proposals/:id/decide', async (req, res) => {
+  try {
+    const ZeusArchitectureProposal = require('../../db/models/ZeusArchitectureProposal');
+    const { decision, note } = req.body;
+    const p = await ZeusArchitectureProposal.findById(req.params.id);
+    if (!p) return res.status(404).json({ error: 'No encontrada' });
+    p.creator_decision = decision || '';
+    p.creator_note = note || '';
+    p.decided_at = new Date();
+    if (decision === 'no-op' || decision === 'reject') p.status = 'rejected';
+    else if (decision === 'accepted' || (decision && decision !== 'no-op')) p.status = 'accepted';
+    await p.save();
+    res.json({ ok: true, proposal: p });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/architecture-proposals/:id/mark-built', async (req, res) => {
+  try {
+    const ZeusArchitectureProposal = require('../../db/models/ZeusArchitectureProposal');
+    const p = await ZeusArchitectureProposal.findById(req.params.id);
+    if (!p) return res.status(404).json({ error: 'No encontrada' });
+    p.status = 'built';
+    p.built_at = new Date();
+    await p.save();
+    res.json({ ok: true, proposal: p });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/architecture-proposals/generate', async (req, res) => {
+  try {
+    const { runArchitectReflection } = require('../../ai/zeus/architect');
+    const result = await runArchitectReflection({ kind: 'manual' });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

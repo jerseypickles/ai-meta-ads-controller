@@ -84,6 +84,21 @@ const zeusStrategicPlanSchema = new mongoose.Schema({
     health_score: Number,              // 0-100
     health_status: { type: String, enum: ['on_track', 'behind', 'off_track', 'at_risk'] },
     summary: mongoose.Schema.Types.Mixed
+  },
+
+  // Code readiness (populado por Lens 1 del sentinel al generar el plan)
+  code_readiness: {
+    checked_at: Date,
+    entries: [{
+      goal_metric: String,
+      agent: String,                   // athena | apollo | prometheus | ares | multiple
+      file: String,                    // "path:line_start-line_end" o "path"
+      capable: Boolean,
+      gap_description: String,
+      rec_id: { type: mongoose.Schema.Types.ObjectId, ref: 'ZeusCodeRecommendation', default: null },
+      _id: false
+    }],
+    summary: String                    // ej: "4/5 goals listos, 1 gap en Apollo"
   }
 });
 

@@ -929,6 +929,19 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'zeus-sentinel-weekly' });
   logger.info('  [*] Zeus Sentinel weekly — domingos 9am ET (5 sub-lentes completas)');
 
+  // Semanal domingos 11:30am ET: Zeus Architect (Lens 3) — architecture proposals
+  // Corre 30 min después de self-reflection L4 para usar playbooks/journal frescos
+  cron.schedule('30 11 * * 0', async () => {
+    try {
+      const { runWeeklyArchitectCron } = require('./ai/zeus/architect');
+      const result = await runWeeklyArchitectCron();
+      logger.info(`[ZEUS-ARCHITECT] ${JSON.stringify(result).substring(0, 200)}`);
+    } catch (err) {
+      logger.error(`[ZEUS-ARCHITECT] ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'zeus-architect' });
+  logger.info('  [*] Zeus Architect (Lens 3) — domingos 11:30am ET');
+
   // Diario 3am ET: Zeus learner — post-mortems 7/30/90d de outcomes aplicados
   cron.schedule('0 3 * * *', async () => {
     try {

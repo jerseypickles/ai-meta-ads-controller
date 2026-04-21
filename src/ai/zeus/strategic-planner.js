@@ -183,6 +183,24 @@ Respondé SOLO con el JSON.`;
   });
 
   logger.info(`[ZEUS-PLANNER] Generated ${horizon} plan ${plan._id}`);
+
+  // Lens 1 — Plan Readiness Check (fire-and-forget async si options.skipReadiness=true)
+  if (!options.skipReadiness) {
+    try {
+      const { checkPlanReadiness } = require('./sentinel-lenses/plan-readiness');
+      const readiness = await checkPlanReadiness(plan);
+      plan.code_readiness = {
+        checked_at: new Date(),
+        entries: readiness.entries || [],
+        summary: readiness.summary || ''
+      };
+      await plan.save();
+      logger.info(`[ZEUS-PLANNER] Readiness attached: ${readiness.summary}`);
+    } catch (err) {
+      logger.error(`[ZEUS-PLANNER] Readiness check failed (non-fatal): ${err.message}`);
+    }
+  }
+
   return plan;
 }
 
