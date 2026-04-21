@@ -141,6 +141,30 @@ async function detectSignals(sinceDate) {
     // noop
   }
 
+  // 10. Findings críticos del code-sentinel (vulnerability scanner)
+  try {
+    const ZeusCodeRecommendation = require('../../db/models/ZeusCodeRecommendation');
+    const criticalFindings = await ZeusCodeRecommendation.find({
+      lens: 'vulnerability',
+      severity: { $in: ['critical', 'high'] },
+      status: 'pending',
+      created_at: { $gte: sinceDate }
+    }).sort({ created_at: -1 }).limit(3).lean();
+    for (const f of criticalFindings) {
+      signals.push({
+        kind: 'sentinel_finding',
+        severity: f.severity,
+        sub_lens: f.sub_lens,
+        file: `${f.file_path}${f.line_start ? ':' + f.line_start : ''}`,
+        category: f.category,
+        rationale: (f.rationale || '').substring(0, 180),
+        evidence: (f.evidence_summary || '').substring(0, 150)
+      });
+    }
+  } catch (err) {
+    // noop
+  }
+
   // 9. Eventos estacionales entrando en anticipación (awareness pings)
   try {
     const { getUpcomingEvents } = require('./seasonal-calendar');

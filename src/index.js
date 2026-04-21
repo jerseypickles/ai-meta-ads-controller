@@ -905,17 +905,29 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'zeus-proactive' });
   logger.info('  [*] Zeus proactive — cada 30 min');
 
-  // Semanal domingos 9am ET: Zeus hace auditoría del código cruzando con data
+  // Diario 4:30am ET: Zeus Sentinel daily pass (security + silent-failures + config-drift)
+  cron.schedule('30 4 * * *', async () => {
+    try {
+      const { runSentinel } = require('./ai/zeus/sentinel');
+      const result = await runSentinel('daily');
+      logger.info(`[ZEUS-SENTINEL-DAILY] ${JSON.stringify(result.totals)}`);
+    } catch (err) {
+      logger.error(`[ZEUS-SENTINEL-DAILY] ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'zeus-sentinel-daily' });
+  logger.info('  [*] Zeus Sentinel daily — 4:30am ET (security + silent-failures + config-drift)');
+
+  // Semanal domingos 9am ET: Zeus Sentinel weekly pass (las 5 sub-lentes)
   cron.schedule('0 9 * * 0', async () => {
     try {
-      const { runWeeklyAudit } = require('./ai/zeus/weekly-audit');
-      const result = await runWeeklyAudit();
-      logger.info(`[ZEUS-AUDIT-CRON] ${JSON.stringify(result).substring(0, 300)}`);
+      const { runSentinel } = require('./ai/zeus/sentinel');
+      const result = await runSentinel('weekly');
+      logger.info(`[ZEUS-SENTINEL-WEEKLY] ${JSON.stringify(result.totals)}`);
     } catch (err) {
-      logger.error(`[ZEUS-AUDIT-CRON] ${err.message}`);
+      logger.error(`[ZEUS-SENTINEL-WEEKLY] ${err.message}`);
     }
-  }, { timezone: TIMEZONE, name: 'zeus-weekly-audit' });
-  logger.info('  [*] Zeus auditoría semanal — domingos 9am ET');
+  }, { timezone: TIMEZONE, name: 'zeus-sentinel-weekly' });
+  logger.info('  [*] Zeus Sentinel weekly — domingos 9am ET (5 sub-lentes completas)');
 
   // Diario 3am ET: Zeus learner — post-mortems 7/30/90d de outcomes aplicados
   cron.schedule('0 3 * * *', async () => {

@@ -50,10 +50,26 @@ const zeusCodeRecSchema = new mongoose.Schema({
   reviewed_at: { type: Date, default: null },
   review_note: { type: String, default: '' },
 
+  // Sentinel tagging — cuando la rec viene de una pasada del code-sentinel
+  lens: {
+    type: String,
+    enum: ['vulnerability', 'plan_readiness', 'architecture', 'manual', null],
+    default: null,
+    index: true
+  },
+  sub_lens: {
+    type: String,
+    enum: ['security', 'silent_failures', 'config_drift', 'calibration', 'prompt_drift', null],
+    default: null,
+    index: true
+  },
+  audit_run_id: { type: mongoose.Schema.Types.ObjectId, ref: 'ZeusAuditRun', default: null, index: true },
+
   created_at: { type: Date, default: Date.now, index: true }
 });
 
 zeusCodeRecSchema.index({ status: 1, created_at: -1 });
 zeusCodeRecSchema.index({ category: 1, severity: 1, status: 1 });
+zeusCodeRecSchema.index({ lens: 1, sub_lens: 1, created_at: -1 });
 
 module.exports = mongoose.model('ZeusCodeRecommendation', zeusCodeRecSchema);
