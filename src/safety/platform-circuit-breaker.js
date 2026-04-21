@@ -59,9 +59,10 @@ async function assessPlatformHealth() {
   const active = latest.filter(s => s.status === 'ACTIVE');
   const withIssues = latest.filter(s => s.status === 'WITH_ISSUES');
 
-  const spend24h = active.reduce((s, a) => s + (a.last_1d?.spend || 0), 0);
-  const impressions24h = active.reduce((s, a) => s + (a.last_1d?.impressions || 0), 0);
-  const actuallyDelivering = active.filter(s => (s.last_1d?.spend || 0) > 0).length;
+  // Path correcto: metrics.today (hoy) — los campos están bajo .metrics, no a nivel root
+  const spend24h = active.reduce((s, a) => s + (a.metrics?.today?.spend || 0), 0);
+  const impressions24h = active.reduce((s, a) => s + (a.metrics?.today?.impressions || 0), 0);
+  const actuallyDelivering = active.filter(s => (s.metrics?.today?.spend || 0) > 0).length;
 
   const baseline = await SystemConfig.get(BASELINE_KEY, { avg_daily_spend: 0 });
 
