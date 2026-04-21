@@ -1617,6 +1617,29 @@ function ArchitectureCard({ proposal, onDecide, onMarkBuilt }) {
             </div>
           )}
 
+          {proposal.devils_critique?.attacks?.length > 0 && (
+            <div className={`zeus-arch-devils verdict-${proposal.devils_critique.overall_verdict}`}>
+              <div className="zeus-arch-devils-head">
+                <span className="zeus-arch-devils-icon">😈</span>
+                <span className="zeus-arch-devils-title">Devil's Advocate</span>
+                <span className={`zeus-arch-devils-verdict verdict-${proposal.devils_critique.overall_verdict}`}>
+                  {(proposal.devils_critique.overall_verdict || '').replace(/_/g, ' ')}
+                </span>
+              </div>
+              {proposal.devils_critique.summary && (
+                <div className="zeus-arch-devils-summary">{proposal.devils_critique.summary}</div>
+              )}
+              <ul className="zeus-arch-devils-attacks">
+                {proposal.devils_critique.attacks.map((a, i) => (
+                  <li key={i} className={`zeus-arch-devils-attack severity-${a.severity}`}>
+                    <span className={`zeus-arch-devils-kind severity-${a.severity}`}>{a.kind?.replace(/_/g, ' ')}</span>
+                    <span className="zeus-arch-devils-text">{a.attack}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {isDraft && (
             <div className="zeus-arch-decide">
               <input
