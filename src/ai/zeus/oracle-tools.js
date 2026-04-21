@@ -781,6 +781,26 @@ const TOOL_DEFINITIONS = [
       },
       required: ['recommendation']
     }
+  },
+  {
+    name: 'query_agent_stances',
+    description: 'Devuelve el stance actual de cada agente (prometheus/athena/apollo/ares). Cada stance es la postura operativa del día (aggressive/steady/observe-only/paused/recovering) + focus temático + rationale. Úsala para saber qué están haciendo los agentes antes de proponer acciones que dependan de ellos.',
+    input_schema: { type: 'object', properties: {}, required: [] }
+  },
+  {
+    name: 'override_agent_stance',
+    description: 'Como CEO, podés overridear el stance de un agente. Úsalo cuando detectás señales que el agente no ve (conversación externa, contexto de negocio, intuición). El override es explícito y registrado, con expiración obligatoria (max 72h). Ej: Ares está "aggressive" pero sabés que Meta está rara → overridealo a "paused" por 24h.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        agent: { type: 'string', enum: ['prometheus', 'athena', 'apollo', 'ares'] },
+        stance: { type: 'string', enum: ['aggressive', 'steady', 'observe-only', 'paused', 'recovering'] },
+        focus: { type: 'string', description: 'Focus temático opcional' },
+        reason: { type: 'string', description: 'Por qué overrideás — queda auditable' },
+        expires_in_hours: { type: 'number', default: 24, description: '1-72h, default 24h' }
+      },
+      required: ['agent', 'stance', 'reason']
+    }
   }
 ];
 
@@ -2053,7 +2073,9 @@ const TOOL_HANDLERS = {
   query_platform_health: handleQueryPlatformHealth,
   query_portfolio_capacity: handleQueryPortfolioCapacity,
   query_similar_episodes: handleQuerySimilarEpisodes,
-  get_devils_advocate: handleGetDevilsAdvocate
+  get_devils_advocate: handleGetDevilsAdvocate,
+  query_agent_stances: handleQueryAgentStances,
+  override_agent_stance: handleOverrideAgentStance
 };
 
 async function handleQueryPlatformHealth() {
@@ -2110,6 +2132,44 @@ async function handleGetDevilsAdvocate(input) {
   try {
     const { critique } = require('./devils-advocate');
     return await critique(input.recommendation, input.context || {});
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function handleQueryAgentStances() {
+  try {
+    const { getCurrentStance } = require('./agent-stance');
+    const ZeusAgentStance = require('../../db/models/ZeusAgentStance');
+    const agents = ZeusAgentStance.AGENTS;
+    const out = {};
+    for (const a of agents) {
+      const s = await getCurrentStance(a);
+      out[a] = s ? {
+        stance: s.stance, focus: s.focus, rationale: s.rationale,
+        source: s.source, override_by: s.override_by, stale: s.stale,
+        created_at: s.created_at, expires_at: s.expires_at
+      } : null;
+    }
+    return out;
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function handleOverrideAgentStance(input) {
+  if (!input.agent || !input.stance || !input.reason) return { error: 'agent, stance, reason requeridos' };
+  try {
+    const { setOverride } = require('./agent-stance');
+    const s = await setOverride({
+      agent: input.agent,
+      stance: input.stance,
+      focus: input.focus || '',
+      reason: input.reason,
+      expires_in_hours: input.expires_in_hours || 24,
+      by: 'zeus'
+    });
+    return { ok: true, stance_id: s._id, stance: s.stance, expires_at: s.expires_at };
   } catch (err) {
     return { error: err.message };
   }

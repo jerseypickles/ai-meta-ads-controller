@@ -196,6 +196,27 @@ async function buildOracleContext(lastSeenAt = null) {
     ctx.upcoming_seasonal_events = events.slice(0, 10);
   } catch (_) { ctx.upcoming_seasonal_events = []; }
 
+  // Stances activos de los agentes — Zeus debe saber el estado mental del equipo
+  try {
+    const { getCurrentStance } = require('./agent-stance');
+    const ZeusAgentStance = require('../../db/models/ZeusAgentStance');
+    const stances = {};
+    for (const a of ZeusAgentStance.AGENTS) {
+      const s = await getCurrentStance(a);
+      if (s) {
+        stances[a] = {
+          stance: s.stance,
+          focus: s.focus || null,
+          source: s.source,
+          stale: s.stale,
+          override_by: s.override_by,
+          expires_in_hrs: Math.round((new Date(s.expires_at).getTime() - Date.now()) / 3600000)
+        };
+      }
+    }
+    ctx.agent_stances = stances;
+  } catch (_) { ctx.agent_stances = {}; }
+
   return ctx;
 }
 
@@ -271,6 +292,15 @@ function formatContextForPrompt(ctx) {
       lines.push(`    cuando: ${pb.trigger}`);
       lines.push(`    →  ${pb.action}`);
     }
+  }
+
+  if (ctx.agent_stances && Object.keys(ctx.agent_stances).length > 0) {
+    lines.push(`\nSTANCES ACTIVOS DE LOS AGENTES (estado mental del equipo):`);
+    for (const [agent, s] of Object.entries(ctx.agent_stances)) {
+      const suffix = s.stale ? ' STALE' : s.override_by ? ` override:${s.override_by}` : '';
+      lines.push(`  ${agent}: ${s.stance}${s.focus ? ` · focus=${s.focus}` : ''} (expira ${s.expires_in_hrs}h${suffix})`);
+    }
+    lines.push(`  Respetá los stances al recomendar — si proponés algo que contradice el stance activo, justificá por qué.`);
   }
 
   if (ctx.upcoming_seasonal_events?.length) {

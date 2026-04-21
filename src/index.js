@@ -891,6 +891,31 @@ function initCronJobs() {
   });
   logger.info('  [*] Kill switch monitor — cada 15 min');
 
+  // Agent Stance — morning briefings escalonados 7:00 / 7:10 / 7:20 / 7:30 ET
+  // Por ahora activo solo Prometheus (fase 1). Los otros quedan comentados hasta validar.
+  cron.schedule('0 7 * * *', async () => {
+    try {
+      const { runMorningBriefing } = require('./ai/zeus/agent-stance');
+      const s = await runMorningBriefing('prometheus');
+      logger.info(`[STANCE-CRON] prometheus → ${s.stance}${s.focus ? ` (${s.focus})` : ''}`);
+    } catch (err) {
+      logger.error(`[STANCE-CRON] prometheus falló: ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'stance-briefing-prometheus' });
+  logger.info('  [*] Stance briefing Prometheus — 7:00am ET');
+
+  // Verdict cron diario 5am ET (Fase 2) — cierra stances ≥7d con verdict retro
+  cron.schedule('0 5 * * *', async () => {
+    try {
+      const { runVerdictCron } = require('./ai/zeus/agent-stance');
+      const r = await runVerdictCron();
+      logger.info(`[STANCE-VERDICT-CRON] closed ${r.closed}/${r.evaluated}`);
+    } catch (err) {
+      logger.error(`[STANCE-VERDICT-CRON] ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'stance-verdict' });
+  logger.info('  [*] Stance verdict — diario 5am ET (calibración retroactiva)');
+
   // Cada 15 min (offset 7 min para no chocar con kill switch): Platform Circuit Breaker
   // Detecta billing freeze / mass WITH_ISSUES / zero delivery y activa modo degradado
   cron.schedule('7,22,37,52 * * * *', async () => {

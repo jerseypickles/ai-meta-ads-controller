@@ -746,21 +746,41 @@ async function runTestingAgent() {
   // Fase 0: Procesar force_graduate directives de Zeus (orden directa del CEO)
   const forceGraduated = await processForceGraduateDirectives();
 
+  // Stance del día (gate de juicio). Si es observe-only/paused → no launches.
+  // Si es aggressive/recovering → aplicamos teeth multiplier a los caps.
+  let stanceTeeth = null;
+  try {
+    const { getStanceTeeth } = require('../zeus/agent-stance');
+    stanceTeeth = await getStanceTeeth('prometheus');
+    logger.info(`[TESTING] Stance actual: ${stanceTeeth.stance}${stanceTeeth.focus ? ` focus=${stanceTeeth.focus}` : ''}${stanceTeeth.stale ? ' (STALE)' : ''}`);
+  } catch (err) {
+    logger.warn(`[TESTING] stance lookup falló, default steady: ${err.message}`);
+    stanceTeeth = { stance: 'steady', max_launches_multiplier: 1.0, block_all_writes: false };
+  }
+
   // Chequear directivas avoid de Zeus + platform circuit breaker.
-  // Si existe cualquier bloqueo, skipeamos launches pero seguimos monitoreando
-  // tests activos (no dejarlos huérfanos).
   let launchBlocked = false;
   let blockReason = '';
-  try {
-    const { isDegraded } = require('../../safety/platform-circuit-breaker');
-    const platform = await isDegraded();
-    if (platform.degraded) {
-      logger.warn(`[TESTING] Launches SKIP — plataforma degradada: ${platform.reason}`);
-      launchBlocked = true;
-      blockReason = `platform: ${platform.reason}`;
+
+  // Stance teeth: si dice no lanzar, no lanzamos
+  if (stanceTeeth.max_launches_multiplier === 0 || stanceTeeth.block_all_writes) {
+    launchBlocked = true;
+    blockReason = `stance: ${stanceTeeth.stance}`;
+    logger.info(`[TESTING] Launches SKIP — stance ${stanceTeeth.stance}`);
+  }
+
+  if (!launchBlocked) {
+    try {
+      const { isDegraded } = require('../../safety/platform-circuit-breaker');
+      const platform = await isDegraded();
+      if (platform.degraded) {
+        logger.warn(`[TESTING] Launches SKIP — plataforma degradada: ${platform.reason}`);
+        launchBlocked = true;
+        blockReason = `platform: ${platform.reason}`;
+      }
+    } catch (err) {
+      logger.warn(`[TESTING] platform circuit breaker check falló: ${err.message}`);
     }
-  } catch (err) {
-    logger.warn(`[TESTING] platform circuit breaker check falló: ${err.message}`);
   }
   if (!launchBlocked) {
     try {

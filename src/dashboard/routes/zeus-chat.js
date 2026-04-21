@@ -758,4 +758,67 @@ router.post('/architecture-proposals/generate', async (req, res) => {
   }
 });
 
+// ═══ Agent Stances (Fase 1+2 — morning briefing + override + calibración) ═══
+router.get('/agent-stances', async (req, res) => {
+  try {
+    const ZeusAgentStance = require('../../db/models/ZeusAgentStance');
+    const { getCurrentStance } = require('../../ai/zeus/agent-stance');
+    const agents = ZeusAgentStance.AGENTS;
+    const current = {};
+    for (const a of agents) {
+      current[a] = await getCurrentStance(a);
+    }
+    res.json({ current });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/agent-stances/:agent/history', async (req, res) => {
+  try {
+    const ZeusAgentStance = require('../../db/models/ZeusAgentStance');
+    const limit = Math.min(50, parseInt(req.query.limit) || 14);
+    const history = await ZeusAgentStance.find({ agent: req.params.agent })
+      .sort({ created_at: -1 })
+      .limit(limit)
+      .lean();
+    res.json({ history });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/agent-stances/override', async (req, res) => {
+  try {
+    const { agent, stance, focus, reason, expires_in_hours } = req.body || {};
+    if (!agent || !stance) return res.status(400).json({ error: 'agent y stance requeridos' });
+    const { setOverride } = require('../../ai/zeus/agent-stance');
+    const created = await setOverride({ agent, stance, focus, reason, expires_in_hours, by: 'creator' });
+    res.json({ ok: true, stance: created });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/agent-stances/:id/renew', async (req, res) => {
+  try {
+    const { additional_hours } = req.body || {};
+    const { renewStance } = require('../../ai/zeus/agent-stance');
+    const updated = await renewStance(req.params.id, additional_hours || 24);
+    res.json({ ok: true, stance: updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/agent-stances/briefing/:agent', async (req, res) => {
+  try {
+    const { runMorningBriefing } = require('../../ai/zeus/agent-stance');
+    const stance = await runMorningBriefing(req.params.agent);
+    res.json({ ok: true, stance });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

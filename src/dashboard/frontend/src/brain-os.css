@@ -3660,3 +3660,300 @@
   color: rgba(255, 255, 255, 0.65);
 }
 
+/* ═══ Panel Stances — postura operativa del día ═══ */
+.zeus-stances-panel {
+  overflow: hidden;
+  background: rgba(10, 14, 39, 0.7);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  max-height: 560px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.zeus-stances-header {
+  padding: 12px 16px 8px;
+  background: rgba(59, 130, 246, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.zeus-stances-title {
+  font-size: 0.72rem;
+  color: #93c5fd;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.zeus-stances-sub {
+  font-size: 0.66rem;
+  color: var(--bos-text-muted);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.zeus-stances-empty {
+  padding: 24px 20px;
+  text-align: center;
+  color: var(--bos-text-dim);
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
+/* ─── StanceCard ─── */
+.zeus-stance-card {
+  background: rgba(17, 21, 51, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 3px solid #60a5fa;
+  border-radius: 8px;
+  margin: 10px 14px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.zeus-stance-card.stance-stale {
+  background: rgba(251, 191, 36, 0.04);
+}
+
+.zeus-stance-card.stance-expired {
+  opacity: 0.65;
+}
+
+.zeus-stance-card.stance-empty {
+  border-left-color: #4b5563;
+  opacity: 0.8;
+}
+
+.zeus-stance-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.zeus-stance-agent {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--bos-text);
+  text-transform: capitalize;
+}
+
+.zeus-stance-badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid;
+}
+
+.zeus-stance-flag {
+  font-size: 0.55rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.zeus-stance-flag.stale {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+}
+
+.zeus-stance-flag.expired {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.zeus-stance-flag.override {
+  background: rgba(168, 85, 247, 0.15);
+  color: #c084fc;
+}
+
+.zeus-stance-spacer { flex: 1; }
+
+.zeus-stance-source {
+  font-size: 0.6rem;
+  color: var(--bos-text-dim);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.zeus-stance-label {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--bos-text-muted);
+  margin-right: 6px;
+}
+
+.zeus-stance-focus {
+  font-size: 0.72rem;
+  color: var(--bos-text);
+  background: rgba(167, 139, 250, 0.06);
+  padding: 6px 8px;
+  border-radius: 6px;
+  border-left: 2px solid #a78bfa;
+}
+
+.zeus-stance-rationale {
+  font-size: 0.76rem;
+  color: var(--bos-text);
+  line-height: 1.5;
+}
+
+.zeus-stance-proscons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  font-size: 0.7rem;
+}
+
+.zeus-stance-pros ul,
+.zeus-stance-cons ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: var(--bos-text-muted);
+  line-height: 1.4;
+}
+
+.zeus-stance-pros li { color: #86efac; }
+.zeus-stance-cons li { color: #fca5a5; }
+
+.zeus-stance-override-reason {
+  font-size: 0.7rem;
+  color: var(--bos-text-muted);
+  font-style: italic;
+  padding: 6px 8px;
+  background: rgba(168, 85, 247, 0.05);
+  border-radius: 6px;
+}
+
+.zeus-stance-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.62rem;
+  color: var(--bos-text-dim);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.zeus-stance-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.zeus-stance-btn {
+  padding: 4px 10px;
+  font-size: 0.65rem;
+  background: rgba(17, 21, 51, 0.8);
+  border: 1px solid rgba(96, 165, 250, 0.25);
+  color: #93c5fd;
+  border-radius: 4px;
+  cursor: pointer;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.zeus-stance-btn:hover {
+  background: rgba(96, 165, 250, 0.12);
+  border-color: rgba(96, 165, 250, 0.5);
+}
+
+.zeus-stance-btn.subtle {
+  border-color: rgba(255, 255, 255, 0.08);
+  color: var(--bos-text-muted);
+  background: transparent;
+}
+
+.zeus-stance-btn.subtle:hover {
+  color: var(--bos-text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.zeus-stance-empty-msg {
+  padding: 10px 4px 4px;
+  color: var(--bos-text-dim);
+  font-size: 0.72rem;
+  font-style: italic;
+}
+
+/* ─── Historial ─── */
+.zeus-stance-history {
+  margin-top: 4px;
+  padding: 8px;
+  background: rgba(10, 14, 39, 0.5);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.zeus-stance-history-empty {
+  font-size: 0.7rem;
+  color: var(--bos-text-dim);
+  font-style: italic;
+  text-align: center;
+  padding: 8px 0;
+}
+
+.zeus-stance-history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.66rem;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.zeus-stance-history-date {
+  color: var(--bos-text-dim);
+  font-family: 'JetBrains Mono', monospace;
+  min-width: 72px;
+}
+
+.zeus-stance-history-badge {
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  font-size: 0.58rem;
+  text-transform: uppercase;
+}
+
+.zeus-stance-verdict {
+  font-size: 0.55rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.zeus-stance-history-src {
+  font-size: 0.58rem;
+  color: var(--bos-text-dim);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.zeus-stance-history-focus {
+  font-size: 0.62rem;
+  color: var(--bos-text-muted);
+  font-style: italic;
+  margin-left: auto;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+

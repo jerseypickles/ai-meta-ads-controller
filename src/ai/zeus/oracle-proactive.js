@@ -141,6 +141,53 @@ async function detectSignals(sinceDate) {
     // noop
   }
 
+  // 16. Override de agent stance vieja — ping al creador para renewal
+  try {
+    const ZeusAgentStance = require('../../db/models/ZeusAgentStance');
+    const cutoff = new Date(Date.now() - 20 * 3600000);
+    const aging = await ZeusAgentStance.find({
+      source: { $in: ['override_creator', 'override_zeus'] },
+      superseded_at: null,
+      created_at: { $lte: cutoff },
+      expires_at: { $gt: new Date() }
+    }).lean();
+    for (const s of aging) {
+      const hrs_old = Math.round((Date.now() - new Date(s.created_at).getTime()) / 3600000);
+      const hrs_left = Math.round((new Date(s.expires_at).getTime() - Date.now()) / 3600000);
+      signals.push({
+        kind: 'stance_override_aging',
+        severity: 'medium',
+        agent: s.agent,
+        stance: s.stance,
+        override_by: s.override_by,
+        reason: s.override_reason,
+        hours_old: hrs_old,
+        hours_left: hrs_left,
+        detail: `${s.agent} en override ${s.stance} hace ${hrs_old}h por ${s.override_by}. Expira en ${hrs_left}h — renová o dejá expirar.`
+      });
+    }
+  } catch (_) {}
+
+  // 17. Stance briefing fallado (fallback stale activo)
+  try {
+    const ZeusAgentStance = require('../../db/models/ZeusAgentStance');
+    const recentStale = await ZeusAgentStance.find({
+      source: { $in: ['fallback_stale', 'fallback_default'] },
+      superseded_at: null,
+      created_at: { $gte: sinceDate }
+    }).lean();
+    for (const s of recentStale) {
+      signals.push({
+        kind: 'stance_briefing_failed',
+        severity: s.source === 'fallback_default' ? 'high' : 'medium',
+        agent: s.agent,
+        fallback: s.source,
+        stance: s.stance,
+        detail: `${s.agent}: briefing matutino falló, fallback ${s.source === 'fallback_stale' ? 'usando stance de ayer' : 'default steady'}. Revisá logs.`
+      });
+    }
+  } catch (_) {}
+
   // 15. Platform degraded enter/exit events (circuit breaker)
   try {
     const events = await SafetyEvent.find({

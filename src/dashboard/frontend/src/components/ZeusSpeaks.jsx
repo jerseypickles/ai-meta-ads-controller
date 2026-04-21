@@ -617,6 +617,9 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   const [archFilter, setArchFilter] = useState('draft');
   const [showPalette, setShowPalette] = useState(false);
   const [prefDraftsCount, setPrefDraftsCount] = useState(0);
+  const [showStances, setShowStances] = useState(false);
+  const [stancesCurrent, setStancesCurrent] = useState({});
+  const [stancesHistory, setStancesHistory] = useState({});
   const scrollRef = useRef(null);
   const esRef = useRef(null);
   const streamingTextRef = useRef('');
@@ -811,6 +814,54 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
     if (showArchitecture) loadArchitecture();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showArchitecture, archFilter]);
+
+  async function loadStances() {
+    try {
+      const res = await api.get('/api/zeus/agent-stances');
+      setStancesCurrent(res.data.current || {});
+      const agents = Object.keys(res.data.current || {});
+      const histories = {};
+      for (const a of agents) {
+        try {
+          const h = await api.get(`/api/zeus/agent-stances/${a}/history`, { params: { limit: 14 } });
+          histories[a] = h.data.history || [];
+        } catch (_) {}
+      }
+      setStancesHistory(histories);
+    } catch (err) { console.error(err); }
+  }
+
+  async function overrideStance(agent) {
+    const stance = window.prompt(`Override ${agent} a qué stance? (aggressive/steady/observe-only/paused/recovering)`);
+    if (!stance) return;
+    const reason = window.prompt('Razón del override?');
+    if (!reason) return;
+    const hrsStr = window.prompt('Horas (1-72, default 24)?', '24');
+    const hours = Math.min(72, Math.max(1, parseInt(hrsStr) || 24));
+    try {
+      await api.post('/api/zeus/agent-stances/override', { agent, stance, reason, expires_in_hours: hours });
+      await loadStances();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function renewStanceUI(stanceId) {
+    try {
+      await api.post(`/api/zeus/agent-stances/${stanceId}/renew`, { additional_hours: 24 });
+      await loadStances();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function triggerBriefing(agent) {
+    if (!window.confirm(`Disparar briefing manual de ${agent}? (~30s)`)) return;
+    try {
+      await api.post(`/api/zeus/agent-stances/briefing/${agent}`);
+      await loadStances();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  useEffect(() => {
+    if (showStances) loadStances();
+  }, [showStances]);
 
   // Load counts al abrir drawer (para el badge del 💡 y 🏛️ y drafts de memoria)
   useEffect(() => {
@@ -1049,11 +1100,13 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                     setShowMemory(false);
                     setShowCodeRecs(false);
                     setShowConversationList(false);
+                    setShowStances(false);
                     if (key === 'plans') setShowPlans(true);
                     else if (key === 'calendar') setShowCalendar(true);
                     else if (key === 'architecture') setShowArchitecture(true);
                     else if (key === 'memory') setShowMemory(true);
                     else if (key === 'coderecs') setShowCodeRecs(true);
+                    else if (key === 'stances') setShowStances(true);
                     else if (key === 'conversations') {
                       loadConversationList();
                       setShowConversationList(true);
@@ -1205,6 +1258,38 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                     proposal={p}
                     onDecide={(decision, note) => decideArchProposal(p._id, decision, note)}
                     onMarkBuilt={() => markArchBuilt(p._id)}
+                  />
+                ))
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Panel Stances — postura operativa del día de cada agente */}
+        <AnimatePresence>
+          {showStances && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="zeus-stances-panel"
+            >
+              <div className="zeus-stances-header">
+                <div className="zeus-stances-title">🎯 Stances del día</div>
+                <div className="zeus-stances-sub">La postura operativa de cada agente. Morning briefing 7am ET. Podés overridear si ves algo que el agente no ve.</div>
+              </div>
+              {Object.keys(stancesCurrent).length === 0 ? (
+                <div className="zeus-stances-empty">Aún no hay stances registrados. El primer briefing matutino corre mañana 7am ET, o dispará manual abajo.</div>
+              ) : (
+                Object.entries(stancesCurrent).map(([agent, stance]) => (
+                  <StanceCard
+                    key={agent}
+                    agent={agent}
+                    stance={stance}
+                    history={stancesHistory[agent] || []}
+                    onOverride={() => overrideStance(agent)}
+                    onRenew={() => stance && renewStanceUI(stance._id)}
+                    onBriefNow={() => triggerBriefing(agent)}
                   />
                 ))
               )}
@@ -1501,6 +1586,12 @@ function ZeusPalette({ onClose, onSelect, codeRecsPending, archDrafts, prefDraft
         { key: 'plans', emoji: '🗺️', label: 'Planes', desc: 'Weekly / Monthly / Quarterly' },
         { key: 'coderecs', emoji: '💡', label: 'Code Recs', desc: 'Sugerencias de cambios', badge: codeRecsPending },
         { key: 'architecture', emoji: '🏛️', label: 'Arquitectura', desc: 'Propuestas estructurales', badge: archDrafts }
+      ]
+    },
+    {
+      group: 'Estado mental del equipo',
+      entries: [
+        { key: 'stances', emoji: '🎯', label: 'Stances', desc: 'Postura del día de cada agente' }
       ]
     }
   ];
@@ -2192,6 +2283,159 @@ function MessageBubble({ message, onFollowup }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ═══ StanceCard — postura operativa del día de un agente ═══
+const AGENT_EMOJI = { prometheus: '🔥', athena: '🦉', apollo: '🎨', ares: '⚔️' };
+const STANCE_COLOR = {
+  aggressive: '#f97316',
+  steady: '#60a5fa',
+  'observe-only': '#a78bfa',
+  paused: '#6b7280',
+  recovering: '#fbbf24'
+};
+const STANCE_LABEL = {
+  aggressive: 'AGGRESSIVE',
+  steady: 'STEADY',
+  'observe-only': 'OBSERVE',
+  paused: 'PAUSED',
+  recovering: 'RECOVERING'
+};
+const SOURCE_LABEL = {
+  briefing: 'briefing',
+  override_creator: 'override tuyo',
+  override_zeus: 'override Zeus',
+  fallback_stale: 'fallback stale',
+  fallback_default: 'fallback default'
+};
+const VERDICT_COLOR = { correct: '#10b981', wrong: '#ef4444', inconclusive: '#6b7280' };
+
+function fmtStanceTime(d) {
+  if (!d) return '—';
+  const date = new Date(d);
+  const now = Date.now();
+  const diffMs = date.getTime() - now;
+  const absHrs = Math.abs(diffMs) / 3600000;
+  if (absHrs < 1) {
+    const mins = Math.round(Math.abs(diffMs) / 60000);
+    return diffMs < 0 ? `hace ${mins}m` : `en ${mins}m`;
+  }
+  if (absHrs < 48) {
+    const hrs = Math.round(absHrs);
+    return diffMs < 0 ? `hace ${hrs}h` : `en ${hrs}h`;
+  }
+  return date.toLocaleDateString('es-AR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function StanceCard({ agent, stance, history, onOverride, onRenew, onBriefNow }) {
+  const [showHistory, setShowHistory] = useState(false);
+
+  if (!stance) {
+    return (
+      <div className="zeus-stance-card stance-empty">
+        <div className="zeus-stance-head">
+          <span className="zeus-stance-agent">{AGENT_EMOJI[agent] || '🤖'} {agent}</span>
+          <span className="zeus-stance-spacer" />
+          <button className="zeus-stance-btn" onClick={onBriefNow} title="Dispara briefing manual (~30s)">brief now</button>
+        </div>
+        <div className="zeus-stance-empty-msg">Sin stance activo. Corré briefing manual o esperá el cron matutino.</div>
+      </div>
+    );
+  }
+
+  const color = STANCE_COLOR[stance.stance] || '#94a3b8';
+  const label = STANCE_LABEL[stance.stance] || stance.stance.toUpperCase();
+  const isExpired = stance.expires_at && new Date(stance.expires_at).getTime() < Date.now();
+  const isOverride = stance.source === 'override_creator' || stance.source === 'override_zeus';
+
+  return (
+    <div className={`zeus-stance-card ${stance.stale ? 'stance-stale' : ''} ${isExpired ? 'stance-expired' : ''}`} style={{ borderLeftColor: color }}>
+      <div className="zeus-stance-head">
+        <span className="zeus-stance-agent">{AGENT_EMOJI[agent] || '🤖'} {agent}</span>
+        <span className="zeus-stance-badge" style={{ background: color + '22', color, borderColor: color + '55' }}>{label}</span>
+        {stance.stale && <span className="zeus-stance-flag stale">stale</span>}
+        {isExpired && <span className="zeus-stance-flag expired">expirado</span>}
+        {isOverride && <span className="zeus-stance-flag override">{SOURCE_LABEL[stance.source]}</span>}
+        <span className="zeus-stance-spacer" />
+        <span className="zeus-stance-source" title={`source: ${stance.source}`}>{SOURCE_LABEL[stance.source] || stance.source}</span>
+      </div>
+
+      {stance.focus && (
+        <div className="zeus-stance-focus">
+          <span className="zeus-stance-label">focus:</span> {stance.focus}
+        </div>
+      )}
+
+      {stance.rationale && (
+        <div className="zeus-stance-rationale">{stance.rationale}</div>
+      )}
+
+      {(stance.pros?.length > 0 || stance.cons?.length > 0) && (
+        <div className="zeus-stance-proscons">
+          {stance.pros?.length > 0 && (
+            <div className="zeus-stance-pros">
+              <span className="zeus-stance-label">pros:</span>
+              <ul>{stance.pros.map((p, i) => <li key={i}>{p}</li>)}</ul>
+            </div>
+          )}
+          {stance.cons?.length > 0 && (
+            <div className="zeus-stance-cons">
+              <span className="zeus-stance-label">cons:</span>
+              <ul>{stance.cons.map((c, i) => <li key={i}>{c}</li>)}</ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {stance.override_reason && (
+        <div className="zeus-stance-override-reason">
+          <span className="zeus-stance-label">razón override:</span> {stance.override_reason}
+        </div>
+      )}
+
+      <div className="zeus-stance-meta">
+        <span>creado {fmtStanceTime(stance.created_at)}</span>
+        <span>·</span>
+        <span>expira {fmtStanceTime(stance.expires_at)}</span>
+      </div>
+
+      <div className="zeus-stance-actions">
+        <button className="zeus-stance-btn" onClick={onOverride} title="Overrideá el stance como CEO">override</button>
+        <button className="zeus-stance-btn" onClick={onRenew} title="Extendé 24h más">renew 24h</button>
+        <button className="zeus-stance-btn" onClick={onBriefNow} title="Forzá un briefing nuevo (~30s)">brief now</button>
+        <span className="zeus-stance-spacer" />
+        <button className="zeus-stance-btn subtle" onClick={() => setShowHistory(!showHistory)}>
+          {showHistory ? '▾' : '▸'} historial ({history?.length || 0})
+        </button>
+      </div>
+
+      {showHistory && (
+        <div className="zeus-stance-history">
+          {(!history || history.length === 0) ? (
+            <div className="zeus-stance-history-empty">Sin historial previo.</div>
+          ) : (
+            history.map(h => (
+              <div key={h._id} className="zeus-stance-history-row">
+                <span className="zeus-stance-history-date">{fmtStanceTime(h.created_at)}</span>
+                <span className="zeus-stance-history-badge" style={{ color: STANCE_COLOR[h.stance] || '#94a3b8' }}>
+                  {STANCE_LABEL[h.stance] || h.stance}
+                </span>
+                {h.verdict && (
+                  <span className="zeus-stance-verdict" style={{ color: VERDICT_COLOR[h.verdict], borderColor: (VERDICT_COLOR[h.verdict] || '#6b7280') + '55' }}>
+                    {h.verdict}
+                  </span>
+                )}
+                {h.source && h.source !== 'briefing' && (
+                  <span className="zeus-stance-history-src">{SOURCE_LABEL[h.source] || h.source}</span>
+                )}
+                {h.focus && <span className="zeus-stance-history-focus" title={h.focus}>focus: {h.focus.substring(0, 40)}{h.focus.length > 40 ? '…' : ''}</span>}
+              </div>
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }
