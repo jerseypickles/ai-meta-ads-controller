@@ -245,6 +245,23 @@ router.get('/chat/conversations', async (req, res) => {
   }
 });
 
+// Strip markdown básico para previews de notificaciones
+function stripMarkdownForPreview(text) {
+  if (!text) return '';
+  return text
+    .replace(/```[\s\S]*?```/g, '')              // fenced code blocks
+    .replace(/`([^`]+)`/g, '$1')                 // inline code
+    .replace(/\*\*([^*]+)\*\*/g, '$1')           // bold
+    .replace(/\*([^*]+)\*/g, '$1')               // italic
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')     // links — keep label
+    .replace(/^#+\s+/gm, '')                     // headings
+    .replace(/^>\s+/gm, '')                      // blockquotes
+    .replace(/---FOLLOWUPS---[\s\S]*?---END---/g, '') // followups block
+    .replace(/\n+/g, ' ')                        // collapse newlines
+    .replace(/\s+/g, ' ')                        // collapse spaces
+    .trim();
+}
+
 // ═══ GET /chat/unread — cuenta mensajes proactivos no leídos ═══
 router.get('/chat/unread', async (req, res) => {
   try {
@@ -260,7 +277,8 @@ router.get('/chat/unread', async (req, res) => {
       unread: count,
       latest: latest ? {
         conversation_id: latest.conversation_id,
-        preview: (latest.content || '').substring(0, 200),
+        preview: stripMarkdownForPreview(latest.content || '').substring(0, 120),
+        full: (latest.content || '').substring(0, 400),
         created_at: latest.created_at
       } : null
     });

@@ -7,6 +7,21 @@ import api from '../api';
 import { renderVizBlock } from './zeus-viz';
 
 const LS_CONV_KEY = 'zeus_oracle_conversation_id';
+const LS_DRAWER_OPEN_KEY = 'zeus_oracle_drawer_open';
+const LS_MESSAGES_CACHE_KEY = 'zeus_oracle_messages_cache';
+
+function formatTimeAgo(date) {
+  if (!date) return '';
+  const d = new Date(date);
+  const secs = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+  if (secs < 60) return 'ahora';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d`;
+}
 
 function getApiBase() {
   return import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
@@ -53,11 +68,19 @@ export default function ZeusSpeaks() {
   const [conversationId, setConversationId] = useState(null);
   const [toolActivity, setToolActivity] = useState([]);
   const [streaming, setStreaming] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(() => {
+    // Restaura estado del drawer en refresh — si estaba abierto, vuelve abierto
+    try { return localStorage.getItem(LS_DRAWER_OPEN_KEY) === '1'; } catch (_) { return false; }
+  });
   const [pendingInitialMessage, setPendingInitialMessage] = useState(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [unreadPreview, setUnreadPreview] = useState(null);
   const esRef = useRef(null);
+
+  // Persiste estado del drawer
+  useEffect(() => {
+    try { localStorage.setItem(LS_DRAWER_OPEN_KEY, drawerOpen ? '1' : '0'); } catch (_) {}
+  }, [drawerOpen]);
 
   // Poll unread count cada 45s
   useEffect(() => {
@@ -207,6 +230,7 @@ export default function ZeusSpeaks() {
                 try {
                   await api.post('/api/zeus/greeting/seen', { reset: true }).catch(() => {});
                   localStorage.removeItem(LS_CONV_KEY);
+                  localStorage.removeItem(LS_MESSAGES_CACHE_KEY);
                   setConversationId(null);
                   setStreamingText('');
                   setMode('loading');
@@ -238,24 +262,26 @@ export default function ZeusSpeaks() {
         )}
       </AnimatePresence>
 
-      {/* Top banner — anuncio mini arriba del dashboard cuando hay proactive sin leer */}
+      {/* Notificación Zeus — card discreta top-right cuando hay proactive sin leer */}
       <AnimatePresence>
         {unreadPreview && unreadCount > 0 && !drawerOpen && (
           <motion.button
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ type: 'spring', damping: 22, stiffness: 280 }}
+            initial={{ opacity: 0, x: 20, scale: 0.95 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 20, scale: 0.95 }}
+            transition={{ type: 'spring', damping: 24, stiffness: 300 }}
             onClick={() => setDrawerOpen(true)}
-            className="zeus-top-banner"
+            className="zeus-notif-card"
           >
-            <span className="zeus-top-banner-icon">⚡</span>
-            <span className="zeus-top-banner-label">Zeus</span>
-            <span className="zeus-top-banner-text">{unreadPreview.preview}</span>
-            {unreadCount > 1 && (
-              <span className="zeus-top-banner-count">+{unreadCount - 1}</span>
-            )}
-            <span className="zeus-top-banner-cta">abrir ⟶</span>
+            <div className="zeus-notif-top">
+              <span className="zeus-notif-avatar">⚡</span>
+              <span className="zeus-notif-label">Zeus</span>
+              <span className="zeus-notif-time">{formatTimeAgo(unreadPreview.created_at)}</span>
+              {unreadCount > 1 && (
+                <span className="zeus-notif-count">+{unreadCount - 1}</span>
+              )}
+            </div>
+            <div className="zeus-notif-preview">{unreadPreview.preview}</div>
           </motion.button>
         )}
       </AnimatePresence>
@@ -544,7 +570,19 @@ function toolLabel(tool) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage, onInitialMessageConsumed }) {
-  const [messages, setMessages] = useState([]);
+  // Inicializa mensajes con cache local (instant show mientras server fetch corre en paralelo)
+  const [messages, setMessages] = useState(() => {
+    try {
+      const raw = localStorage.getItem(LS_MESSAGES_CACHE_KEY);
+      if (!raw) return [];
+      const cache = JSON.parse(raw);
+      // Solo usamos cache si matchea la conversation actual
+      if (cache.conversation_id === conversationId && Array.isArray(cache.messages)) {
+        return cache.messages;
+      }
+    } catch (_) {}
+    return [];
+  });
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [thinking, setThinking] = useState(false);
@@ -602,6 +640,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
     setToolActivity([]);
     onNewConversation(null);
     localStorage.removeItem(LS_CONV_KEY);
+    localStorage.removeItem(LS_MESSAGES_CACHE_KEY);
   }
 
   async function loadCodeRecs() {
@@ -785,6 +824,20 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   }, []);
 
   useEffect(() => { streamingTextRef.current = streamingText; }, [streamingText]);
+
+  // Persiste cache de mensajes en localStorage — para show instantáneo en refresh
+  useEffect(() => {
+    if (!conversationId) return;
+    try {
+      // Guardamos solo las últimas 30 mensajes para no inflar localStorage
+      const trimmed = messages.slice(-30);
+      localStorage.setItem(LS_MESSAGES_CACHE_KEY, JSON.stringify({
+        conversation_id: conversationId,
+        messages: trimmed,
+        saved_at: Date.now()
+      }));
+    } catch (_) {}
+  }, [messages, conversationId]);
   useEffect(() => { toolActivityRef.current = toolActivity; }, [toolActivity]);
   useEffect(() => { followupsRef.current = pendingFollowups; }, [pendingFollowups]);
 
@@ -810,10 +863,20 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   }, [messages, streamingText]);
 
   async function loadHistory(convId) {
-    setLoadingHistory(true);
+    // Solo mostramos loading si NO tenemos cache — cache visible instantáneo, server reconcila en bg
+    const hasCache = messages.length > 0;
+    if (!hasCache) setLoadingHistory(true);
     try {
       const res = await api.get('/api/zeus/chat/history', { params: { conversation_id: convId } });
-      setMessages(res.data.messages || []);
+      const serverMessages = res.data.messages || [];
+      // Si el server tiene más mensajes que el cache, reemplazamos. Si menos (edge case),
+      // mantenemos cache que probablemente tiene mensajes locales recientes aún no persistidos.
+      setMessages(prev => {
+        if (serverMessages.length >= prev.length) return serverMessages;
+        // Preservamos mensajes locales al final que el server todavía no tiene
+        const localTail = prev.filter(m => m._local);
+        return [...serverMessages, ...localTail];
+      });
     } catch (err) {
       console.error(err);
     } finally {

@@ -956,76 +956,96 @@
   font-family: 'JetBrains Mono', monospace;
 }
 
-/* Top banner — anuncio mini arriba del dashboard */
-.zeus-top-banner {
+/* ═══ Notification card — discreta, top-right ═══ */
+.zeus-notif-card {
   position: fixed;
-  top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 18px;
+  right: 18px;
   z-index: 55;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 16px 8px 12px;
-  max-width: min(720px, 90vw);
-  background: linear-gradient(90deg, rgba(17, 21, 51, 0.95), rgba(26, 32, 71, 0.92));
-  border: 1px solid rgba(236, 72, 153, 0.3);
-  border-radius: 999px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  width: 340px;
+  max-width: calc(100vw - 36px);
+  background: linear-gradient(145deg, rgba(20, 24, 54, 0.96), rgba(30, 22, 58, 0.94));
+  border: 1px solid rgba(139, 92, 246, 0.28);
+  border-radius: 12px;
   color: var(--bos-text);
-  font-size: 0.76rem;
   cursor: pointer;
-  backdrop-filter: blur(14px);
-  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5), 0 0 24px rgba(236, 72, 153, 0.2);
-  transition: all 150ms;
+  backdrop-filter: blur(18px);
+  box-shadow:
+    0 14px 40px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(139, 92, 246, 0.08),
+    0 0 28px rgba(139, 92, 246, 0.12);
+  transition: all 180ms ease;
   text-align: left;
+  font-family: inherit;
 }
 
-.zeus-top-banner:hover {
-  border-color: rgba(236, 72, 153, 0.5);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6), 0 0 32px rgba(236, 72, 153, 0.3);
+.zeus-notif-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(139, 92, 246, 0.45);
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(139, 92, 246, 0.15),
+    0 0 36px rgba(139, 92, 246, 0.2);
 }
 
-.zeus-top-banner-icon {
-  font-size: 0.95rem;
-  filter: drop-shadow(0 0 6px rgba(236, 72, 153, 0.55));
+.zeus-notif-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zeus-notif-avatar {
+  font-size: 0.92rem;
+  filter: drop-shadow(0 0 5px rgba(139, 92, 246, 0.55));
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(139, 92, 246, 0.15);
+  border-radius: 50%;
   flex-shrink: 0;
 }
 
-.zeus-top-banner-label {
-  font-size: 0.58rem;
-  color: #f472b6;
+.zeus-notif-label {
+  font-size: 0.62rem;
+  color: #c4b5fd;
   text-transform: uppercase;
   letter-spacing: 0.12em;
   font-weight: 700;
-  flex-shrink: 0;
 }
 
-.zeus-top-banner-text {
-  color: var(--bos-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-  min-width: 0;
+.zeus-notif-time {
+  font-size: 0.62rem;
+  color: rgba(255, 255, 255, 0.38);
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.02em;
 }
 
-.zeus-top-banner-count {
+.zeus-notif-count {
   font-size: 0.6rem;
-  padding: 2px 8px;
-  background: rgba(236, 72, 153, 0.2);
-  color: #f472b6;
+  padding: 1px 7px;
+  background: rgba(139, 92, 246, 0.2);
+  color: #c4b5fd;
   border-radius: 10px;
   font-weight: 700;
-  flex-shrink: 0;
+  margin-left: auto;
   font-family: 'JetBrains Mono', monospace;
 }
 
-.zeus-top-banner-cta {
-  font-size: 0.6rem;
-  color: var(--bos-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  flex-shrink: 0;
+.zeus-notif-preview {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* Drawer */
