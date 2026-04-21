@@ -80,6 +80,10 @@ router.get('/greeting/stream', async (req, res) => {
       conversationId = 'conv_' + crypto.randomBytes(8).toString('hex');
     }
 
+    // Computar lastSeen desde SystemConfig (mismo pattern que /greeting/check)
+    const lastSeenRaw = await SystemConfig.get(LAST_SEEN_KEY, null);
+    const lastSeen = lastSeenRaw?.at ? new Date(lastSeenRaw.at) : null;
+
     sendEvent('start', { mode, conversation_id: conversationId });
 
     const result = await runOracle({
