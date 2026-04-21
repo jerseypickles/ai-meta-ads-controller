@@ -69,15 +69,15 @@ router.get('/greeting/stream', async (req, res) => {
     // Con persistencia de chat, solo saludamos completo (una vez por día).
     const mode = 'greeting_full';
 
-    // Reusar conversation_id existente si el cliente lo pasa y es válido;
-    // si no, crear uno nuevo.
+    // Reusar conversation_id existente si el cliente lo pasa — confiamos en el
+    // cliente. Antes se hacía findOne() para validar la existencia pero eso causaba
+    // que ante un lag de replica de Mongo Atlas (o una conv recién creada sin
+    // mensajes persistidos aún) el server generara un conv_id NUEVO, el frontend
+    // sobreescribiera LS_CONV_KEY y la conversación quedara abandonada.
     let conversationId = req.query.conversation_id || null;
-    if (conversationId) {
-      const exists = await ZeusChatMessage.findOne({ conversation_id: conversationId }).select('_id').lean();
-      if (!exists) conversationId = null;
-    }
     if (!conversationId) {
       conversationId = 'conv_' + crypto.randomBytes(8).toString('hex');
+      logger.info(`[ZEUS-CHAT] /greeting/stream sin conv_id del cliente, generando ${conversationId}`);
     }
 
     // Computar lastSeen desde SystemConfig (mismo pattern que /greeting/check)

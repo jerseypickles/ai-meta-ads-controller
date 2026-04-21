@@ -136,10 +136,17 @@ export default function ZeusSpeaks() {
 
       const es = streamSSE(greetingPath, {
         start: (data) => {
-          if (data.conversation_id) {
-            setConversationId(data.conversation_id);
-            localStorage.setItem(LS_CONV_KEY, data.conversation_id);
+          if (!data.conversation_id) return;
+          const currentLS = localStorage.getItem(LS_CONV_KEY);
+          // Si el server devuelve una conv_id distinta a la que pasamos, avisamos
+          // en consola — antes esto sobreescribía silenciosamente y perdíamos historial.
+          if (currentLS && currentLS !== data.conversation_id) {
+            console.warn(`[ZEUS] greeting devolvió conv distinta: ${currentLS} → ${data.conversation_id}. Conservo la del cliente.`);
+            setConversationId(currentLS);
+            return;
           }
+          setConversationId(data.conversation_id);
+          localStorage.setItem(LS_CONV_KEY, data.conversation_id);
         },
         thinking: () => {
           // Ya se muestra el orb pulsando; no cambiamos mode
