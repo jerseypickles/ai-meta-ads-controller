@@ -449,7 +449,6 @@ router.get('/strategic-plans/:id', async (req, res) => {
 router.post('/strategic-plans/:id/approve', async (req, res) => {
   try {
     const { adjustments } = req.body || {};
-    // Supersedar cualquier plan activo del mismo horizon
     const plan = await ZeusStrategicPlan.findById(req.params.id);
     if (!plan) return res.status(404).json({ error: 'Plan no encontrado' });
 
@@ -464,7 +463,16 @@ router.post('/strategic-plans/:id/approve', async (req, res) => {
     if (adjustments) plan.creator_adjustments = adjustments;
     await plan.save();
 
-    res.json({ ok: true, plan });
+    // Propagar plan → directivas operativas a cada agente
+    let propagation = null;
+    try {
+      const { propagatePlan } = require('../../ai/zeus/plan-propagator');
+      propagation = await propagatePlan(plan);
+    } catch (propErr) {
+      logger.error(`[PLAN-APPROVE] Propagation falló: ${propErr.message}`);
+    }
+
+    res.json({ ok: true, plan, propagation });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
