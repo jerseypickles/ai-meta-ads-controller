@@ -571,6 +571,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   const [archCounts, setArchCounts] = useState({});
   const [archFilter, setArchFilter] = useState('draft');
   const [showPalette, setShowPalette] = useState(false);
+  const [prefDraftsCount, setPrefDraftsCount] = useState(0);
   const scrollRef = useRef(null);
   const esRef = useRef(null);
   const streamingTextRef = useRef('');
@@ -634,7 +635,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
 
   async function loadPreferences() {
     try {
-      const res = await api.get('/api/zeus/preferences');
+      const res = await api.get('/api/zeus/preferences', { params: { include_inactive: 1, status: 'all' } });
       setPreferences(res.data.preferences || []);
     } catch (err) { console.error(err); }
   }
@@ -648,6 +649,21 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   async function togglePreferenceActive(id, active) {
     try {
       await api.patch(`/api/zeus/preferences/${id}`, { active });
+      await loadPreferences();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function decidePreference(id, decision) {
+    try {
+      await api.post(`/api/zeus/preferences/${id}/decide`, { decision });
+      await loadPreferences();
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function triggerPreferenceDetector() {
+    if (!window.confirm('Disparar detector manual? Analiza últimos 30d de interacciones (~30s).')) return;
+    try {
+      await api.post('/api/zeus/preferences/detect');
       await loadPreferences();
     } catch (err) { alert('Error: ' + err.message); }
   }
@@ -750,7 +766,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showArchitecture, archFilter]);
 
-  // Load counts al abrir drawer (para el badge del 💡 y 🏛️)
+  // Load counts al abrir drawer (para el badge del 💡 y 🏛️ y drafts de memoria)
   useEffect(() => {
     (async () => {
       try {
@@ -760,6 +776,10 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
       try {
         const res = await api.get('/api/zeus/architecture-proposals', { params: { status: 'all' } });
         setArchCounts(res.data.counts || {});
+      } catch (_) {}
+      try {
+        const res = await api.get('/api/zeus/preferences', { params: { status: 'proposed' } });
+        setPrefDraftsCount((res.data.preferences || []).length);
       } catch (_) {}
     })();
   }, []);
@@ -931,9 +951,9 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
               title="Paneles de Zeus"
             >
               ☰
-              {(codeRecsCounts.pending + (archCounts.draft || 0)) > 0 && (
+              {(codeRecsCounts.pending + (archCounts.draft || 0) + prefDraftsCount) > 0 && (
                 <span className="zeus-icon-badge">
-                  {Math.min(99, codeRecsCounts.pending + (archCounts.draft || 0))}
+                  {Math.min(99, codeRecsCounts.pending + (archCounts.draft || 0) + prefDraftsCount)}
                 </span>
               )}
             </button>
@@ -951,6 +971,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                   onClose={() => setShowPalette(false)}
                   codeRecsPending={codeRecsCounts.pending || 0}
                   archDrafts={archCounts.draft || 0}
+                  prefDrafts={prefDraftsCount}
                   onSelect={(key) => {
                     setShowPlans(false);
                     setShowCalendar(false);
@@ -1131,27 +1152,99 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
               className="zeus-memory-panel"
             >
               <div className="zeus-memory-header">
-                <div className="zeus-memory-title">💭 Lo que Zeus recuerda de vos</div>
-                <div className="zeus-memory-sub">Preferencias persistentes entre conversaciones. Zeus las inyecta en cada respuesta.</div>
+                <div className="zeus-memory-title">💭 Lo que Zeus sabe de vos</div>
+                <div className="zeus-memory-sub">Zeus observa patrones en tu forma de operar y propone preferencias. Vos aprobás las que te cierren. Las activas se inyectan en cada respuesta.</div>
+                <button
+                  onClick={triggerPreferenceDetector}
+                  className="zeus-memory-detect-btn"
+                  title="Disparar detector manual — analiza los últimos 30d de interacciones"
+                >
+                  ↻ Detectar ahora
+                </button>
               </div>
-              {preferences.length === 0 ? (
-                <div className="zeus-memory-empty">Zeus aún no recuerda nada específico. Decíle cosas tipo "priorizá X sobre Y" y las aprenderá.</div>
-              ) : (
-                preferences.map(p => (
-                  <div key={p._id} className={`zeus-memory-item ${!p.active ? 'inactive' : ''}`}>
-                    <div className="zeus-memory-item-head">
-                      <span className="zeus-memory-cat">{p.category}</span>
-                      <span className="zeus-memory-key">{p.key}</span>
-                      <span className="zeus-memory-spacer" />
-                      <button className="zeus-memory-toggle" onClick={() => togglePreferenceActive(p._id, !p.active)} title={p.active ? 'Desactivar' : 'Reactivar'}>
-                        {p.active ? '●' : '○'}
-                      </button>
-                      <button className="zeus-memory-del" onClick={() => deletePreference(p._id)} title="Borrar">×</button>
+
+              {/* Drafts propuestos por Zeus, esperando tu decisión */}
+              {preferences.filter(p => p.status === 'proposed').length > 0 && (
+                <div className="zeus-memory-drafts-section">
+                  <div className="zeus-memory-section-title">✨ Zeus propone (esperando tu confirmación)</div>
+                  {preferences.filter(p => p.status === 'proposed').map(p => (
+                    <div key={p._id} className="zeus-memory-draft">
+                      <div className="zeus-memory-item-head">
+                        <span className="zeus-memory-cat">{p.category}</span>
+                        <span className="zeus-memory-key">{p.key}</span>
+                        <span className="zeus-memory-conf">conf {Math.round((p.confidence || 0) * 100)}%</span>
+                      </div>
+                      <div className="zeus-memory-value">{p.value}</div>
+                      {p.evidence?.summary && (
+                        <div className="zeus-memory-evidence">
+                          <span className="zeus-memory-evidence-label">Evidencia:</span> {p.evidence.summary}
+                        </div>
+                      )}
+                      {p.evidence?.datapoints?.length > 0 && (
+                        <ul className="zeus-memory-datapoints">
+                          {p.evidence.datapoints.slice(0, 3).map((d, i) => <li key={i}>{d}</li>)}
+                        </ul>
+                      )}
+                      <div className="zeus-memory-draft-actions">
+                        <button className="zeus-memory-reject" onClick={() => decidePreference(p._id, 'reject')}>
+                          Rechazar
+                        </button>
+                        <button className="zeus-memory-accept" onClick={() => decidePreference(p._id, 'accept')}>
+                          Aceptar
+                        </button>
+                      </div>
                     </div>
-                    <div className="zeus-memory-value">{p.value}</div>
-                    {p.context && <div className="zeus-memory-context">{p.context}</div>}
-                  </div>
-                ))
+                  ))}
+                </div>
+              )}
+
+              {/* Preferencias activas */}
+              {preferences.filter(p => p.status === 'active').length > 0 && (
+                <div className="zeus-memory-section">
+                  <div className="zeus-memory-section-title">● Activas</div>
+                  {preferences.filter(p => p.status === 'active').map(p => (
+                    <div key={p._id} className={`zeus-memory-item ${!p.active ? 'inactive' : ''}`}>
+                      <div className="zeus-memory-item-head">
+                        <span className="zeus-memory-cat">{p.category}</span>
+                        <span className="zeus-memory-key">{p.key}</span>
+                        {p.source === 'auto_detected' && (
+                          <span className="zeus-memory-source-badge" title="Detectada por Zeus, confirmada por vos">auto</span>
+                        )}
+                        <span className="zeus-memory-spacer" />
+                        <button className="zeus-memory-toggle" onClick={() => togglePreferenceActive(p._id, !p.active)} title={p.active ? 'Desactivar' : 'Reactivar'}>
+                          {p.active ? '●' : '○'}
+                        </button>
+                        <button className="zeus-memory-del" onClick={() => deletePreference(p._id)} title="Borrar">×</button>
+                      </div>
+                      <div className="zeus-memory-value">{p.value}</div>
+                      {p.context && <div className="zeus-memory-context">{p.context}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Rejected — histórico colapsado */}
+              {preferences.filter(p => p.status === 'rejected').length > 0 && (
+                <details className="zeus-memory-rejected-section">
+                  <summary className="zeus-memory-section-title">Rechazadas · {preferences.filter(p => p.status === 'rejected').length}</summary>
+                  {preferences.filter(p => p.status === 'rejected').map(p => (
+                    <div key={p._id} className="zeus-memory-item inactive">
+                      <div className="zeus-memory-item-head">
+                        <span className="zeus-memory-cat">{p.category}</span>
+                        <span className="zeus-memory-key">{p.key}</span>
+                        <span className="zeus-memory-spacer" />
+                        <button className="zeus-memory-del" onClick={() => deletePreference(p._id)} title="Borrar del todo">×</button>
+                      </div>
+                      <div className="zeus-memory-value">{p.value}</div>
+                    </div>
+                  ))}
+                </details>
+              )}
+
+              {preferences.length === 0 && (
+                <div className="zeus-memory-empty">
+                  Zeus aún no detectó patrones. Semanalmente (domingo 12pm) analiza tus interacciones y propone preferencias — también podés decirle directamente "priorizá X sobre Y", o disparar el detector manual con el botón ↻.
+                </div>
               )}
             </motion.div>
           )}
@@ -1322,12 +1415,12 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   );
 }
 
-function ZeusPalette({ onClose, onSelect, codeRecsPending, archDrafts }) {
+function ZeusPalette({ onClose, onSelect, codeRecsPending, archDrafts, prefDrafts }) {
   const items = [
     {
       group: 'Lo que Zeus usa para pensar',
       entries: [
-        { key: 'memory', emoji: '💭', label: 'Memoria', desc: 'Preferencias persistentes' },
+        { key: 'memory', emoji: '💭', label: 'Memoria', desc: 'Preferencias persistentes', badge: prefDrafts },
         { key: 'calendar', emoji: '📅', label: 'Calendario', desc: 'Eventos estacionales' },
         { key: 'conversations', emoji: '📁', label: 'Conversaciones', desc: 'Historial de chats' }
       ]

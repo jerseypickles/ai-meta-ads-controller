@@ -30,10 +30,40 @@ const zeusPreferenceSchema = new mongoose.Schema({
   source_conversation_id: { type: String, default: null },
   source_message: { type: String, default: '' }, // extracto del mensaje del que se inferió
 
+  // Origen — explícito (creador lo dijo) vs auto-detected (Zeus lo infirió de patrones)
+  source: {
+    type: String,
+    enum: ['explicit', 'auto_detected'],
+    default: 'explicit',
+    index: true
+  },
+
+  // Estado: proposed (Zeus lo sugirió, creador aún no confirma)
+  //         active   (confirmado/explícito, se inyecta en context)
+  //         rejected (creador dijo que no)
+  status: {
+    type: String,
+    enum: ['proposed', 'active', 'rejected'],
+    default: 'active',
+    index: true
+  },
+
+  // Para propuestas auto-detected — evidencia concreta de por qué Zeus cree esto
+  evidence: {
+    summary: { type: String, default: '' },
+    datapoints: [{ type: String }],      // 2-3 líneas concretas que soportan
+    observed_in: { type: Number, default: 0 }, // # conversaciones donde apareció el patrón
+    _id: false
+  },
+
   // Gestión
   active: { type: Boolean, default: true, index: true },
   last_referenced_at: { type: Date, default: null },
   reference_count: { type: Number, default: 0 },
+
+  // Decisión del creador sobre propuestas
+  decided_at: { type: Date, default: null },
+  decision_note: { type: String, default: '' },
 
   created_at: { type: Date, default: Date.now, index: true },
   updated_at: { type: Date, default: Date.now }

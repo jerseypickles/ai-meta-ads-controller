@@ -361,11 +361,60 @@ router.delete('/code-recs/:id', async (req, res) => {
 // ═══ GET /preferences — memoria persistente del creador ═══
 router.get('/preferences', async (req, res) => {
   try {
-    const { category, include_inactive } = req.query;
-    const filter = include_inactive ? {} : { active: true };
+    const { category, include_inactive, status } = req.query;
+    const filter = {};
+    if (status && status !== 'all') filter.status = status;
+    else if (!include_inactive) filter.active = true;
     if (category && category !== 'all') filter.category = category;
-    const prefs = await ZeusPreference.find(filter).sort({ category: 1, updated_at: -1 }).lean();
-    res.json({ preferences: prefs });
+    const prefs = await ZeusPreference.find(filter).sort({ status: 1, category: 1, updated_at: -1 }).lean();
+
+    // Contar proposed separado para badge
+    const proposedCount = await ZeusPreference.countDocuments({ status: 'proposed' });
+
+    res.json({ preferences: prefs, proposed_count: proposedCount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ POST /preferences/:id/decide — confirmar/rechazar un draft auto-detected ═══
+router.post('/preferences/:id/decide', async (req, res) => {
+  try {
+    const { decision, note, value, category, context } = req.body || {};
+    if (!['accept', 'reject'].includes(decision)) {
+      return res.status(400).json({ error: 'decision debe ser accept o reject' });
+    }
+    const pref = await ZeusPreference.findById(req.params.id);
+    if (!pref) return res.status(404).json({ error: 'No encontrada' });
+    if (pref.status !== 'proposed') return res.status(400).json({ error: 'ya fue decidida' });
+
+    // Permite editar value/category/context al aceptar
+    if (decision === 'accept') {
+      if (value) pref.value = value;
+      if (category) pref.category = category;
+      if (context) pref.context = context;
+      pref.status = 'active';
+      pref.active = true;
+    } else {
+      pref.status = 'rejected';
+      pref.active = false;
+    }
+    pref.decided_at = new Date();
+    pref.decision_note = note || '';
+    pref.updated_at = new Date();
+    await pref.save();
+    res.json(pref);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ POST /preferences/detect — dispara detector manual ═══
+router.post('/preferences/detect', async (req, res) => {
+  try {
+    const { detectPreferences } = require('../../ai/zeus/preference-detector');
+    const result = await detectPreferences();
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

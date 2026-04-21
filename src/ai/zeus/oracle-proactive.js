@@ -141,6 +141,31 @@ async function detectSignals(sinceDate) {
     // noop
   }
 
+  // 14. Preference drafts nuevos (auto-detected — esperando confirmación)
+  try {
+    const ZeusPreference = require('../../db/models/ZeusPreference');
+    const newDrafts = await ZeusPreference.find({
+      status: 'proposed',
+      source: 'auto_detected',
+      created_at: { $gte: sinceDate }
+    }).sort({ confidence: -1 }).limit(3).lean();
+    if (newDrafts.length) {
+      signals.push({
+        kind: 'preference_drafts',
+        severity: 'medium',
+        count: newDrafts.length,
+        samples: newDrafts.map(d => ({
+          key: d.key,
+          value: (d.value || '').substring(0, 120),
+          evidence: (d.evidence?.summary || '').substring(0, 120),
+          confidence: d.confidence
+        }))
+      });
+    }
+  } catch (err) {
+    // noop
+  }
+
   // 12. Verificaciones fallidas — recs marcadas applied pero código no cambió
   try {
     const ZeusCodeRecommendation = require('../../db/models/ZeusCodeRecommendation');

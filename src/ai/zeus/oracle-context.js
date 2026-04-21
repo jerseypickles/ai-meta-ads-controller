@@ -163,7 +163,7 @@ async function buildOracleContext(lastSeenAt = null) {
 
   // Preferencias persistentes del creador (memoria cross-conversación)
   try {
-    const prefs = await ZeusPreference.find({ active: true })
+    const prefs = await ZeusPreference.find({ active: true, status: 'active' })
       .sort({ category: 1, confidence: -1, updated_at: -1 })
       .limit(30)
       .lean();

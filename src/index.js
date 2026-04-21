@@ -942,6 +942,18 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'zeus-architect' });
   logger.info('  [*] Zeus Architect (Lens 3) — domingos 11:30am ET');
 
+  // Semanal domingos 12:00pm ET: Zeus Preference Detector — detecta patrones del creador
+  cron.schedule('0 12 * * 0', async () => {
+    try {
+      const { runWeeklyDetectorCron } = require('./ai/zeus/preference-detector');
+      const result = await runWeeklyDetectorCron();
+      logger.info(`[ZEUS-PREF-DETECT] ${JSON.stringify(result).substring(0, 200)}`);
+    } catch (err) {
+      logger.error(`[ZEUS-PREF-DETECT] ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'zeus-pref-detector' });
+  logger.info('  [*] Zeus Preference Detector — domingos 12pm ET');
+
   // Diario 3am ET: Zeus learner — post-mortems 7/30/90d de outcomes aplicados
   cron.schedule('0 3 * * *', async () => {
     try {
