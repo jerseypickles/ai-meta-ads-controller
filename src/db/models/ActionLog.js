@@ -227,7 +227,37 @@ const actionLogSchema = new mongoose.Schema({
   learned_overlap_count: { type: Number, default: 0 },  // Fix 4: concurrent actions count for attribution
   // Re-learning con ventana de 7d (signal mas confiable que 3d)
   learned_7d_at: { type: Date, default: null, index: true },
-  learned_7d_reward: { type: Number, default: null }
+  learned_7d_reward: { type: Number, default: null },
+
+  // Meta context — segunda derivada para hypothesis engine (timing, concurrencia, cohorte)
+  // Populado por pattern-enricher en pre-save hook.
+  meta_context: {
+    hour_et: Number,
+    dow_et: Number,
+    dow_name: String,
+    is_weekend: Boolean,
+    is_business_hours: Boolean,
+    is_evening: Boolean,
+    is_overnight: Boolean,
+    bucket_4h: Number,
+    cohort_date: String,               // "YYYY-MM-DD" en ET
+    concurrent_actions_5min: Number,
+    concurrent_actions_1h: Number,
+    _id: false
+  }
+});
+
+// Pre-save: si meta_context no está populado, lo enriquecemos automáticamente.
+actionLogSchema.pre('save', async function (next) {
+  try {
+    if (this.isNew && (!this.meta_context || !this.meta_context.hour_et)) {
+      const { enrichActionContext } = require('../../ai/zeus/pattern-enricher');
+      this.meta_context = await enrichActionContext(this);
+    }
+  } catch (_) {
+    // Si falla el enrichment, seguimos — no queremos bloquear el insert principal
+  }
+  next();
 });
 
 // Índice para buscar acciones recientes por entidad

@@ -141,6 +141,26 @@ async function detectSignals(sinceDate) {
     // noop
   }
 
+  // 15. Platform degraded enter/exit events (circuit breaker)
+  try {
+    const events = await SafetyEvent.find({
+      event_type: { $in: ['platform_degraded_enter', 'platform_degraded_exit'] },
+      created_at: { $gte: sinceDate }
+    }).sort({ created_at: -1 }).limit(2).lean();
+    for (const e of events) {
+      signals.push({
+        kind: e.event_type,
+        severity: e.severity,
+        reason: (e.reason || '').substring(0, 200),
+        detail: e.event_type === 'platform_degraded_enter'
+          ? 'Entré en modo degradado — todos los agentes con writes pausados'
+          : 'Salí de modo degradado — operación normal reanudada'
+      });
+    }
+  } catch (err) {
+    // noop
+  }
+
   // 14. Preference drafts nuevos (auto-detected — esperando confirmación)
   try {
     const ZeusPreference = require('../../db/models/ZeusPreference');

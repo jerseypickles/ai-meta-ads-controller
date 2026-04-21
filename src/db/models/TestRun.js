@@ -68,7 +68,32 @@ const testRunSchema = new mongoose.Schema({
   kill_reason: { type: String, default: '' },
 
   // Si ya se guardo feedback para Creative Agent
-  feedback_saved: { type: Boolean, default: false }
+  feedback_saved: { type: Boolean, default: false },
+
+  // Meta context — timing + cohorte + concurrencia al momento del launch
+  meta_context: {
+    hour_et: Number,
+    dow_et: Number,
+    dow_name: String,
+    is_weekend: Boolean,
+    is_business_hours: Boolean,
+    is_evening: Boolean,
+    is_overnight: Boolean,
+    bucket_4h: Number,
+    cohort_date: String,
+    concurrent_launches_1h: Number,
+    _id: false
+  }
+});
+
+testRunSchema.pre('save', async function (next) {
+  try {
+    if (this.isNew && (!this.meta_context || !this.meta_context.hour_et)) {
+      const { enrichTestRunContext } = require('../../ai/zeus/pattern-enricher');
+      this.meta_context = await enrichTestRunContext(this);
+    }
+  } catch (_) {}
+  next();
 });
 
 testRunSchema.index({ phase: 1, launched_at: -1 });

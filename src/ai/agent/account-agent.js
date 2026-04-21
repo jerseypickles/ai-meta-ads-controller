@@ -1108,8 +1108,20 @@ function _getAgentMode() {
 async function runAccountAgent() {
   const startTime = Date.now();
   const cycleId = `agent_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-  const mode = _getAgentMode();
+  let mode = _getAgentMode();
   logger.info(`═══ Iniciando Account Agent [${cycleId}] modo=${mode} ═══`);
+
+  // Platform circuit breaker — si Meta está degradada, forzamos observer (solo read, sin writes)
+  try {
+    const { isDegraded } = require('../../safety/platform-circuit-breaker');
+    const platform = await isDegraded();
+    if (platform.degraded && mode !== 'observer') {
+      logger.warn(`[ACCOUNT-AGENT] Platform degradada (${platform.reason}) — forzando observer mode, sin writes`);
+      mode = 'observer';
+    }
+  } catch (err) {
+    logger.warn(`[ACCOUNT-AGENT] platform circuit breaker check falló: ${err.message}`);
+  }
 
   // Chequear directivas avoid de Zeus (ej billing freeze)
   try {

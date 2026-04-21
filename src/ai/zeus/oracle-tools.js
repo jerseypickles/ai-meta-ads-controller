@@ -745,6 +745,16 @@ const TOOL_DEFINITIONS = [
       },
       required: ['file_path', 'rationale', 'evidence_summary', 'category', 'severity']
     }
+  },
+  {
+    name: 'query_platform_health',
+    description: 'Consulta el estado del Platform Circuit Breaker — si está degradado (Meta no entrega, billing freeze, mass WITH_ISSUES) los agentes están con writes pausados. Úsala cuando el creador pregunte por estado general o cuando vas a proponer acciones que dependen de que Meta esté operativa.',
+    input_schema: { type: 'object', properties: {}, required: [] }
+  },
+  {
+    name: 'query_portfolio_capacity',
+    description: 'Consulta capacidad del portfolio — cuántos ad sets activos, ratio en LEARNING, scales/duplications hoy, utilización vs límites estructurales. Úsala antes de recomendar duplicaciones masivas, scale-ups, o para dimensionar cuánto más el sistema puede crecer sin canibalización.',
+    input_schema: { type: 'object', properties: {}, required: [] }
   }
 ];
 
@@ -2013,8 +2023,38 @@ const TOOL_HANDLERS = {
   write_journal_entry: handleWriteJournalEntry,
   list_playbooks: handleListPlaybooks,
   query_execution_authority: handleQueryExecutionAuthority,
-  check_execution_readiness: handleCheckExecutionReadiness
+  check_execution_readiness: handleCheckExecutionReadiness,
+  query_platform_health: handleQueryPlatformHealth,
+  query_portfolio_capacity: handleQueryPortfolioCapacity
 };
+
+async function handleQueryPlatformHealth() {
+  try {
+    const { assessPlatformHealth, isDegraded } = require('../../safety/platform-circuit-breaker');
+    const [state, assessment] = await Promise.all([isDegraded(), assessPlatformHealth()]);
+    return {
+      currently_degraded: state.degraded,
+      degraded_since: state.since,
+      degraded_reason: state.reason,
+      live_assessment: {
+        degraded: assessment.degraded,
+        signals: assessment.signals,
+        metrics: assessment.metrics
+      }
+    };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function handleQueryPortfolioCapacity() {
+  try {
+    const { assessCapacity } = require('./portfolio-capacity');
+    return await assessCapacity();
+  } catch (err) {
+    return { error: err.message };
+  }
+}
 
 async function executeTool(toolName, input) {
   const handler = TOOL_HANDLERS[toolName];

@@ -746,18 +746,34 @@ async function runTestingAgent() {
   // Fase 0: Procesar force_graduate directives de Zeus (orden directa del CEO)
   const forceGraduated = await processForceGraduateDirectives();
 
-  // Chequear directivas avoid de Zeus — si existe, skipeamos launches pero
-  // seguimos monitoreando tests activos (no dejarlos huérfanos).
+  // Chequear directivas avoid de Zeus + platform circuit breaker.
+  // Si existe cualquier bloqueo, skipeamos launches pero seguimos monitoreando
+  // tests activos (no dejarlos huérfanos).
   let launchBlocked = false;
+  let blockReason = '';
   try {
-    const { isAgentBlocked } = require('../zeus/directive-guard');
-    const block = await isAgentBlocked('prometheus');
-    if (block.blocked) {
-      logger.info(`[TESTING] Launches SKIP por directiva de Zeus: "${block.reason}"`);
+    const { isDegraded } = require('../../safety/platform-circuit-breaker');
+    const platform = await isDegraded();
+    if (platform.degraded) {
+      logger.warn(`[TESTING] Launches SKIP — plataforma degradada: ${platform.reason}`);
       launchBlocked = true;
+      blockReason = `platform: ${platform.reason}`;
     }
   } catch (err) {
-    logger.warn(`[TESTING] directive-guard check falló: ${err.message}`);
+    logger.warn(`[TESTING] platform circuit breaker check falló: ${err.message}`);
+  }
+  if (!launchBlocked) {
+    try {
+      const { isAgentBlocked } = require('../zeus/directive-guard');
+      const block = await isAgentBlocked('prometheus');
+      if (block.blocked) {
+        logger.info(`[TESTING] Launches SKIP por directiva de Zeus: "${block.reason}"`);
+        launchBlocked = true;
+        blockReason = `directive: ${block.reason}`;
+      }
+    } catch (err) {
+      logger.warn(`[TESTING] directive-guard check falló: ${err.message}`);
+    }
   }
 
   // Fase 1: Lanzar tests nuevos (salvo que Zeus haya bloqueado)

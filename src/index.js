@@ -891,6 +891,21 @@ function initCronJobs() {
   });
   logger.info('  [*] Kill switch monitor — cada 15 min');
 
+  // Cada 15 min (offset 7 min para no chocar con kill switch): Platform Circuit Breaker
+  // Detecta billing freeze / mass WITH_ISSUES / zero delivery y activa modo degradado
+  cron.schedule('7,22,37,52 * * * *', async () => {
+    try {
+      const { runHealthCheckCron } = require('./safety/platform-circuit-breaker');
+      const result = await runHealthCheckCron();
+      if (result.degraded) {
+        logger.warn(`[PLATFORM-CB] degraded=true · signals=${result.signals.map(s => s.kind).join(',')}`);
+      }
+    } catch (err) {
+      logger.error(`[PLATFORM-CB-CRON] ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'platform-circuit-breaker' });
+  logger.info('  [*] Platform Circuit Breaker — cada 15 min (offset 7)');
+
   // Cada 30 minutos: Zeus proactive — detecta señales y manda mensaje espontáneo al chat
   cron.schedule('*/30 * * * *', async () => {
     try {

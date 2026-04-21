@@ -679,6 +679,23 @@ async function runAresAgent() {
   const cycleId = `ares_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   logger.info(`═══ Iniciando Ares Agent [${cycleId}] ═══`);
 
+  // Fase -2: Platform circuit breaker — si Meta está degradada, no duplicamos
+  try {
+    const { isDegraded } = require('../../safety/platform-circuit-breaker');
+    const platform = await isDegraded();
+    if (platform.degraded) {
+      logger.warn(`[ARES] Cycle SKIP — plataforma degradada: ${platform.reason}`);
+      return {
+        skipped: true,
+        reason: `platform_degraded: ${platform.reason}`,
+        elapsed: '0s',
+        cycle_id: cycleId
+      };
+    }
+  } catch (err) {
+    logger.warn(`[ARES] platform circuit breaker check falló, continúo: ${err.message}`);
+  }
+
   // Fase -1: Chequear directivas 'avoid' activas de Zeus (ej billing freeze)
   try {
     const { isAgentBlocked } = require('../zeus/directive-guard');
@@ -695,6 +712,27 @@ async function runAresAgent() {
     }
   } catch (err) {
     logger.warn(`[ARES] directive-guard check falló, continúo: ${err.message}`);
+  }
+
+  // Fase 0: Portfolio capacity — si hit limits, skip duplications (solo para este ciclo)
+  let capacityBlocked = false;
+  try {
+    const { canExecuteAction } = require('../zeus/portfolio-capacity');
+    const cap = await canExecuteAction('duplicate_adset');
+    if (!cap.allowed) {
+      logger.warn(`[ARES] Duplications SKIP por capacidad: ${cap.reason}`);
+      capacityBlocked = true;
+    }
+  } catch (err) {
+    logger.warn(`[ARES] capacity check falló, continúo: ${err.message}`);
+  }
+  if (capacityBlocked) {
+    return {
+      skipped: true,
+      reason: 'portfolio_capacity_limit',
+      elapsed: '0s',
+      cycle_id: cycleId
+    };
   }
 
   // Fase 1: Obtener o crear campana Ares
