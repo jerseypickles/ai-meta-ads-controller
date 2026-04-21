@@ -25,7 +25,8 @@ const PRINCIPLES = [
   'uncontested_causal_assumption',      // Dejó pasar causalidad asumida sin señalar
   'suppressed_disagreement',            // Había discrepancia pero no la dijo
   'missing_counterfactual',             // Atribuyó outcome sin baseline contrafactual
-  'template_execution_without_thinking' // Aplicó estructura sin diagnosticar el caso
+  'template_execution_without_thinking',// Aplicó estructura sin diagnosticar el caso
+  'trusted_stale_context'               // Trustea contexto base histórico como si fuera fresh; no refresha con tools
 ];
 
 const zeusJournalSchema = new mongoose.Schema({

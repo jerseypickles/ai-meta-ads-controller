@@ -2627,7 +2627,8 @@ const PRINCIPLE_LABELS = {
   uncontested_causal_assumption: 'causalidad no señalada',
   suppressed_disagreement: 'suprimió desacuerdo',
   missing_counterfactual: 'sin contrafactual',
-  template_execution_without_thinking: 'forma sin fondo'
+  template_execution_without_thinking: 'forma sin fondo',
+  trusted_stale_context: 'confió en contexto stale'
 };
 
 function fmtCalibDate(d) {
