@@ -149,11 +149,19 @@ router.get('/chat/stream', async (req, res) => {
       conversation_id = 'conv_' + crypto.randomBytes(8).toString('hex');
     }
 
-    // Load history
-    const prev = await ZeusChatMessage.find({ conversation_id })
-      .sort({ created_at: 1 })
-      .limit(40)
-      .lean();
+    // Load history — últimos N mensajes (no los primeros N).
+    // Bug histórico fijado 2026-04-21: antes hacía sort ASC + limit 40, que cargaba
+    // los primeros 40 mensajes de la conversación (el inicio), no los últimos. En
+    // conversaciones largas Zeus respondía basado en el arranque del hilo, no en
+    // el thread reciente. Eso causaba history-pull dominante de temas antiguos.
+    //
+    // Fix: sort DESC + limit 18 + reverse → últimos 18 en orden cronológico.
+    // Trim a 18 (de 40) para que debates largos no dominen el context y Zeus
+    // pueda respetar la REGLA #1 del persona (scope drift).
+    const prev = (await ZeusChatMessage.find({ conversation_id })
+      .sort({ created_at: -1 })
+      .limit(18)
+      .lean()).reverse();
 
     const history = [];
     for (const m of prev) {
