@@ -1281,6 +1281,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
               className="zeus-plans-panel"
             >
               <div className="zeus-plans-header">
+                <button className="zeus-panel-close" onClick={() => setShowPlans(false)} aria-label="Cerrar panel">×</button>
                 <div className="zeus-plans-title">🗺️ Planes estratégicos</div>
                 <div className="zeus-plans-filter">
                   {['all', 'weekly', 'monthly', 'quarterly'].map(h => (
@@ -1332,6 +1333,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
               className="zeus-calendar-panel"
             >
               <div className="zeus-calendar-header">
+                <button className="zeus-panel-close" onClick={() => setShowCalendar(false)} aria-label="Cerrar panel">×</button>
                 <div className="zeus-calendar-title">📅 Calendario estacional</div>
                 <div className="zeus-calendar-sub">Zeus sabe lo que viene (awareness). No activa directivas automáticas — vos decidís cuándo arrancar.</div>
               </div>
@@ -1374,6 +1376,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
               className="zeus-architecture-panel"
             >
               <div className="zeus-architecture-header">
+                <button className="zeus-panel-close" onClick={() => setShowArchitecture(false)} aria-label="Cerrar panel">×</button>
                 <div className="zeus-architecture-title">🏛️ Propuestas arquitectónicas</div>
                 <div className="zeus-architecture-sub">Bottlenecks estructurales — Zeus propone opciones, vos decidís.</div>
                 <div className="zeus-architecture-filter">
@@ -1427,6 +1430,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
               className="zeus-stances-panel"
             >
               <div className="zeus-stances-header">
+                <button className="zeus-panel-close" onClick={() => setShowStances(false)} aria-label="Cerrar panel">×</button>
                 <div className="zeus-stances-title">🎯 Stances del día</div>
                 <div className="zeus-stances-sub">La postura operativa de cada agente. Morning briefing 7am ET. Podés overridear si ves algo que el agente no ve.</div>
               </div>
@@ -1459,6 +1463,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
               className="zeus-calib-panel"
             >
               <div className="zeus-calib-header">
+                <button className="zeus-panel-close" onClick={() => setShowCalibration(false)} aria-label="Cerrar panel">×</button>
                 <div className="zeus-calib-title">📓 Calibración de respuesta</div>
                 <div className="zeus-calib-sub">Archive de golden / anti-refs + trampas + auditoría trimestral. Detecta drift empíricamente.</div>
                 <div className="zeus-calib-tabs">
@@ -1552,6 +1557,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
               className="zeus-ap-panel"
             >
               <div className="zeus-ap-header">
+                <button className="zeus-panel-close" onClick={() => setShowAutoPause(false)} aria-label="Cerrar panel">×</button>
                 <div className="zeus-ap-title">🎚️ Auto-Pause — palanca bounded</div>
                 <div className="zeus-ap-sub">Pausa automática de adsets con ROAS_3d &lt;0.3 + spend ≥$150 + 0-1 compras. Criterio matemático auditable, no L5.</div>
               </div>
@@ -1657,6 +1663,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
               className="zeus-memory-panel"
             >
               <div className="zeus-memory-header">
+                <button className="zeus-panel-close" onClick={() => setShowMemory(false)} aria-label="Cerrar panel">×</button>
                 <div className="zeus-memory-title">💭 Lo que Zeus sabe de vos</div>
                 <div className="zeus-memory-sub">Zeus observa patrones en tu forma de operar y propone preferencias. Vos aprobás las que te cierren. Las activas se inyectan en cada respuesta.</div>
                 <button
@@ -1765,6 +1772,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
               className="zeus-coderecs-panel"
             >
               <div className="zeus-coderecs-header">
+                <button className="zeus-panel-close" onClick={() => setShowCodeRecs(false)} aria-label="Cerrar panel">×</button>
                 <div className="zeus-coderecs-title">💡 Recomendaciones de Zeus</div>
                 <div className="zeus-coderecs-filter">
                   {['pending', 'accepted', 'rejected', 'applied', 'all'].map(f => (
@@ -1810,6 +1818,10 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
               exit={{ height: 0, opacity: 0 }}
               className="zeus-conversations-panel"
             >
+              <div className="zeus-conversations-header">
+                <button className="zeus-panel-close" onClick={() => setShowConversationList(false)} aria-label="Cerrar panel">×</button>
+                <div className="zeus-conversations-title">📁 Conversaciones previas</div>
+              </div>
               {conversationList.length === 0 ? (
                 <div className="zeus-conversations-empty">No hay conversaciones previas</div>
               ) : (
