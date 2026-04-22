@@ -10,7 +10,7 @@ const { TOOL_DEFINITIONS, executeTool } = require('./oracle-tools');
 
 const claude = new Anthropic({ apiKey: config.claude.apiKey });
 const MODEL = 'claude-sonnet-4-6';  // más barato que Opus para sub-agents
-const MAX_TOOL_ROUNDS = 4;
+const MAX_TOOL_ROUNDS = 8;          // bumped 4→8 (2026-04-22): agentes recolectaban data y agotaban rounds sin sintetizar respuesta
 const MAX_TOKENS = 2500;
 
 // Personalidades y tools que cada agente puede usar
@@ -66,6 +66,7 @@ Zeus (tu CEO) te está consultando sobre algo específico. Respondé en 2-4 orac
   const messages = [{ role: 'user', content: question }];
   const toolsUsed = [];
   let finalText = '';
+  let exhaustedRounds = false;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     let response;
@@ -87,44 +88,78 @@ Zeus (tu CEO) te está consultando sobre algo específico. Respondé en 2-4 orac
       };
     }
 
-    const assistantContent = [];
-    let hadToolUse = false;
-
+    // Acumular texto de TODOS los text blocks de esta response
     for (const block of response.content) {
       if (block.type === 'text') {
-        assistantContent.push(block);
         finalText += block.text;
-      } else if (block.type === 'tool_use') {
-        hadToolUse = true;
-        assistantContent.push(block);
-        let toolResult;
-        try {
-          toolResult = await executeTool(block.name, block.input);
-        } catch (err) {
-          toolResult = { error: err.message };
-        }
-        toolsUsed.push(block.name);
-        messages.push({ role: 'assistant', content: assistantContent });
-        messages.push({
-          role: 'user',
-          content: [{
-            type: 'tool_result',
-            tool_use_id: block.id,
-            content: JSON.stringify(toolResult).substring(0, 6000)
-          }]
-        });
-        break;
       }
     }
 
-    if (!hadToolUse) break;
+    // Recolectar TODOS los tool_use blocks (fix bug: antes hacía break en el primero,
+    // perdía tool_use blocks paralelos. Anthropic API soporta multi tool_use por turno.)
+    const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
+
+    // Si no hubo tool calls, el modelo terminó — break del loop
+    if (toolUseBlocks.length === 0) break;
+
+    // Push assistant turn con el content completo (text + tool_uses)
+    messages.push({ role: 'assistant', content: response.content });
+
+    // Ejecutar TODOS los tool calls en paralelo
+    const toolResultBlocks = await Promise.all(toolUseBlocks.map(async (block) => {
+      let toolResult;
+      try {
+        toolResult = await executeTool(block.name, block.input);
+      } catch (err) {
+        toolResult = { error: err.message };
+      }
+      toolsUsed.push(block.name);
+      return {
+        type: 'tool_result',
+        tool_use_id: block.id,
+        content: JSON.stringify(toolResult).substring(0, 6000)
+      };
+    }));
+
+    // Push TODOS los tool_results en una sola user message (Anthropic API requirement)
+    messages.push({ role: 'user', content: toolResultBlocks });
+
+    // Marcar exhausted si éste fue el último round permitido
+    if (round === MAX_TOOL_ROUNDS - 1) exhaustedRounds = true;
+  }
+
+  // FIX bug raíz: si agotamos rounds sin producir text final, forzar synthesis sin tools.
+  // Esto cierra el caso "agente mudo" — el modelo recolectó data pero no llegó a sintetizar.
+  if (exhaustedRounds && !finalText.trim()) {
+    logger.warn(`[AGENT-BRAIN:${agentKey}] rounds exhausted sin text — forzando synthesis call sin tools`);
+    try {
+      const synthesis = await claude.messages.create({
+        model: MODEL,
+        max_tokens: MAX_TOKENS,
+        system: systemPrompt + '\n\nIMPORTANTE: Ya consultaste todas las tools necesarias. NO hagas más tool calls. Sintetizá AHORA tu respuesta concreta basada en lo que recolectaste hasta ahora. Texto solamente.',
+        // tools omitido a propósito — fuerza text-only response
+        messages
+      });
+      for (const block of synthesis.content) {
+        if (block.type === 'text') finalText += block.text;
+      }
+    } catch (err) {
+      logger.warn(`[AGENT-BRAIN:${agentKey}] synthesis call falló: ${err.message}`);
+    }
+  }
+
+  // Fallback transparente si después del synthesis sigue vacío
+  let responseText = finalText.trim();
+  if (!responseText) {
+    responseText = `⚠️ ${cfg.name} agotó ${MAX_TOOL_ROUNDS} rounds + synthesis sin sintetizar respuesta. Tools usados: ${toolsUsed.join(', ') || 'ninguno'}. Es señal de que la pregunta requirió más data de la que tengo disponible o el contexto se saturó.`;
+    logger.warn(`[AGENT-BRAIN:${agentKey}] respuesta vacía tras exhaust + synthesis fallback`);
   }
 
   return {
     agent: agentKey,
     agent_name: cfg.name,
     agent_emoji: cfg.emoji,
-    response: finalText.trim(),
+    response: responseText,
     tools_used: toolsUsed
   };
 }
