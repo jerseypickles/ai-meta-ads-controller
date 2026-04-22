@@ -66,8 +66,9 @@ function fmtPct(n) {
 }
 
 function fmtRoas(n) {
-  if (n == null || n === 0) return '—';
-  return `${n.toFixed(2)}x`;
+  // 0 es un valor válido (ventana con spend pero sin ventas) — solo "—" cuando es null/undefined
+  if (n == null) return '—';
+  return `${Number(n).toFixed(2)}x`;
 }
 
 function roasColor(r) {
@@ -152,7 +153,6 @@ export default function AdSetDetailCard({ adsetId, onClose }) {
         <div className="adset-detail-card__title-block">
           <div className="adset-detail-card__title">{entity.name}</div>
           <div className="adset-detail-card__subtitle">
-            {entity.campaign && <span>{entity.campaign}</span>}
             <span className={`adset-detail-card__status adset-detail-card__status--${String(entity.status || '').toLowerCase()}`}>
               {entity.status}
             </span>
@@ -204,6 +204,12 @@ export default function AdSetDetailCard({ adsetId, onClose }) {
                   </div>
                   <div className="adset-detail-card__window-row">
                     <span>Spend</span><span>{fmtMoney(m.spend)}</span>
+                  </div>
+                  <div className="adset-detail-card__window-row">
+                    <span>Revenue</span>
+                    <span style={{ color: m.revenue > 0 ? '#10b981' : 'var(--bos-text-muted)' }}>
+                      {fmtMoney(m.revenue)}
+                    </span>
                   </div>
                   <div className="adset-detail-card__window-row">
                     <span>Compras</span><span>{m.purchases || 0}</span>

@@ -1150,7 +1150,7 @@ router.post('/auto-pause/health/run', async (req, res) => {
 // Devuelve la misma data que el tool query_adset_detail pero vía HTTP directo (sin LLM).
 router.get('/entity/adset/:id/detail', async (req, res) => {
   try {
-    const { getLatestSnapshots, getSnapshotHistory } = require('../../db/queries');
+    const { getLatestSnapshots, getSnapshotHistory, getAdsForAdSet } = require('../../db/queries');
     const ActionLog = require('../../db/models/ActionLog');
     const BrainMemory = require('../../db/models/BrainMemory');
     const TestRun = require('../../db/models/TestRun');
@@ -1163,29 +1163,9 @@ router.get('/entity/adset/:id/detail', async (req, res) => {
     const match = adsetSnapshots.find(s => s.entity_id === adsetId);
     if (!match) return res.status(404).json({ error: 'adset no encontrado' });
 
-    // Ads adentro
-    const adSnapshots = await getLatestSnapshots('ad');
-    const adsInside = adSnapshots
-      .filter(s => s.parent_adset_id === adsetId)
-      .map(s => {
-        const m7 = s.metrics?.last_7d || {};
-        const mToday = s.metrics?.today || {};
-        return {
-          id: s.entity_id,
-          name: s.entity_name,
-          status: s.status,
-          spend_today: Math.round(mToday.spend || 0),
-          spend_7d: Math.round(m7.spend || 0),
-          roas_7d: +(m7.roas || 0).toFixed(2),
-          purchases_7d: m7.purchases || 0,
-          ctr: +(m7.ctr || 0).toFixed(2),
-          frequency: +(m7.frequency || 0).toFixed(2)
-        };
-      })
-      .sort((a, b) => b.spend_7d - a.spend_7d);
-
-    // History, acciones, tests, memoria — en paralelo
-    const [history, actions, tests, memory] = await Promise.all([
+    // Ads adentro + history + actions + tests + memory en paralelo
+    const [adsRaw, history, actions, tests, memory] = await Promise.all([
+      getAdsForAdSet(adsetId).catch(() => []),
       getSnapshotHistory(adsetId, days).catch(() => []),
       ActionLog.find({ entity_id: adsetId, success: true })
         .sort({ executed_at: -1 }).limit(10).lean().catch(() => []),
@@ -1194,27 +1174,71 @@ router.get('/entity/adset/:id/detail', async (req, res) => {
       BrainMemory.findOne({ entity_id: adsetId }).lean().catch(() => null)
     ]);
 
+    const adsInside = adsRaw.map(s => {
+      const m7 = s.metrics?.last_7d || {};
+      const mToday = s.metrics?.today || {};
+      const roas7d = m7.spend > 0 ? (m7.purchase_value || 0) / m7.spend : 0;
+      return {
+        id: s.entity_id,
+        name: s.entity_name,
+        status: s.status,
+        spend_today: Math.round(mToday.spend || 0),
+        spend_7d: Math.round(m7.spend || 0),
+        roas_7d: +roas7d.toFixed(2),
+        purchases_7d: m7.purchases || 0,
+        ctr: +(m7.ctr || 0).toFixed(2),
+        frequency: +(m7.frequency || 0).toFixed(2)
+      };
+    }).sort((a, b) => b.spend_7d - a.spend_7d);
+
     const mToday = match.metrics?.today || {};
     const m3 = match.metrics?.last_3d || {};
     const m7 = match.metrics?.last_7d || {};
     const m14 = match.metrics?.last_14d || {};
 
     function windowMetrics(m) {
+      const spend = m.spend || 0;
+      const revenue = m.purchase_value || 0;
+      const purchases = m.purchases || 0;
       return {
-        spend: Math.round(m.spend || 0),
-        roas: +(m.roas || 0).toFixed(2),
-        purchases: m.purchases || 0,
-        cpa: m.purchases > 0 ? +(m.spend / m.purchases).toFixed(2) : null,
+        spend: Math.round(spend),
+        revenue: Math.round(revenue),
+        roas: spend > 0 ? +(revenue / spend).toFixed(2) : 0,
+        purchases,
+        cpa: purchases > 0 ? +(spend / purchases).toFixed(2) : null,
         ctr: +(m.ctr || 0).toFixed(2),
         frequency: +(m.frequency || 0).toFixed(2)
       };
     }
 
+    // Serie diaria — agrupar snapshots por día (último snapshot de cada día)
+    // y calcular spend/revenue/roas del día usando metrics.today
+    const byDay = new Map();
+    for (const snap of history) {
+      const day = new Date(snap.snapshot_at).toISOString().slice(0, 10);
+      // Tomamos el último snapshot del día (history viene ASC, así sobrescribimos)
+      byDay.set(day, snap);
+    }
+    const dailyHistory = Array.from(byDay.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, snap]) => {
+        const t = snap.metrics?.today || {};
+        const spend = t.spend || 0;
+        const revenue = t.purchase_value || 0;
+        return {
+          date,
+          spend: Math.round(spend),
+          revenue: Math.round(revenue),
+          roas: spend > 0 ? +(revenue / spend).toFixed(2) : 0,
+          purchases: t.purchases || 0
+        };
+      });
+
     res.json({
       entity: {
         id: match.entity_id,
         name: match.entity_name,
-        campaign: match.campaign_name,
+        campaign_id: match.campaign_id,
         status: match.status,
         daily_budget: match.daily_budget,
         learning_stage: match.learning_stage,
@@ -1226,12 +1250,7 @@ router.get('/entity/adset/:id/detail', async (req, res) => {
         last_7d: windowMetrics(m7),
         last_14d: windowMetrics(m14)
       },
-      daily_history: history.slice(-days).map(h => ({
-        date: h.date,
-        spend: Math.round(h.spend || 0),
-        roas: +(h.roas || 0).toFixed(2),
-        purchases: h.purchases || 0
-      })),
+      daily_history: dailyHistory,
       ads: adsInside,
       ads_count: adsInside.length,
       recent_actions: actions.map(a => ({
