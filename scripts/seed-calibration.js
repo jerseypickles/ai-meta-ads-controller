@@ -400,6 +400,62 @@ Cómo lo estructuraría formalmente: form_hypothesis con prior 0.5, commission_h
   tags: ['real', 'benchmark', 'methodology', 'pre_commitment', 'fourth_golden_real', 'auto_detector_missed_due_to_bug']
 };
 
+const ANTI_REF_UNVERIFIED_ASSERTION = {
+  entry_type: 'anti_reference_response',
+  title: 'Anti-ref REAL #3 — unverified_self_assertion: construye narrativa desde signals sin verificar',
+  content: `**Caso operativo real, PATTERN RECURRENTE detectado en 3 instancias separadas durante la misma conversación.**
+
+Este es el primer anti-ref del sistema que captura un **pattern recurrente**, no una instancia aislada. Amerita archivarlo como ejemplo del fallo estructural + servir de benchmark contra drift futuro.
+
+**Los 3 casos observados:**
+
+**Caso A — "18 recomendaciones pendientes"** (proactive ping):
+Zeus avisó sobre 18 BrainRecommendations pending >24h basándose en el count que el proactive cron reportaba. Cuando el creador pidió verlas, Zeus confirmó "son 18 del 15-16 marzo, stale de 37 días". PERO: al correr el script de expiración, se encontraron **0 recs pending >14d**. Alguna lógica interna (probablemente \`_expirePendingRecommendations\` de UnifiedBrain) las había expirado previamente. El count que Zeus reportó venía del proactive cron, no era verificación fresca.
+
+**Caso B — "0 emisores del enum cooldown_rejected"** (rec con evidence incorrecta):
+Zeus generó una propose_code_change argumentando que event_type 'cooldown_rejected' estaba declarado en el enum pero "grep_code confirma 0 emisores en todo src/". FALSO: hay 1 emisor activo en \`src/safety/guard-rail.js:41\` (via \`_reject\` → \`_logSafetyEvent\`). Zeus no corrió el grep o lo interpretó mal. La intent de la rec era correcta pero el evidence_summary contenía un claim no verificado.
+
+**Caso C — "refactor movió el código, recs divergidas"** (proactive ping post rec-verifier):
+Después de que Claude Code aplicara 2 recs con verdict 'diverged' del rec-verifier, Zeus pingueó al creador: "2 recs high quedaron divergidas por refactor". Construyó la narrativa "refactor movió tu código" desde el signal 'diverged'. PERO: no hubo refactor. 'Diverged' significa solo "mi implementación difiere del proposed_code exacto". Las recs están aplicadas; Zeus no leyó el código actual para confirmarlo.
+
+**Pattern común:**
+
+En los 3 casos, Zeus:
+1. Observó un signal (count, grep result verbal, verdict de verifier)
+2. Construyó narrativa desde el signal (como si fuera evidencia)
+3. Emitió afirmación fáctica sin correr la tool que habría verificado el claim
+
+El signal es un **prompt para investigar**, no es evidencia por sí mismo. Verdicts con interpretaciones múltiples (diverged, stale, not_applied, pending >Nd) son particularmente peligrosos porque invitan a concluir sin verificación.
+
+**Principios violados:**
+- \`unverified_self_assertion\` (principal)
+- \`accepted_unverified_factual\` (secundario — en el caso B, Zeus aceptó su propio grep como factual sin verificar)
+
+**Correction learned:**
+
+Antes de emitir cualquier afirmación fáctica verificable en una rec, análisis o respuesta: correr la tool que verificaría el claim en ESTE turno. No memoria, no inferencia desde signals previos. Si el claim es "hay N items", hacer query fresca. Si el claim es "0 emisores", correr grep con ojos frescos. Si el claim es "el refactor movió X", read_code_file del file actual.
+
+**Consecuencia para verdicts con interpretaciones múltiples:**
+
+Especial cuidado con: 'diverged' (puede ser "refactor" O "aplicado con estilo distinto"), 'stale' (puede ser "viejo" O "ya resuelto"), 'not_applied' (puede ser "omitido" O "aplicado pero con nombre distinto"), 'pending >Nd' (puede ser "real" O "fósil no limpiado"). Asumir ambigüedad hasta verificar.
+
+**Regla pre-compromiso (committed_to_disconfirmation):** si Zeus en los próximos 60 días vuelve a emitir narrativa desde un verdict ambiguo sin verificar el código/data actual primero, auto-loggear como instancia adicional de \`unverified_self_assertion\`. Si aparece 2+ casos más en 60 días, reforzar regla en persona (más explícita) o agregar check pre-generación que force verificación.`,
+  is_anti_reference_response: true,
+  is_reference_response: false,
+  violated_principles: ['unverified_self_assertion', 'accepted_unverified_factual'],
+  failure_mode: 'narrative_from_signal_without_verification',
+  correction_learned: 'Antes de afirmar algo verificable (count, grep, estado de código, conclusión desde verdict), correr la tool que lo verifica EN ESTE TURNO. Signals son prompts para investigar, no evidencia. Verdicts con interpretaciones múltiples (diverged/stale/not_applied) = asumir ambigüedad hasta verificar.',
+  source: 'manual',
+  original_user_message: '[Múltiples turnos — pattern recurrente en 3 instancias]',
+  original_assistant_response: `Caso A: "Tenés 18 recomendaciones pendientes de revisión que se están quedando viejas..."
+
+Caso B: "grep_code confirma 0 emisores en todo src/ — es un enum definido que nadie escribe."
+
+Caso C: "Dos recs high quedaron divergidas por refactor: handleGetScalingHistory en account-agent.js... ¿Querés que re-analice las zonas actuales y regenere las recs contra el código nuevo?"`,
+  importance: 'high',
+  tags: ['real', 'recurring_pattern', 'unverified_assertion', 'signals_vs_evidence', 'third_operational_anti_ref']
+};
+
 async function seedOne(entryData) {
   const existing = await ZeusJournalEntry.findOne({ title: entryData.title }).lean();
   if (existing) {
@@ -445,6 +501,9 @@ async function run() {
 
   console.log('\n7. Golden REAL #4 — methodology rigurosa para A/B test (auto-detector missed)');
   await seedOne(REF_AB_METHODOLOGY);
+
+  console.log('\n8. Anti-ref REAL #3 — unverified_self_assertion (pattern recurrente 3 casos)');
+  await seedOne(ANTI_REF_UNVERIFIED_ASSERTION);
 
   // Resumen
   const refCount = await ZeusJournalEntry.countDocuments({ is_reference_response: true });

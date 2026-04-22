@@ -2826,7 +2826,8 @@ const PRINCIPLE_LABELS = {
   template_execution_without_thinking: 'forma sin fondo',
   trusted_stale_context: 'confió en contexto stale',
   ignored_explicit_correction: 'ignoró corrección explícita',
-  conversational_scope_drift: 'salió del scope'
+  conversational_scope_drift: 'salió del scope',
+  unverified_self_assertion: 'afirmó sin verificar'
 };
 
 function fmtCalibDate(d) {

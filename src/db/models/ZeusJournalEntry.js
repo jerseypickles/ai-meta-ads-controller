@@ -29,7 +29,8 @@ const PRINCIPLES = [
   'template_execution_without_thinking',// Aplicó estructura sin diagnosticar el caso
   'trusted_stale_context',              // Trustea contexto base histórico como si fuera fresh; no refresha con tools
   'ignored_explicit_correction',        // El creador corrigió explícitamente y el agente repitió la conducta
-  'conversational_scope_drift'          // Elabora sobre temas ya cerrados o no preguntados; sale del scope de la pregunta actual
+  'conversational_scope_drift',         // Elabora sobre temas ya cerrados o no preguntados; sale del scope de la pregunta actual
+  'unverified_self_assertion'           // Afirma algo verificable (count, grep, estado de código) sin correr la tool que lo verificaría; construye narrativa desde signals (diverged/stale/N items) sin verificar el signal contra el código/data actual
 ];
 
 const zeusJournalSchema = new mongoose.Schema({
