@@ -472,8 +472,13 @@ router.get('/auto-generate-status/:jobId', (req, res) => {
 
 router.delete('/shots/:filename', (req, res) => {
   try {
+    // Guard contra path traversal — CVE-class bug: sin esto ../etc/passwd borra files arbitrarios
+    const requested = req.params.filename;
+    if (!requested || requested.includes('..') || requested.includes('/') || requested.includes('\\') || requested.includes('\x00')) {
+      return res.status(400).json({ error: 'Invalid filename' });
+    }
     const shotsDir = path.join(config.system.uploadsDir, 'video-shots');
-    const filePath = path.join(shotsDir, req.params.filename);
+    const filePath = path.join(shotsDir, path.basename(requested));
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
       res.json({ success: true });

@@ -169,7 +169,11 @@ router.post('/upload', upload.single('file'), async (req, res) => {
             });
             logger.info(`[PRODUCT-DETECT] "${detected.product_name}" (linea: ${detected.product_line}, sabor: ${detected.flavor}) detectado para ${req.file.originalname}`);
           }
-        }).catch(() => {});
+        }).catch((err) => {
+          // Silent failure dejaba el asset sin product_name → Apollo no podía asignarlo
+          // a un producto → perdido del pipeline sin traza. Logueamos para diagnóstico.
+          logger.warn(`[PRODUCT-DETECT] Background detect falló para ${req.file.originalname}: ${err.message} — asset ${asset._id} queda sin product_name`);
+        });
       }
     }
 
@@ -769,8 +773,13 @@ router.post('/generate/images', async (req, res) => {
  * Servir imagen generada para preview en frontend.
  */
 router.get('/generate/preview/:filename', (req, res) => {
+  // Guard contra path traversal — CVE-class bug: sin esto ../.env leaks secrets
+  const requested = req.params.filename;
+  if (!requested || requested.includes('..') || requested.includes('/') || requested.includes('\\') || requested.includes('\x00')) {
+    return res.status(400).json({ error: 'Invalid filename' });
+  }
   const GENERATED_DIR = path.join(config.system.uploadsDir, 'generated');
-  const filePath = path.join(GENERATED_DIR, req.params.filename);
+  const filePath = path.join(GENERATED_DIR, path.basename(requested));
 
   if (!fs.existsSync(filePath)) {
     return res.status(404).json({ error: 'Imagen no encontrada' });
@@ -886,7 +895,11 @@ router.post('/generate/accept', async (req, res) => {
           });
           logger.info(`[PRODUCT-DETECT] "${detected.product_name}" (linea: ${detected.product_line}, sabor: ${detected.flavor}) detectado para ${newFilename}`);
         }
-      }).catch(() => {});
+      }).catch((err) => {
+        // Silent failure dejaba el asset generado por AI sin product_name. Peor que
+        // el caso de upload porque Apollo espera estos clasificados automáticamente.
+        logger.warn(`[PRODUCT-DETECT] Background detect falló para asset generado ${newFilename}: ${err.message} — asset ${asset._id} queda sin product_name`);
+      });
     }
 
     logger.info(`Creative IA aceptado: openai -> ${newFilename}`);

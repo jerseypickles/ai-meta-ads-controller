@@ -491,7 +491,12 @@ async function gatherAccountIntelligence() {
         const camp3Data = await meta.get(`/${aresCampaign3Id}`, { fields: 'daily_budget' });
         cbo3Budget = camp3Data.daily_budget ? parseInt(camp3Data.daily_budget) / 100 : 0;
       }
-    } catch (_) {}
+    } catch (err) {
+      // Silent failure dejaba los 3 budgets en 0 sin traza — durante billing freezes o rate
+      // limits de Meta esto sucede y downstream decisiones estratégicas se tomaban sobre data
+      // corrupta (CBO budget reportado como 0 → conclusiones erradas en Zeus learner).
+      logger.warn(`[ZEUS-LEARNER] Failed to load Ares CBO budgets from Meta: ${err.message} — budgets quedaron en 0, impacta output de este ciclo`);
+    }
 
     aresData = {
       ...aresData,

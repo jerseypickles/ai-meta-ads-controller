@@ -566,7 +566,12 @@ async function killOrExpireTest(test, reason, phase) {
       // El Creative Agent lee esto al rankear escenas
       await TestRun.findByIdAndUpdate(test._id, { $set: { feedback_saved: true } });
     }
-  } catch (_) {}
+  } catch (err) {
+    // Silent failure acá rompe el feedback loop Prometheus→Apollo (scene ranking).
+    // Sin log, el mismo test puede procesarse múltiples veces sin que feedback_saved
+    // se marque — degrada aprendizaje creativo sin traza.
+    logger.warn(`[TESTING-AGENT] Failed to mark feedback_saved for test ${test._id}: ${err.message} — scene feedback loop compromised`);
+  }
 
   logger.info(`[TESTING-AGENT] ${phase.toUpperCase()}: "${test.test_adset_name}" — ${reason}`);
 

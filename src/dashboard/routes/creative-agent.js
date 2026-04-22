@@ -164,8 +164,13 @@ router.get('/products/:id/image/:filename', async (req, res) => {
     }
 
     // Fallback: intentar desde disco (productos viejos)
+    // Guard contra path traversal — el match contra png_references NO sanitiza el filename
+    const requested = req.params.filename;
+    if (!requested || requested.includes('..') || requested.includes('/') || requested.includes('\\') || requested.includes('\x00')) {
+      return res.status(400).json({ error: 'Invalid filename' });
+    }
     const productUploadDir = path.join(config.system.uploadsDir || 'uploads', 'product-bank');
-    const filePath = path.join(productUploadDir, req.params.filename);
+    const filePath = path.join(productUploadDir, path.basename(requested));
     if (fs.existsSync(filePath)) return res.sendFile(filePath);
 
     res.status(404).json({ error: 'Image not found' });

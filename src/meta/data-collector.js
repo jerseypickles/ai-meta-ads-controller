@@ -322,7 +322,12 @@ class DataCollector {
           { $group: { _id: '$entity_id', doc: { $first: '$$ROOT' } } }
         ]);
         for (const s of recentSnaps) prevSnapshots[s._id] = s.doc;
-      } catch (_) {}
+      } catch (err) {
+        // Silent failure acá rompe la protección contra "suspicious batch" que viene abajo.
+        // Si aggregation falla, prevSnapshots queda vacío y la línea 327+ no puede preservar
+        // métricas previas cuando Meta devuelve zero glitches. Logueamos para diagnóstico.
+        logger.warn(`[DATA-COLLECTOR] Failed to load prevSnapshots for zero-glitch protection: ${err.message} — continuing with empty prev; suspicious-batch guard downstream may be compromised`);
+      }
 
       // ── Health check: si >50% de ad sets activos vinieron con spend=0, batch sospechoso ──
       const activeWithInsights = adSetEntries.filter(([id, info]) => info.effective_status === 'ACTIVE');
