@@ -269,37 +269,21 @@ async function auditResponsePostHoc({ userMessage, assistantResponse, conversati
     if (!assistantResponse || assistantResponse.length < MIN_ASSISTANT_RESPONSE_CHARS) return null;
     if (!userMessage || userMessage.length < MIN_USER_MESSAGE_CHARS) return null;
 
-    // Paso 1 — clasificador
-    const classification = await classifyNeedsAudit(userMessage);
-    if (!classification.needs_audit) {
-      // No loggeamos cada skip — sería ruido
-      return null;
-    }
-
-    // Paso 2 — checklist
-    let checklist;
+    // Paso A — detector de golden (committed_to_disconfirmation).
+    // Corre SIEMPRE, independiente del classifier de anti-ref.
+    // Bug previo: estaba nested dentro del path de anti-ref, entonces si el
+    // turno no era sobre "creator judgment" (ej: respuesta a propuesta abierta),
+    // el classifier retornaba needs_audit=false y el golden detector nunca
+    // se ejecutaba — perdíamos goldens reales en preguntas no-juicio.
+    let commitmentDetection = null;
     try {
-      checklist = await runChecklist({ userMessage, assistantResponse });
+      commitmentDetection = await detectCommitmentToDisconfirmation(assistantResponse);
     } catch (err) {
-      logger.warn(`[RESPONSE-AUDITOR] checklist call failed: ${err.message}`);
-      return null;
+      logger.warn(`[RESPONSE-AUDITOR] commitment detector failed: ${err.message}`);
     }
 
-    // Paso 3 — interpretar
-    const interp = interpretChecklist(checklist);
-
-    // Paso 3b — en paralelo, detectar si califica como committed_to_disconfirmation (golden positivo)
-    // Solo si la respuesta NO es anti-ref (si falló en algo, no es golden).
-    if (!interp.is_anti_ref) {
-      let commitmentDetection = null;
+    if (commitmentDetection?.qualifies) {
       try {
-        commitmentDetection = await detectCommitmentToDisconfirmation(assistantResponse);
-      } catch (err) {
-        logger.warn(`[RESPONSE-AUDITOR] commitment detector failed: ${err.message}`);
-      }
-
-      if (commitmentDetection?.qualifies) {
-        // Persistir golden reference con principio committed_to_disconfirmation
         const goldenEntry = await ZeusJournalEntry.create({
           entry_type: 'reference_response',
           title: `Golden auto-detectada — pre-compromiso falsable (committed_to_disconfirmation)`,
@@ -315,8 +299,34 @@ async function auditResponsePostHoc({ userMessage, assistantResponse, conversati
           tags: ['post_hoc_audit', 'auto_detected', 'committed_to_disconfirmation']
         });
         logger.info(`[RESPONSE-AUDITOR] golden ref auto-detectada id=${goldenEntry._id} (committed_to_disconfirmation)`);
+      } catch (goldenErr) {
+        logger.warn(`[RESPONSE-AUDITOR] golden persist failed: ${goldenErr.message}`);
       }
+    }
 
+    // Paso B — checklist de anti-ref (separado, gated por classifier de juicio)
+    // Este path solo aplica cuando el creador emitió afirmación fáctica/causal
+    // que Zeus pudo haber validado sin verificar.
+    const classification = await classifyNeedsAudit(userMessage);
+    if (!classification.needs_audit) {
+      logger.info(`[RESPONSE-AUDITOR] audit passed for conv=${conversation_id}${commitmentDetection?.qualifies ? ' (golden)' : ''}`);
+      return { outcome: 'passed', conversation_id, golden: !!commitmentDetection?.qualifies };
+    }
+
+    // Paso C — checklist (detecta anti-refs)
+    let checklist;
+    try {
+      checklist = await runChecklist({ userMessage, assistantResponse });
+    } catch (err) {
+      logger.warn(`[RESPONSE-AUDITOR] checklist call failed: ${err.message}`);
+      return { outcome: 'skipped', reason: err.message, golden: !!commitmentDetection?.qualifies };
+    }
+
+    // Paso D — interpretar
+    const interp = interpretChecklist(checklist);
+
+    // Golden detection ya corrió en Paso A. Si el turno no es anti-ref, devolvemos passed.
+    if (!interp.is_anti_ref) {
       logger.info(`[RESPONSE-AUDITOR] audit passed for conv=${conversation_id}${commitmentDetection?.qualifies ? ' (golden)' : ''}`);
       return { outcome: 'passed', conversation_id, golden: !!commitmentDetection?.qualifies };
     }

@@ -331,6 +331,75 @@ Q5 — Sí al principio, con matiz: criterio estricto de detección = (i) señal
   tags: ['real', 'benchmark', 'spec_review', 'anti_gaming', 'third_golden_real']
 };
 
+const REF_AB_METHODOLOGY = {
+  entry_type: 'reference_response',
+  title: 'Golden REAL #4 — methodology rigurosa para A/B test de motores de imagen',
+  content: `**Por qué es golden reference real:**
+
+El creador propuso "queremos agregar Gemini + otro motor y A/B testear contra GPT". Zeus respondió con methodology completa que aplica todos los principios anti-validation, pre-commitment, separación medible/intuición.
+
+**1. Pre-commitment a métrica primaria antes de ver resultado:**
+
+> "Métrica primaria definida antes. ¿Ganador por ROAS 7d? ¿Por CTR? ¿Por purchase rate? Si no lo definís antes, después vas a cherry-pickear la métrica donde gana el que querías que ganara."
+
+Anti-cherry-picking explícito. Pre-compromiso falsable: ROAS 7d primary, CTR secondary. Si después ganan ambos en CTR pero pierden en ROAS, el resultado es "perdió" — no se puede revisar la métrica post-hoc.
+
+**2. Aislamiento de variables cuantificado:**
+
+> "Apollo hoy rankea por DNA fitness, así que el control natural es: tomar los top 5-10 DNAs y generar el mismo DNA con ambos motores."
+
+Mismo DNA + mismo prompt + mismo producto + mismo ángulo. Isolation strict — sin esto medís "todo junto", no el motor.
+
+**3. Sample size + tiempo + costo concretos:**
+
+- 6-12 creativos por brazo (no "algunos")
+- 7-14d ventana (no "un tiempo")
+- ~$600-1200 budget total (no "barato")
+
+Cada constraint con número, pre-comprometido antes de ejecutar.
+
+**4. Reuso de infraestructura existente vs invención:**
+
+> "Esto es justo el caso donde form_hypothesis + commission_hypothesis_test agregan valor real."
+
+Identifica que el aparato bayesiano de L2 (que construimos hace meses) es la herramienta correcta. No propone build nuevo cuando hay infra que aplica. Mostró conocimiento del propio sistema.
+
+**Principios ejemplificados:**
+- \`committed_to_disconfirmation\`: pre-commitment a métrica primaria con consecuencia explícita ("si no la definís antes, vas a cherry-pickear")
+- \`separate_measurable_from_intuition\`: cuantificó samples / ventana / costo en lugar de "razonable" o "suficiente"
+- \`resist_validation\`: no validó el A/B test por default. Dio condiciones estrictas ("para que el test sea válido") que pueden hacer que la propuesta misma se descarte.
+
+**Para diffear futuras propuestas de experimento:** si Zeus dice "sí hacelo" sin definir métrica primaria pre-resultado, sin cuantificar samples, o sin pensar en cómo aislar variables — comparar contra esta y diagnosticar qué se perdió.
+
+**Contexto técnico:** este turno NO fue capturado por el auto-detector original porque el classifier de needs_audit retornó false (la pregunta del creador era propuesta, no juicio fáctico). Bug arquitectónico: el golden detector estaba nested dentro del path de anti-ref. Fix aplicado en mismo commit que esta entrada (decoupled — el detector ahora corre siempre, independiente del classifier).`,
+  is_reference_response: true,
+  is_anti_reference_response: false,
+  principles_exemplified: [
+    'committed_to_disconfirmation',
+    'separate_measurable_from_intuition',
+    'resist_validation'
+  ],
+  source: 'manual',
+  original_user_message: 'queremos agregar Gemini + otro motor de imagen y A/B testear contra GPT — qué pensás',
+  original_assistant_response: `Idea sólida y es exactamente el tipo de decisión que merece un A/B formal, no "probemos el nuevo a ver qué pasa". Pero antes de entusiasmarme con el diseño, te marco los puntos críticos para que salga bien:
+
+Lo que tiene que estar blindado para que el test sea válido:
+
+Aislar la variable. Ambos motores tienen que generar sobre el mismo DNA (mismo prompt, misma escena, mismo producto, mismo ángulo).
+
+Muestra mínima por motor. Con 2-3 creativos por motor no vas a tener señal. Prometheus típicamente necesita 3-6 tests graduados por brazo para conclusión. O sea ~6-12 creativos vivos por motor mínimo, corridos en paralelo.
+
+Métrica primaria definida antes. ROAS 7d como primaria, CTR como secundaria. Si no lo definís antes, después vas a cherry-pickear la métrica donde gana el que querías que ganara.
+
+Ventana temporal. Mínimo 7d de spend por creativo, ideal 14d.
+
+Costo del test. Si son ~12 creativos × $50-100 spend para graduar ≈ $600-1200 presupuesto del experimento.
+
+Cómo lo estructuraría formalmente: form_hypothesis con prior 0.5, commission_hypothesis_test con 6 samples min por brazo, Zeus actualiza prior bayesiano a medida que llegan resultados.`,
+  importance: 'high',
+  tags: ['real', 'benchmark', 'methodology', 'pre_commitment', 'fourth_golden_real', 'auto_detector_missed_due_to_bug']
+};
+
 async function seedOne(entryData) {
   const existing = await ZeusJournalEntry.findOne({ title: entryData.title }).lean();
   if (existing) {
@@ -373,6 +442,9 @@ async function run() {
 
   console.log('\n6. Golden REAL #3 — respuesta al PRD auto_pause');
   await seedOne(REF_PRD_REVIEW);
+
+  console.log('\n7. Golden REAL #4 — methodology rigurosa para A/B test (auto-detector missed)');
+  await seedOne(REF_AB_METHODOLOGY);
 
   // Resumen
   const refCount = await ZeusJournalEntry.countDocuments({ is_reference_response: true });
