@@ -226,4 +226,28 @@ router.get('/thoughts', async (req, res) => {
   }
 });
 
+// ═══ POST /directives/:id/deactivate — desactivar una directiva desde el panel ═══
+router.post('/directives/:id/deactivate', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const reason = req.body?.reason || 'deactivated from panel';
+    const dir = await ZeusDirective.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          active: false,
+          last_validated_at: new Date(),
+          'data.deactivated_by': 'panel_ui',
+          'data.deactivation_reason': reason
+        }
+      },
+      { new: true }
+    );
+    if (!dir) return res.status(404).json({ error: 'directiva no encontrada' });
+    res.json({ ok: true, directive: dir });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

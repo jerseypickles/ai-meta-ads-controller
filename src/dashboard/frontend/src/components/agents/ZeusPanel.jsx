@@ -293,21 +293,111 @@ const DIRECTIVE_COLORS = {
 };
 
 function DirectivesSection({ directives }) {
+  const [filter, setFilter] = useState('all'); // all | creator | learner | persistent
+  const [localDeactivated, setLocalDeactivated] = useState(new Set());
+
   if (directives.length === 0) {
     return <EmptyState>Sin directivas. Zeus generará en su próximo ciclo.</EmptyState>;
   }
 
-  const active = directives.filter(d => d.active !== false);
-  const historical = directives.filter(d => d.active === false);
+  // Fuente efectiva: source top-level o data.source legacy
+  function effectiveSource(d) {
+    return d.source || d.data?.source || 'system';
+  }
+
+  const active = directives.filter(d => d.active !== false && !localDeactivated.has(d._id));
+  const historical = directives.filter(d => d.active === false || localDeactivated.has(d._id));
+
+  // Counts para los filter chips
+  const count = {
+    all: active.length,
+    creator: active.filter(d => effectiveSource(d) === 'chat').length,
+    persistent: active.filter(d => d.persistent === true).length,
+    learner: active.filter(d => effectiveSource(d) === 'learner').length
+  };
+
+  // Filtro activo
+  const filtered = active.filter(d => {
+    if (filter === 'all') return true;
+    if (filter === 'creator') return effectiveSource(d) === 'chat';
+    if (filter === 'persistent') return d.persistent === true;
+    if (filter === 'learner') return effectiveSource(d) === 'learner';
+    return true;
+  });
+
+  // Orden: persistent primero, luego source=chat, luego resto por confidence
+  filtered.sort((a, b) => {
+    if (a.persistent !== b.persistent) return a.persistent ? -1 : 1;
+    const sa = effectiveSource(a), sb = effectiveSource(b);
+    const prio = { chat: 0, proactive: 1, learner: 2, system: 3 };
+    if (prio[sa] !== prio[sb]) return (prio[sa] ?? 4) - (prio[sb] ?? 4);
+    return (b.confidence || 0) - (a.confidence || 0);
+  });
+
+  async function handleDeactivate(id) {
+    if (!window.confirm('¿Desactivar esta directiva?')) return;
+    try {
+      await api.post(`/api/zeus/directives/${id}/deactivate`, { reason: 'panel_button' });
+      setLocalDeactivated(new Set([...localDeactivated, id]));
+    } catch (err) {
+      alert('Error desactivando: ' + (err?.response?.data?.error || err.message));
+    }
+  }
+
+  const chips = [
+    { key: 'all', label: 'Todas', color: '#93c5fd', n: count.all },
+    { key: 'creator', label: '👑 Creador', color: '#60a5fa', n: count.creator },
+    { key: 'persistent', label: '🔒 Estables', color: '#fbbf24', n: count.persistent },
+    { key: 'learner', label: '🤖 Learner', color: 'var(--bos-text-muted)', n: count.learner }
+  ];
 
   return (
     <div>
       {active.length > 0 && (
         <div>
           <SectionHeader label="Activas" count={active.length} color="#fbbf24" />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {active.map((d, i) => (
-              <DirectiveCard key={d._id || i} d={d} index={i} />
+
+          {/* Filter chips */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+            {chips.map(c => (
+              <button
+                key={c.key}
+                onClick={() => setFilter(c.key)}
+                style={{
+                  background: filter === c.key ? `${c.color}22` : 'transparent',
+                  border: `1px solid ${filter === c.key ? c.color : 'rgba(255,255,255,0.08)'}`,
+                  color: filter === c.key ? c.color : 'var(--bos-text-muted)',
+                  fontSize: '0.64rem',
+                  fontFamily: 'JetBrains Mono, monospace',
+                  padding: '4px 10px',
+                  borderRadius: 12,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5
+                }}
+              >
+                <span>{c.label}</span>
+                <span style={{ opacity: 0.7 }}>·</span>
+                <span>{c.n}</span>
+              </button>
+            ))}
+          </div>
+
+          {filtered.length === 0 && (
+            <EmptyState>Sin directivas en este filtro.</EmptyState>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {filtered.map((d, i) => (
+              <DirectiveCard
+                key={d._id || i}
+                d={d}
+                index={i}
+                effectiveSource={effectiveSource(d)}
+                onDeactivate={handleDeactivate}
+              />
             ))}
           </div>
         </div>
@@ -317,7 +407,13 @@ function DirectivesSection({ directives }) {
           <SectionHeader label="Histórico reciente" count={historical.length} color="var(--bos-text-dim)" />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {historical.slice(0, 8).map((d, i) => (
-              <DirectiveCard key={d._id || i} d={d} index={i} faded />
+              <DirectiveCard
+                key={d._id || i}
+                d={d}
+                index={i}
+                effectiveSource={effectiveSource(d)}
+                faded
+              />
             ))}
           </div>
         </div>
@@ -326,41 +422,125 @@ function DirectivesSection({ directives }) {
   );
 }
 
-function DirectiveCard({ d, index, faded }) {
+// Formatea tiempo restante: "13d 20h", "4h 30m", "12m", "expirada"
+function timeRemaining(expires_at) {
+  if (!expires_at) return null;
+  const diff = new Date(expires_at).getTime() - Date.now();
+  if (diff <= 0) return { label: 'expirada', expired: true };
+  const days = Math.floor(diff / 86400000);
+  const hours = Math.floor((diff % 86400000) / 3600000);
+  const mins = Math.floor((diff % 3600000) / 60000);
+  if (days > 0) return { label: `${days}d ${hours}h`, expired: false, days };
+  if (hours > 0) return { label: `${hours}h ${mins}m`, expired: false, days: 0 };
+  return { label: `${mins}m`, expired: false, days: 0 };
+}
+
+function DirectiveCard({ d, index, faded, effectiveSource, onDeactivate }) {
+  const [expanded, setExpanded] = useState(false);
   const color = DIRECTIVE_COLORS[d.directive_type] || '#6b7280';
   const targetColor = AGENT_COLORS[d.target_agent] || '#6b7280';
+  const isCreator = effectiveSource === 'chat';
+  const isPersistent = d.persistent === true;
+  const isProactive = effectiveSource === 'proactive';
+  const isLearner = effectiveSource === 'learner';
+  const remaining = timeRemaining(d.expires_at);
+  const reasoning = d.data?.reasoning || '';
+
+  // Tier styling — de más importante (persistent) a menos (learner)
+  let tierStyle;
+  if (isPersistent) {
+    tierStyle = {
+      className: 'dir-card tier-persistent',
+      tierLabel: '🔒 REGLA ESTABLE',
+      tierColor: '#fbbf24',
+      borderLeft: `4px solid #fbbf24`,
+      boxShadow: '0 0 18px rgba(251, 191, 36, 0.08)',
+      background: 'linear-gradient(180deg, rgba(251, 191, 36, 0.06), rgba(17, 21, 51, 0.55))'
+    };
+  } else if (isCreator) {
+    tierStyle = {
+      className: 'dir-card tier-creator',
+      tierLabel: '👑 CREADOR',
+      tierColor: '#60a5fa',
+      borderLeft: `4px solid #60a5fa`,
+      boxShadow: '0 0 14px rgba(96, 165, 250, 0.1)',
+      background: 'linear-gradient(180deg, rgba(96, 165, 250, 0.04), rgba(17, 21, 51, 0.55))'
+    };
+  } else if (isProactive) {
+    tierStyle = {
+      className: 'dir-card tier-proactive',
+      tierLabel: '💡 ZEUS',
+      tierColor: '#f97316',
+      borderLeft: `3px solid #f97316`,
+      boxShadow: 'none',
+      background: 'rgba(17, 21, 51, 0.48)'
+    };
+  } else {
+    // learner o system
+    tierStyle = {
+      className: 'dir-card tier-learner',
+      tierLabel: isLearner ? '🤖 learner' : '· system',
+      tierColor: 'var(--bos-text-dim)',
+      borderLeft: `2px solid ${color}55`,
+      boxShadow: 'none',
+      background: 'rgba(17, 21, 51, 0.32)'
+    };
+  }
+
+  const textSize = isPersistent || isCreator ? '0.83rem' : '0.74rem';
+  const padding = isPersistent || isCreator ? '12px 14px' : '8px 12px';
+
   return (
     <motion.div
       initial={{ opacity: 0, x: -8 }}
       animate={{ opacity: faded ? 0.55 : 1, x: 0 }}
       transition={{ delay: index * 0.04 }}
+      className={tierStyle.className}
       style={{
-        background: faded ? 'rgba(17, 21, 51, 0.3)' : 'rgba(17, 21, 51, 0.55)',
+        background: faded ? 'rgba(17, 21, 51, 0.25)' : tierStyle.background,
         borderRadius: 10,
-        padding: '10px 14px',
-        borderLeft: `3px solid ${color}`,
+        padding,
+        borderLeft: tierStyle.borderLeft,
+        boxShadow: faded ? 'none' : tierStyle.boxShadow,
         position: 'relative',
-        overflow: 'hidden'
+        overflow: 'hidden',
+        transition: 'all 0.2s'
       }}
     >
-      {/* Agent-to-agent flow header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-        <span style={{ fontSize: '0.88rem', filter: 'drop-shadow(0 0 6px #fbbf24)' }}>⚡</span>
-        <span style={{ fontSize: '0.6rem', color: 'var(--bos-text-dim)' }}>→</span>
-        <span style={{ fontSize: '0.95rem' }}>{AGENT_ICONS[d.target_agent] || '?'}</span>
+      {/* Header — tier label + agent + type + status/countdown + actions */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+        {/* Tier badge — la más prominente */}
         <span style={{
-          fontSize: '0.58rem',
+          fontSize: '0.55rem',
+          fontWeight: 700,
+          color: tierStyle.tierColor,
+          textTransform: 'uppercase',
+          letterSpacing: '0.12em',
+          padding: '2px 7px',
+          borderRadius: 4,
+          background: `${tierStyle.tierColor}15`,
+          whiteSpace: 'nowrap'
+        }}>
+          {tierStyle.tierLabel}
+        </span>
+
+        {/* Agent destino */}
+        <span style={{ fontSize: '0.9rem' }}>{AGENT_ICONS[d.target_agent] || '?'}</span>
+        <span style={{
+          fontSize: '0.56rem',
           fontWeight: 700,
           color: targetColor,
           textTransform: 'uppercase',
-          letterSpacing: '0.12em'
+          letterSpacing: '0.1em'
         }}>
           {d.target_agent}
         </span>
+
+        {/* Directive type */}
         <span style={{
           fontSize: '0.55rem',
-          padding: '2px 8px',
-          borderRadius: 8,
+          padding: '2px 7px',
+          borderRadius: 4,
           background: `${color}22`,
           color,
           textTransform: 'uppercase',
@@ -369,34 +549,163 @@ function DirectiveCard({ d, index, faded }) {
         }}>
           {d.directive_type}
         </span>
-        {d.executed ? (
-          <span style={{ fontSize: '0.58rem', color: 'var(--bos-bio)', marginLeft: 'auto', fontFamily: 'JetBrains Mono, monospace' }}>
-            ✓ EXECUTED
-          </span>
-        ) : d.active !== false ? (
-          <span style={{ fontSize: '0.58rem', color: '#fbbf24', marginLeft: 'auto', fontFamily: 'JetBrains Mono, monospace' }}>
-            ⏳ ACTIVE
-          </span>
-        ) : (
-          <span style={{ fontSize: '0.58rem', color: 'var(--bos-text-dim)', marginLeft: 'auto', fontFamily: 'JetBrains Mono, monospace' }}>
-            ✗ EXPIRED
-          </span>
-        )}
+
+        {/* Status / countdown a la derecha */}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+          {d.executed ? (
+            <span style={{ fontSize: '0.58rem', color: 'var(--bos-bio)', fontFamily: 'JetBrains Mono, monospace' }}>
+              ✓ EXECUTED
+            </span>
+          ) : d.active === false || faded ? (
+            <span style={{ fontSize: '0.58rem', color: 'var(--bos-text-dim)', fontFamily: 'JetBrains Mono, monospace' }}>
+              ✗ {remaining?.expired ? 'EXPIRED' : 'INACTIVE'}
+            </span>
+          ) : isPersistent ? (
+            <span style={{ fontSize: '0.58rem', color: '#fbbf24', fontFamily: 'JetBrains Mono, monospace', fontWeight: 600 }}>
+              ∞ permanente
+            </span>
+          ) : remaining ? (
+            <span
+              style={{
+                fontSize: '0.58rem',
+                color: remaining.days >= 7 ? 'var(--bos-bio)' :
+                       remaining.days >= 2 ? '#60a5fa' :
+                       remaining.days >= 1 ? '#fbbf24' : '#f97316',
+                fontFamily: 'JetBrains Mono, monospace',
+                fontWeight: 600
+              }}
+              title={`expira ${new Date(d.expires_at).toLocaleString()}`}
+            >
+              ⏱ {remaining.label}
+            </span>
+          ) : (
+            <span style={{ fontSize: '0.58rem', color: '#fbbf24', fontFamily: 'JetBrains Mono, monospace' }}>
+              ⏳ activa
+            </span>
+          )}
+
+          {/* Botón desactivar — solo para directivas del creador, no executadas, no faded */}
+          {isCreator && !faded && !d.executed && onDeactivate && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDeactivate(d._id);
+              }}
+              title="Desactivar esta directiva"
+              style={{
+                background: 'transparent',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                color: 'var(--bos-text-muted)',
+                width: 20,
+                height: 20,
+                borderRadius: 4,
+                fontSize: '0.7rem',
+                cursor: 'pointer',
+                padding: 0,
+                lineHeight: 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.15s'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = '#ef4444';
+                e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = 'var(--bos-text-muted)';
+                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+              }}
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
-      <div style={{ fontSize: '0.83rem', color: 'var(--bos-text)', lineHeight: 1.5, marginBottom: 4 }}>
+
+      {/* Texto de la directiva */}
+      <div
+        style={{
+          fontSize: textSize,
+          color: 'var(--bos-text)',
+          lineHeight: 1.5,
+          marginBottom: 4,
+          cursor: reasoning ? 'pointer' : 'default'
+        }}
+        onClick={() => reasoning && setExpanded(!expanded)}
+      >
         {d.directive}
       </div>
+
+      {/* Reasoning expandible (hover o click) */}
+      {reasoning && (
+        <AnimatePresence>
+          {expanded && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              style={{
+                fontSize: '0.7rem',
+                color: 'var(--bos-text-muted)',
+                lineHeight: 1.5,
+                padding: '8px 10px',
+                background: 'rgba(0, 0, 0, 0.25)',
+                borderRadius: 6,
+                borderLeft: '2px solid rgba(96, 165, 250, 0.3)',
+                margin: '6px 0',
+                fontStyle: 'italic'
+              }}
+            >
+              <div style={{
+                fontSize: '0.55rem',
+                color: '#93c5fd',
+                textTransform: 'uppercase',
+                letterSpacing: '0.1em',
+                fontWeight: 700,
+                fontStyle: 'normal',
+                marginBottom: 4
+              }}>
+                Razón
+              </div>
+              {reasoning}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      )}
+
+      {/* Footer meta — confidence + samples + toggle reasoning */}
       <div style={{
         display: 'flex',
         gap: 10,
-        fontSize: '0.6rem',
+        fontSize: '0.58rem',
         color: 'var(--bos-text-muted)',
-        fontFamily: 'JetBrains Mono, monospace'
+        fontFamily: 'JetBrains Mono, monospace',
+        alignItems: 'center'
       }}>
-        <span>conf {Math.round((d.confidence || 0) * 100)}%</span>
-        {d.based_on_samples && <span>· {d.based_on_samples} samples</span>}
+        {!isPersistent && <span>conf {Math.round((d.confidence || 0) * 100)}%</span>}
+        {d.based_on_samples > 0 && <span>· {d.based_on_samples} samples</span>}
+        {reasoning && (
+          <button
+            onClick={() => setExpanded(!expanded)}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--bos-text-dim)',
+              fontSize: '0.58rem',
+              fontFamily: 'inherit',
+              cursor: 'pointer',
+              padding: 0,
+              marginLeft: 'auto',
+              textDecoration: 'underline',
+              textDecorationStyle: 'dotted'
+            }}
+          >
+            {expanded ? '▲ ocultar razón' : '▼ ver razón'}
+          </button>
+        )}
         {d.execution_result && (
-          <span style={{ color: 'var(--bos-bio)', marginLeft: 'auto' }}>
+          <span style={{ color: 'var(--bos-bio)', marginLeft: reasoning ? 0 : 'auto' }}>
             → {d.execution_result.substring(0, 60)}
           </span>
         )}
