@@ -429,9 +429,14 @@ async function runCreativeAgent() {
   let zeusStyleBoosts = {};   // style_key → bonus weight
   let zeusAngleBoosts = {};   // angle_key → bonus weight
   try {
+    // Fix 2026-04-22: agregar filter de expires_at. Antes Apollo aplicaba
+    // boosts/penalties de directivas técnicamente active=true pero expiradas
+    // que nunca fueron deactivated por cron. Ahora solo vigentes.
+    const now = new Date();
     const directives = await ZeusDirective.find({
       target_agent: { $in: ['apollo', 'all'] },
-      active: true
+      active: true,
+      $or: [{ expires_at: null }, { expires_at: { $gt: now } }]
     }).lean();
 
     // Helper: convierte string a array (Zeus a veces devuelve string en vez de array)

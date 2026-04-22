@@ -330,13 +330,21 @@ async function duplicateWinner(candidate, aresCampaignId) {
 
 async function processZeusDirectives(aresCampaignId) {
   // Buscar directivas para 'ares' Y para 'all' que sean relevantes (CBO budget, etc)
+  // Fix 2026-04-22: agregar filter de expires_at. Antes Ares podía ejecutar
+  // directivas técnicamente active=true pero expiradas — riesgo real con acciones
+  // procedurales (duplicaciones, budget changes) que no deberían pasar después
+  // del timeout original.
+  const now = new Date();
   const directives = await ZeusDirective.find({
     $or: [
       { target_agent: 'ares' },
       { target_agent: 'all', directive_type: 'adjust', 'data.new_budget': { $exists: true } }
     ],
     active: true,
-    executed: false
+    executed: false,
+    $and: [
+      { $or: [{ expires_at: null }, { expires_at: { $gt: now } }] }
+    ]
   }).sort({ confidence: -1 }).lean();
 
   if (directives.length === 0) return { processed: 0, results: [] };

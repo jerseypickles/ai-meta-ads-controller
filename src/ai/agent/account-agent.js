@@ -1466,9 +1466,14 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
   let zeusContext = '';
   try {
     const ZeusDirective = require('../../db/models/ZeusDirective');
+    // Fix 2026-04-22: agregar filter de expires_at. Antes Athena podía leer
+    // directivas técnicamente active=true pero expiradas (expires_at < now)
+    // que quedaron sin deactivate cron. Ahora solo vigentes.
+    const now = new Date();
     const directives = await ZeusDirective.find({
       target_agent: { $in: ['athena', 'all'] },
-      active: true
+      active: true,
+      $or: [{ expires_at: null }, { expires_at: { $gt: now } }]
     }).lean();
     if (directives.length > 0) {
       zeusContext = '\n\n## ZEUS DIRECTIVES\n' +
