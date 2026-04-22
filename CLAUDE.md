@@ -239,10 +239,23 @@ Key groups: Meta API (APP_ID, APP_SECRET, ACCESS_TOKEN, AD_ACCOUNT_ID), Anthropi
 - Don't generate recommendations for entities with <$5 weekly spend
 
 ### When Modifying AI Prompts
-- System prompt is in `brain-analyzer.js` (`_getRecommendationSystemPrompt`) and `brain-prompts.js`
-- Changes to prompt rules cascade to all recommendation cycles
-- The diagnostic engine pre-computes signals — prompt rules should reference these diagnostics
-- JSON response format must match `_parseRecommendationResponse` parser
+- Zeus prompts: `src/ai/zeus/oracle-runner.js` (ZEUS_PERSONA), `src/ai/zeus/agent-stance.js` (morning briefings), `src/ai/zeus/devils-advocate.js` (critic)
+- UnifiedBrain prompt: `src/ai/brain/unified-brain.js` + `src/ai/prompts.js`
+- Response calibration principles: ver notas del Hilo B + taxonomía en `ZeusJournalEntry.PRINCIPLES`
+
+### BrainRecommendation pipeline — status actual (22-abr-2026)
+
+**Writes DARK en producción desde 2026-03-10** (commit `3124601`, refactor que eliminó el viejo cron `jobBrainRecommendations`).
+
+Causa arquitectónica: `jobAgentsCycle` (4x/día) con `agent_mode='unified'` (default) llama a `brain.analyzeAndLearn()` que **solo** procesa impact feedback y temporal patterns — NO invoca `_saveToBrainRecommendations()`. El código de escritura vive solo en `brain.runCycle()`, que se ejecuta con `agent_mode='legacy'`. El refactor de marzo asumió que jobAgentsCycle cubría ambas cosas, pero el path quedó huérfano.
+
+**Reads siguen activos** — el modelo se consulta en `impact-context-builder.js`, `brain-analyzer.js` (follow-ups, approved/pending queries), frontend, y `oracle-proactive.js` (hasta hoy — ahora cuenta `ZeusCodeRecommendation` en lugar).
+
+**Estado práctico**: las BrainRecommendations históricas son read-only audit trail. El rol que cumplían está cubierto por: Zeus `ZeusCodeRecommendation` (panel 💡), Athena ejecución táctica directa, stances diarios, auto_pause bounded.
+
+**Para re-habilitar writes** (si alguna vez se decide): agregar al final de `unified-brain.js:analyzeAndLearn()` una invocación equivalente a `_saveToBrainRecommendations(recs, cycleId, sharedData, usage)` con una generación propia previa, O switchar `agent_mode` a 'legacy' en `SystemConfig`.
+
+**Dead code eliminado 2026-04-22** (`97691cb` etc): `brain-analyzer.js::generateRecommendations`, `_getRecommendationSystemPrompt`, `_buildRecommendationPrompt`, `_parseRecommendationResponse` — 528 líneas sin callers.
 
 ### When Adding New Action Types
 1. Add to `BrainRecommendation.action_type` enum

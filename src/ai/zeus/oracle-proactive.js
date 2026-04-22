@@ -14,6 +14,7 @@ const CreativeDNA = require('../../db/models/CreativeDNA');
 const ActionLog = require('../../db/models/ActionLog');
 const SafetyEvent = require('../../db/models/SafetyEvent');
 const BrainRecommendation = require('../../db/models/BrainRecommendation');
+const ZeusCodeRecommendation = require('../../db/models/ZeusCodeRecommendation');
 const ZeusChatMessage = require('../../db/models/ZeusChatMessage');
 const SystemConfig = require('../../db/models/SystemConfig');
 
@@ -100,8 +101,11 @@ async function detectSignals(sinceDate) {
     });
   }
 
-  // 6. Recomendaciones pending demasiado viejas (>24h)
-  const staleRecs = await BrainRecommendation.countDocuments({
+  // 6. Code recommendations pending demasiado viejas (>24h)
+  // Cambio 22-abr-2026: antes contaba BrainRecommendation (pipeline dark desde 10-mar,
+  // contaba fósiles de mediados de marzo). Ahora cuenta las ZeusCodeRecommendation que
+  // Zeus mismo genera — esas son las vivas y accionables hoy.
+  const staleRecs = await ZeusCodeRecommendation.countDocuments({
     status: 'pending',
     created_at: { $lte: new Date(now.getTime() - 24 * 3600000) }
   });
