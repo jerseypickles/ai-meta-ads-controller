@@ -708,6 +708,7 @@ const TOOL_DEFINITIONS = [
         reasoning: { type: 'string', description: 'Por qué esta directiva (el contexto que la motiva)' },
         confidence: { type: 'number', default: 0.9, description: '0-1, típicamente alto cuando viene del creador' },
         expires_in_hours: { type: 'number', description: 'Si la directiva tiene ventana temporal (ej billing freeze), poné cuántas horas desde ahora. null = no expira.' },
+        persistent: { type: 'boolean', default: false, description: 'Si true, la directiva sobrevive al cron de cleanup aunque expire — para reglas de negocio estables que nunca deben desactivarse automáticamente (ej "Apollo nunca genere creativos con texto > 40 chars"). Default false.' },
         category: { type: 'string', enum: ['creative_pattern', 'test_signal', 'account_pattern', 'cross_agent', 'general'], default: 'general' },
         data: { type: 'object', description: 'Datos estructurados opcionales para que el agente consuma (ej { min_roas: 3.5, until: "17:00" })', additionalProperties: true }
       },
@@ -1965,8 +1966,9 @@ async function handleCreateDirective(input) {
       confidence: input.confidence ?? 0.9,
       based_on_samples: 0,
       category: input.category || 'general',
+      source: 'chat',   // top-level — el learner lo respeta para no pisarlas
       active: true,
-      persistent: false,
+      persistent: !!input.persistent,   // si el creador lo marca, sobrevive al cleanup de expiradas
       expires_at: expiresAt
     });
     return {

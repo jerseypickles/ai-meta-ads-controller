@@ -39,9 +39,22 @@ const zeusDirectiveSchema = new mongoose.Schema({
     default: 'general'
   },
 
+  // Origen de la directiva. Permite al learner respetar directivas manuales
+  // del creador (source='chat') y no crear contradictorias.
+  //   chat      → creada por el creador desde el Zeus chat via handleCreateDirective
+  //   learner   → generada por el cron del learner (zeus-learner.js)
+  //   proactive → emitida en ciclo proactivo de Zeus
+  //   system    → creada por otro subsistema (default para retrocompat)
+  source: {
+    type: String,
+    enum: ['chat', 'learner', 'proactive', 'system'],
+    default: 'system',
+    index: true
+  },
+
   // Estado
   active: { type: Boolean, default: true, index: true },
-  persistent: { type: Boolean, default: false }, // Directivas persistentes no se desactivan entre ciclos
+  persistent: { type: Boolean, default: false }, // Si true, el cron cleanup NO la desactiva aunque expire
 
   // Tracking de ejecucion (problema 1: Zeus debe saber que sus directivas ya fueron cumplidas)
   executed: { type: Boolean, default: false, index: true },

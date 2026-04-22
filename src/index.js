@@ -700,6 +700,22 @@ async function jobHypothesisValidator() {
 }
 
 /**
+ * Job: Directive Cleanup — marca active=false las directivas expiradas
+ * (expires_at<now y NO persistent). Evita zombies acumulados en DB.
+ */
+async function jobDirectiveCleanup() {
+  try {
+    const { runDirectiveCleanup } = require('./ai/zeus/directive-maintenance');
+    const result = await runDirectiveCleanup();
+    if (result.deactivated > 0) {
+      logger.info(`[CRON] Directive Cleanup: ${result.deactivated} zombies desactivadas`);
+    }
+  } catch (error) {
+    logger.error('[CRON] Error en Directive Cleanup:', error);
+  }
+}
+
+/**
  * Job: AI Ops Metrics Refresh — 24/7 con frecuencia adaptativa.
  * Horas activas: cada 15 min (Meta refresca insights cada ~15 min).
  * Fuera de horas: cada 30 min (mantener datos razonablemente frescos).
@@ -1225,6 +1241,13 @@ function initCronJobs() {
     name: 'hypothesis-validator'
   });
   logger.info('  [*] Hypothesis Validator — diario 2am ET');
+
+  // Directive Cleanup — 1x/dia (3am ET), marca active=false expiradas no-persistent
+  cron.schedule('0 3 * * *', jobDirectiveCleanup, {
+    timezone: TIMEZONE,
+    name: 'directive-cleanup'
+  });
+  logger.info('  [*] Directive Cleanup — diario 3am ET');
 
   // AI Ops metrics refresh — cada 15 min, 24/7
   cron.schedule('5,20,35,50 * * * *', jobAIOpsRefresh, {

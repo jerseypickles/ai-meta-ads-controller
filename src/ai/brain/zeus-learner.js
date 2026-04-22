@@ -1179,23 +1179,95 @@ Rules:
       }
     }
     let created = 0;
+    let skippedByManual = 0;
 
     const VALID_CATEGORIES = ['creative_pattern', 'test_signal', 'account_pattern', 'cross_agent', 'general'];
     const VALID_TARGETS = ['apollo', 'prometheus', 'athena', 'ares', 'all'];
     const VALID_TYPES = ['prioritize', 'avoid', 'adjust', 'alert', 'insight', 'force_graduate'];
 
+    // Pre-fetch: directivas manuales del creador (source='chat') activas y vigentes.
+    // El learner las respeta — si va a crear algo que contradice una manual, SKIP.
+    // Bug resuelto 2026-04-22: antes el learner creaba libremente directivas
+    // contradictorias con avoid manuales (ej. avoid Apollo 14d + prioritize Apollo 3d
+    // convivían y confundían al agente).
+    const now = new Date();
+    const manualDirectives = await ZeusDirective.find({
+      source: 'chat',
+      active: true,
+      $or: [{ expires_at: null }, { expires_at: { $gt: now } }]
+    }).lean();
+
+    // Construimos un índice por target_agent para chequeo rápido.
+    // Una directiva auto contradice una manual si:
+    //   - mismo target_agent (o manual es 'all')
+    //   - tipos opuestos: avoid vs prioritize
+    const manualsByAgent = {};
+    for (const m of manualDirectives) {
+      if (!manualsByAgent[m.target_agent]) manualsByAgent[m.target_agent] = [];
+      manualsByAgent[m.target_agent].push(m);
+    }
+
+    function contradictsManual(target, type, categoryKey) {
+      const opposites = { avoid: 'prioritize', prioritize: 'avoid' };
+      const opposite = opposites[type];
+      if (!opposite) return null;
+      const candidates = [
+        ...(manualsByAgent[target] || []),
+        ...(manualsByAgent['all'] || [])
+      ];
+      for (const m of candidates) {
+        if (m.directive_type === opposite) {
+          // Mismo agente, tipo opuesto → contradice. Si hay categoría, la usamos
+          // para afinar, pero por defecto cualquier avoid/prioritize sobre el
+          // mismo agente cuenta como colisión (el creador suele emitir amplio).
+          if (!categoryKey || m.category === categoryKey || m.category === 'general') {
+            return m;
+          }
+        }
+      }
+      return null;
+    }
+
     for (const d of (result.directives || [])) {
       if (d.confidence < 0.4) continue;
 
+      const target = VALID_TARGETS.includes(d.target_agent) ? d.target_agent : 'all';
+      const type = VALID_TYPES.includes(d.directive_type) ? d.directive_type : 'alert';
+      const category = VALID_CATEGORIES.includes(d.category) ? d.category : 'general';
+
+      // Chequeo de contradicción con directiva manual activa
+      const conflict = contradictsManual(target, type, category);
+      if (conflict) {
+        skippedByManual++;
+        logger.warn(`[ZEUS-LEARNER] SKIP ${type} para ${target} — contradice manual activa ${conflict._id} (${conflict.directive_type}: "${(conflict.directive || '').substring(0, 60)}...")`);
+        try {
+          await BrainInsight.create({
+            insight_type: 'learner_respected_manual',
+            severity: 'info',
+            title: `🔒 Learner respetó manual del creador (${target})`,
+            body: `Learner iba a emitir ${type} para ${target} pero hay una directiva manual ${conflict.directive_type} activa: "${conflict.directive}". Skipped.`,
+            generated_by: 'zeus_learner',
+            entities: [],
+            data_points: {
+              skipped_directive: d,
+              manual_directive_id: conflict._id.toString(),
+              manual_expires_at: conflict.expires_at
+            }
+          });
+        } catch (_) { /* non-critical */ }
+        continue;
+      }
+
       try {
         await ZeusDirective.create({
-          target_agent: VALID_TARGETS.includes(d.target_agent) ? d.target_agent : 'all',
-          directive_type: VALID_TYPES.includes(d.directive_type) ? d.directive_type : 'alert',
+          target_agent: target,
+          directive_type: type,
           directive: (d.directive || '').substring(0, 200),
           data: d.data || {},
           confidence: Math.min(1, Math.max(0, d.confidence || 0.5)),
           based_on_samples: totalDataPoints,
-          category: VALID_CATEGORIES.includes(d.category) ? d.category : 'general',
+          category,
+          source: 'learner',   // marca de autoría — permite filtrar en fixes futuros
           active: true,
           expires_at: new Date(Date.now() + 72 * 3600000)
         });
@@ -1204,6 +1276,10 @@ Rules:
         continue;
       }
       created++;
+    }
+
+    if (skippedByManual > 0) {
+      logger.info(`[ZEUS-LEARNER] ${skippedByManual} directivas skipped por contradecir manuales del creador`);
     }
 
     // Guardar pensamientos como BrainInsights (stream de consciencia de Zeus)
