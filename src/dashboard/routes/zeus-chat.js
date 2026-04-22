@@ -1004,4 +1004,142 @@ router.post('/calibration/audit/run', async (req, res) => {
   }
 });
 
+// ═══ Auto-Pause endpoints (Hilo C) ═══
+
+// GET /api/zeus/auto-pause/status — modo actual + stats recientes
+router.get('/auto-pause/status', async (req, res) => {
+  try {
+    const { getMode, isYellowZoneActive, autopausesTodayCount } = require('../../ai/zeus/auto-pause-executor');
+    const { computeFPRate } = require('../../ai/zeus/auto-pause-maintenance');
+    const ZeusAutoPauseShadowLog = require('../../db/models/ZeusAutoPauseShadowLog');
+    const ZeusAutoPauseLog = require('../../db/models/ZeusAutoPauseLog');
+
+    const [mode, yellow, todayCount, fpStats, shadowCount, shadowVerdicts, liveCount, liveVerdicts] = await Promise.all([
+      getMode(),
+      isYellowZoneActive(),
+      autopausesTodayCount(),
+      computeFPRate(),
+      ZeusAutoPauseShadowLog.countDocuments({}),
+      ZeusAutoPauseShadowLog.aggregate([{ $group: { _id: '$verdict', count: { $sum: 1 } } }]),
+      ZeusAutoPauseLog.countDocuments({}),
+      ZeusAutoPauseLog.aggregate([{ $group: { _id: '$verdict', count: { $sum: 1 } } }])
+    ]);
+
+    res.json({
+      mode,
+      yellow_zone_active: yellow,
+      today_count: todayCount,
+      daily_cap: 3,
+      fp_stats: fpStats,
+      shadow: {
+        total: shadowCount,
+        by_verdict: shadowVerdicts.reduce((acc, v) => { acc[v._id || 'pending'] = v.count; return acc; }, {})
+      },
+      live: {
+        total: liveCount,
+        by_verdict: liveVerdicts.reduce((acc, v) => { acc[v._id || 'pending'] = v.count; return acc; }, {})
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/zeus/auto-pause/mode — cambiar modo (disabled/shadow/live)
+router.post('/auto-pause/mode', async (req, res) => {
+  try {
+    const { mode, reason } = req.body || {};
+    if (!['disabled', 'shadow', 'live'].includes(mode)) {
+      return res.status(400).json({ error: 'mode inválido: disabled | shadow | live' });
+    }
+    const { setMode } = require('../../ai/zeus/auto-pause-executor');
+    await setMode(mode, reason || 'manual toggle');
+    res.json({ ok: true, mode });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/zeus/auto-pause/yellow-zone/clear — limpiar yellow zone manual
+router.post('/auto-pause/yellow-zone/clear', async (req, res) => {
+  try {
+    const { clearYellowZone } = require('../../ai/zeus/auto-pause-executor');
+    await clearYellowZone();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/zeus/auto-pause/shadow-logs?limit=&verdict= — lista shadow logs
+router.get('/auto-pause/shadow-logs', async (req, res) => {
+  try {
+    const ZeusAutoPauseShadowLog = require('../../db/models/ZeusAutoPauseShadowLog');
+    const { limit, verdict } = req.query;
+    const filter = {};
+    if (verdict && verdict !== 'all') filter.verdict = verdict;
+    const logs = await ZeusAutoPauseShadowLog.find(filter)
+      .sort({ detected_at: -1 })
+      .limit(Math.min(parseInt(limit) || 50, 200))
+      .lean();
+    res.json({ logs });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/zeus/auto-pause/logs?limit=&verdict= — lista live auto-pause logs
+router.get('/auto-pause/logs', async (req, res) => {
+  try {
+    const ZeusAutoPauseLog = require('../../db/models/ZeusAutoPauseLog');
+    const { limit, verdict } = req.query;
+    const filter = {};
+    if (verdict && verdict !== 'all') filter.verdict = verdict;
+    const logs = await ZeusAutoPauseLog.find(filter)
+      .sort({ paused_at: -1 })
+      .limit(Math.min(parseInt(limit) || 50, 200))
+      .lean();
+    res.json({ logs });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/zeus/auto-pause/logs/:id/reactivate — registrar reactivación manual (creator)
+router.post('/auto-pause/logs/:id/reactivate', async (req, res) => {
+  try {
+    const { reason } = req.body || {};
+    const ZeusAutoPauseLog = require('../../db/models/ZeusAutoPauseLog');
+    const log = await ZeusAutoPauseLog.findById(req.params.id);
+    if (!log) return res.status(404).json({ error: 'no encontrado' });
+    if (log.reactivated_at) return res.status(400).json({ error: 'ya reactivado' });
+    // Ejecutar reactivación en Meta
+    try {
+      const client = require('../../meta/client');
+      if (typeof client.updateAdSet === 'function') {
+        await client.updateAdSet(log.adset_id, { status: 'ACTIVE' });
+      }
+    } catch (metaErr) {
+      logger.warn(`[AUTO-PAUSE] Meta reactivate failed: ${metaErr.message}`);
+    }
+    const { recordReactivation } = require('../../ai/zeus/auto-pause-executor');
+    await recordReactivation({ adset_id: log.adset_id, reactivated_by: 'creator', reason: reason || '' });
+    const updated = await ZeusAutoPauseLog.findById(log._id).lean();
+    res.json({ ok: true, log: updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/zeus/auto-pause/health/run — correr health check manual
+router.post('/auto-pause/health/run', async (req, res) => {
+  try {
+    const { runHealthCheckCron } = require('../../ai/zeus/auto-pause-maintenance');
+    const report = await runHealthCheckCron();
+    res.json({ ok: true, report });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

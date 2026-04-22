@@ -929,6 +929,45 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'calibration-audit' });
   logger.info('  [*] Calibration audit — trimestral 1ro de feb/may/ago/nov 9am ET');
 
+  // Hilo C — Auto-pause (palanca ejecutiva bounded)
+  // Detector cron cada 30min (off-peak del kill switch). Modo dispatch según SystemConfig:
+  // disabled (no-op) | shadow (loggea sin pausar) | live (pausa real en Meta con daily_cap=3).
+  cron.schedule('12,42 * * * *', async () => {
+    try {
+      const { runAutoPauseCron } = require('./ai/zeus/auto-pause-executor');
+      const result = await runAutoPauseCron();
+      if (!result.skipped) logger.info(`[AUTO-PAUSE-CRON] ${JSON.stringify(result)}`);
+    } catch (err) {
+      logger.error(`[AUTO-PAUSE-CRON] ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'auto-pause-detector' });
+  logger.info('  [*] Auto-pause detector — cada 30min (default disabled)');
+
+  // Ground truth crons — clasifican verdicts a T+7d (shadow) y T+14d (live reactivations)
+  cron.schedule('0 6 * * *', async () => {
+    try {
+      const { runShadowGroundTruthCron, runLivePostReactivationCron } = require('./ai/zeus/auto-pause-maintenance');
+      const shadowRes = await runShadowGroundTruthCron();
+      const liveRes = await runLivePostReactivationCron();
+      logger.info(`[AUTO-PAUSE-GT] shadow:${shadowRes.completed}/${shadowRes.pending} · live_reactivated:${liveRes.reactivated_completed} · live_unreactivated:${liveRes.unreactivated_classified}`);
+    } catch (err) {
+      logger.error(`[AUTO-PAUSE-GT] ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'auto-pause-ground-truth' });
+  logger.info('  [*] Auto-pause ground truth — diario 6am ET');
+
+  // Health check — evalúa kill criteria + zone detection. Puede auto-disable.
+  cron.schedule('30 6 * * *', async () => {
+    try {
+      const { runHealthCheckCron } = require('./ai/zeus/auto-pause-maintenance');
+      const report = await runHealthCheckCron();
+      logger.info(`[AUTO-PAUSE-HEALTH] zone=${report.zone} action=${report.action} fp_rate=${report.fp_stats?.fp_rate ?? 'n/a'}`);
+    } catch (err) {
+      logger.error(`[AUTO-PAUSE-HEALTH] ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'auto-pause-health' });
+  logger.info('  [*] Auto-pause health check — diario 6:30am ET');
+
   // Cada 15 min (offset 7 min para no chocar con kill switch): Platform Circuit Breaker
   // Detecta billing freeze / mass WITH_ISSUES / zero delivery y activa modo degradado
   cron.schedule('7,22,37,52 * * * *', async () => {
