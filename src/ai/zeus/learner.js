@@ -17,8 +17,39 @@ const MS_DAY = 86400000;
 /**
  * Toma un snapshot actual de una entidad y lo compara con baseline.
  * Retorna objeto con métricas + actual_direction + verdict.
+ *
+ * Phase 3 Hilo D (2026-04-22): branching por measurement_method.
+ * Zeus señaló que KPI delta es instrumento equivocado para plumbing/security.
+ * Ahora respetamos el método stampado por rec-verifier al crear el outcome.
  */
 async function measureImpact(outcome, windowDays) {
+  const method = outcome.measurement_method || 'kpi_delta';
+
+  // Métodos no automatizables hoy — se marcan inconclusive honesto hasta
+  // que tengamos instrumentación (log indexing, request monitoring).
+  if (['log_firings', 'regression_check', 'manual', 'inconclusive_no_auto_instrument'].includes(method)) {
+    const reasonByMethod = {
+      log_firings: 'Requiere log indexing — cuenta de warns del pattern introducido no automatizable todavía',
+      regression_check: 'Requiere request monitoring — chequeo de 400s sobre inputs legítimos no automatizable todavía',
+      manual: 'Rec cosmética/estructural, requiere review humano',
+      inconclusive_no_auto_instrument: 'Método marcado explícitamente como no-medible automáticamente'
+    };
+    return {
+      measured_at: new Date(),
+      metrics: {
+        method,
+        reason: reasonByMethod[method],
+        params: outcome.measurement_params || null,
+        window_days: windowDays
+      },
+      actual_direction: 'unknown',
+      actual_magnitude: `method=${method} · pending manual/tooling`,
+      accuracy_score: null,  // NO calificamos accuracy con instrumento equivocado
+      verdict: 'inconclusive'
+    };
+  }
+
+  // Default: kpi_delta (mantiene el comportamiento legacy)
   if (!outcome.entity_id) {
     // Sin entity — mediciones agregadas del portfolio
     return null;

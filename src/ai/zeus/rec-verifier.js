@@ -181,11 +181,70 @@ Respondé SOLO con JSON válido (sin backticks):
 }
 
 /**
+ * Deriva measurement_method apropiado según la categoría de la rec.
+ * Phase 3 Hilo D (2026-04-22): KPI delta NO es universal — safety/silent-failure
+ * no muestran impacto en ROAS/CPA. Usar método específico por categoría.
+ */
+function deriveMeasurementMethod(rec) {
+  const cat = String(rec.category || 'other').toLowerCase();
+  const rationale = String(rec.rationale || '').toLowerCase();
+
+  // Safety (path traversals, SQL injection, auth bypass) — mide ausencia de
+  // regresión funcional sobre inputs legítimos. No KPI delta.
+  if (cat === 'safety') {
+    return {
+      method: 'regression_check',
+      params: {
+        note: 'Verificar que inputs legítimos siguen funcionando post-guard.',
+        needs_manual: true
+      }
+    };
+  }
+
+  // Bug con silent failure: el fix reemplaza catch vacío con logger.warn.
+  // Métrica correcta: count de warn firings en 7d (>0 = el path se ejercía).
+  if (cat === 'bug') {
+    if (rationale.includes('silent') || rationale.includes('catch') || rationale.includes('sin log') || rationale.includes('tragado')) {
+      return {
+        method: 'log_firings',
+        params: {
+          note: 'Esperamos warns del nuevo pattern si el path se ejerce.',
+          expected_direction: 'positive',  // firings>0 es bueno (confirma path vivo)
+          needs_log_indexing: true
+        }
+      };
+    }
+    return {
+      method: 'regression_check',
+      params: { note: 'Bug fix genérico — verificar no-regresión.', needs_manual: true }
+    };
+  }
+
+  // Dead code, naming, refactor: no hay KPI afectado por diseño.
+  if (['dead_code', 'naming'].includes(cat)) {
+    return { method: 'manual', params: { note: 'Cambio cosmético/estructural, review manual.' } };
+  }
+
+  // Threshold, optimization: sí mueven KPIs, método tradicional aplica.
+  if (['threshold', 'optimization'].includes(cat)) {
+    return { method: 'kpi_delta', params: null };
+  }
+
+  // Default: KPI delta (conservador — si el método default falla, al menos
+  // produce number aunque sea menos relevante).
+  return { method: 'kpi_delta', params: null };
+}
+
+/**
  * C — Crea ZeusRecommendationOutcome con baseline para empezar a medir.
  * Se llama inmediatamente después de applied/built.
+ *
+ * Phase 3 Hilo D: selecciona measurement_method por categoría. Si no es
+ * kpi_delta, el method se stampa para que el learner lo respete en T+7d.
  */
 async function createOutcomeTracking(rec, recType = 'code_change') {
   try {
+    const { method, params } = deriveMeasurementMethod(rec);
     const outcome = await ZeusRecommendationOutcome.create({
       rec_id: String(rec._id),
       rec_type: recType,
@@ -199,7 +258,9 @@ async function createOutcomeTracking(rec, recType = 'code_change') {
         applied_at: new Date().toISOString(),
         rec_summary: (rec.evidence_summary || rec.bottleneck?.evidence_summary || '').substring(0, 500)
       },
-      applied_at: new Date()
+      applied_at: new Date(),
+      measurement_method: method,
+      measurement_params: params
     });
     return outcome._id;
   } catch (err) {
