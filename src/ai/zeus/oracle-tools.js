@@ -1891,10 +1891,68 @@ async function handleListWatchers(input) {
   }));
 }
 
+// Stopwords para fuzzy dedup de directivas — palabras que no aportan a diferenciación semántica
+const DIRECTIVE_STOPWORDS = new Set([
+  'para','con','sobre','desde','hasta','pero','cuando','aunque','solo','esta','este','esto','esos','eso',
+  'the','for','with','from','until','when','while','only','this','that','these','those',
+  'que','porque','entonces','luego','después','antes','ahora','siempre','nunca','siempre',
+  'because','then','after','before','now','always','never',
+  'más','menos','muy','mucho','poco','todo','nada','algo','algunos',
+  'more','less','much','little','all','nothing','something','some',
+  'ejecutar','hacer','tener','estar','haber','ser','poder','deber',
+  'execute','make','have','can','must','should','will'
+]);
+
+function computeDirectivePatternHash(directive, target_agent, directive_type) {
+  const textKey = (directive || '')
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 3 && !DIRECTIVE_STOPWORDS.has(w))
+    .slice(0, 12)
+    .sort()
+    .join('_');
+  const raw = `${target_agent}::${directive_type}::${textKey}`;
+  return require('crypto').createHash('sha256').update(raw).digest('hex').substring(0, 16);
+}
+
 async function handleCreateDirective(input) {
   if (!input.directive || !input.directive_type || !input.target_agent || !input.reasoning) {
     return { error: 'directive, directive_type, target_agent y reasoning son requeridos' };
   }
+
+  // Dedup check (2026-04-22): buscar directivas activas del mismo agente+tipo
+  // con texto similar. Evita duplicación — vimos 2 directivas idénticas ADJUST
+  // para Prometheus activas al mismo tiempo, generando ruido operativo.
+  try {
+    const activeDirectives = await ZeusDirective.find({
+      target_agent: input.target_agent,
+      directive_type: input.directive_type,
+      active: true
+    }).lean();
+
+    const newHash = computeDirectivePatternHash(input.directive, input.target_agent, input.directive_type);
+    const duplicate = activeDirectives.find(d =>
+      computeDirectivePatternHash(d.directive, d.target_agent, d.directive_type) === newHash
+    );
+
+    if (duplicate) {
+      const expiresStr = duplicate.expires_at
+        ? ` (expira ${new Date(duplicate.expires_at).toISOString()})`
+        : ' (sin expiración)';
+      return {
+        error: `duplicate of active directive ${duplicate._id}${expiresStr}. Usá deactivate_directive sobre la existente antes de crear nueva, o update_directive si cambiaste el timing/contenido.`,
+        blocked_by: 'dedup',
+        existing_directive_id: duplicate._id.toString(),
+        existing_directive_preview: duplicate.directive.substring(0, 200),
+        guidance: 'Si la nueva directiva representa cambio genuino (no duplicación accidental), desactivá la existente primero con deactivate_directive, después creá la nueva.'
+      };
+    }
+  } catch (dedupErr) {
+    // Fail-open: si dedup falla, crear (logueamos para diagnostico)
+    logger.warn(`[CREATE-DIRECTIVE] dedup check failed (fail-open): ${dedupErr.message}`);
+  }
+
   try {
     const expiresAt = input.expires_in_hours
       ? new Date(Date.now() + input.expires_in_hours * 3600000)
