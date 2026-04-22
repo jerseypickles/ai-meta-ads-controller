@@ -542,21 +542,40 @@ async function handleGetScalingHistory(input) {
   const { entity_id } = input;
   const now = Date.now();
 
+  // Fix 2026-04-22 (rec Zeus): antes filtraba solo impact_measured, ignoraba
+  // impact_7d_measured. Ahora acepta cualquiera. Para cada action, prefiere
+  // metrics_after_7d cuando existe (estable post re-learning de Meta), fallback
+  // a metrics_after_3d. Pattern espejo de impact-context-builder.js:95-112.
   const pastActions = await ActionLog.find({
     entity_id,
     success: true,
-    impact_measured: true
+    $or: [
+      { impact_measured: true },
+      { impact_7d_measured: true }
+    ]
   }).sort({ executed_at: -1 }).limit(15).lean();
 
   return {
     entity_id,
     total_measured: pastActions.length,
     actions: pastActions.map(a => {
-      const deltaRoas = a.metrics_after_3d?.roas_7d && a.metrics_at_execution?.roas_7d
-        ? Math.round((a.metrics_after_3d.roas_7d - a.metrics_at_execution.roas_7d) / Math.max(a.metrics_at_execution.roas_7d, 0.01) * 10000) / 100
+      // Prefer 7d (estable), fallback 3d, fallback 1d — pattern de impact-context-builder
+      const after = (a.impact_7d_measured && a.metrics_after_7d?.roas_7d > 0)
+        ? a.metrics_after_7d
+        : (a.metrics_after_3d || a.metrics_after_1d || {});
+      const checkpoint = (a.impact_7d_measured && a.metrics_after_7d?.roas_7d > 0) ? '7d' : '3d';
+
+      const before = a.metrics_at_execution || {};
+      const roasBefore = before.roas_7d || 0;
+      const roasAfter = after.roas_7d || 0;
+      const cpaBefore = before.cpa_7d || 0;
+      const cpaAfter = after.cpa_7d || 0;
+
+      const deltaRoas = roasBefore > 0
+        ? Math.round((roasAfter - roasBefore) / Math.max(roasBefore, 0.01) * 10000) / 100
         : null;
-      const deltaCpa = a.metrics_after_3d?.cpa_7d && a.metrics_at_execution?.cpa_7d
-        ? Math.round((a.metrics_after_3d.cpa_7d - a.metrics_at_execution.cpa_7d) / Math.max(a.metrics_at_execution.cpa_7d, 0.01) * 10000) / 100
+      const deltaCpa = cpaBefore > 0
+        ? Math.round((cpaAfter - cpaBefore) / Math.max(cpaBefore, 0.01) * 10000) / 100
         : null;
       const result = deltaRoas != null ? (deltaRoas > 5 ? 'improved' : deltaRoas < -5 ? 'worsened' : 'neutral') : 'unknown';
 
@@ -569,6 +588,7 @@ async function handleGetScalingHistory(input) {
         result,
         delta_roas_pct: deltaRoas,
         delta_cpa_pct: deltaCpa,
+        checkpoint,                              // '7d' (preferido) o '3d' (fallback)
         reasoning: (a.reasoning || '').substring(0, 200)
       };
     })

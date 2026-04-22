@@ -127,17 +127,33 @@ async function checkDeliveryHealth() {
   }
 
   // ═══ Check 6: Anomalías críticas de BrainInsight ═══
+  // Fix 2026-04-22 (rec Zeus): payload anterior tenía anomaly_type:a.insight_type, que
+  // siempre era 'anomaly' (la query filtra por eso). Ahora propagamos el subtipo real
+  // (diagnosis: CREATIVE_FATIGUE / FUNNEL_LEAK / AUDIENCE_SATURATED / etc), data points
+  // numéricos, y entity context — para que Athena pueda discriminar respuesta sin
+  // tool calls extras.
   const recentAnomalies = await BrainInsight.find({
     insight_type: 'anomaly',
     severity: { $in: ['critical', 'high'] },
     created_at: { $gte: new Date(now - 2 * 3600000) }
   }).limit(5).lean();
   for (const a of recentAnomalies) {
+    const firstEntity = (Array.isArray(a.entities) && a.entities[0]) || {};
+    const entityName = a.entity_name || firstEntity.entity_name || null;
     issues.push({
       kind: 'anomaly',
       severity: a.severity,
-      detail: `${a.title}${a.entity_name ? ` — ${a.entity_name}` : ''}`,
-      anomaly_type: a.insight_type
+      detail: `${a.title}${entityName ? ` — ${entityName}` : ''}`,
+      // Subtipo real (diagnosis): CREATIVE_FATIGUE, FUNNEL_LEAK, AUDIENCE_SATURATED, etc.
+      // Reemplaza el anterior anomaly_type:'anomaly' que era redundante.
+      anomaly_subtype: a.diagnosis || null,
+      // Snapshot métrico bruto del momento de detección
+      metric_snapshot: a.data_points || null,
+      // Análisis del Brain (truncado para no inflar payload)
+      analysis: (a.body || '').substring(0, 400),
+      entity_id: firstEntity.entity_id || null,
+      entity_type: firstEntity.entity_type || null,
+      insight_id: a._id
     });
   }
 
