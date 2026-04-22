@@ -27,6 +27,11 @@ const CONCENTRATION_THRESHOLD = 0.8;
 const MIN_AGE_DAYS_FOR_STARVED = 3;
 // Ventana para backfill del favorito en el primer run
 const FAVORITE_BACKFILL_DAYS = 14;
+// Filtro stale: si el último snapshot de la campaña tiene más de esto, la ignoramos.
+// Campañas archivadas/eliminadas en Meta dejan de ser traídas por data-collector
+// (cada 10 min), entonces su último snapshot queda congelado. Sin este filtro,
+// el monitor las trata como "zombies" eternamente aunque ya no existan en Meta.
+const STALE_THRESHOLD_HOURS = 6;
 
 /**
  * Determina si una campaña es CBO por shape: daily_budget a nivel campaña > 0
@@ -312,8 +317,16 @@ async function analyzeAllCBOs() {
     { $match: { status: 'ACTIVE' } }
   ]);
 
-  const cbos = campaigns.filter(isCBO);
-  logger.info(`[CBO-MONITOR] detectadas ${cbos.length} CBOs activas de ${campaigns.length} campañas`);
+  // Filtrar CBOs + excluir stale (snapshots congelados de campañas que Meta
+  // ya no reporta — archivadas/eliminadas pero quedaron en DB)
+  const staleThreshold = Date.now() - STALE_THRESHOLD_HOURS * 3600000;
+  const allCBOs = campaigns.filter(isCBO);
+  const cbos = allCBOs.filter(c => {
+    const snapTime = new Date(c.snapshot_at).getTime();
+    return snapTime > staleThreshold;
+  });
+  const staleCount = allCBOs.length - cbos.length;
+  logger.info(`[CBO-MONITOR] detectadas ${cbos.length} CBOs activas de ${campaigns.length} campañas (${staleCount} stale filtradas)`);
 
   const results = [];
   for (const cbo of cbos) {
