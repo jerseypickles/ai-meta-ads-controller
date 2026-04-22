@@ -156,9 +156,15 @@ async function seedOne(entryData) {
   return created;
 }
 
+// Redacta credenciales de una URI tipo mongodb+srv://user:pass@host/db → mongodb+srv://***@host/db
+function redactUri(uri) {
+  if (!uri) return '(no configurada)';
+  return uri.replace(/\/\/[^@]+@/, '//***:***@');
+}
+
 async function run() {
   console.log('\n═══ Seed Calibration Archive (Hilo B) ═══');
-  console.log('MongoDB:', (config.mongodb.uri || '').substring(0, 60) + '...');
+  console.log('MongoDB:', redactUri(config.mongodb.uri));
 
   await mongoose.connect(config.mongodb.uri);
   console.log('  [CONN] conectado a Mongo');
