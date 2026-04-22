@@ -700,6 +700,21 @@ async function jobHypothesisValidator() {
 }
 
 /**
+ * Job: CBO Health Monitor — cada 2h, snapshot de salud por CBO.
+ * Observabilidad (Fase 1): persiste snapshots y emite BrainInsights de
+ * zombies/colapso/saturación. NO afecta decisiones de Ares todavía.
+ */
+async function jobCBOHealthMonitor() {
+  try {
+    const { runCBOHealthMonitor } = require('./ai/agent/cbo-health-monitor');
+    const snaps = await runCBOHealthMonitor();
+    logger.info(`[CRON] CBO Health Monitor: ${snaps.length} snapshots`);
+  } catch (error) {
+    logger.error('[CRON] Error en CBO Health Monitor:', error);
+  }
+}
+
+/**
  * Job: Directive Cleanup — marca active=false las directivas expiradas
  * (expires_at<now y NO persistent). Evita zombies acumulados en DB.
  */
@@ -1248,6 +1263,13 @@ function initCronJobs() {
     name: 'directive-cleanup'
   });
   logger.info('  [*] Directive Cleanup — diario 3am ET');
+
+  // CBO Health Monitor — cada 2h (12x/día), observabilidad de CBOs para Ares
+  cron.schedule('0 */2 * * *', jobCBOHealthMonitor, {
+    timezone: TIMEZONE,
+    name: 'cbo-health-monitor'
+  });
+  logger.info('  [*] CBO Health Monitor — cada 2h, 24/7');
 
   // AI Ops metrics refresh — cada 15 min, 24/7
   cron.schedule('5,20,35,50 * * * *', jobAIOpsRefresh, {

@@ -160,4 +160,64 @@ router.get('/intelligence', async (req, res) => {
   }
 });
 
+// ═══ GET /cbo-health — snapshots más recientes por CBO + resumen + history ═══
+router.get('/cbo-health', async (req, res) => {
+  try {
+    const CBOHealthSnapshot = require('../../db/models/CBOHealthSnapshot');
+
+    // Último snapshot por CBO
+    const latest = await CBOHealthSnapshot.aggregate([
+      { $sort: { campaign_id: 1, snapshot_at: -1 } },
+      { $group: { _id: '$campaign_id', doc: { $first: '$$ROOT' } } },
+      { $replaceRoot: { newRoot: '$doc' } },
+      { $sort: { is_zombie: 1, daily_budget: -1 } }
+    ]);
+
+    // Sparkline ROAS 7 días (12 snapshots/día × 7 = 84 puntos max por CBO)
+    const since = new Date(Date.now() - 7 * 86400000);
+    const history = await CBOHealthSnapshot.find({
+      snapshot_at: { $gte: since }
+    }).sort({ snapshot_at: 1 }).lean();
+
+    const byCampaign = {};
+    for (const h of history) {
+      if (!byCampaign[h.campaign_id]) byCampaign[h.campaign_id] = [];
+      byCampaign[h.campaign_id].push({
+        t: h.snapshot_at,
+        roas_3d: h.cbo_roas_3d,
+        concentration: h.concentration_index_3d,
+        starved: h.starved_count
+      });
+    }
+
+    res.json({
+      snapshots: latest,
+      history_by_campaign: byCampaign,
+      summary: {
+        total: latest.length,
+        zombies: latest.filter(s => s.is_zombie).length,
+        collapse: latest.filter(s => s.collapse_detected).length,
+        saturating: latest.filter(s =>
+          s.concentration_sustained_3d && s.favorite_declining && s.favorite_freq > 2
+        ).length
+      }
+    });
+  } catch (err) {
+    logger.error(`[ARES-API] Error en /cbo-health: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ POST /cbo-health/run — trigger manual del monitor ═══
+router.post('/cbo-health/run', async (req, res) => {
+  try {
+    const { runCBOHealthMonitor } = require('../../ai/agent/cbo-health-monitor');
+    const result = await runCBOHealthMonitor();
+    res.json({ ok: true, snapshots_created: result.length });
+  } catch (err) {
+    logger.error(`[ARES-API] Error en /cbo-health/run: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

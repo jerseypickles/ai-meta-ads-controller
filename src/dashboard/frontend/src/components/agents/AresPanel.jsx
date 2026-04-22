@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getAresIntelligence, runAresApi } from '../../api';
+import api from '../../api';
+import { ResponsiveContainer, LineChart, Line, YAxis } from 'recharts';
 
 const ARES_COLOR = '#ef4444';
 
@@ -18,6 +20,7 @@ const roasColor = (r) => r >= 3 ? '#10b981' : r >= 1.5 ? '#f59e0b' : r > 0 ? '#e
 
 export default function AresPanel() {
   const [data, setData] = useState(null);
+  const [cboHealth, setCboHealth] = useState(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [activeSection, setActiveSection] = useState('overview');
@@ -30,8 +33,13 @@ export default function AresPanel() {
 
   async function loadData() {
     try {
-      const res = await getAresIntelligence().catch(() => null);
-      setData(res || {});
+      const [aresRes, healthRes] = await Promise.all([
+        getAresIntelligence().catch(() => null),
+        // Health monitor endpoint — nuevo
+        api.get('/api/ares/cbo-health').then(r => r.data).catch(() => null)
+      ]);
+      setData(aresRes || {});
+      setCboHealth(healthRes);
     } catch (err) {
       console.error('Ares load error:', err);
     } finally {
@@ -186,6 +194,7 @@ export default function AresPanel() {
       }}>
         {[
           { k: 'overview', l: 'Resumen', c: ARES_COLOR },
+          { k: 'health', l: 'Salud CBOs', c: '#10b981', n: cboHealth?.summary?.total },
           { k: 'cbo1', l: 'CBO 1 · Probados', c: '#ef4444', n: cbo1.active_clones },
           { k: 'cbo2', l: 'CBO 2 · Nuevos', c: '#f59e0b', n: cbo2.active_clones },
           { k: 'cbo3', l: 'CBO 3 · Rescate', c: '#8b5cf6', n: cbo3.active_clones },
@@ -235,6 +244,9 @@ export default function AresPanel() {
               recentDups={dups.slice(0, 5)}
               hasCBO3={!!data?.campaign_3_id}
             />
+          )}
+          {activeSection === 'health' && (
+            <CBOHealthSection health={cboHealth} />
           )}
           {activeSection === 'cbo1' && (
             <CBODetailSection label="CBO 1 — Ganadores Probados" color="#ef4444" stats={cbo1} campaignId={data?.campaign_id} />
@@ -733,6 +745,220 @@ function Empty({ children }) {
       borderRadius: 10
     }}>
       {children}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CBOHealthSection — vista de salud por CBO con semáforo + sparkline
+// ═══════════════════════════════════════════════════════════════════════════
+
+function CBOHealthSection({ health }) {
+  if (!health) {
+    return (
+      <div style={{ padding: 40, textAlign: 'center', color: 'var(--bos-text-dim)' }}>
+        Cargando salud de CBOs...
+      </div>
+    );
+  }
+
+  const snapshots = health.snapshots || [];
+  const byCampaign = health.history_by_campaign || {};
+  const summary = health.summary || {};
+
+  if (snapshots.length === 0) {
+    return (
+      <div style={{ padding: 40, textAlign: 'center', color: 'var(--bos-text-dim)', fontStyle: 'italic' }}>
+        Sin snapshots aún. El monitor corre cada 2h — esperá al próximo ciclo o dispará manual con <code>POST /api/ares/cbo-health/run</code>.
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Resumen top */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(4, 1fr)',
+        gap: 8,
+        marginBottom: 14
+      }}>
+        <HealthSummaryCard label="CBOs activas" value={summary.total} color="#60a5fa" />
+        <HealthSummaryCard label="Zombies" value={summary.zombies} color="#a78bfa" warn={summary.zombies > 0} />
+        <HealthSummaryCard label="Colapsando" value={summary.collapse} color="#ef4444" warn={summary.collapse > 0} />
+        <HealthSummaryCard label="Saturando" value={summary.saturating} color="#fbbf24" warn={summary.saturating > 0} />
+      </div>
+
+      {/* Cards por CBO */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {snapshots.map(s => (
+          <CBOHealthCard key={s._id} snap={s} history={byCampaign[s.campaign_id] || []} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function HealthSummaryCard({ label, value, color, warn }) {
+  return (
+    <div style={{
+      background: warn ? `${color}15` : 'rgba(17, 21, 51, 0.4)',
+      border: `1px solid ${warn ? color + '40' : 'rgba(255,255,255,0.05)'}`,
+      borderRadius: 8,
+      padding: '10px 12px',
+      textAlign: 'center'
+    }}>
+      <div style={{ fontSize: '1.3rem', fontWeight: 700, color, fontFamily: 'JetBrains Mono, monospace', lineHeight: 1 }}>
+        {value ?? 0}
+      </div>
+      <div style={{ fontSize: '0.56rem', color: 'var(--bos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: 4 }}>
+        {label}
+      </div>
+    </div>
+  );
+}
+
+function healthSemaphore(snap) {
+  if (snap.is_zombie) return { bg: 'rgba(167, 139, 250, 0.1)', border: '#a78bfa', label: 'ZOMBIE', icon: '🧟' };
+  if (snap.collapse_detected) return { bg: 'rgba(239, 68, 68, 0.12)', border: '#ef4444', label: 'COLAPSANDO', icon: '🔴' };
+  if (snap.concentration_sustained_3d && snap.favorite_declining && snap.favorite_freq > 2) {
+    return { bg: 'rgba(251, 191, 36, 0.1)', border: '#fbbf24', label: 'SATURANDO', icon: '⚠' };
+  }
+  if (snap.budget_pulse < 15 && snap.active_adsets_count >= 6) {
+    return { bg: 'rgba(249, 115, 22, 0.1)', border: '#f97316', label: 'STARVATION', icon: '💸' };
+  }
+  if (snap.cbo_roas_3d >= 3) return { bg: 'rgba(16, 185, 129, 0.08)', border: '#10b981', label: 'HEALTHY', icon: '✓' };
+  return { bg: 'rgba(96, 165, 250, 0.06)', border: '#60a5fa', label: 'OK', icon: '·' };
+}
+
+function CBOHealthCard({ snap, history }) {
+  const [expanded, setExpanded] = useState(false);
+  const sem = healthSemaphore(snap);
+
+  return (
+    <div style={{
+      background: sem.bg,
+      border: `1px solid ${sem.border}40`,
+      borderLeft: `3px solid ${sem.border}`,
+      borderRadius: 10,
+      padding: 14,
+      transition: 'all 0.2s'
+    }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+        <span style={{
+          fontSize: '0.55rem',
+          padding: '2px 8px',
+          borderRadius: 4,
+          background: `${sem.border}22`,
+          color: sem.border,
+          fontWeight: 700,
+          textTransform: 'uppercase',
+          letterSpacing: '0.12em',
+          whiteSpace: 'nowrap'
+        }}>
+          {sem.icon} {sem.label}
+        </span>
+        <div style={{ flex: 1, minWidth: 0, fontSize: '0.82rem', color: 'var(--bos-text)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {snap.campaign_name}
+        </div>
+        <div style={{ fontSize: '0.65rem', color: 'var(--bos-text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>
+          ${snap.daily_budget}/d
+        </div>
+      </div>
+
+      {snap.is_zombie ? (
+        <div style={{ fontSize: '0.7rem', color: 'var(--bos-text-muted)', fontStyle: 'italic' }}>
+          0 adsets activos. Budget asignado pero no genera spend. Considerar apagar campaña para liberar budget pool.
+        </div>
+      ) : (
+        <>
+          {/* Métricas clave en una fila */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, fontSize: '0.68rem', fontFamily: 'JetBrains Mono, monospace', color: 'var(--bos-text)', marginBottom: 8 }}>
+            <span style={{ color: roasColor(snap.cbo_roas_3d), fontWeight: 700 }}>
+              {snap.cbo_roas_3d.toFixed(2)}x ROAS 3d
+            </span>
+            <span style={{ color: 'var(--bos-text-muted)' }}>·</span>
+            <span>{snap.active_adsets_count} adsets</span>
+            <span style={{ color: 'var(--bos-text-muted)' }}>·</span>
+            <span style={{ color: snap.budget_pulse < 15 && snap.active_adsets_count >= 6 ? '#f97316' : 'inherit' }}>
+              ${snap.budget_pulse.toFixed(0)}/adset pulse
+            </span>
+            <span style={{ color: 'var(--bos-text-muted)' }}>·</span>
+            <span>conc {Math.round(snap.concentration_index_3d * 100)}% 3d</span>
+            {snap.starved_count > 0 && (
+              <>
+                <span style={{ color: 'var(--bos-text-muted)' }}>·</span>
+                <span style={{ color: '#f97316', fontWeight: 600 }}>{snap.starved_count} starved</span>
+              </>
+            )}
+          </div>
+
+          {/* Favorito */}
+          {snap.favorite_adset_name && (
+            <div style={{ fontSize: '0.66rem', color: 'var(--bos-text-muted)', marginBottom: 8 }}>
+              <span style={{ color: '#fbbf24' }}>👑 {snap.favorite_adset_name}</span>
+              <span style={{ color: 'var(--bos-text-dim)' }}> · {snap.favorite_tenure_days}d tenure · </span>
+              <span style={{ color: snap.favorite_declining ? '#ef4444' : '#10b981' }}>
+                {snap.favorite_roas_3d.toFixed(2)}x {snap.favorite_declining ? '↓' : '→'}
+              </span>
+              <span style={{ color: 'var(--bos-text-dim)' }}> · freq {snap.favorite_freq.toFixed(2)}</span>
+            </div>
+          )}
+
+          {/* Sparkline */}
+          {history.length >= 3 && (
+            <div style={{ height: 30, marginBottom: 4 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={history} margin={{ top: 2, bottom: 2, left: 0, right: 0 }}>
+                  <YAxis hide domain={[0, 'auto']} />
+                  <Line
+                    type="monotone"
+                    dataKey="roas_3d"
+                    stroke={sem.border}
+                    strokeWidth={1.5}
+                    dot={false}
+                    isAnimationActive={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Expand */}
+          <div
+            onClick={() => setExpanded(!expanded)}
+            style={{
+              fontSize: '0.6rem',
+              color: 'var(--bos-text-dim)',
+              cursor: 'pointer',
+              textAlign: 'center',
+              paddingTop: 4,
+              borderTop: '1px dashed rgba(255,255,255,0.05)'
+            }}
+          >
+            {expanded ? '▲ ocultar detalle' : '▼ ver starved + detalles'}
+          </div>
+
+          {expanded && (
+            <div style={{ marginTop: 8, fontSize: '0.64rem', color: 'var(--bos-text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>
+              <div style={{ marginBottom: 4 }}>spend: 1d ${snap.cbo_spend_1d.toFixed(0)} · 3d ${snap.cbo_spend_3d.toFixed(0)} · 7d ${snap.cbo_spend_7d.toFixed(0)}</div>
+              <div style={{ marginBottom: 4 }}>revenue: 1d ${snap.cbo_revenue_1d.toFixed(0)} · 3d ${snap.cbo_revenue_3d.toFixed(0)} · 7d ${snap.cbo_revenue_7d.toFixed(0)}</div>
+              <div style={{ marginBottom: 4 }}>roas: 1d {snap.cbo_roas_1d.toFixed(2)}x · 3d {snap.cbo_roas_3d.toFixed(2)}x · 7d {snap.cbo_roas_7d.toFixed(2)}x</div>
+              {(snap.starved_adsets || []).filter(s => s.is_true_starved).length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ color: '#f97316', fontWeight: 700, textTransform: 'uppercase', fontSize: '0.56rem', letterSpacing: '0.1em', marginBottom: 4 }}>Starved adsets ({snap.starved_count})</div>
+                  {snap.starved_adsets.filter(s => s.is_true_starved).map(s => (
+                    <div key={s.adset_id} style={{ paddingLeft: 8, marginBottom: 2 }}>
+                      · {s.adset_name} · edad {s.entity_age_days}d · {Math.round(s.spend_share_3d * 100)}% vs {Math.round(s.proportional_expected * 100)}% esperado
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

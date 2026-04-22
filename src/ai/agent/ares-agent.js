@@ -743,6 +743,32 @@ async function runAresAgent() {
     };
   }
 
+  // Fase 0.5: CBO Health observation (Fase 1 del plan — solo lee, no bloquea).
+  // Lee los snapshots más recientes generados por el monitor cada 2h y loggea
+  // findings para trazabilidad. En Fase 2 estos snapshots van a alimentar el
+  // gate compuesto que decide si duplicar o proponer refresh/rescue en su lugar.
+  try {
+    const CBOHealthSnapshot = require('../../db/models/CBOHealthSnapshot');
+    const recentCBOs = await CBOHealthSnapshot.aggregate([
+      { $match: { snapshot_at: { $gte: new Date(Date.now() - 3 * 3600000) } } }, // últimas 3h
+      { $sort: { campaign_id: 1, snapshot_at: -1 } },
+      { $group: { _id: '$campaign_id', doc: { $first: '$$ROOT' } } },
+      { $replaceRoot: { newRoot: '$doc' } }
+    ]);
+    if (recentCBOs.length > 0) {
+      const zombies = recentCBOs.filter(s => s.is_zombie).length;
+      const collapsing = recentCBOs.filter(s => s.collapse_detected).length;
+      const saturating = recentCBOs.filter(s =>
+        s.concentration_sustained_3d && s.favorite_declining && s.favorite_freq > 2
+      ).length;
+      logger.info(`[ARES] CBO health (obs): ${recentCBOs.length} CBOs · zombies=${zombies} · colapsando=${collapsing} · saturando=${saturating}`);
+    } else {
+      logger.info('[ARES] CBO health: sin snapshots recientes (monitor todavía no corrió?)');
+    }
+  } catch (err) {
+    logger.warn(`[ARES] CBO health observation falló (no crítico): ${err.message}`);
+  }
+
   // Fase 1: Obtener o crear campana Ares
   let aresCampaignId;
   try {
