@@ -455,56 +455,53 @@ ${modeInstructions}`;
       logger.warn(`[ZEUS-ORACLE] unusual stop_reason=${response.stop_reason} blocks=[${blockTypes}] round=${round}`);
     }
 
-    const assistantContent = [];
-    let hadToolUse = false;
+    // Recolectar TODOS los tool_use blocks de la response (fix paralelismo 2026-04-22).
+    // Antes: el inner loop hacía break en el primer tool_use, perdiendo los demás —
+    // forzaba 1 tool por round. Ahora: ejecutamos N tools en paralelo dentro del mismo
+    // round, reduciendo dramáticamente la probabilidad de agotar MAX_TOOL_ROUNDS.
+    const toolUseBlocks = response.content.filter(b => b.type === 'tool_use');
 
-    for (const block of response.content) {
-      if (block.type === 'thinking' || block.type === 'redacted_thinking') {
-        // Preservá thinking para próximo turno (requisito de Anthropic)
-        assistantContent.push(block);
-      } else if (block.type === 'text') {
-        // Text ya se emitió via streamEvent; solo lo preservamos para el próximo turno
-        assistantContent.push(block);
-      } else if (block.type === 'tool_use') {
-        hadToolUse = true;
-        assistantContent.push(block);
+    // Si no hubo tool calls, el modelo terminó — break
+    if (toolUseBlocks.length === 0) break;
 
-        let toolResult;
-        let resultSummary;
-        try {
-          toolResult = await executeTool(block.name, block.input);
-          resultSummary = summarizeToolResult(block.name, toolResult);
-        } catch (err) {
-          toolResult = { error: err.message };
-          resultSummary = `Error: ${err.message}`;
-          logger.error(`[ZEUS-ORACLE] Tool ${block.name} error: ${err.message}`);
-        }
+    // Push assistant content completo (thinking + text + tool_uses) preservando orden
+    messages.push({ role: 'assistant', content: response.content });
 
-        toolCallsExecuted.push({
-          tool: block.name,
-          input: block.input,
-          result_summary: resultSummary
-        });
-
-        onEvent('tool_use_result', {
-          tool: block.name,
-          summary: resultSummary
-        });
-
-        messages.push({ role: 'assistant', content: assistantContent });
-        messages.push({
-          role: 'user',
-          content: [{
-            type: 'tool_result',
-            tool_use_id: block.id,
-            content: JSON.stringify(toolResult).substring(0, 8000)
-          }]
-        });
-        break;
+    // Ejecutar TODOS los tool calls en paralelo
+    const toolResultBlocks = await Promise.all(toolUseBlocks.map(async (block) => {
+      let toolResult;
+      let resultSummary;
+      try {
+        toolResult = await executeTool(block.name, block.input);
+        resultSummary = summarizeToolResult(block.name, toolResult);
+      } catch (err) {
+        toolResult = { error: err.message };
+        resultSummary = `Error: ${err.message}`;
+        logger.error(`[ZEUS-ORACLE] Tool ${block.name} error: ${err.message}`);
       }
-    }
 
-    if (!hadToolUse) break;
+      toolCallsExecuted.push({
+        tool: block.name,
+        input: block.input,
+        result_summary: resultSummary
+      });
+
+      onEvent('tool_use_result', {
+        tool: block.name,
+        summary: resultSummary
+      });
+
+      return {
+        type: 'tool_result',
+        tool_use_id: block.id,
+        content: JSON.stringify(toolResult).substring(0, 8000)
+      };
+    }));
+
+    // Push TODOS los tool_results en una sola user message (Anthropic API requirement
+    // — todos los tool_results de un turno deben venir agrupados, no spread en
+    // múltiples user messages).
+    messages.push({ role: 'user', content: toolResultBlocks });
   }
 
   // Safety net: si el loop terminó sin texto, fallback streameado sin thinking
@@ -530,11 +527,16 @@ ${modeInstructions}`;
     }
   }
 
-  // Si aún está vacío después del fallback, mensaje amable
+  // Si aún está vacío después del fallback, mensaje informativo con diagnóstico
   if (!finalText || finalText.trim().length === 0) {
-    const emptyMsg = 'Ups, me quedé pensando sin llegar a responder. Probablemente se me fue el presupuesto de tokens en tool calls. Reintentá la pregunta o hacela más específica.';
+    // Listar tools que SÍ se ejecutaron — da contexto al creador sobre qué intenté
+    const toolList = toolCallsExecuted.length > 0
+      ? toolCallsExecuted.slice(0, 8).map(t => t.tool).join(', ') + (toolCallsExecuted.length > 8 ? `… +${toolCallsExecuted.length - 8} más` : '')
+      : 'ninguno';
+    const emptyMsg = `Ups, me quedé pensando sin llegar a responder. Agoté ${MAX_TOOL_ROUNDS} rounds de tool calls + un retry de fallback sin resolver.\n\n**Tools que llegué a usar** (${toolCallsExecuted.length} total): ${toolList}\n\nEsto suele pasar cuando:\n- La pregunta es muy abierta y necesité explorar mucho código/data\n- El contexto se saturó después de varias tool calls\n\n**Probá una de estas:**\n- Reintentar la misma pregunta (a veces sale en el segundo intento)\n- Hacerla más específica (mencionar archivo concreto, agente concreto, métrica concreta)\n- Pedirme primero "qué necesitás saber para responder X?" para que pida la data justa que me hace falta`;
     finalText = emptyMsg;
     onEvent('text_delta', { text: emptyMsg });
+    logger.warn(`[ZEUS-ORACLE] empty after fallback. tools=${toolCallsExecuted.length} tokens=${tokensUsed}`);
   }
 
   // Parsear follow-ups del final del texto
