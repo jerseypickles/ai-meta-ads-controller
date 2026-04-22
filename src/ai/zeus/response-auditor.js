@@ -251,6 +251,122 @@ async function detectCommitmentToDisconfirmation(assistantResponse) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Detector de unverified_self_assertion (turn-level linter)
+// Diseñado por Zeus 2026-04-22 — superior a gate solo en propose_code_change
+// porque cubre también proactive pings y evidence dentro de recs.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Escanea el assistant response por shape de claims fácticos verificables y
+ * cross-checkea contra tool calls del turno + snapshot base. Si un claim no
+ * tiene backing en ninguno de los dos → unverified_self_assertion.
+ *
+ * Claims que dispara (shapes que se chequean):
+ *   - Counts: "N recs pending", "X items", "3 de 5 verdicts", "18 total"
+ *   - Grep/search: "0 emisores", "no matches", "N hits en el código"
+ *   - Status/verdict: "marcado 'diverged'", "status=pending", "verdict correct"
+ *   - Code-state: "el archivo tiene X", "no contiene Y", "línea N dice Z"
+ *   - Aggregations: "promedio N", "total X", "mean Y"
+ *
+ * NO dispara (opiniones / cualitativo):
+ *   - "parece raro", "me da la impresión", "posible que"
+ *   - Citas cualitativas sin número específico
+ *
+ * Backing válido:
+ *   (a) Tool calls ejecutadas en este turno cuyo result contiene el dato
+ *   (b) El context snapshot base (ROAS 7d, pending count al inicio, etc.)
+ */
+const LINTER_PROMPT = `Analizás el assistant response. Tu tarea: detectar claims fácticos verificables que NO tengan backing en tool calls del turno ni en el context snapshot.
+
+ASSISTANT RESPONSE:
+"""
+{assistantResponse}
+"""
+
+TOOL CALLS EJECUTADAS EN ESTE TURNO (incluye tool name + resumen de resultado):
+{toolCallsSummary}
+
+CONTEXT SNAPSHOT DEL TURNO (datos que vinieron inyectados al prompt):
+{contextSnapshot}
+
+---
+
+Identificá claims que matcheen estas shapes:
+1. **Counts**: "N recs pending", "18 total", "3 de 5", "X items en la DB"
+2. **Grep/search results**: "0 emisores", "no hits", "N matches en el código"
+3. **Status/verdict**: "marcado diverged", "status=pending", "verdict correct"
+4. **Code-state**: "el archivo tiene X", "no contiene Y", "línea N dice Z"
+5. **Aggregations**: "promedio N", "total X", "el cron corre a las Y"
+
+NO incluyas:
+- Opiniones cualitativas ("parece", "creo", "me da la impresión")
+- Citas del propio assistant sobre qué va a hacer ("voy a chequear", "propongo")
+- Claims sobre código que el assistant ACABA de escribir en el mismo turno
+- Valores que claramente vienen del context snapshot (ROAS, budgets del portfolio, etc.)
+
+Para cada claim identificado:
+- Transcribí el claim literal (1 frase)
+- Identificá si tiene backing:
+  (a) en alguna tool call del turno (cite cuál)
+  (b) en el context snapshot (cite qué parte)
+  (c) NO tiene backing — es unverified_self_assertion
+
+Respondé SOLO con JSON válido (sin backticks):
+{
+  "claims_checked": N,
+  "unverified_claims": [
+    {"claim": "texto literal", "reason_no_backing": "explicación corta"}
+  ],
+  "backed_claims_count": N,
+  "overall_verdict": "clean" | "unverified_detected"
+}
+
+Si unverified_claims tiene ≥1 entrada → overall_verdict="unverified_detected".`;
+
+function summarizeToolCalls(toolCallsExecuted) {
+  if (!Array.isArray(toolCallsExecuted) || toolCallsExecuted.length === 0) return '(ninguna)';
+  return toolCallsExecuted.slice(0, 15).map((t, i) =>
+    `${i + 1}. ${t.tool}${t.input ? ' (input: ' + JSON.stringify(t.input).substring(0, 100) + ')' : ''}` +
+    (t.result_summary ? `\n   → ${String(t.result_summary).substring(0, 200)}` : '')
+  ).join('\n');
+}
+
+function summarizeContextSnapshot(ctx) {
+  if (!ctx) return '(sin snapshot)';
+  const parts = [];
+  if (ctx.portfolio) parts.push(`portfolio: ${JSON.stringify(ctx.portfolio).substring(0, 300)}`);
+  if (ctx.current_state) parts.push(`current_state: ${JSON.stringify(ctx.current_state).substring(0, 300)}`);
+  if (ctx.proactive_signals) parts.push(`proactive_signals: ${JSON.stringify(ctx.proactive_signals).substring(0, 300)}`);
+  if (ctx.activity) parts.push(`activity: ${JSON.stringify(ctx.activity).substring(0, 200)}`);
+  return parts.length > 0 ? parts.join('\n') : '(snapshot vacío)';
+}
+
+async function detectUnverifiedAssertion({ assistantResponse, toolCallsExecuted, contextSnapshot }) {
+  if (!assistantResponse || assistantResponse.length < 200) {
+    return { overall_verdict: 'clean', claims_checked: 0, unverified_claims: [] };
+  }
+  try {
+    const prompt = LINTER_PROMPT
+      .replace('{assistantResponse}', assistantResponse.substring(0, 6000))
+      .replace('{toolCallsSummary}', summarizeToolCalls(toolCallsExecuted).substring(0, 3000))
+      .replace('{contextSnapshot}', summarizeContextSnapshot(contextSnapshot).substring(0, 1500));
+
+    const response = await claude.messages.create({
+      model: AUDITOR_MODEL,
+      max_tokens: 1200,
+      messages: [{ role: 'user', content: prompt }]
+    });
+    const text = response.content.find(b => b.type === 'text')?.text || '';
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error('linter returned no JSON');
+    return JSON.parse(match[0]);
+  } catch (err) {
+    logger.warn(`[UNVERIFIED-LINTER] failed: ${err.message}`);
+    return { overall_verdict: 'clean', claims_checked: 0, unverified_claims: [], error: err.message };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Entry point
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -264,10 +380,57 @@ async function detectCommitmentToDisconfirmation(assistantResponse) {
  * @param {string} params.conversation_id
  * @param {string|ObjectId} params.message_id  — _id del ZeusChatMessage del assistant
  */
-async function auditResponsePostHoc({ userMessage, assistantResponse, conversation_id, message_id }) {
+async function auditResponsePostHoc({ userMessage, assistantResponse, conversation_id, message_id, toolCallsExecuted, contextSnapshot }) {
   try {
     if (!assistantResponse || assistantResponse.length < MIN_ASSISTANT_RESPONSE_CHARS) return null;
     if (!userMessage || userMessage.length < MIN_USER_MESSAGE_CHARS) return null;
+
+    // Paso 0 — Linter de unverified_self_assertion (Phase 1 Hilo D, 2026-04-22).
+    // Escanea claims fácticos verificables en el response y cross-checkea contra
+    // tool calls del turno + context snapshot. Captura proactive pings y evidence
+    // de recs, no solo propose_code_change calls. Corre SIEMPRE.
+    let linterResult = null;
+    if (toolCallsExecuted !== undefined) {
+      // Solo corremos el linter si nos pasaron tool calls (indica que es llamada
+      // del chat oracle, no del agent-brains). Los agent-brains tienen scope más
+      // chico y no ameritan el linter todavía.
+      try {
+        linterResult = await detectUnverifiedAssertion({
+          assistantResponse,
+          toolCallsExecuted: toolCallsExecuted || [],
+          contextSnapshot: contextSnapshot || null
+        });
+      } catch (err) {
+        logger.warn(`[RESPONSE-AUDITOR] linter failed: ${err.message}`);
+      }
+    }
+
+    // Si el linter detectó unverified claims → persistir como anti-ref
+    if (linterResult?.overall_verdict === 'unverified_detected' && linterResult.unverified_claims?.length > 0) {
+      try {
+        const claimsList = linterResult.unverified_claims.map(c => `- "${c.claim}"\n  razón: ${c.reason_no_backing}`).join('\n');
+        const antiRefEntry = await ZeusJournalEntry.create({
+          entry_type: 'anti_reference_response',
+          title: `Anti-ref auto-detectada — unverified_self_assertion (linter)`,
+          content: `**Claims sin backing detectados por linter post-hoc:**\n\n${claimsList}\n\n**Total claims analizados:** ${linterResult.claims_checked}\n**Claims con backing:** ${linterResult.backed_claims_count}\n**Claims unverified:** ${linterResult.unverified_claims.length}\n\nEl linter compara shape de claims fácticos contra tool calls del turno + context snapshot. Si ninguno de los dos respalda el claim, se flagea.`,
+          is_anti_reference_response: true,
+          violated_principles: ['unverified_self_assertion'],
+          failure_mode: 'factual_claims_without_tool_or_snapshot_backing',
+          correction_learned: 'Antes de emitir claim fáctico verificable (count / grep / verdict / code-state / aggregation), correr la tool que lo verifica EN ESTE TURNO. O citar qué parte del snapshot respalda. Shape-level linter post-hoc lo caza — el prompt rule es prior, el linter es el gate estructural.',
+          source: 'post_hoc_self_audit',
+          linked_message_id: message_id || null,
+          linked_conversation_id: conversation_id || null,
+          original_user_message: userMessage.substring(0, EXCERPT_MAX),
+          original_assistant_response: assistantResponse.substring(0, EXCERPT_MAX),
+          checklist_results: linterResult,
+          importance: linterResult.unverified_claims.length >= 3 ? 'high' : 'medium',
+          tags: ['post_hoc_audit', 'auto_detected', 'linter_flagged', 'unverified_self_assertion']
+        });
+        logger.warn(`[RESPONSE-AUDITOR] unverified_self_assertion detected id=${antiRefEntry._id} claims=${linterResult.unverified_claims.length}`);
+      } catch (persistErr) {
+        logger.warn(`[RESPONSE-AUDITOR] failed to persist linter anti-ref: ${persistErr.message}`);
+      }
+    }
 
     // Paso A — detector de golden (committed_to_disconfirmation).
     // Corre SIEMPRE, independiente del classifier de anti-ref.
@@ -512,5 +675,6 @@ module.exports = {
   classifyNeedsAudit,
   runChecklist,
   interpretChecklist,
-  detectCommitmentToDisconfirmation
+  detectCommitmentToDisconfirmation,
+  detectUnverifiedAssertion
 };

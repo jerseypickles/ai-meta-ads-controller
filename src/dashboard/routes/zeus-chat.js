@@ -201,7 +201,9 @@ router.get('/chat/stream', async (req, res) => {
       ai_model: result.model
     });
 
-    // Post-hoc self-audit (async, non-blocking) — Hilo B / Fase 1
+    // Post-hoc self-audit (async, non-blocking) — Hilo B / Fase 1 + Hilo D / Phase 1
+    // Incluye tool calls + context snapshot del turno para el linter de
+    // unverified_self_assertion (detecta claims fácticos sin backing).
     try {
       const { auditResponsePostHoc } = require('../../ai/zeus/response-auditor');
       // Fire-and-forget; errores internos se loggean dentro del auditor.
@@ -209,7 +211,9 @@ router.get('/chat/stream', async (req, res) => {
         userMessage: message,
         assistantResponse: result.text,
         conversation_id,
-        message_id: savedAssistant._id
+        message_id: savedAssistant._id,
+        toolCallsExecuted: result.tool_calls || [],
+        contextSnapshot: result.context_snapshot || null
       }).catch(err => logger.warn(`[ZEUS-CHAT] post-hoc audit dispatch failed: ${err.message}`));
     } catch (auditErr) {
       logger.warn(`[ZEUS-CHAT] post-hoc audit require/dispatch failed: ${auditErr.message}`);
