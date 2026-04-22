@@ -2553,18 +2553,64 @@
   margin: 0.5em 0;
   color: var(--bos-text-muted);
 }
+/* Wrapper de tabla — permite scroll horizontal sin romper celdas */
+.zeus-markdown-table-wrap {
+  overflow-x: auto;
+  margin: 0.6em 0;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(10, 14, 39, 0.4);
+}
+.zeus-markdown-table-wrap::-webkit-scrollbar {
+  height: 6px;
+}
+.zeus-markdown-table-wrap::-webkit-scrollbar-thumb {
+  background: rgba(96, 165, 250, 0.3);
+  border-radius: 3px;
+}
+
 .zeus-markdown table {
   border-collapse: collapse;
-  margin: 0.5em 0;
-  font-size: 0.8em;
+  margin: 0;
+  font-size: 0.78em;
+  width: auto;
+  min-width: 100%;
+  table-layout: auto;
 }
 .zeus-markdown th, .zeus-markdown td {
-  padding: 4px 8px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  /* Por default no romper palabras — valores como "$138" o "0.42x" se mantienen enteros */
+  white-space: nowrap;
+  vertical-align: middle;
 }
 .zeus-markdown th {
-  background: rgba(59, 130, 246, 0.08);
+  background: rgba(59, 130, 246, 0.12);
+  color: #93c5fd;
   font-weight: 600;
+  font-size: 0.72em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  position: sticky;
+  top: 0;
+}
+/* Primera columna de texto (nombres de entidades) puede ser larga — la dejamos truncar con ellipsis */
+.zeus-markdown td:first-child,
+.zeus-markdown th:first-child {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.zeus-markdown tr:hover td {
+  background: rgba(96, 165, 250, 0.04);
+}
+/* Links de entidad dentro de tablas: chip limpio sin wrap */
+.zeus-markdown td a.zeus-entity-link {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
 }
 
 .zeus-drawer-input {

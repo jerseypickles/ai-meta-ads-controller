@@ -491,6 +491,14 @@ function ZeusMarkdown({ children, onEntityClick }) {
           }
           return <a href={href} target="_blank" rel="noreferrer" {...props}>{children}</a>;
         },
+        // Envolvemos la tabla en un wrapper con scroll horizontal — resuelve
+        // el caso de tablas con muchas columnas donde los headers se parten
+        // letra por letra por falta de ancho.
+        table: ({ children, ...props }) => (
+          <div className="zeus-markdown-table-wrap">
+            <table {...props}>{children}</table>
+          </div>
+        ),
         code: ({ inline, className, children: codeChildren, ...props }) => {
           const match = /^language-zeus:(\w+)$/.exec(className || '');
           if (match && !inline) {
