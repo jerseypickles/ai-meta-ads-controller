@@ -5290,6 +5290,211 @@
   }
 }
 
+/* ═══ EntityListTable — cards densas que Zeus renderiza via zeus:entity-list ═══ */
+.entity-list {
+  margin: 0.8em 0;
+  background: rgba(10, 14, 39, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.entity-list-empty {
+  padding: 14px;
+  font-size: 0.74rem;
+  color: var(--bos-text-muted);
+  font-style: italic;
+  text-align: center;
+}
+
+.entity-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: rgba(17, 21, 51, 0.5);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.entity-list-header-count {
+  color: #93c5fd;
+  font-size: 0.68rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.entity-list-sort {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.entity-list-sort-label {
+  color: var(--bos-text-dim);
+  font-size: 0.56rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-right: 4px;
+}
+
+.entity-list-sort-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  color: var(--bos-text-muted);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.6rem;
+  font-family: 'JetBrains Mono', monospace;
+  cursor: pointer;
+  transition: all 0.12s;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.entity-list-sort-btn:hover {
+  color: var(--bos-text);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+.entity-list-sort-btn.is-active {
+  background: rgba(96, 165, 250, 0.12);
+  border-color: rgba(96, 165, 250, 0.35);
+  color: #93c5fd;
+  font-weight: 600;
+}
+
+.entity-list-sort-arrow {
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.entity-list-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.entity-list-row {
+  background: rgba(15, 23, 42, 0.6);
+  padding: 10px 14px;
+  transition: background 0.15s;
+}
+.entity-list-row:hover {
+  background: rgba(96, 165, 250, 0.05);
+}
+.entity-list-row.is-expanded {
+  background: rgba(96, 165, 250, 0.08);
+}
+
+.entity-list-row-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+
+.entity-list-row-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.entity-list-row-link {
+  font-size: 0.84rem !important;
+  font-weight: 600 !important;
+  padding: 3px 10px !important;
+  border-radius: 5px !important;
+  background: rgba(96, 165, 250, 0.1) !important;
+  border: 1px solid rgba(96, 165, 250, 0.2) !important;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.entity-list-row-link:hover {
+  background: rgba(96, 165, 250, 0.2) !important;
+  border-color: rgba(96, 165, 250, 0.5) !important;
+}
+
+.entity-list-row-note {
+  color: #fbbf24;
+  font-size: 0.62rem;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 2px 6px;
+  background: rgba(251, 191, 36, 0.1);
+  border-radius: 3px;
+}
+
+.entity-list-row-badge {
+  flex-shrink: 0;
+}
+
+.entity-list-badge {
+  font-size: 0.56rem;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.entity-list-row-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 0.72rem;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--bos-text);
+  margin-bottom: 4px;
+}
+
+.entity-list-metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+}
+
+.entity-list-sep {
+  color: var(--bos-text-dim);
+  font-size: 0.7rem;
+}
+
+.entity-list-spark {
+  margin-top: 4px;
+  height: 22px;
+  opacity: 0.85;
+}
+
+.entity-list-row-expand {
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.entity-list-row-expand-body {
+  background: rgba(0, 0, 0, 0.25);
+  border-left: 2px solid rgba(96, 165, 250, 0.5);
+  padding: 8px 12px;
+  color: var(--bos-text-muted);
+  font-size: 0.7rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  font-family: 'JetBrains Mono', monospace;
+  border-radius: 0 4px 4px 0;
+}
+
 /* Flash highlight — cuando Zeus hace navigate a una fila la resaltamos */
 .flash-highlight {
   animation: flash-highlight 2.2s ease-out;

@@ -18,6 +18,7 @@ import {
   Tooltip, ResponsiveContainer, Cell, LabelList,
   ReferenceLine
 } from 'recharts';
+import EntityListTable from './EntityListTable';
 
 // ═══════════════════════════════════════════════════════════════
 // Theme helpers — colores consistentes con el dark theme del dashboard
@@ -305,6 +306,7 @@ export function renderVizBlock(type, spec) {
     if (type === 'metric') return <MetricCard {...spec} />;
     if (type === 'compare') return <CompareBars {...spec} />;
     if (type === 'progress') return <ProgressGauge {...spec} />;
+    if (type === 'entity-list') return <EntityListTable spec={spec} />;
   } catch (err) {
     console.warn('[zeus-viz] render failed', type, err);
   }

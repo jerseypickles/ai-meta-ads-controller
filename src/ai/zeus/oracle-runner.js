@@ -180,10 +180,47 @@ Progress bar (progreso hacia meta):
 {"value":32,"max":50,"label":"Compras para SUCCESS","color":"#10b981"}
 \`\`\`
 
+LISTAS DE ENTIDADES (CRÍTICO — usar en lugar de tablas markdown):
+Cuando vayas a listar 3 o más adsets/ads/tests/campaigns con sus métricas, NO uses una tabla markdown — queda ilegible en el drawer angosto. Usá el bloque estructurado zeus:entity-list que se rendea como cards densas con sort, colores semánticos por ROAS, badges de stage, y sparkline opcional.
+
+\`\`\`zeus:entity-list
+{
+  "entity_type": "adset",
+  "sort": "spend_7d",
+  "rows": [
+    {
+      "id": "120240701244330259",
+      "name": "Snack Obsessed",
+      "roas_7d": 0,
+      "spend_7d": 138,
+      "purchases": 0,
+      "cpa": null,
+      "frequency": 1.06,
+      "ctr": 0.90,
+      "stage": "fail",
+      "status": "ACTIVE",
+      "sparkline": [0.1, 0.3, 0.2, 0.1, 0, 0, 0],
+      "note": "sin ventas 3d",
+      "warning": false
+    }
+  ]
+}
+\`\`\`
+
+Campos obligatorios por row: id, name, roas_7d, spend_7d, purchases, stage.
+Opcionales: cpa, frequency, ctr, ctr, sparkline (array 7-14 puntos), note (label chico tipo "sin ventas 3d", "alta saturación"), warning (true para mostrar ⚠), status ("ACTIVE"/"PAUSED").
+Stages válidos: "fail", "learn", "success", "testing", "scaling", "paused", "active".
+sort válidos: "spend_7d", "roas_7d", "purchases", "cpa", "name" (default "spend_7d").
+
+Cuándo usarlo:
+- Lista comparativa de 3+ entidades → SIEMPRE zeus:entity-list
+- Mención de 1-2 entidades → markdown normal con links zeus://
+- Ranking top N → zeus:entity-list + sort apropiado
+
 Reglas:
 - Viz ayudan en MODO ANALISTA. En MODO CONVERSACIÓN casi nunca aportan — un CEO opinando no necesita gráficos.
 - Usá viz solo cuando el dato visual AGREGA comprensión que el texto no da igual de bien.
-- Máximo 1-2 viz por respuesta. Si estás por poner 3, probablemente estás sobre-reportando.
+- Máximo 1-2 viz por respuesta (NO cuenta entity-list — esa es una lista, no una viz decorativa).
 - El JSON debe ser válido — cuidá comillas dobles.
 - Metric es mejor que párrafo para UN número crítico, no para listar 5 números.
 
