@@ -175,20 +175,53 @@ router.get('/chat/stream', async (req, res) => {
     sendEvent('start', { conversation_id });
 
     // Persist user message first
-    await ZeusChatMessage.create({
+    const savedUser = await ZeusChatMessage.create({
       conversation_id,
       role: 'user',
       content: message
     });
 
-    const result = await runOracle({
-      userMessage: message,
-      mode: 'chat',
-      history,
-      lastSeenAt: new Date(),
-      uiContext,
-      onEvent: sendEvent
-    });
+    // Fix 2026-04-22: buffer el text_delta para poder persistir una respuesta
+    // parcial si runOracle falla mid-stream (antes: user message quedaba
+    // huérfano si el stream se cortaba, sin assistant response en DB).
+    let partialText = '';
+    const toolCallsPartial = [];
+    const wrappedSend = (type, data) => {
+      if (type === 'text_delta' && data?.text) partialText += data.text;
+      if (type === 'tool_use_start') toolCallsPartial.push({ tool: data?.tool, at: new Date() });
+      return sendEvent(type, data);
+    };
+
+    let result;
+    try {
+      result = await runOracle({
+        userMessage: message,
+        mode: 'chat',
+        history,
+        lastSeenAt: new Date(),
+        uiContext,
+        onEvent: wrappedSend
+      });
+    } catch (oracleErr) {
+      // Runo falló mid-stream — persistir lo que alcanzamos a recibir
+      logger.error(`[ZEUS-CHAT] runOracle falló: ${oracleErr.message}`);
+      if (partialText.trim().length > 0) {
+        try {
+          await ZeusChatMessage.create({
+            conversation_id,
+            role: 'assistant',
+            content: partialText,
+            partial: true,
+            partial_reason: oracleErr.message?.substring(0, 200) || 'stream_error',
+            tool_calls: toolCallsPartial
+          });
+          logger.info(`[ZEUS-CHAT] persistí respuesta parcial (${partialText.length} chars) para conv ${conversation_id}`);
+        } catch (saveErr) {
+          logger.error(`[ZEUS-CHAT] fallé al persistir parcial: ${saveErr.message}`);
+        }
+      }
+      throw oracleErr; // re-lanzo para que el catch exterior mande api_error
+    }
 
     // Persist assistant response
     const savedAssistant = await ZeusChatMessage.create({
@@ -234,12 +267,19 @@ router.get('/chat/history', async (req, res) => {
     const { conversation_id } = req.query;
     if (!conversation_id) return res.status(400).json({ error: 'conversation_id requerido' });
 
-    const messages = await ZeusChatMessage.find({ conversation_id })
-      .sort({ created_at: 1 })
+    // Fix 2026-04-22: traer los ÚLTIMOS 60 mensajes, no los primeros. Antes era
+    // sort ASC + limit 60 → en conversaciones con >60 turnos, después de refresh
+    // el usuario veía el inicio del hilo y los mensajes recientes quedaban
+    // invisibles (aunque sí persistidos en MongoDB). Mismo patrón que ya estaba
+    // aplicado en /chat/stream para cargar history al LLM.
+    const total = await ZeusChatMessage.countDocuments({ conversation_id });
+    const recent = await ZeusChatMessage.find({ conversation_id })
+      .sort({ created_at: -1 })
       .limit(60)
       .lean();
+    const messages = recent.reverse();
 
-    res.json({ conversation_id, messages });
+    res.json({ conversation_id, messages, total, truncated: total > 60 });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

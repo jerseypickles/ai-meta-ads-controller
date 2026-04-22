@@ -39,6 +39,11 @@ const zeusChatMessageSchema = new mongoose.Schema({
   tokens_used: { type: Number, default: 0 },
   ai_model: { type: String, default: null },
 
+  // Si la respuesta se truncó porque runOracle falló mid-stream. Permite
+  // distinguir respuestas completas de las que quedaron cortadas por error.
+  partial: { type: Boolean, default: false },
+  partial_reason: { type: String, default: null },
+
   created_at: { type: Date, default: Date.now, index: true }
 });
 

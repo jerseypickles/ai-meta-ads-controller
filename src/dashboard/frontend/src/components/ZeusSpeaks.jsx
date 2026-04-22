@@ -1062,18 +1062,39 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
 
   useEffect(() => { streamingTextRef.current = streamingText; }, [streamingText]);
 
-  // Persiste cache de mensajes en localStorage — para show instantáneo en refresh
+  // Persiste cache de mensajes en localStorage — para show instantáneo en refresh.
+  // Fix 2026-04-22: si QuotaExceededError, re-intentamos con menos mensajes en vez
+  // de fallar silencioso (antes tenía catch (_) {} mudo — el cache se rompía sin
+  // aviso cuando algún mensaje tenía tool_calls o context_snapshot grandes).
   useEffect(() => {
     if (!conversationId) return;
-    try {
-      // Guardamos solo las últimas 30 mensajes para no inflar localStorage
-      const trimmed = messages.slice(-30);
+    function trySave(count) {
+      const trimmed = messages.slice(-count);
       localStorage.setItem(LS_MESSAGES_CACHE_KEY, JSON.stringify({
         conversation_id: conversationId,
         messages: trimmed,
         saved_at: Date.now()
       }));
-    } catch (_) {}
+    }
+    try {
+      trySave(30);
+    } catch (err) {
+      if (err && (err.name === 'QuotaExceededError' || err.code === 22)) {
+        // Quota llena — intentamos con 15, luego 5, luego limpiamos
+        for (const fallback of [15, 5]) {
+          try {
+            trySave(fallback);
+            console.warn(`[ZeusSpeaks] localStorage quota — degradé a últimos ${fallback} mensajes`);
+            return;
+          } catch (_) { /* siguiente fallback */ }
+        }
+        // Último recurso: limpiar el cache entero
+        try { localStorage.removeItem(LS_MESSAGES_CACHE_KEY); } catch (_) {}
+        console.warn('[ZeusSpeaks] localStorage quota — cache limpiado; next refresh carga desde API');
+      } else {
+        console.warn('[ZeusSpeaks] localStorage save falló:', err?.message || err);
+      }
+    }
   }, [messages, conversationId]);
   useEffect(() => { toolActivityRef.current = toolActivity; }, [toolActivity]);
   useEffect(() => { followupsRef.current = pendingFollowups; }, [pendingFollowups]);
