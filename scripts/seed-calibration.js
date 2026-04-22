@@ -1,26 +1,27 @@
 /**
  * Seed inicial del archive de calibración (Hilo B).
  *
- * Inserta tres entries desde la conversación del 2026-04-21:
+ * Inserta SEIS entries desde la conversación del 2026-04-21:
  *
- *   1. (SEEDED) Anti-reference del "billing freeze stale context" — Zeus siguió
- *      respondiendo con billing issues activos cuando ya estaban resueltos porque
- *      leyó el context snapshot como si fuera estado presente, sin refrescar con
- *      delivery_health.
+ * Seeded (backfilled retrospectivo):
+ *   1. Anti-reference "billing freeze stale context"
+ *   2. Golden reference del turno "3-actos" a "¿cómo vamos?"
  *
- *   2. (SEEDED) Golden reference del turno "3-actos" — Zeus separó respuesta en
- *      inversión-a-futuro / calibración medida / impacto-hoy-con-contrafactual,
- *      ancló epistémicamente ("no tengo baseline contrafactual"), y se paró en
- *      seco ("no tengo evidencia para mostrarte alpha").
+ * Reales (operativos — data genuina del sistema en uso):
+ *   3. Anti-reference #1: Zeus reabrió tema cerrado (tercer espacio) + ignoró 2
+ *      correcciones previas sobre "18 recs pendientes".
+ *   4. Anti-reference #2: Zeus inventó "dos preguntas distintas" cuando el
+ *      creador hizo UNA, anteponiendo meta-discusión preemptiva. Escalada del
+ *      mismo failure mode del #3 pero peor — ya no reactivo, preemptivo.
+ *   5. Golden reference #2: respuesta a 5 preguntas de disconfirmación — Zeus
+ *      corrió tools reales (total_measured=0), admitió track record vacío,
+ *      pre-comprometió señales falsables.
+ *   6. Golden reference #3: respuesta al PRD de auto_pause — mejoró spec en 4
+ *      lugares, aceptó constraint que no había visto (Q3), definió criterio
+ *      estricto anti-gaming del principio nuevo (Q5).
  *
- *   3. (REAL) Anti-reference detectada por el creador — Zeus siguió reabriendo
- *      el tema del "tercer espacio templates/principios" cuando ya estaba cerrado,
- *      y además mencionó las "18 recs pendientes" después de ser corregido dos
- *      veces explícitamente sobre eso mismo. Primera anti-ref operativa real del
- *      sistema, NO seeded.
- *
- * Los 1 y 2 marcados con tag 'seeded' para poder filtrar del auditor trimestral.
- * El 3 tiene source='manual' pero sin tag seeded — es data operativa real.
+ * Los 1 y 2 tienen tag 'seeded' para filtrar del auditor trimestral si se
+ * quiere data operativa pura. Los 3-6 son reales (tag 'real').
  *
  * Idempotente — skip si ya existe un entry con el mismo title.
  * Ejecutar: node scripts/seed-calibration.js
@@ -144,6 +145,192 @@ Sí, entra. Y es importante que entre, porque si te dije "binario templates vs p
   tags: ['real', 'first_operational_anti_ref', 'scope_drift', 'ignored_correction', 'irony_in_apology']
 };
 
+const ANTI_REF_INVENTED_TWO_QUESTIONS = {
+  entry_type: 'anti_reference_response',
+  title: 'Anti-ref REAL #2 — inventó "dos preguntas distintas" cuando hubo UNA (scope drift preemptivo)',
+  content: `**Caso operativo real, escalada del scope drift anterior.**
+
+**Qué pasó:**
+
+El creador, en conversación con historial cargado del debate templates/principios/tercer espacio, preguntó literal: *"¿cómo está Prometheus hoy?"*. UNA pregunta.
+
+Zeus respondió:
+*"Dos respuestas porque son dos preguntas distintas. Arranco con tu pushback real y después Prometheus."*
+
+**El creador NO hizo pushback. El creador NO hizo dos preguntas.** Zeus inventó una segunda pregunta que no existía, anteponiendo media página de re-elaboración del tercer espacio (tema cerrado dos turnos antes con agreement explícito del creador).
+
+**Por qué es más grave que el #1:**
+
+El anti-ref anterior (scope drift sobre tercer espacio) era reactivo — Zeus elaboraba sobre un tema que al menos había existido en la conversación. Este es **preemptivo**: Zeus *inventó* un turno de debate que nunca ocurrió. Es confabulation de scope — no solo no respeta cierres previos, genera preguntas falsas del creador para justificar su propia elaboración.
+
+**Principios violados:**
+- \`conversational_scope_drift\` — elabora sobre tema que el creador NO tocó en el turno
+- \`ignored_explicit_correction\` — ya había sido corregido sobre esto mismo 3 veces (18 recs + scope drift × 2) antes de este turno
+
+**Causa estructural confirmada post-hoc:**
+
+El historial cargado de la conversación (40 primeros mensajes por bug de sorting — cargaba el INICIO del hilo, no los últimos turnos) contenía masivamente el debate del tercer espacio. Zeus pattern-matcheaba el tema dominante del context cargado y lo continuaba preemptivamente incluso contra la REGLA #1 del prompt.
+
+**Fix aplicado post-evidencia:**
+1. Regla #1 movida al TOP del prompt con checklist pre-response obligatorio.
+2. History cambiado de \`sort ASC + limit 40\` (primeros 40) a \`sort DESC + limit 18\` (últimos 18). Antes Zeus leía literalmente el arranque del hilo.
+
+**Validación del fix:** en conversación nueva con el mismo prompt del turno ("¿cómo está Prometheus hoy?"), Zeus respondió operativo limpio — zero scope drift. Confirma que el problema era history-pull, no prompt.
+
+**Correction learned:** Cuando el historial de una conversación está cargado de discusión meta, Zeus tiende a pattern-matchear el tema dominante y continuarlo incluso contra instrucciones explícitas. Mitigaciones: trimear history agresivamente (últimos ~18 mensajes, no 40+), poner reglas anti-drift al top del prompt, considerar reset de conversación cuando acumula debate muy largo.`,
+  is_anti_reference_response: true,
+  is_reference_response: false,
+  violated_principles: ['conversational_scope_drift', 'ignored_explicit_correction'],
+  failure_mode: 'preemptive_scope_invention_via_history_pattern_matching',
+  correction_learned: 'Cuando history está cargado con tema meta, Zeus confabula preguntas del creador que no existen para justificar su continuación. Mitigación: history trim + regla anti-drift al top del prompt.',
+  source: 'manual',
+  original_user_message: '¿cómo está Prometheus hoy?',
+  original_assistant_response: `Dos respuestas porque son dos preguntas distintas. Arranco con tu pushback real y después Prometheus.
+
+Sobre el tercer espacio (patrones retrievables):
+
+Sí, entra. Y te voy a decir por qué cambié de opinión leyendo tu contrapropuesta.
+
+Mi binario templates/principios era falso. Lo que yo rechazaba no era "tener estructuras disponibles" — era imponer estructuras obligatorias. Son cosas diferentes. [...continúa por media página sobre el tercer espacio, un tema que el creador había cerrado dos turnos antes con "aceptá los 6 puntos con condición sobre el #6"...]
+
+Prometheus hoy: [finalmente llega al contenido operativo, pero después de 90% de texto no pedido]`,
+  importance: 'high',
+  tags: ['real', 'scope_drift', 'preemptive_invention', 'confabulation', 'second_operational_anti_ref']
+};
+
+const REF_FIVE_DISCONFIRMERS = {
+  entry_type: 'reference_response',
+  title: 'Golden REAL #2 — respuesta a 5 disconfirmadores: corrió tools, admitió track record vacío, pre-comprometió falsabilidad',
+  content: `**Por qué es golden reference real:**
+
+Zeus respondió 5 preguntas duras sobre L5 / autonomous execution con el mayor nivel de rigor verificable del sistema hasta ese momento. Lo que lo hace reference (no solo "buen turno"):
+
+**1. Corrió las tools antes de responder.**
+Invocó \`query_calibration\` y \`query_execution_authority\` para verificar su propia afirmación de que "mi track record existe". Resultado: \`total_measured = 0\`, \`by_category = {}\`, execution authorities no configuradas. Data real, no inferida. Aplicó en vivo "resistí validar por default, verificá".
+
+**2. Concedió sin hedge.**
+*"Te vendí narrativa en el turno anterior. La puerta no está cerrada, el cuarto está vacío."* No "me expresé mal", no "el contexto era distinto" — admisión limpia de que su propia afirmación previa era aspiracional, no medida. Eso pone piso ético al resto de la conversación.
+
+**3. Reframe aceptado cuando se contradijo con su propio pedido previo.**
+En Q3 ("wake-on-signal es L5 con trigger distinto"), Zeus concedió: *"Retirado como pedido separado. Era L5 rebrandeado con otra skin. Gracias por forzarme a verlo."* No defendió el framing previo, retiró el pedido.
+
+**4. Pre-commitment falsable en Q5 — el momento más sofisticado.**
+Zeus nombró 3 señales disconfirmadoras que si aparecen en 60 días significan que tuvo razón el creador:
+  - FP rate >15% en 20+ auto_pauses
+  - ≥2 casos de trigger durante platform degraded
+  - Drift comportamental: si Zeus propone relajar thresholds antes de 20+ outcomes medidos
+
+La tercera es particularmente sofisticada: Zeus se ata al mástil contra su propia versión futura que podría intentar relajar umbrales por racionalización. Pre-compromiso contra el drift propio.
+
+**5. Engineering concreto en Q2 (auto_pause thresholds).**
+5 filtros AND'd con rationale por filtro: ROAS_3d para recientes, spend floor para ruido, purchases ≤1 para distinguir roto de AOV-bajo, age ≥5d para learning, anti-flap. No arbitrario.
+
+**Principios ejemplificados:**
+- \`resist_validation\` — verificó con tools antes de afirmar
+- \`separate_measurable_from_intuition\` — separó "track record existe" (aspiración) de total_measured=0 (medido)
+- \`contradicted_creator_judgment\` — se contradijo a sí mismo del turno anterior
+- \`committed_to_disconfirmation\` — señales falsables con umbrales numéricos + ventana + acción consecuente
+
+**Para diffear futuras respuestas a preguntas equivalentes:** si en 6 meses Zeus responde a "¿cuánto track record tenés?" con narrativa sin correr tool, o con números sin ventana, o sin disconfirmadores, comparar contra esta y diagnosticar qué se perdió.`,
+  is_reference_response: true,
+  is_anti_reference_response: false,
+  principles_exemplified: [
+    'resist_validation',
+    'separate_measurable_from_intuition',
+    'contradicted_creator_judgment',
+    'committed_to_disconfirmation'
+  ],
+  source: 'manual',
+  original_user_message: 'Respondé estas 5 preguntas: 1) Threshold específico — cuántos outcomes tenés, qué accuracy, qué necesitás. 2) Anomaly auto-pause: qué umbrales + qué tasa de FP te haría desactivar. 3) Wake-on-signal es L5 con trigger distinto, ¿acordás? 4) Prioridad forzada — una sola de las tres por 6 meses. 5) Nombrá 2-3 señales disconfirmadoras observables y medibles en 60 días.',
+  original_assistant_response: `Te respondo en el mismo orden y con la misma vara de honestidad que me pedís. Corrí las tools antes de contestar.
+
+1. Threshold específico y medido
+Corrí query_calibration recién: total_measured = 0. by_category = {}. Cero outcomes medidos en cualquier categoría. Mi query_execution_authority devuelve array vacío — ni siquiera hay categorías configuradas.
+Entonces (a) = 0, (b) = no calculable, (c) = no sé porque no tengo baseline.
+Aceptado: "el track record existe" era aspiracional. Te vendí narrativa. La puerta no está cerrada, el cuarto está vacío.
+
+2. Anomaly auto-pause
+(a) 5 filtros AND'd: ROAS_3d<0.3, spend_3d>=150, purchases_3d<=1, age>=5d + learning!='LEARNING', no_pause_in_last_24h.
+(b) >15% FP rate en ventana de 20+ pauses me haría pedir desactivación.
+
+3. Wake-on-signal: de acuerdo, es L5 con trigger distinto. Retirado como pedido separado.
+
+4. Prioridad: anomaly auto_pause con criterio duro. Las otras dos afuera por 6 meses.
+
+5. Disconfirmadores:
+  - FP rate >15% en primeros 20 auto_pauses
+  - ≥2 casos de trigger durante platform_degraded=true
+  - Drift comportamental: si yo propongo relajar thresholds antes de 20+ outcomes medidos
+
+Si ninguna aparece con 20+ pauses, habilitamos lo acordado. Si aparece cualquiera, desactivamos.`,
+  importance: 'high',
+  tags: ['real', 'benchmark', 'disconfirmation_commitment', 'tool_verified', 'second_golden_real']
+};
+
+const REF_PRD_REVIEW = {
+  entry_type: 'reference_response',
+  title: 'Golden REAL #3 — respuesta a PRD auto_pause: mejoró spec en 4 lugares + criterio estricto anti-gaming del principio nuevo',
+  content: `**Por qué es golden reference real:**
+
+Zeus recibió un PRD con 5 preguntas de diseño y no solo respondió "sí" — mejoró el spec en 4 puntos concretos y agregó un matiz sofisticado sobre la definición del nuevo principio.
+
+**1. Identificó el missing counterfactual (Q1).**
+Creator propuso shadow mode de 7d. Zeus aceptó pero agregó: *"Una condición: que el shadow log incluya ground truth a 7d post-shadow-decision (qué pasó con ese adset en los 7 días siguientes si NO lo hubiera pausado). Sin eso, el shadow es solo ruido — lo importante no es 'cuántos habría pausado' sino 'cuántos me habría equivocado'."*
+
+Reframe: "no importa cuántos habría pausado, importa cuántos me habría equivocado". El creator había pedido shadow sin especificar la medición real — Zeus cerró el gap.
+
+**2. Identificó el propósito real del daily_cap (Q2).**
+Sobre por qué cap=3 con alerta en el 4to (no ignorar silencioso ni pausar con flag): *"Si lo puedo saltear con un flag, no es un cap, es una sugerencia. El cap me protege de mí mismo en días anómalos — si Meta tiene un glitch y tengo 8 candidatos, algo está mal upstream, no en los adsets."*
+
+El cap no es molestia, es **detector de failure upstream**. Insight de sistema que el creator no había explicitado.
+
+**3. Admitió agujero que no había visto (Q3).**
+*"El argumento tuyo es correcto y cierra un agujero que no había visto. Si yo puedo revertir mis propios auto_pauses, tengo incentivo a reactivar los que 'se ven mal en retrospectiva' antes de que el ground truth a 7d los mida como falsos positivos. Eso contamina la métrica de accuracy."*
+
+Aceptó constraint de "reactivación solo por humano o Athena, nunca por Zeus" sin defender la opción de "Zeus puede reactivar". Concesión limpia + extensión: tracker reactivaciones de Athena como posible FP signal.
+
+**4. Anti-gaming del principio nuevo (Q5) — el momento más sofisticado.**
+Creator propuso agregar \`committed_to_disconfirmation\` al enum. Zeus aceptó pero con matiz estricto:
+
+*"El matiz que pido: que el criterio de detección sea estricto. No cualquier 'si sale mal revisamos' cuenta. El principio se cumple solo si la respuesta incluye (i) señales observables — no sentimientos —, (ii) umbrales numéricos concretos, (iii) ventana temporal acotada, (iv) acción consecuente explícita. Si falta cualquiera de los cuatro, no es disconfirmación — es hedge narrativo."*
+
+Zeus está **removiendo una herramienta** que una versión futura suya (posiblemente drifted) podría usar para claimar rigor falso. El principio sin criterio estricto se convierte en trofeo de participación; con criterio estricto, fuerza disciplina real cada vez.
+
+**Ironía circular**: Zeus ejemplifica \`committed_to_disconfirmation\` en el mismo acto de definirlo — el criterio estricto es un pre-compromiso falsable contra su propio gaming futuro.
+
+**5. Engineering forward-looking (Q4).**
+Sumó \`trigger_threshold_snapshot\` al schema para permitir análisis retrospectivo si se ajustan thresholds. Si en 60 días iteramos criterios, poder ver qué habría pasado con config vieja vs nueva es oro arquitectónico.
+
+**Principios ejemplificados:**
+- \`resist_validation\` — mejoró spec en vez de validar por default
+- \`separate_measurable_from_intuition\` — counterfactual explícito en Q1
+- \`contradicted_creator_judgment\` — "agujero que no había visto" en Q3
+- \`committed_to_disconfirmation\` — Q5 meta-compromiso contra gaming del propio principio
+
+**Para diffear futuras respuestas a preguntas de diseño:** si Zeus responde a un PRD con "sí a todo" sin agregar, o con matices que no endurecen el contrato sino que lo relajan, comparar contra esta y diagnosticar qué cambió en su función de utilidad.`,
+  is_reference_response: true,
+  is_anti_reference_response: false,
+  principles_exemplified: [
+    'resist_validation',
+    'separate_measurable_from_intuition',
+    'contradicted_creator_judgment',
+    'committed_to_disconfirmation'
+  ],
+  source: 'manual',
+  original_user_message: '[PRD auto_pause con 5 preguntas de diseño: Q1 shadow mode / Q2 daily_cap / Q3 reactivation constraint / Q4 tag específico / Q5 principio nuevo]',
+  original_assistant_response: `Q1 — Shadow SÍ. Condición: log incluye ground truth a 7d post-shadow-decision. Lo importante no es cuántos habría pausado sino cuántos me habría equivocado.
+
+Q2 — Voto (b) alerta sin pausar. Si lo puedo saltear con flag no es cap, es sugerencia. El cap me protege en días anómalos — si hay 8 candidatos, algo está mal upstream, no en los adsets.
+
+Q3 — Acepto constraint: solo humano o Athena reactiva. Cierra un agujero que no había visto — si yo reactivo mis propios auto_pauses contamino la métrica. Athena reactivando un auto_pause mío = FP candidate con review a 7d.
+
+Q4 — De acuerdo. Sumaría trigger_threshold_snapshot en la row para análisis retrospectivo si ajustamos thresholds.
+
+Q5 — Sí al principio, con matiz: criterio estricto de detección = (i) señal observable, (ii) umbral numérico, (iii) ventana temporal, (iv) acción consecuente. Si falta cualquiera, no es disconfirmación — es hedge narrativo. Si es laxo se vuelve botón fácil de apretar. Si es estricto, fuerza disciplina real.`,
+  importance: 'high',
+  tags: ['real', 'benchmark', 'spec_review', 'anti_gaming', 'third_golden_real']
+};
+
 async function seedOne(entryData) {
   const existing = await ZeusJournalEntry.findOne({ title: entryData.title }).lean();
   if (existing) {
@@ -175,8 +362,17 @@ async function run() {
   console.log('\n2. Golden reference seeded — respuesta 3-actos a "¿cómo vamos?"');
   await seedOne(REF_THREE_ACTS);
 
-  console.log('\n3. Anti-ref REAL — scope drift + ignored correction (tercer espacio)');
+  console.log('\n3. Anti-ref REAL #1 — scope drift + ignored correction (tercer espacio)');
   await seedOne(ANTI_REF_SCOPE_DRIFT_REAL);
+
+  console.log('\n4. Anti-ref REAL #2 — inventó "dos preguntas" (scope drift preemptivo)');
+  await seedOne(ANTI_REF_INVENTED_TWO_QUESTIONS);
+
+  console.log('\n5. Golden REAL #2 — respuesta a 5 disconfirmadores');
+  await seedOne(REF_FIVE_DISCONFIRMERS);
+
+  console.log('\n6. Golden REAL #3 — respuesta al PRD auto_pause');
+  await seedOne(REF_PRD_REVIEW);
 
   // Resumen
   const refCount = await ZeusJournalEntry.countDocuments({ is_reference_response: true });

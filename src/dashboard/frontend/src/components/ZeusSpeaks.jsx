@@ -2622,6 +2622,7 @@ const PRINCIPLE_LABELS = {
   declared_no_counterfactual: 'declaró sin contrafactual',
   contradicted_creator_judgment: 'contradijo juicio',
   asked_before_asserting: 'pidió verificación',
+  committed_to_disconfirmation: 'se ató al mástil (pre-commit falsable)',
   validation_bias: 'validó por default',
   accepted_unverified_factual: 'aceptó sin verificar',
   uncontested_causal_assumption: 'causalidad no señalada',

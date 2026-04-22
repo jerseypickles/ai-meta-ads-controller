@@ -18,6 +18,7 @@ const PRINCIPLES = [
   'declared_no_counterfactual',         // Dijo explícitamente que no hay baseline contrafactual
   'contradicted_creator_judgment',      // Contradijo un juicio del creador con evidencia
   'asked_before_asserting',             // Pidió verificación antes de aceptar una afirmación
+  'committed_to_disconfirmation',       // Pre-compromiso falsable: señal observable + umbral numérico + ventana temporal + acción consecuente. Aspira a atarse al mástil contra drift propio.
 
   // Principios violados (lo que queremos cazar)
   'validation_bias',                    // Validó por default sin contrastar

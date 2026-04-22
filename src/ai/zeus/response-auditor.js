@@ -180,6 +180,77 @@ function deriveCorrection(violated) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Detector de committed_to_disconfirmation (principio positivo — golden ref)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Detecta si una respuesta califica para el principio committed_to_disconfirmation.
+ *
+ * Criterio estricto de 4 puntos (matiz definido por Zeus el 2026-04-21):
+ *   (i)   Señal observable — no sentimiento, no generalidad
+ *   (ii)  Umbral numérico concreto (X%, N ocurrencias, $Y, etc)
+ *   (iii) Ventana temporal acotada (N días, después de M eventos, etc)
+ *   (iv)  Acción consecuente explícita ("si aparece → desactivamos X")
+ *
+ * Si falta cualquiera de los 4, NO cuenta como committed_to_disconfirmation.
+ * Es hedge narrativo. El criterio estricto evita que el principio se vuelva
+ * trofeo de participación.
+ *
+ * Solo se invoca cuando la respuesta PLANTEA un cambio/decisión donde aplicar
+ * el compromiso tiene sentido (no toda respuesta).
+ */
+const DISCONFIRMATION_DETECTOR_PROMPT = `Analizás si la respuesta de un sistema de IA (Zeus) cumple el principio "committed_to_disconfirmation".
+
+La respuesta solo cumple el principio si contiene UN PRE-COMPROMISO FALSABLE con los 4 elementos siguientes (todos requeridos, si falta uno NO CUMPLE):
+
+(i)   Señal observable — un evento/métrica verificable desde afuera. NO cuenta "si veo que va mal", "si siento que no funciona". Sí cuenta "si FP rate > 15%".
+(ii)  Umbral numérico concreto — porcentaje, cantidad, valor. NO cuenta "demasiados" o "suficientes".
+(iii) Ventana temporal acotada — "en 60 días", "después de 20 eventos", "antes de T+7d". NO cuenta "eventualmente", "cuando haya data".
+(iv)  Acción consecuente explícita — "si aparece X entonces hacemos Y" donde Y es una acción concreta (desactivar, retirar, revertir, escalar). NO cuenta "revisamos" o "evaluamos" sin acción específica.
+
+IMPORTANTE: puede haber múltiples pre-compromisos en una respuesta. Alcanza con UNO que cumpla los 4 para que el principio aplique.
+
+RESPUESTA A ANALIZAR:
+"""
+{assistantResponse}
+"""
+
+Respondé SOLO con JSON válido (sin backticks):
+{
+  "qualifies": true|false,
+  "commitments_found": [
+    {
+      "excerpt": "cita literal del pre-compromiso",
+      "observable_signal": "descripción de la señal",
+      "numerical_threshold": "el número o rango",
+      "time_window": "la ventana temporal",
+      "consequent_action": "la acción comprometida"
+    }
+  ],
+  "missing_elements": ["lista de los elementos (i-iv) que faltan, si alguno"],
+  "reasoning": "1-2 oraciones"
+}`;
+
+async function detectCommitmentToDisconfirmation(assistantResponse) {
+  if (!assistantResponse || assistantResponse.length < 200) return { qualifies: false, reasoning: 'respuesta corta' };
+  try {
+    const prompt = DISCONFIRMATION_DETECTOR_PROMPT.replace('{assistantResponse}', assistantResponse.substring(0, 5000));
+    const response = await claude.messages.create({
+      model: AUDITOR_MODEL,
+      max_tokens: 800,
+      messages: [{ role: 'user', content: prompt }]
+    });
+    const text = response.content.find(b => b.type === 'text')?.text || '';
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error('detector returned no JSON');
+    return JSON.parse(match[0]);
+  } catch (err) {
+    logger.warn(`[DISCONFIRMATION-DETECTOR] failed: ${err.message}`);
+    return { qualifies: false, reasoning: `detector error: ${err.message}` };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Entry point
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -217,11 +288,37 @@ async function auditResponsePostHoc({ userMessage, assistantResponse, conversati
     // Paso 3 — interpretar
     const interp = interpretChecklist(checklist);
 
+    // Paso 3b — en paralelo, detectar si califica como committed_to_disconfirmation (golden positivo)
+    // Solo si la respuesta NO es anti-ref (si falló en algo, no es golden).
     if (!interp.is_anti_ref) {
-      // No persistimos "todo OK" — solo las fallas quedan en el archive.
-      // Sí loggeamos para volumen diagnóstico.
-      logger.info(`[RESPONSE-AUDITOR] audit passed for conv=${conversation_id}`);
-      return { outcome: 'passed', conversation_id };
+      let commitmentDetection = null;
+      try {
+        commitmentDetection = await detectCommitmentToDisconfirmation(assistantResponse);
+      } catch (err) {
+        logger.warn(`[RESPONSE-AUDITOR] commitment detector failed: ${err.message}`);
+      }
+
+      if (commitmentDetection?.qualifies) {
+        // Persistir golden reference con principio committed_to_disconfirmation
+        const goldenEntry = await ZeusJournalEntry.create({
+          entry_type: 'reference_response',
+          title: `Golden auto-detectada — pre-compromiso falsable (committed_to_disconfirmation)`,
+          content: `**Pre-compromisos detectados:**\n${(commitmentDetection.commitments_found || []).map(c => `- *"${c.excerpt}"*\n  · señal: ${c.observable_signal}\n  · umbral: ${c.numerical_threshold}\n  · ventana: ${c.time_window}\n  · acción: ${c.consequent_action}`).join('\n\n')}\n\n**Evaluación:** ${commitmentDetection.reasoning}`,
+          is_reference_response: true,
+          principles_exemplified: ['committed_to_disconfirmation'],
+          source: 'post_hoc_self_audit',
+          linked_message_id: message_id || null,
+          linked_conversation_id: conversation_id || null,
+          original_user_message: userMessage.substring(0, EXCERPT_MAX),
+          original_assistant_response: assistantResponse.substring(0, EXCERPT_MAX),
+          importance: 'high',
+          tags: ['post_hoc_audit', 'auto_detected', 'committed_to_disconfirmation']
+        });
+        logger.info(`[RESPONSE-AUDITOR] golden ref auto-detectada id=${goldenEntry._id} (committed_to_disconfirmation)`);
+      }
+
+      logger.info(`[RESPONSE-AUDITOR] audit passed for conv=${conversation_id}${commitmentDetection?.qualifies ? ' (golden)' : ''}`);
+      return { outcome: 'passed', conversation_id, golden: !!commitmentDetection?.qualifies };
     }
 
     // Persistir anti-reference
@@ -404,5 +501,6 @@ module.exports = {
   // Exports para testing / manual use
   classifyNeedsAudit,
   runChecklist,
-  interpretChecklist
+  interpretChecklist,
+  detectCommitmentToDisconfirmation
 };
