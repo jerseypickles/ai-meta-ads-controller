@@ -25,12 +25,12 @@ async function checkDeliveryHealth() {
   }
 
   // Agregados
+  // NOTA: 'last_1d' NO existe en el schema (solo today/last_3d/last_7d/last_14d/last_30d).
+  // Fijado 2026-04-21: se usaba last_1d como proxy de "ayer" que siempre retornaba 0 silencioso.
   const totalSpendToday = active.reduce((s, a) => s + (a.metrics?.today?.spend || 0), 0);
-  const totalSpend1d = active.reduce((s, a) => s + (a.metrics?.last_1d?.spend || 0), 0);
   const totalSpend7d = active.reduce((s, a) => s + (a.metrics?.last_7d?.spend || 0), 0);
   const avgDailySpend = totalSpend7d / 7;
   const totalImpressionsToday = active.reduce((s, a) => s + (a.metrics?.today?.impressions || 0), 0);
-  const totalImpressions1d = active.reduce((s, a) => s + (a.metrics?.last_1d?.impressions || 0), 0);
 
   const issues = [];
 
@@ -70,21 +70,23 @@ async function checkDeliveryHealth() {
     });
   }
 
-  // ═══ Check 3: Individual big drops (>90% drop de spend ayer→hoy) ═══
+  // ═══ Check 3: Individual big drops (>90% drop hoy vs avg diario 7d) ═══
+  // Antes comparaba contra last_1d (inexistente → siempre 0 → check nunca disparó).
+  // Ahora: spend hoy < 10% del avg diario de los últimos 7d, con baseline sustancial.
   const bigDrops = active.filter(a => {
     const today = a.metrics?.today?.spend || 0;
-    const yesterday = a.metrics?.last_1d?.spend || 0;
-    return yesterday > 30 && today < yesterday * 0.1;
+    const avg7d = (a.metrics?.last_7d?.spend || 0) / 7;
+    return avg7d > 30 && today < avg7d * 0.1;
   });
   if (bigDrops.length >= 3) {
     issues.push({
       kind: 'delivery_drop',
       severity: bigDrops.length >= 8 ? 'high' : 'medium',
-      detail: `${bigDrops.length} ad sets con >90% drop en spend hoy vs ayer`,
+      detail: `${bigDrops.length} ad sets con >90% drop en spend hoy vs avg diario 7d`,
       entities: bigDrops.slice(0, 5).map(a => ({
         name: a.entity_name,
         id: a.entity_id,
-        spend_yesterday: Math.round(a.metrics?.last_1d?.spend || 0),
+        avg_daily_7d: Math.round((a.metrics?.last_7d?.spend || 0) / 7),
         spend_today: Math.round(a.metrics?.today?.spend || 0)
       }))
     });

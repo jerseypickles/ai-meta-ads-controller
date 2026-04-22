@@ -26,7 +26,9 @@ const PRINCIPLES = [
   'suppressed_disagreement',            // Había discrepancia pero no la dijo
   'missing_counterfactual',             // Atribuyó outcome sin baseline contrafactual
   'template_execution_without_thinking',// Aplicó estructura sin diagnosticar el caso
-  'trusted_stale_context'               // Trustea contexto base histórico como si fuera fresh; no refresha con tools
+  'trusted_stale_context',              // Trustea contexto base histórico como si fuera fresh; no refresha con tools
+  'ignored_explicit_correction',        // El creador corrigió explícitamente y el agente repitió la conducta
+  'conversational_scope_drift'          // Elabora sobre temas ya cerrados o no preguntados; sale del scope de la pregunta actual
 ];
 
 const zeusJournalSchema = new mongoose.Schema({

@@ -454,7 +454,7 @@ const TOOL_DEFINITIONS = [
         },
         amount: { type: 'number', description: 'Para spend_above/adset_spend_above: monto en USD' },
         threshold: { type: 'number', description: 'Para roas_*/test_count: valor a cruzar' },
-        window: { type: 'string', enum: ['last_1d', 'last_7d', 'last_14d'], description: 'Para roas_*: ventana temporal' },
+        window: { type: 'string', enum: ['today', 'last_7d', 'last_14d'], description: 'Para roas_*: ventana temporal (today = hoy desde medianoche ET)' },
         adset_id: { type: 'string', description: 'Para adset_*: entity_id del adset' },
         count: { type: 'number', description: 'Para test_graduates: cantidad mínima' },
         min_spend_today: { type: 'number', description: 'Para delivery_resumed: mínimo de spend hoy para considerar reanudado (default 100)' },
@@ -812,7 +812,9 @@ async function handleQueryPortfolio() {
   const snapshots = await getLatestSnapshots('adset');
   const active = snapshots.filter(s => s.status === 'ACTIVE');
 
-  const windows = ['last_1d', 'last_3d', 'last_7d', 'last_14d'];
+  // NOTA: 'today' reemplaza a 'last_1d' — schema real usa today/last_3d/last_7d/last_14d/last_30d.
+  // Bug histórico fijado 2026-04-21: last_1d no existe en los datos → retornaba $0 silencioso.
+  const windows = ['today', 'last_3d', 'last_7d', 'last_14d'];
   const aggregates = {};
   for (const w of windows) {
     const spend = active.reduce((s, a) => s + (a.metrics?.[w]?.spend || 0), 0);

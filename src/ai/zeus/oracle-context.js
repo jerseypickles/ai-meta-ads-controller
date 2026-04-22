@@ -37,9 +37,11 @@ async function buildOracleContext(lastSeenAt = null) {
     };
   };
 
+  // NOTA: 'today' es spend desde medianoche ET (calendar day). NO existe 'last_1d' en los datos.
+  // Bug histórico (fijado 2026-04-21): oracle-context leía 'last_1d' que retornaba $0 silencioso.
   ctx.portfolio = {
     active_adsets: active.length,
-    last_1d: agg('last_1d'),
+    today: agg('today'),
     last_7d: agg('last_7d'),
     last_14d: agg('last_14d')
   };
@@ -227,9 +229,9 @@ function formatContextForPrompt(ctx) {
   const lines = [];
   const p = ctx.portfolio;
   lines.push(`PORTFOLIO — ${p.active_adsets} ad sets activos`);
-  lines.push(`  24h: $${p.last_1d.spend} gastados · $${p.last_1d.revenue} revenue · ${p.last_1d.roas}x ROAS · ${p.last_1d.purchases} compras`);
-  lines.push(`  7d:  $${p.last_7d.spend} gastados · $${p.last_7d.revenue} revenue · ${p.last_7d.roas}x ROAS · ${p.last_7d.purchases} compras`);
-  lines.push(`  14d: $${p.last_14d.spend} gastados · $${p.last_14d.revenue} revenue · ${p.last_14d.roas}x ROAS · ${p.last_14d.purchases} compras`);
+  lines.push(`  HOY (desde medianoche ET): $${p.today.spend} gastados · $${p.today.revenue} revenue · ${p.today.roas}x ROAS · ${p.today.purchases} compras`);
+  lines.push(`  7d rolling:  $${p.last_7d.spend} gastados · $${p.last_7d.revenue} revenue · ${p.last_7d.roas}x ROAS · ${p.last_7d.purchases} compras`);
+  lines.push(`  14d rolling: $${p.last_14d.spend} gastados · $${p.last_14d.revenue} revenue · ${p.last_14d.roas}x ROAS · ${p.last_14d.purchases} compras`);
 
   const a = ctx.activity_since_last;
   lines.push(`\nACTIVIDAD (últimas ~${a.window_hours}h):`);
