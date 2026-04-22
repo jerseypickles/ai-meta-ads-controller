@@ -115,6 +115,26 @@ async function runSubLens(subLens, mode = 'daily') {
  * Sub-lentes se ejecutan en serie para no saturar la API de Claude.
  */
 async function runSentinel(mode = 'daily') {
+  // Gate de capacity (Phase 2 Hilo D, 2026-04-22): si el backlog está saturado,
+  // Sentinel pausa en vez de generar más ruido. Zone red = skip completo.
+  // Zone yellow = cadencia reducida (corre cada 72h en vez de 24h).
+  try {
+    const { shouldSentinelRun, markSentinelRun } = require('./rec-capacity');
+    const gate = await shouldSentinelRun();
+    if (!gate.run) {
+      logger.warn(`[SENTINEL] SKIP '${mode}' — ${gate.reason}`);
+      return { mode, skipped: true, reason: gate.reason, capacity: gate.capacity };
+    }
+    if (gate.scope_reduced) {
+      logger.info(`[SENTINEL] '${mode}' corre con scope reducido (post-green hysteresis)`);
+    }
+    // Marcar el run ANTES para que el gate de cadence en yellow funcione
+    await markSentinelRun();
+  } catch (gateErr) {
+    // Fail-open: si el gate falla, correr normal pero loggear
+    logger.warn(`[SENTINEL] capacity gate error (fail-open): ${gateErr.message}`);
+  }
+
   const lenses = mode === 'weekly' ? WEEKLY_LENSES : DAILY_LENSES;
   logger.info(`[SENTINEL] Iniciando pasada '${mode}' con ${lenses.length} sub-lentes`);
 

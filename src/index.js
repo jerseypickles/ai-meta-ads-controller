@@ -916,6 +916,21 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'stance-verdict' });
   logger.info('  [*] Stance verdict — diario 5am ET (calibración retroactiva)');
 
+  // Hilo D Phase 2 — Rec capacity red-state aging check (diario 9am ET)
+  // Si rec backlog está zone=red por >72h sin actividad del creador, pingea.
+  cron.schedule('0 9 * * *', async () => {
+    try {
+      const { checkRedStateAging } = require('./ai/zeus/rec-capacity');
+      const result = await checkRedStateAging();
+      if (result.pinged) {
+        logger.warn(`[REC-CAPACITY] red-aging ping enviado · ${result.hours_in_red?.toFixed(1)}h en red`);
+      }
+    } catch (err) {
+      logger.error(`[REC-CAPACITY] red-aging check failed: ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'rec-capacity-aging' });
+  logger.info('  [*] Rec capacity red-aging — diario 9am ET');
+
   // Hilo B — auditoría trimestral de calibración de respuesta (principio + trampas + anti-refs)
   // Corre 9am ET el 1ro de feb/may/ago/nov (cada inicio de trimestre)
   cron.schedule('0 9 1 2,5,8,11 *', async () => {

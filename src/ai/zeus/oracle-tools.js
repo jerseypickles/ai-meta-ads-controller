@@ -27,6 +27,7 @@ const ZeusJournalEntry = require('../../db/models/ZeusJournalEntry');
 const ZeusPlaybook = require('../../db/models/ZeusPlaybook');
 const ZeusExecutionAuthority = require('../../db/models/ZeusExecutionAuthority');
 const { getLatestSnapshots, getSnapshotHistory, getOverviewHistory } = require('../../db/queries');
+const logger = require('../../utils/logger');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Tool definitions (Anthropic format)
@@ -745,6 +746,11 @@ const TOOL_DEFINITIONS = [
       },
       required: ['file_path', 'rationale', 'evidence_summary', 'category', 'severity']
     }
+  },
+  {
+    name: 'query_rec_capacity',
+    description: 'Consulta el estado del rec-capacity gate — pending_eff, growth_rate, zone (green/yellow/red), hysteresis state. Úsala antes de decidir proponer muchas recs nuevas, o cuando el creador pregunte por el estado del backlog de code recs. En zone=yellow solo HIGH+ pasan el gate; en red solo CRITICAL. El módulo pausa sentinel automáticamente en red.',
+    input_schema: { type: 'object', properties: {}, required: [] }
   },
   {
     name: 'query_platform_health',
@@ -1991,6 +1997,37 @@ async function handleProposeCodeChange(input) {
   if (ZEUS_SELF_FILES.some(f => normPath === f || normPath.endsWith(f))) {
     return { error: `Archivo fuera de scope: ${input.file_path}. No podés proponer cambios a tu propio cerebro ni a safety.` };
   }
+
+  // Gate de capacity (Phase 2 Hilo D, 2026-04-22): chequea dedup + zone.
+  // Si zone=yellow solo HIGH+ pasan, zone=red solo CRITICAL. Dedup siempre.
+  try {
+    const { canEmitRec } = require('./rec-capacity');
+    const capacityCheck = await canEmitRec({
+      file_path: input.file_path,
+      line_start: input.line_start || null,
+      line_end: input.line_end || null,
+      category: input.category || 'other',
+      severity: input.severity || 'medium',
+      rationale: input.rationale
+    });
+    if (!capacityCheck.allowed) {
+      return {
+        error: `rec-capacity gate: ${capacityCheck.reason}`,
+        blocked_by: 'rec_capacity',
+        is_duplicate: capacityCheck.is_duplicate || false,
+        duplicate_rec_id: capacityCheck.duplicate_rec_id,
+        zone: capacityCheck.zone,
+        severity_required: capacityCheck.severity_required,
+        guidance: capacityCheck.is_duplicate
+          ? 'Ya existe rec similar. Chequeá la existente antes de re-emitir.'
+          : 'Backlog saturado. Esperá que el creador procese pending existentes o eleva severity si es genuino.'
+      };
+    }
+  } catch (gateErr) {
+    // Si el gate mismo falla, NO bloqueamos (fail-open) pero loggeamos
+    logger.warn(`[PROPOSE-CODE-CHANGE] capacity gate error (fail-open): ${gateErr.message}`);
+  }
+
   try {
     const rec = await ZeusCodeRecommendation.create({
       file_path: input.file_path,
@@ -2010,6 +2047,33 @@ async function handleProposeCodeChange(input) {
       ok: true,
       id: rec._id.toString(),
       summary: `Recomendación creada: ${input.category}/${input.severity} en ${input.file_path}${input.line_start ? `:${input.line_start}` : ''}`
+    };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function handleQueryRecCapacity() {
+  try {
+    const { assessRecCapacity } = require('./rec-capacity');
+    const assessment = await assessRecCapacity();
+    return {
+      ok: true,
+      zone: assessment.zone,
+      pending_eff: assessment.pending_eff,
+      total_pending: assessment.total_pending,
+      stale_dropped: assessment.stale_dropped,
+      dedup_dropped: assessment.dedup_dropped,
+      growth_rate_per_day: assessment.growth_rate_per_day,
+      in_hysteresis: assessment.in_hysteresis,
+      hysteresis_remaining_hours: assessment.hysteresis_remaining_hours,
+      red_aged_hours: assessment.red_aged_hours,
+      gate_behavior: {
+        green: 'todas severities permitidas, cadencia normal',
+        yellow: 'solo HIGH+ permitidas, sentinel cadence x3',
+        red: 'solo CRITICAL con dedup, sentinel skipeado'
+      }[assessment.zone],
+      config: assessment.config
     };
   } catch (err) {
     return { error: err.message };
@@ -2048,6 +2112,7 @@ const TOOL_HANDLERS = {
   read_code_file: handleReadCodeFile,
   grep_code: handleGrepCode,
   propose_code_change: handleProposeCodeChange,
+  query_rec_capacity: handleQueryRecCapacity,
   remember_preference: handleRememberPreference,
   forget_preference: handleForgetPreference,
   list_preferences: handleListPreferences,
