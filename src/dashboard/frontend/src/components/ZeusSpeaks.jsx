@@ -627,6 +627,11 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   const [calibCounts, setCalibCounts] = useState({});
   const [calibTraps, setCalibTraps] = useState([]);
   const [calibTrapCounts, setCalibTrapCounts] = useState({});
+  // Hilo C — panel 🎚️ auto-pause
+  const [showAutoPause, setShowAutoPause] = useState(false);
+  const [apStatus, setApStatus] = useState(null);
+  const [apTab, setApTab] = useState('live'); // live | shadow
+  const [apLogs, setApLogs] = useState([]);
   const scrollRef = useRef(null);
   const esRef = useRef(null);
   const streamingTextRef = useRef('');
@@ -941,6 +946,71 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
     if (showCalibration) loadCalibrationEntries(calibTab);
   }, [showCalibration, calibTab]);
 
+  // Hilo C — auto-pause handlers
+  async function loadAutoPause(tab) {
+    try {
+      const [statusRes, logsRes] = await Promise.all([
+        api.get('/api/zeus/auto-pause/status'),
+        api.get(`/api/zeus/auto-pause/${tab === 'shadow' ? 'shadow-logs' : 'logs'}`, { params: { limit: 50 } })
+      ]);
+      setApStatus(statusRes.data);
+      setApLogs(logsRes.data.logs || []);
+    } catch (err) { console.error('loadAutoPause', err); }
+  }
+
+  async function changeApMode(newMode) {
+    const currentMode = apStatus?.mode || 'disabled';
+    if (newMode === currentMode) return;
+    const warnings = {
+      'disabled_to_shadow': 'Pasar a SHADOW — el detector va a loggear candidatos pero NO va a pausar. Sin riesgo operativo. ¿Confirmás?',
+      'shadow_to_live': '⚠️ Pasar a LIVE — el sistema va a PAUSAR adsets automáticamente. Asegurate de tener 20+ candidatos shadow con <15% FP rate antes. ¿Confirmás?',
+      'live_to_shadow': 'Pasar de LIVE a SHADOW — deja de pausar pero sigue loggeando. ¿Confirmás?',
+      'to_disabled': 'DESACTIVAR auto-pause completo. Se frena cualquier detección y ejecución. ¿Confirmás?'
+    };
+    let msg;
+    if (newMode === 'disabled') msg = warnings.to_disabled;
+    else if (currentMode === 'disabled' && newMode === 'shadow') msg = warnings.disabled_to_shadow;
+    else if (currentMode === 'shadow' && newMode === 'live') msg = warnings.shadow_to_live;
+    else if (currentMode === 'live' && newMode === 'shadow') msg = warnings.live_to_shadow;
+    else msg = `Cambiar mode: ${currentMode} → ${newMode}. ¿Confirmás?`;
+    if (!window.confirm(msg)) return;
+    const reason = window.prompt('Razón (opcional, queda en el log):', '') || '';
+    try {
+      await api.post('/api/zeus/auto-pause/mode', { mode: newMode, reason });
+      await loadAutoPause(apTab);
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function clearApYellowZone() {
+    if (!window.confirm('Limpiar yellow zone — esto permite que el detector vuelva a ejecutar nuevas pauses. Solo hacelo si revisaste los FPs y decidiste continuar. ¿Confirmás?')) return;
+    try {
+      await api.post('/api/zeus/auto-pause/yellow-zone/clear');
+      await loadAutoPause(apTab);
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function reactivateApLog(logId) {
+    if (!window.confirm('Reactivar este adset en Meta y registrar la reactivación? Se va a trackear como FP candidato con review a 7d.')) return;
+    const reason = window.prompt('Razón de la reactivación:', '') || '';
+    try {
+      await api.post(`/api/zeus/auto-pause/logs/${logId}/reactivate`, { reason });
+      await loadAutoPause(apTab);
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  async function runApHealthCheck() {
+    if (!window.confirm('Correr health check manual ahora? Evalúa FP rate, delivery confounds, drift behavioral. Puede desactivar el sistema si dispara kill criteria.')) return;
+    try {
+      const r = await api.post('/api/zeus/auto-pause/health/run');
+      alert(`Health check: zone=${r.data.report.zone} · action=${r.data.report.action}${r.data.report.reason ? '\nReason: ' + r.data.report.reason : ''}`);
+      await loadAutoPause(apTab);
+    } catch (err) { alert('Error: ' + err.message); }
+  }
+
+  useEffect(() => {
+    if (showAutoPause) loadAutoPause(apTab);
+  }, [showAutoPause, apTab]);
+
   // Load counts al abrir drawer (para el badge del 💡 y 🏛️ y drafts de memoria)
   useEffect(() => {
     (async () => {
@@ -1180,6 +1250,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                     setShowConversationList(false);
                     setShowStances(false);
                     setShowCalibration(false);
+                    setShowAutoPause(false);
                     if (key === 'plans') setShowPlans(true);
                     else if (key === 'calendar') setShowCalendar(true);
                     else if (key === 'architecture') setShowArchitecture(true);
@@ -1187,6 +1258,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                     else if (key === 'coderecs') setShowCodeRecs(true);
                     else if (key === 'stances') setShowStances(true);
                     else if (key === 'calibration') setShowCalibration(true);
+                    else if (key === 'autopause') setShowAutoPause(true);
                     else if (key === 'conversations') {
                       loadConversationList();
                       setShowConversationList(true);
@@ -1465,6 +1537,111 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                     ))
                   )}
                 </>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Panel Auto-Pause — Hilo C (palanca ejecutiva bounded) */}
+        <AnimatePresence>
+          {showAutoPause && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="zeus-ap-panel"
+            >
+              <div className="zeus-ap-header">
+                <div className="zeus-ap-title">🎚️ Auto-Pause — palanca bounded</div>
+                <div className="zeus-ap-sub">Pausa automática de adsets con ROAS_3d &lt;0.3 + spend ≥$150 + 0-1 compras. Criterio matemático auditable, no L5.</div>
+              </div>
+
+              {/* Status Bar */}
+              {apStatus && (
+                <div className="zeus-ap-status-bar">
+                  <div className="zeus-ap-status-row">
+                    <div className="zeus-ap-mode-group">
+                      <span className="zeus-ap-label">modo:</span>
+                      <button
+                        className={`zeus-ap-mode-btn ${apStatus.mode === 'disabled' ? 'active mode-disabled' : ''}`}
+                        onClick={() => changeApMode('disabled')}
+                      >disabled</button>
+                      <button
+                        className={`zeus-ap-mode-btn ${apStatus.mode === 'shadow' ? 'active mode-shadow' : ''}`}
+                        onClick={() => changeApMode('shadow')}
+                      >shadow</button>
+                      <button
+                        className={`zeus-ap-mode-btn ${apStatus.mode === 'live' ? 'active mode-live' : ''}`}
+                        onClick={() => changeApMode('live')}
+                      >live</button>
+                    </div>
+
+                    <span className="zeus-ap-stat">
+                      hoy: <b>{apStatus.today_count}/{apStatus.daily_cap}</b>
+                    </span>
+
+                    {apStatus.fp_stats?.ready ? (
+                      <span className={`zeus-ap-stat fp-rate ${apStatus.fp_stats.fp_rate > 0.2 ? 'red' : apStatus.fp_stats.fp_rate > 0.15 ? 'amber' : 'green'}`}>
+                        FP rate: <b>{(apStatus.fp_stats.fp_rate * 100).toFixed(1)}%</b> (n={apStatus.fp_stats.count})
+                      </span>
+                    ) : (
+                      <span className="zeus-ap-stat muted">
+                        FP rate: pending ({apStatus.fp_stats?.count || 0}/20)
+                      </span>
+                    )}
+
+                    <span className="zeus-ap-spacer" />
+
+                    <button className="zeus-ap-btn subtle" onClick={runApHealthCheck} title="Correr health check ahora">
+                      ↻ health check
+                    </button>
+                  </div>
+
+                  {apStatus.yellow_zone_active && (
+                    <div className="zeus-ap-yellow-banner">
+                      <span className="zeus-ap-yellow-icon">⚠️</span>
+                      <div className="zeus-ap-yellow-text">
+                        <b>Zone AMARILLA — nuevas pauses BLOQUEADAS.</b>
+                        <br />FP rate cruzó threshold (&gt;15%). El detector sigue corriendo pero NO ejecuta pauses hasta tu decisión.
+                        Revisá los casos, decidí tighten de thresholds o disable, y después clear manualmente.
+                      </div>
+                      <button className="zeus-ap-btn" onClick={clearApYellowZone}>clear yellow</button>
+                    </div>
+                  )}
+
+                  <div className="zeus-ap-counts">
+                    <span>shadow total: <b>{apStatus.shadow.total}</b> ({Object.entries(apStatus.shadow.by_verdict).map(([v, c]) => `${v}:${c}`).join(' · ') || 'ninguno'})</span>
+                    <span>·</span>
+                    <span>live total: <b>{apStatus.live.total}</b> ({Object.entries(apStatus.live.by_verdict).map(([v, c]) => `${v}:${c}`).join(' · ') || 'ninguno'})</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Tabs */}
+              <div className="zeus-ap-tabs">
+                <button
+                  className={`zeus-ap-tab ${apTab === 'live' ? 'active' : ''}`}
+                  onClick={() => setApTab('live')}
+                >Live logs {apStatus ? `(${apStatus.live.total})` : ''}</button>
+                <button
+                  className={`zeus-ap-tab ${apTab === 'shadow' ? 'active' : ''}`}
+                  onClick={() => setApTab('shadow')}
+                >Shadow logs {apStatus ? `(${apStatus.shadow.total})` : ''}</button>
+              </div>
+
+              {/* Log cards */}
+              {apLogs.length === 0 ? (
+                <div className="zeus-ap-empty">
+                  {apTab === 'shadow'
+                    ? 'Sin shadow logs todavía. El detector crea candidatos cuando está en modo shadow o live.'
+                    : 'Sin live logs todavía. Las pausas reales aparecen acá cuando el modo es live + criterio dispara.'}
+                </div>
+              ) : (
+                apLogs.map(log => (
+                  apTab === 'shadow'
+                    ? <ShadowLogCard key={log._id} log={log} />
+                    : <LiveLogCard key={log._id} log={log} onReactivate={() => reactivateApLog(log._id)} />
+                ))
               )}
             </motion.div>
           )}
@@ -1766,6 +1943,12 @@ function ZeusPalette({ onClose, onSelect, codeRecsPending, archDrafts, prefDraft
       entries: [
         { key: 'stances', emoji: '🎯', label: 'Stances', desc: 'Postura del día de cada agente' },
         { key: 'calibration', emoji: '📓', label: 'Calibración', desc: 'Golden / anti-refs / trampas / auditorías' }
+      ]
+    },
+    {
+      group: 'Palancas ejecutivas bounded',
+      entries: [
+        { key: 'autopause', emoji: '🎚️', label: 'Auto-Pause', desc: 'Pausa automática de drains con criterio duro' }
       ]
     }
   ];
@@ -2842,6 +3025,159 @@ function AuditCard({ entry }) {
             </div>
           )}
           {entry.content && <div className="zeus-calib-content">{entry.content}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══ Hilo C — Auto-Pause cards ═══
+
+const AP_VERDICT_COLOR = {
+  pending: '#6b7280',
+  correct_pause: '#10b981',
+  false_positive: '#ef4444',
+  ambiguous: '#fbbf24'
+};
+
+const AP_VERDICT_ICON = {
+  pending: '◷',
+  correct_pause: '✓',
+  false_positive: '✗',
+  ambiguous: '~'
+};
+
+function fmtApDate(d) {
+  if (!d) return '—';
+  const date = new Date(d);
+  const diffMs = Date.now() - date.getTime();
+  const hrs = diffMs / 3600000;
+  if (Math.abs(hrs) < 1) return 'recién';
+  if (hrs < 48 && hrs >= 0) return `hace ${Math.round(hrs)}h`;
+  if (hrs < 0 && Math.abs(hrs) < 72) return `en ${Math.round(Math.abs(hrs))}h`;
+  return date.toLocaleDateString('es-AR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function ShadowLogCard({ log }) {
+  const [expanded, setExpanded] = useState(false);
+  const ts = log.threshold_snapshot || {};
+  const gt = log.ground_truth_7d;
+  const verdictColor = AP_VERDICT_COLOR[log.verdict] || '#6b7280';
+  return (
+    <div className={`zeus-ap-card shadow verdict-${log.verdict}`} style={{ borderLeftColor: verdictColor }}>
+      <div className="zeus-ap-card-head" onClick={() => setExpanded(!expanded)}>
+        <span className="zeus-ap-card-icon" style={{ color: verdictColor }}>
+          {AP_VERDICT_ICON[log.verdict] || '?'}
+        </span>
+        <span className="zeus-ap-card-title">{log.adset_name}</span>
+        <span className="zeus-ap-card-metric">
+          ROAS_3d {ts.roas_3d?.toFixed(2) || '?'}x · ${Math.round(ts.spend_3d || 0)} · {ts.purchases_3d || 0}c
+        </span>
+        <span className="zeus-ap-card-verdict" style={{ color: verdictColor, borderColor: verdictColor + '55' }}>
+          {log.verdict || 'pending'}
+        </span>
+        <span className="zeus-ap-card-date">{fmtApDate(log.detected_at)}</span>
+        <span className="zeus-ap-expand">{expanded ? '▾' : '▸'}</span>
+      </div>
+      {expanded && (
+        <div className="zeus-ap-card-body">
+          <div className="zeus-ap-field">
+            <span className="zeus-ap-label">detección:</span>
+            <code>ROAS_3d {ts.roas_3d?.toFixed(3)} · spend ${ts.spend_3d} · purchases {ts.purchases_3d} · age {ts.age_days}d · learning {ts.learning_stage}</code>
+          </div>
+          <div className="zeus-ap-field">
+            <span className="zeus-ap-label">would_pause:</span> {log.would_pause ? 'sí' : 'no'}
+            <span style={{ marginLeft: 10 }}><span className="zeus-ap-label">criteria:</span> <code>{log.criteria_version}</code></span>
+          </div>
+          {log.ground_truth_completed ? (
+            <>
+              <div className="zeus-ap-field">
+                <span className="zeus-ap-label">ground truth (7d si NO pausado):</span>
+                <code>ROAS {gt?.roas?.toFixed(2)}x · spend ${gt?.spend} · {gt?.purchases} compras</code>
+              </div>
+              {log.verdict_reason && <div className="zeus-ap-field muted">{log.verdict_reason}</div>}
+            </>
+          ) : (
+            <div className="zeus-ap-field muted">
+              ground truth pending · review due {fmtApDate(log.ground_truth_due_at)}
+            </div>
+          )}
+          {log.platform_state_at_detection?.degraded && (
+            <div className="zeus-ap-field warning">⚠ platform estaba degraded al detectar — caso de confound</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LiveLogCard({ log, onReactivate }) {
+  const [expanded, setExpanded] = useState(false);
+  const ts = log.threshold_snapshot || {};
+  const verdictColor = AP_VERDICT_COLOR[log.verdict] || '#6b7280';
+  const isReactivated = !!log.reactivated_at;
+  return (
+    <div className={`zeus-ap-card live verdict-${log.verdict}`} style={{ borderLeftColor: verdictColor }}>
+      <div className="zeus-ap-card-head" onClick={() => setExpanded(!expanded)}>
+        <span className="zeus-ap-card-icon" style={{ color: verdictColor }}>
+          {AP_VERDICT_ICON[log.verdict] || '?'}
+        </span>
+        <span className="zeus-ap-card-title">{log.adset_name}</span>
+        <span className="zeus-ap-card-metric">
+          ROAS_3d {ts.roas_3d?.toFixed(2) || '?'}x · ${Math.round(ts.spend_3d || 0)}
+        </span>
+        <span className="zeus-ap-card-verdict" style={{ color: verdictColor, borderColor: verdictColor + '55' }}>
+          {log.verdict || 'pending'}
+        </span>
+        {isReactivated && (
+          <span className="zeus-ap-card-reactivated" title={`reactivated by ${log.reactivated_by}`}>
+            ↻ {log.reactivated_by}
+          </span>
+        )}
+        <span className="zeus-ap-card-date">{fmtApDate(log.paused_at)}</span>
+        <span className="zeus-ap-expand">{expanded ? '▾' : '▸'}</span>
+      </div>
+      {expanded && (
+        <div className="zeus-ap-card-body">
+          <div className="zeus-ap-field">
+            <span className="zeus-ap-label">pausado:</span> {fmtApDate(log.paused_at)}
+            {log.meta_api_success === false && <span className="zeus-ap-field warning"> · ⚠ Meta API falló</span>}
+          </div>
+          <div className="zeus-ap-field">
+            <span className="zeus-ap-label">threshold:</span>
+            <code>ROAS_3d {ts.roas_3d?.toFixed(3)} · spend ${ts.spend_3d} · purchases {ts.purchases_3d} · age {ts.age_days}d · learning {ts.learning_stage}</code>
+          </div>
+          <div className="zeus-ap-field">
+            <span className="zeus-ap-label">criteria:</span> <code>{log.criteria_version}</code>
+            <span style={{ marginLeft: 10 }}><span className="zeus-ap-label">review due:</span> {fmtApDate(log.review_due_at)}</span>
+          </div>
+          {isReactivated ? (
+            <>
+              <div className="zeus-ap-field">
+                <span className="zeus-ap-label">reactivado:</span> {fmtApDate(log.reactivated_at)} por <b>{log.reactivated_by}</b>
+                {log.reactivation_reason && <span> · "{log.reactivation_reason}"</span>}
+              </div>
+              {log.ground_truth_post_reactivation ? (
+                <div className="zeus-ap-field">
+                  <span className="zeus-ap-label">post-reactivation 7d:</span>
+                  <code>ROAS {log.ground_truth_post_reactivation.roas_7d?.toFixed(2)}x · ${log.ground_truth_post_reactivation.spend_7d} · {log.ground_truth_post_reactivation.purchases_7d} compras</code>
+                </div>
+              ) : (
+                <div className="zeus-ap-field muted">ground truth post-reactivation pending</div>
+              )}
+            </>
+          ) : (
+            <div className="zeus-ap-actions">
+              <button className="zeus-ap-btn" onClick={onReactivate}>↻ reactivar adset</button>
+              <span className="zeus-ap-field muted" style={{ marginLeft: 8 }}>
+                si lo reactivás, se trackea como FP candidate y se mide ROAS a 7d post.
+              </span>
+            </div>
+          )}
+          {log.verdict_reason && <div className="zeus-ap-field muted">{log.verdict_reason}</div>}
+          {log.platform_state_at_pause?.degraded && (
+            <div className="zeus-ap-field warning">⚠ platform estaba degraded al pausar — caso de confound (violación gate)</div>
+          )}
         </div>
       )}
     </div>

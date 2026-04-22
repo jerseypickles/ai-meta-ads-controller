@@ -4281,3 +4281,332 @@
   line-height: 1.4;
 }
 
+/* ═══ Panel Auto-Pause — Hilo C ═══ */
+.zeus-ap-panel {
+  overflow: hidden;
+  background: rgba(10, 14, 39, 0.7);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  max-height: 720px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.zeus-ap-header {
+  padding: 12px 16px 8px;
+  background: rgba(239, 68, 68, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.zeus-ap-title {
+  font-size: 0.72rem;
+  color: #fca5a5;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.zeus-ap-sub {
+  font-size: 0.66rem;
+  color: var(--bos-text-muted);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+/* Status bar */
+.zeus-ap-status-bar {
+  padding: 10px 16px;
+  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.zeus-ap-status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 0.7rem;
+}
+
+.zeus-ap-mode-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.zeus-ap-label {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--bos-text-muted);
+  margin-right: 4px;
+}
+
+.zeus-ap-mode-btn {
+  padding: 4px 10px;
+  font-size: 0.62rem;
+  background: rgba(17, 21, 51, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--bos-text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+}
+
+.zeus-ap-mode-btn:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.zeus-ap-mode-btn.active.mode-disabled {
+  background: rgba(107, 114, 128, 0.2);
+  border-color: rgba(107, 114, 128, 0.5);
+  color: #d1d5db;
+}
+
+.zeus-ap-mode-btn.active.mode-shadow {
+  background: rgba(139, 92, 246, 0.2);
+  border-color: rgba(139, 92, 246, 0.5);
+  color: #c4b5fd;
+}
+
+.zeus-ap-mode-btn.active.mode-live {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+  font-weight: 700;
+}
+
+.zeus-ap-stat {
+  color: var(--bos-text);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.zeus-ap-stat.muted { color: var(--bos-text-muted); }
+
+.zeus-ap-stat.fp-rate.green b { color: #10b981; }
+.zeus-ap-stat.fp-rate.amber b { color: #fbbf24; }
+.zeus-ap-stat.fp-rate.red b { color: #ef4444; }
+
+.zeus-ap-spacer { flex: 1; }
+
+.zeus-ap-btn {
+  padding: 4px 10px;
+  font-size: 0.65rem;
+  background: rgba(17, 21, 51, 0.8);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  color: #fca5a5;
+  border-radius: 4px;
+  cursor: pointer;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.zeus-ap-btn:hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+.zeus-ap-btn.subtle {
+  border-color: rgba(255, 255, 255, 0.08);
+  color: var(--bos-text-muted);
+  background: transparent;
+}
+
+.zeus-ap-btn.subtle:hover {
+  color: var(--bos-text);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* Yellow zone banner */
+.zeus-ap-yellow-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.25);
+  border-radius: 6px;
+  margin-top: 4px;
+}
+
+.zeus-ap-yellow-icon { font-size: 1.2rem; }
+
+.zeus-ap-yellow-text {
+  flex: 1;
+  font-size: 0.68rem;
+  color: #fde68a;
+  line-height: 1.4;
+}
+
+.zeus-ap-counts {
+  font-size: 0.62rem;
+  color: var(--bos-text-dim);
+  font-family: 'JetBrains Mono', monospace;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.zeus-ap-counts b { color: var(--bos-text-muted); }
+
+/* Tabs */
+.zeus-ap-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.zeus-ap-tab {
+  padding: 4px 10px;
+  font-size: 0.62rem;
+  background: rgba(17, 21, 51, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--bos-text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+}
+
+.zeus-ap-tab.active {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+}
+
+.zeus-ap-empty {
+  padding: 24px 20px;
+  text-align: center;
+  color: var(--bos-text-dim);
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
+/* Cards */
+.zeus-ap-card {
+  background: rgba(17, 21, 51, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 3px solid #6b7280;
+  border-radius: 8px;
+  margin: 8px 14px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.zeus-ap-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  flex-wrap: wrap;
+}
+
+.zeus-ap-card-icon {
+  font-weight: 700;
+  font-size: 0.9rem;
+  min-width: 16px;
+}
+
+.zeus-ap-card-title {
+  font-size: 0.72rem;
+  color: var(--bos-text);
+  flex: 1;
+  min-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zeus-ap-card-metric {
+  font-size: 0.6rem;
+  color: var(--bos-text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.zeus-ap-card-verdict {
+  font-size: 0.55rem;
+  padding: 1px 6px;
+  border: 1px solid;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.zeus-ap-card-reactivated {
+  font-size: 0.58rem;
+  padding: 1px 6px;
+  background: rgba(139, 92, 246, 0.15);
+  color: #c4b5fd;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+
+.zeus-ap-card-date {
+  font-size: 0.58rem;
+  color: var(--bos-text-dim);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.zeus-ap-expand {
+  color: var(--bos-text-muted);
+  font-size: 0.9rem;
+}
+
+.zeus-ap-card-body {
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.7rem;
+  color: var(--bos-text);
+  line-height: 1.5;
+}
+
+.zeus-ap-field {
+  font-size: 0.68rem;
+  color: var(--bos-text);
+}
+
+.zeus-ap-field code {
+  font-size: 0.65rem;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: var(--bos-text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.zeus-ap-field.muted {
+  color: var(--bos-text-muted);
+  font-style: italic;
+  font-size: 0.66rem;
+}
+
+.zeus-ap-field.warning {
+  color: #fbbf24;
+  font-size: 0.66rem;
+  font-weight: 600;
+}
+
+.zeus-ap-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+
