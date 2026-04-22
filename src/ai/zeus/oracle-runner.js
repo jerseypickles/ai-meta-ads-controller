@@ -10,7 +10,7 @@ const { buildOracleContext, formatContextForPrompt } = require('./oracle-context
 
 const claude = new Anthropic({ apiKey: config.claude.apiKey });
 const MODEL = 'claude-opus-4-7';
-const MAX_TOOL_ROUNDS = 10;
+const MAX_TOOL_ROUNDS = 15;  // bumped 10→15 (2026-04-22): tareas con exploración legítima de código necesitan más rounds
 const MAX_TOKENS = 16000;  // suficiente para thinking + texto + tool_use blocks
 // Opus 4.7 usa adaptive thinking + output_config.effort (low|medium|high)
 const THINKING_EFFORT = 'medium';
@@ -106,12 +106,15 @@ Flujo de mejora:
 1. Viste algo raro en los datos → grep_code para ubicar la lógica → read_code_file para leer
 2. Triangulá: ¿la lógica explica el patrón? ¿hay un parámetro que se podría ajustar?
 3. Si tenés una propuesta CONCRETA con evidencia numérica → invocá propose_code_change:
-   - file_path + line_start + line_end (precisos)
-   - current_code (snippet actual)
-   - proposed_code (como debería quedar)
+   - file_path (requerido — ubicación aproximada está bien si no querés gastar tools en localización exacta)
+   - line_start + line_end (PREFERIDOS pero NO requeridos — si no estás seguro, omitilos o aproximá; el creador refina antes de aplicar)
+   - current_code (snippet actual; si no lo conocés exacto, omitilo y describí lo que esperás reemplazar en rationale)
+   - proposed_code (como debería quedar — esto SÍ es importante)
    - rationale (por qué)
    - evidence_summary (1-2 líneas con datos concretos, ej: "de 40 killed, 12 tenían ROAS 1.2-1.8 antes del kill")
    - category + severity
+
+   **REGLA OPERATIVA importante**: si para emitir una propose_code_change necesitarías hacer >3 tool calls solo para ubicar líneas exactas, **NO lo hagas — emití la propuesta con file_path + rationale + proposed_code + (line_start: null si no sabés)**. El creador ajusta líneas precisas antes de aplicar. Mejor 2 propuestas con buen razonamiento + ubicación aproximada que 1 propuesta perfectamente preciada habiendo agotado el budget.
 
 Reglas:
 - NO invoques propose_code_change para comentarios generales — solo para cambios concretos con evidencia.
