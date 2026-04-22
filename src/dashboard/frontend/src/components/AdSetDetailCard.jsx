@@ -6,9 +6,54 @@
  */
 
 import { useEffect, useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip } from 'recharts';
 import api from '../api';
+
+/**
+ * Modal overlay que envuelve el AdSetDetailCard.
+ * Se cierra con backdrop click, ESC, o botón ✕.
+ * Se exporta nominalmente para usar desde ZeusSpeaks.
+ */
+export function AdSetDetailModal({ adsetId, onClose }) {
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onClose(); }
+    window.addEventListener('keydown', onKey);
+    // Bloquear scroll del body mientras el modal está abierto
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [onClose]);
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        key="adset-modal-backdrop"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.18 }}
+        className="adset-modal-backdrop"
+        onClick={onClose}
+      >
+        <motion.div
+          key="adset-modal-body"
+          initial={{ opacity: 0, y: 20, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 20, scale: 0.98 }}
+          transition={{ duration: 0.2, ease: 'easeOut' }}
+          className="adset-modal-body"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <AdSetDetailCard adsetId={adsetId} onClose={onClose} />
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
 
 function fmtMoney(n) {
   if (n == null) return '—';

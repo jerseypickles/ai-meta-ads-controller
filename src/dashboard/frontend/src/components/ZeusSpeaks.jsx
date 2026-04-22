@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import AdSetDetailCard from './AdSetDetailCard';
+import { AdSetDetailModal } from './AdSetDetailCard';
 
 // react-markdown v10 por defecto sanea URLs con un safelist (http/https/mailto).
 // Nuestros links `zeus://adset/<id>` NO están en ese safelist — el default
@@ -653,6 +653,8 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   const [apStatus, setApStatus] = useState(null);
   const [apTab, setApTab] = useState('live'); // live | shadow
   const [apLogs, setApLogs] = useState([]);
+  // Modal overlay de drill-in de adset (al clickear link zeus://adset/<id> en el chat)
+  const [activeAdsetId, setActiveAdsetId] = useState(null);
   const scrollRef = useRef(null);
   const esRef = useRef(null);
   const streamingTextRef = useRef('');
@@ -1887,6 +1889,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                   key={i}
                   message={m}
                   onFollowup={(q) => sendMessage(q)}
+                  onOpenAdset={setActiveAdsetId}
                 />
               ))}
 
@@ -1914,7 +1917,10 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                     )}
                     {streamingText && (
                       <div className="zeus-msg-text zeus-markdown">
-                        <ZeusMarkdown>{stripFollowupsBlock(streamingText)}</ZeusMarkdown>
+                        <ZeusMarkdown onEntityClick={(kind, id) => {
+                          if (kind === 'adset' && id) { setActiveAdsetId(id); return true; }
+                          return false;
+                        }}>{stripFollowupsBlock(streamingText)}</ZeusMarkdown>
                         <span className="zeus-cursor">▌</span>
                       </div>
                     )}
@@ -1949,6 +1955,12 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
           </button>
         </div>
       </motion.div>
+
+      {/* Modal overlay — drill-in de adset clickeado en el chat */}
+      {activeAdsetId && createPortal(
+        <AdSetDetailModal adsetId={activeAdsetId} onClose={() => setActiveAdsetId(null)} />,
+        document.body
+      )}
     </>
   );
 }
@@ -2633,27 +2645,17 @@ function CodeRecCard({ rec, onAccept, onReject, onApply, onDelete }) {
   );
 }
 
-function MessageBubble({ message, onFollowup }) {
+function MessageBubble({ message, onFollowup, onOpenAdset }) {
   const isUser = message.role === 'user';
   const isGreeting = message.role === 'system_greeting';
   const followups = !isUser ? (message.followups || []) : [];
 
-  // Cards de drill-in abiertos dentro del mensaje. Orden = orden de click.
-  const [expandedAdsets, setExpandedAdsets] = useState([]);
-
   function handleEntityClick(kind, id) {
-    if (kind === 'adset' && id) {
-      setExpandedAdsets((prev) => {
-        if (prev.includes(id)) return prev;
-        return [...prev, id];
-      });
-      return true; // consumido — no dispatchar zeus-navigate
+    if (kind === 'adset' && id && onOpenAdset) {
+      onOpenAdset(id);
+      return true; // consumido — abre modal overlay, no navegar al panel
     }
     return false; // deja que el handler global navegue al panel
-  }
-
-  function closeAdset(id) {
-    setExpandedAdsets((prev) => prev.filter(x => x !== id));
   }
 
   return (
@@ -2675,15 +2677,6 @@ function MessageBubble({ message, onFollowup }) {
             ? message.content
             : <ZeusMarkdown onEntityClick={handleEntityClick}>{stripFollowupsBlock(message.content || '')}</ZeusMarkdown>}
         </div>
-
-        {/* Cards de adsets expandidos inline */}
-        {expandedAdsets.length > 0 && (
-          <div className="zeus-msg-detail-cards">
-            {expandedAdsets.map(id => (
-              <AdSetDetailCard key={id} adsetId={id} onClose={() => closeAdset(id)} />
-            ))}
-          </div>
-        )}
 
         {isGreeting && (
           <div className="zeus-msg-meta">saludo automático</div>

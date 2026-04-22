@@ -4712,12 +4712,41 @@
   letter-spacing: 0.1em;
 }
 
-/* ═══ AdSetDetailCard — drill-in inline del chat de Zeus ═══ */
-.zeus-msg-detail-cards {
+/* ═══ AdSetDetailModal — drill-in overlay del chat de Zeus ═══ */
+.adset-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 8, 20, 0.72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 10px;
+  align-items: center;
+  justify-content: center;
+  padding: 4vh 4vw;
+  z-index: 10000;
+}
+
+.adset-modal-body {
+  width: 100%;
+  max-width: 720px;
+  max-height: 92vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-radius: 12px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+}
+
+.adset-modal-body::-webkit-scrollbar {
+  width: 6px;
+}
+.adset-modal-body::-webkit-scrollbar-thumb {
+  background: rgba(96, 165, 250, 0.3);
+  border-radius: 3px;
+}
+
+/* Dentro del modal, el card usa el ancho completo disponible */
+.adset-modal-body .adset-detail-card {
+  border-radius: 12px;
 }
 
 .adset-detail-card {
