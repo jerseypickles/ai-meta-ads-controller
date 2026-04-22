@@ -14,6 +14,7 @@ import AresPanel from '../components/agents/AresPanel';
 export default function BrainOS() {
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [showGenome, setShowGenome] = useState(false);
+  const [focusRequest, setFocusRequest] = useState(null); // { kind, id, ts }
 
   // Exportamos el contexto actual del dashboard al window para que ZeusSpeaks
   // lo pueda leer y mandar en cada request — Zeus sabe qué panel estás viendo.
@@ -45,6 +46,7 @@ export default function BrainOS() {
       const targetAgent = agentMap[kind];
       if (targetAgent && ['zeus', 'athena', 'apollo', 'prometheus', 'ares'].includes(targetAgent)) {
         setSelectedAgent(targetAgent);
+        if (id) setFocusRequest({ kind, id, ts: Date.now() });
       }
     }
     window.addEventListener('zeus-navigate', handleNavigate);
@@ -115,7 +117,12 @@ export default function BrainOS() {
             exit={{ x: '100%' }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
           >
-            <AgentDetailPanel agent={selectedAgent} onClose={() => setSelectedAgent(null)} />
+            <AgentDetailPanel
+              agent={selectedAgent}
+              focusRequest={focusRequest}
+              onClose={() => setSelectedAgent(null)}
+              onFocused={() => setFocusRequest(null)}
+            />
           </motion.div>
         )}
       </AnimatePresence>
@@ -123,10 +130,15 @@ export default function BrainOS() {
   );
 }
 
-function AgentDetailPanel({ agent, onClose }) {
+function AgentDetailPanel({ agent, focusRequest, onClose, onFocused }) {
+  // focusRequest solo aplica a Athena por ahora (adset/ad/campaign)
+  const athenaFocus = agent === 'athena' && focusRequest && ['adset', 'ad', 'campaign'].includes(focusRequest.kind)
+    ? focusRequest
+    : null;
+
   const panels = {
     zeus: <ZeusPanel />,
-    athena: <AthenaPanel />,
+    athena: <AthenaPanel focusRequest={athenaFocus} onFocused={onFocused} />,
     apollo: <ApolloPanel />,
     prometheus: <PrometheusPanel />,
     ares: <AresPanel />

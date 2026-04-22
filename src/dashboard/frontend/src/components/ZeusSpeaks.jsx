@@ -1,8 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import AdSetDetailCard from './AdSetDetailCard';
+
+// react-markdown v10 por defecto sanea URLs con un safelist (http/https/mailto).
+// Nuestros links `zeus://adset/<id>` NO están en ese safelist — el default
+// transform los convierte a string vacío y el componente cae al fallback que
+// recarga la página. Este transform preserva zeus:// y delega el resto al
+// default de la lib.
+function zeusUrlTransform(url) {
+  if (url && url.startsWith('zeus://')) return url;
+  return defaultUrlTransform(url);
+}
 import api from '../api';
 import { renderVizBlock } from './zeus-viz';
 
@@ -447,10 +458,11 @@ function handleZeusLink(url) {
   return true;
 }
 
-function ZeusMarkdown({ children }) {
+function ZeusMarkdown({ children, onEntityClick }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
+      urlTransform={zeusUrlTransform}
       components={{
         a: ({ href, children, ...props }) => {
           if (href && href.startsWith('zeus://')) {
@@ -460,6 +472,15 @@ function ZeusMarkdown({ children }) {
                 className="zeus-entity-link"
                 onClick={(e) => {
                   e.preventDefault();
+                  const m = href.match(/^zeus:\/\/([^/]+)\/(.+)$/);
+                  if (!m) return;
+                  const [, kind, id] = m;
+                  // onEntityClick local tiene prioridad (para cards inline en chat).
+                  // Si no consume el evento, cae al handler global (navega al panel).
+                  if (onEntityClick) {
+                    const handled = onEntityClick(kind, id);
+                    if (handled) return;
+                  }
                   handleZeusLink(href);
                 }}
                 {...props}
@@ -2617,6 +2638,24 @@ function MessageBubble({ message, onFollowup }) {
   const isGreeting = message.role === 'system_greeting';
   const followups = !isUser ? (message.followups || []) : [];
 
+  // Cards de drill-in abiertos dentro del mensaje. Orden = orden de click.
+  const [expandedAdsets, setExpandedAdsets] = useState([]);
+
+  function handleEntityClick(kind, id) {
+    if (kind === 'adset' && id) {
+      setExpandedAdsets((prev) => {
+        if (prev.includes(id)) return prev;
+        return [...prev, id];
+      });
+      return true; // consumido — no dispatchar zeus-navigate
+    }
+    return false; // deja que el handler global navegue al panel
+  }
+
+  function closeAdset(id) {
+    setExpandedAdsets((prev) => prev.filter(x => x !== id));
+  }
+
   return (
     <div className={`zeus-msg ${isUser ? 'zeus-msg-user' : 'zeus-msg-assistant'}`}>
       {!isUser && <div className="zeus-msg-avatar">⚡</div>}
@@ -2634,8 +2673,18 @@ function MessageBubble({ message, onFollowup }) {
         <div className="zeus-msg-text zeus-markdown">
           {isUser
             ? message.content
-            : <ZeusMarkdown>{stripFollowupsBlock(message.content || '')}</ZeusMarkdown>}
+            : <ZeusMarkdown onEntityClick={handleEntityClick}>{stripFollowupsBlock(message.content || '')}</ZeusMarkdown>}
         </div>
+
+        {/* Cards de adsets expandidos inline */}
+        {expandedAdsets.length > 0 && (
+          <div className="zeus-msg-detail-cards">
+            {expandedAdsets.map(id => (
+              <AdSetDetailCard key={id} adsetId={id} onClose={() => closeAdset(id)} />
+            ))}
+          </div>
+        )}
+
         {isGreeting && (
           <div className="zeus-msg-meta">saludo automático</div>
         )}

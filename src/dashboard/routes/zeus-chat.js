@@ -1146,4 +1146,121 @@ router.post('/auto-pause/health/run', async (req, res) => {
   }
 });
 
+// GET /api/zeus/entity/adset/:id/detail — drill-in del adset para cards inline en el chat.
+// Devuelve la misma data que el tool query_adset_detail pero vía HTTP directo (sin LLM).
+router.get('/entity/adset/:id/detail', async (req, res) => {
+  try {
+    const { getLatestSnapshots, getSnapshotHistory } = require('../../db/queries');
+    const ActionLog = require('../../db/models/ActionLog');
+    const BrainMemory = require('../../db/models/BrainMemory');
+    const TestRun = require('../../db/models/TestRun');
+
+    const adsetId = req.params.id;
+    const days = Math.min(parseInt(req.query.days || '14', 10), 90);
+
+    // Resolver adset snapshot
+    const adsetSnapshots = await getLatestSnapshots('adset');
+    const match = adsetSnapshots.find(s => s.entity_id === adsetId);
+    if (!match) return res.status(404).json({ error: 'adset no encontrado' });
+
+    // Ads adentro
+    const adSnapshots = await getLatestSnapshots('ad');
+    const adsInside = adSnapshots
+      .filter(s => s.parent_adset_id === adsetId)
+      .map(s => {
+        const m7 = s.metrics?.last_7d || {};
+        const mToday = s.metrics?.today || {};
+        return {
+          id: s.entity_id,
+          name: s.entity_name,
+          status: s.status,
+          spend_today: Math.round(mToday.spend || 0),
+          spend_7d: Math.round(m7.spend || 0),
+          roas_7d: +(m7.roas || 0).toFixed(2),
+          purchases_7d: m7.purchases || 0,
+          ctr: +(m7.ctr || 0).toFixed(2),
+          frequency: +(m7.frequency || 0).toFixed(2)
+        };
+      })
+      .sort((a, b) => b.spend_7d - a.spend_7d);
+
+    // History, acciones, tests, memoria — en paralelo
+    const [history, actions, tests, memory] = await Promise.all([
+      getSnapshotHistory(adsetId, days).catch(() => []),
+      ActionLog.find({ entity_id: adsetId, success: true })
+        .sort({ executed_at: -1 }).limit(10).lean().catch(() => []),
+      TestRun.find({ source_adset_id: adsetId })
+        .sort({ launched_at: -1 }).limit(5).lean().catch(() => []),
+      BrainMemory.findOne({ entity_id: adsetId }).lean().catch(() => null)
+    ]);
+
+    const mToday = match.metrics?.today || {};
+    const m3 = match.metrics?.last_3d || {};
+    const m7 = match.metrics?.last_7d || {};
+    const m14 = match.metrics?.last_14d || {};
+
+    function windowMetrics(m) {
+      return {
+        spend: Math.round(m.spend || 0),
+        roas: +(m.roas || 0).toFixed(2),
+        purchases: m.purchases || 0,
+        cpa: m.purchases > 0 ? +(m.spend / m.purchases).toFixed(2) : null,
+        ctr: +(m.ctr || 0).toFixed(2),
+        frequency: +(m.frequency || 0).toFixed(2)
+      };
+    }
+
+    res.json({
+      entity: {
+        id: match.entity_id,
+        name: match.entity_name,
+        campaign: match.campaign_name,
+        status: match.status,
+        daily_budget: match.daily_budget,
+        learning_stage: match.learning_stage,
+        learning_conversions: match.learning_conversions
+      },
+      windows: {
+        today: windowMetrics(mToday),
+        last_3d: windowMetrics(m3),
+        last_7d: windowMetrics(m7),
+        last_14d: windowMetrics(m14)
+      },
+      daily_history: history.slice(-days).map(h => ({
+        date: h.date,
+        spend: Math.round(h.spend || 0),
+        roas: +(h.roas || 0).toFixed(2),
+        purchases: h.purchases || 0
+      })),
+      ads: adsInside,
+      ads_count: adsInside.length,
+      recent_actions: actions.map(a => ({
+        action: a.action,
+        agent: a.agent_type,
+        executed_at: a.executed_at,
+        reasoning: a.reasoning?.substring(0, 200),
+        before_value: a.before_value,
+        after_value: a.after_value,
+        impact_7d_roas_delta: a.impact_7d?.roas_delta ?? null
+      })),
+      tests: tests.map(t => ({
+        id: t._id,
+        phase: t.phase,
+        launched_at: t.launched_at,
+        roas: t.metrics?.roas,
+        purchases: t.metrics?.purchases
+      })),
+      brain_memory: memory ? {
+        notes: memory.notes?.substring(0, 400),
+        patterns: memory.patterns,
+        action_count: memory.action_history?.length || 0,
+        last_updated: memory.last_updated_at
+      } : null
+    });
+  } catch (err) {
+    logger.error(`[ZEUS entity/adset/detail] ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

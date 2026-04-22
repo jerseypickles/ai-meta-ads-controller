@@ -32,7 +32,7 @@ function formatTime(ts) {
   return `${Math.floor(h / 24)}d`;
 }
 
-export default function AthenaPanel() {
+export default function AthenaPanel({ focusRequest, onFocused } = {}) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeSection, setActiveSection] = useState('overview');
@@ -43,6 +43,34 @@ export default function AthenaPanel() {
     const interval = setInterval(loadData, 60000);
     return () => clearInterval(interval);
   }, []);
+
+  // Cuando Zeus pide focus a un adset concreto: expandir + scroll + flash.
+  // Depende de ts para re-disparar aunque sea el mismo id dos clicks seguidos.
+  useEffect(() => {
+    if (!focusRequest || !focusRequest.id) return;
+    if (loading) return; // esperar a que cargue la data antes de intentar scroll
+
+    const targetId = focusRequest.id;
+
+    // Si viene un 'ad', el id es de ad pero la fila es del adset padre.
+    // De momento para kind=ad no sabemos el parent sin lookup, así que
+    // asumimos adset/campaign = scroll a fila con ese id.
+    setActiveSection('overview');
+    setExpandedAdSet(targetId);
+
+    const timer = setTimeout(() => {
+      const el = document.querySelector(`[data-adset-id="${targetId}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('flash-highlight');
+        setTimeout(() => el.classList.remove('flash-highlight'), 2200);
+      }
+      onFocused?.();
+    }, 350);
+
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRequest?.ts, loading]);
 
   async function loadData() {
     try {
@@ -410,6 +438,7 @@ function AdSetRow({ adset, expanded, onToggle }) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       onClick={onToggle}
+      data-adset-id={adset.adset_id}
       style={{
         background: 'rgba(17, 21, 51, 0.5)',
         borderRadius: 8,
