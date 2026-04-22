@@ -25,7 +25,11 @@ const zeusCodeRecSchema = new mongoose.Schema({
   // Categorización
   category: {
     type: String,
-    enum: ['threshold', 'bug', 'optimization', 'dead_code', 'refactor', 'safety', 'naming', 'other'],
+    enum: [
+      'threshold', 'bug', 'optimization', 'dead_code', 'refactor', 'safety', 'naming',
+      'phase_followup',  // recordatorio temporal: activar siguiente fase de un feature en X días
+      'other'
+    ],
     default: 'other',
     index: true
   },

@@ -742,7 +742,7 @@ const TOOL_DEFINITIONS = [
         evidence_summary: { type: 'string', description: 'Resumen en 1-2 líneas de la evidencia de datos que soporta el cambio (ej: "de 40 tests killed últimos 30 días, 12 tenían ROAS 1.2-1.8 antes del kill — umbral está matando winners en zona gris")' },
         evidence: { type: 'object', description: 'Data estructurada que soporta (métricas, counts, etc)', additionalProperties: true },
         expected_impact: { type: 'string', description: 'Qué debería cambiar después del fix (opcional)' },
-        category: { type: 'string', enum: ['threshold', 'bug', 'optimization', 'dead_code', 'refactor', 'safety', 'naming', 'other'], default: 'other' },
+        category: { type: 'string', enum: ['threshold', 'bug', 'optimization', 'dead_code', 'refactor', 'safety', 'naming', 'phase_followup', 'other'], default: 'other' },
         severity: { type: 'string', enum: ['low', 'medium', 'high', 'critical'], default: 'medium' }
       },
       required: ['file_path', 'rationale', 'evidence_summary', 'category', 'severity']

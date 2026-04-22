@@ -2587,6 +2587,7 @@ function CodeRecCard({ rec, onAccept, onReject, onApply, onDelete }) {
     refactor: '🔧',
     safety: '🛡️',
     naming: '🏷️',
+    phase_followup: '⏳',
     other: '💡'
   };
   const statusColors = {
@@ -2596,10 +2597,25 @@ function CodeRecCard({ rec, onAccept, onReject, onApply, onDelete }) {
     applied: '#8b5cf6'
   };
 
+  // phase_followup se muestra con color violeta en borde y background sutil —
+  // son recordatorios temporales, no bugs ni optimizaciones urgentes.
+  const isPhaseFollowup = rec.category === 'phase_followup';
+  const borderColor = isPhaseFollowup ? '#a855f7' : severityColors[rec.severity];
+  const cardStyle = {
+    borderLeftColor: borderColor,
+    ...(isPhaseFollowup ? {
+      background: 'linear-gradient(180deg, rgba(168, 85, 247, 0.07), rgba(17, 21, 51, 0.4))',
+      borderLeft: `3px solid ${borderColor}`,
+      boxShadow: '0 0 14px rgba(168, 85, 247, 0.08)'
+    } : {})
+  };
+
   return (
-    <div className="zeus-coderec-card" style={{ borderLeftColor: severityColors[rec.severity] }}>
+    <div className={`zeus-coderec-card${isPhaseFollowup ? ' zeus-coderec-card--phase-followup' : ''}`} style={cardStyle}>
       <div className="zeus-coderec-head">
-        <span className="zeus-coderec-cat">{categoryIcons[rec.category] || '💡'} {rec.category}</span>
+        <span className="zeus-coderec-cat" style={isPhaseFollowup ? { color: '#c084fc', fontWeight: 700 } : {}}>
+          {categoryIcons[rec.category] || '💡'} {isPhaseFollowup ? 'recordatorio' : rec.category}
+        </span>
         <span className="zeus-coderec-severity" style={{ color: severityColors[rec.severity] }}>{rec.severity}</span>
         <span className="zeus-coderec-status" style={{ color: statusColors[rec.status] }}>{rec.status}</span>
         <span className="zeus-coderec-spacer" />
