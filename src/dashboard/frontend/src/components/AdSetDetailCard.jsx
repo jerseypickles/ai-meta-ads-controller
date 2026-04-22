@@ -322,24 +322,217 @@ export default function AdSetDetailCard({ adsetId, onClose }) {
           {!brain_memory && (
             <div className="adset-detail-card__empty">Sin memoria del brain sobre este ad set.</div>
           )}
-          {brain_memory && (
-            <>
-              {brain_memory.notes && (
-                <div className="adset-detail-card__memory-notes">{brain_memory.notes}</div>
-              )}
-              {brain_memory.patterns && Object.keys(brain_memory.patterns).length > 0 && (
-                <div className="adset-detail-card__memory-patterns">
-                  <div className="adset-detail-card__section-label">Patrones</div>
-                  <pre>{JSON.stringify(brain_memory.patterns, null, 2)}</pre>
-                </div>
-              )}
-              <div className="adset-detail-card__memory-meta">
-                {brain_memory.action_count} acciones históricas · actualizado {timeAgo(brain_memory.last_updated)}
-              </div>
-            </>
-          )}
+          {brain_memory && <MemoryTab memory={brain_memory} />}
         </div>
       )}
     </motion.div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MemoryTab — estado que el Brain recuerda de este ad set
+// ═══════════════════════════════════════════════════════════════════════════
+
+const TREND_COLOR = {
+  improving: '#10b981',
+  stable: '#60a5fa',
+  declining: '#ef4444',
+  learning: '#fbbf24',
+  unknown: '#6b7280'
+};
+
+const TREND_LABEL = {
+  improving: 'mejorando',
+  stable: 'estable',
+  declining: 'declinando',
+  learning: 'aprendiendo',
+  unknown: 'sin suficiente data',
+  increasing: 'subiendo',
+  decreasing: 'bajando'
+};
+
+const FREQ_COLOR = {
+  ok: '#10b981',
+  moderate: '#fbbf24',
+  high: '#f97316',
+  critical: '#ef4444',
+  unknown: '#6b7280'
+};
+
+const FREQ_LABEL = {
+  ok: 'saludable',
+  moderate: 'moderada',
+  high: 'alta',
+  critical: 'crítica',
+  unknown: 'sin data'
+};
+
+const RESULT_COLOR = {
+  improved: '#10b981',
+  worsened: '#ef4444',
+  neutral: '#6b7280'
+};
+
+const RESULT_LABEL = {
+  improved: '✓ mejoró',
+  worsened: '✗ empeoró',
+  neutral: '— neutral'
+};
+
+function MemoryTab({ memory }) {
+  const trends = memory.trends || {};
+  const remembered = memory.remembered_metrics || {};
+  const history = memory.action_history || [];
+
+  const hasTrend = trends.roas_direction && trends.roas_direction !== 'unknown';
+  const hasAssessment = memory.assessment || memory.creative_health || memory.pending_plan;
+  const hasRemembered = Object.values(remembered).some(v => v > 0);
+
+  return (
+    <>
+      {/* Assessment operativo del agente */}
+      {hasAssessment && (
+        <div className="adset-detail-card__mem-block">
+          <div className="adset-detail-card__section-label">Evaluación del agente</div>
+          {memory.assessment && (
+            <div className="adset-detail-card__memory-notes">{memory.assessment}</div>
+          )}
+          {memory.creative_health && (
+            <div className="adset-detail-card__mem-row">
+              <span>Salud creativa</span>
+              <span>{memory.creative_health}</span>
+              {memory.needs_new_creatives && (
+                <span className="adset-detail-card__mem-flag">necesita creativos nuevos</span>
+              )}
+            </div>
+          )}
+          {memory.pending_plan && (
+            <div className="adset-detail-card__mem-plan">
+              <div className="adset-detail-card__mem-plan-label">Plan pendiente</div>
+              {memory.pending_plan}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tendencias */}
+      {hasTrend && (
+        <div className="adset-detail-card__mem-block">
+          <div className="adset-detail-card__section-label">Tendencias</div>
+          <div className="adset-detail-card__mem-grid">
+            <div className="adset-detail-card__mem-stat">
+              <div className="adset-detail-card__mem-stat-label">ROAS</div>
+              <div
+                className="adset-detail-card__mem-stat-value"
+                style={{ color: TREND_COLOR[trends.roas_direction] || '#93c5fd' }}
+              >
+                {TREND_LABEL[trends.roas_direction] || trends.roas_direction}
+              </div>
+              {trends.consecutive_improve_days > 0 && (
+                <div className="adset-detail-card__mem-stat-meta">
+                  {trends.consecutive_improve_days}d mejorando consecutivo
+                </div>
+              )}
+              {trends.consecutive_decline_days > 0 && (
+                <div className="adset-detail-card__mem-stat-meta" style={{ color: '#ef4444' }}>
+                  {trends.consecutive_decline_days}d declinando consecutivo
+                </div>
+              )}
+            </div>
+            <div className="adset-detail-card__mem-stat">
+              <div className="adset-detail-card__mem-stat-label">Spend</div>
+              <div
+                className="adset-detail-card__mem-stat-value"
+                style={{ color: TREND_COLOR[trends.spend_direction === 'increasing' ? 'improving' : trends.spend_direction === 'decreasing' ? 'declining' : 'stable'] }}
+              >
+                {TREND_LABEL[trends.spend_direction] || trends.spend_direction}
+              </div>
+            </div>
+            {memory.performance_trend && memory.performance_trend !== 'unknown' && (
+              <div className="adset-detail-card__mem-stat">
+                <div className="adset-detail-card__mem-stat-label">Performance</div>
+                <div
+                  className="adset-detail-card__mem-stat-value"
+                  style={{ color: TREND_COLOR[memory.performance_trend] || '#93c5fd' }}
+                >
+                  {TREND_LABEL[memory.performance_trend] || memory.performance_trend}
+                </div>
+              </div>
+            )}
+            {memory.frequency_status && memory.frequency_status !== 'unknown' && (
+              <div className="adset-detail-card__mem-stat">
+                <div className="adset-detail-card__mem-stat-label">Frecuencia</div>
+                <div
+                  className="adset-detail-card__mem-stat-value"
+                  style={{ color: FREQ_COLOR[memory.frequency_status] }}
+                >
+                  {FREQ_LABEL[memory.frequency_status]}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Métricas que el brain recordaba */}
+      {hasRemembered && (
+        <div className="adset-detail-card__mem-block">
+          <div className="adset-detail-card__section-label">Últimas métricas recordadas</div>
+          <div className="adset-detail-card__mem-remembered">
+            <div><span>ROAS 7d</span><b>{fmtRoas(remembered.roas_7d)}</b></div>
+            <div><span>Spend 7d</span><b>{fmtMoney(remembered.spend_7d)}</b></div>
+            <div><span>CPA 7d</span><b>{remembered.cpa_7d > 0 ? fmtMoney(remembered.cpa_7d) : '—'}</b></div>
+            <div><span>CTR 7d</span><b>{fmtPct(remembered.ctr_7d)}</b></div>
+            <div><span>Freq 7d</span><b>{(remembered.frequency_7d || 0).toFixed(2)}</b></div>
+            <div><span>Compras 7d</span><b>{remembered.purchases_7d || 0}</b></div>
+          </div>
+        </div>
+      )}
+
+      {/* Historial de acciones con resultado medido */}
+      {history.length > 0 && (
+        <div className="adset-detail-card__mem-block">
+          <div className="adset-detail-card__section-label">
+            Qué funcionó aquí ({memory.action_count} acciones totales)
+          </div>
+          {history.map((a, i) => (
+            <div key={i} className="adset-detail-card__mem-action">
+              <div className="adset-detail-card__mem-action-head">
+                <span className="adset-detail-card__action-label">{a.action_type}</span>
+                <span style={{ color: RESULT_COLOR[a.result], fontWeight: 600 }}>
+                  {RESULT_LABEL[a.result]}
+                </span>
+                <span className="adset-detail-card__action-time">{timeAgo(a.executed_at)}</span>
+              </div>
+              <div className="adset-detail-card__mem-action-deltas">
+                {a.roas_delta_pct != null && (
+                  <span style={{ color: a.roas_delta_pct > 0 ? '#10b981' : a.roas_delta_pct < 0 ? '#ef4444' : 'var(--bos-text-muted)' }}>
+                    ROAS {a.roas_delta_pct > 0 ? '+' : ''}{a.roas_delta_pct.toFixed(1)}%
+                  </span>
+                )}
+                {a.cpa_delta_pct != null && (
+                  <span style={{ color: a.cpa_delta_pct < 0 ? '#10b981' : a.cpa_delta_pct > 0 ? '#ef4444' : 'var(--bos-text-muted)' }}>
+                    CPA {a.cpa_delta_pct > 0 ? '+' : ''}{a.cpa_delta_pct.toFixed(1)}%
+                  </span>
+                )}
+                {a.context && <span>· {a.context}</span>}
+                {a.attribution === 'shared' && (
+                  <span className="adset-detail-card__mem-flag" style={{ background: 'rgba(251, 191, 36, 0.12)', color: '#fbbf24' }}>
+                    acción compartida
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Footer meta */}
+      <div className="adset-detail-card__memory-meta">
+        {memory.insights_generated > 0 && `${memory.insights_generated} insights · `}
+        actualizado {timeAgo(memory.last_updated)}
+        {memory.next_review_at && ` · próxima revisión ${timeAgo(memory.next_review_at)}`}
+      </div>
+    </>
   );
 }

@@ -5098,7 +5098,143 @@
   font-size: 0.6rem;
   font-family: 'JetBrains Mono', monospace;
   text-align: right;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+/* Memory tab — bloques por sección */
+.adset-detail-card__mem-block {
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.adset-detail-card__mem-block:last-of-type {
+  border-bottom: none;
+}
+
+.adset-detail-card__mem-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.68rem;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--bos-text-muted);
   margin-top: 6px;
+}
+.adset-detail-card__mem-row span:nth-child(2) {
+  color: var(--bos-text);
+}
+
+.adset-detail-card__mem-flag {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.adset-detail-card__mem-plan {
+  background: rgba(167, 139, 250, 0.08);
+  border-left: 2px solid #a78bfa;
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-top: 8px;
+  color: var(--bos-text);
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+.adset-detail-card__mem-plan-label {
+  color: #a78bfa;
+  font-size: 0.56rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+/* Trends grid */
+.adset-detail-card__mem-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.adset-detail-card__mem-stat {
+  background: rgba(17, 21, 51, 0.5);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.adset-detail-card__mem-stat-label {
+  color: var(--bos-text-dim);
+  font-size: 0.56rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.adset-detail-card__mem-stat-value {
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  line-height: 1.15;
+}
+
+.adset-detail-card__mem-stat-meta {
+  color: var(--bos-text-muted);
+  font-size: 0.58rem;
+  font-family: 'JetBrains Mono', monospace;
+  margin-top: 3px;
+}
+
+/* Remembered metrics */
+.adset-detail-card__mem-remembered {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px 14px;
+  margin-top: 6px;
+}
+.adset-detail-card__mem-remembered > div {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.68rem;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--bos-text-muted);
+  padding: 2px 0;
+}
+.adset-detail-card__mem-remembered b {
+  color: var(--bos-text);
+  font-weight: 600;
+}
+
+/* Memory action history */
+.adset-detail-card__mem-action {
+  background: rgba(17, 21, 51, 0.35);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-top: 6px;
+}
+
+.adset-detail-card__mem-action-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.adset-detail-card__mem-action-deltas {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 0.64rem;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--bos-text-muted);
 }
 
 /* Mobile: stack windows into 2 columns */

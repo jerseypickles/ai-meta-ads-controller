@@ -1270,9 +1270,32 @@ router.get('/entity/adset/:id/detail', async (req, res) => {
         purchases: t.metrics?.purchases
       })),
       brain_memory: memory ? {
-        notes: memory.notes?.substring(0, 400),
-        patterns: memory.patterns,
+        // Assessment operativo del Account Agent
+        assessment: memory.agent_assessment || '',
+        frequency_status: memory.agent_frequency_status,
+        creative_health: memory.agent_creative_health || '',
+        needs_new_creatives: !!memory.agent_needs_new_creatives,
+        performance_trend: memory.agent_performance_trend,
+        pending_plan: memory.agent_pending_plan || '',
+        last_check: memory.agent_last_check,
+        next_review_at: memory.agent_next_review_at,
+        // Tendencias observadas
+        trends: memory.trends || null,
+        // Métricas que el brain recordaba la última vez
+        remembered_metrics: memory.remembered_metrics || null,
+        // Historial de acciones con resultado medido — últimas 8
+        action_history: (memory.action_history || []).slice(-8).reverse().map(a => ({
+          action_type: a.action_type,
+          executed_at: a.executed_at,
+          result: a.result,
+          roas_delta_pct: a.roas_delta_pct,
+          cpa_delta_pct: a.cpa_delta_pct,
+          context: a.context,
+          attribution: a.attribution
+        })),
         action_count: memory.action_history?.length || 0,
+        insights_generated: memory.insights_generated || 0,
+        last_insight_at: memory.last_insight_at,
         last_updated: memory.last_updated_at
       } : null
     });
