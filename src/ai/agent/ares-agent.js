@@ -800,9 +800,9 @@ async function runAresAgent() {
       ).length;
       logger.info(`[ARES] CBO health: ${recentCBOs.length} CBOs · zombies=${zombies} · colapsando=${collapsing} · saturando=${saturating}`);
 
-      // Run portfolio analysis — genera BrainRecommendations pending
+      // Run portfolio analysis — EJECUTA autónomo acciones con safety gates
       const analysis = await runPortfolioAnalysis();
-      logger.info(`[ARES] Portfolio analysis: ${analysis.recs_created} recs propuestas (${JSON.stringify(analysis.by_detector)})`);
+      logger.info(`[ARES] Portfolio actions ejecutadas: ${analysis.executed || 0} (${JSON.stringify(analysis.by_detector || {})})`);
     } else {
       logger.info('[ARES] CBO health: sin snapshots recientes, skip portfolio analysis');
     }
