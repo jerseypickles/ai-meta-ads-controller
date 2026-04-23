@@ -629,6 +629,9 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   const [showConversationList, setShowConversationList] = useState(false);
   const [conversationList, setConversationList] = useState([]);
   const [showCodeRecs, setShowCodeRecs] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [codeRecs, setCodeRecs] = useState([]);
   const [codeRecsCounts, setCodeRecsCounts] = useState({});
   const [codeRecsFilter, setCodeRecsFilter] = useState('pending');
@@ -724,6 +727,34 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
     if (showCodeRecs) loadCodeRecs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showCodeRecs, codeRecsFilter]);
+
+  async function loadNotifications() {
+    setNotificationsLoading(true);
+    try {
+      const res = await api.get('/api/zeus/chat/notifications', { params: { limit: 40, hours: 72 } });
+      setNotifications(res.data.notifications || []);
+    } catch (err) { console.error(err); }
+    finally { setNotificationsLoading(false); }
+  }
+
+  async function markNotificationRead(id) {
+    try {
+      await api.post(`/api/zeus/chat/notifications/${id}/read`);
+      setNotifications((prev) => prev.map(n => n.id === id ? { ...n, read_at: new Date().toISOString() } : n));
+    } catch (err) { /* silent */ }
+  }
+
+  async function markAllNotificationsRead() {
+    try {
+      await api.post('/api/zeus/chat/mark-read');
+      setNotifications((prev) => prev.map(n => ({ ...n, read_at: n.read_at || new Date().toISOString() })));
+      setUnreadCount(0);
+    } catch (err) { /* silent */ }
+  }
+
+  useEffect(() => {
+    if (showNotifications) loadNotifications();
+  }, [showNotifications]);
 
   async function loadPreferences() {
     try {
@@ -1293,6 +1324,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                   codeRecsPending={codeRecsCounts.pending || 0}
                   archDrafts={archCounts.draft || 0}
                   prefDrafts={prefDraftsCount}
+                  notificationsUnread={unreadCount}
                   onSelect={(key) => {
                     setShowPlans(false);
                     setShowCalendar(false);
@@ -1303,6 +1335,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                     setShowStances(false);
                     setShowCalibration(false);
                     setShowAutoPause(false);
+                    setShowNotifications(false);
                     if (key === 'plans') setShowPlans(true);
                     else if (key === 'calendar') setShowCalendar(true);
                     else if (key === 'architecture') setShowArchitecture(true);
@@ -1311,6 +1344,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                     else if (key === 'stances') setShowStances(true);
                     else if (key === 'calibration') setShowCalibration(true);
                     else if (key === 'autopause') setShowAutoPause(true);
+                    else if (key === 'notifications') setShowNotifications(true);
                     else if (key === 'conversations') {
                       loadConversationList();
                       setShowConversationList(true);
@@ -1814,6 +1848,59 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
           )}
         </AnimatePresence>
 
+        {/* Panel de notificaciones — proactive pings separados del chat */}
+        <AnimatePresence>
+          {showNotifications && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="zeus-notifications-panel"
+            >
+              <div className="zeus-notifications-header">
+                <button className="zeus-panel-close" onClick={() => setShowNotifications(false)} aria-label="Cerrar panel">×</button>
+                <div className="zeus-notifications-title">🔔 Notificaciones</div>
+                {notifications.filter(n => !n.read_at).length > 0 && (
+                  <button className="zeus-notif-mark-all" onClick={markAllNotificationsRead}>
+                    Marcar todas como leídas
+                  </button>
+                )}
+              </div>
+              {notificationsLoading && (
+                <div className="zeus-notif-empty">Cargando…</div>
+              )}
+              {!notificationsLoading && notifications.length === 0 && (
+                <div className="zeus-notif-empty">
+                  Sin notificaciones en las últimas 72h.<br />
+                  Zeus te escribe acá cuando detecta algo proactivamente.
+                </div>
+              )}
+              {!notificationsLoading && notifications.map(n => (
+                <div
+                  key={n.id}
+                  className={`zeus-notif-item ${n.read_at ? 'is-read' : 'is-unread'}`}
+                  onClick={() => !n.read_at && markNotificationRead(n.id)}
+                >
+                  <div className="zeus-notif-item-head">
+                    {!n.read_at && <span className="zeus-notif-dot" />}
+                    {n.signal_kinds && n.signal_kinds.length > 0 && (
+                      <span className="zeus-notif-kinds">
+                        {n.signal_kinds.slice(0, 3).map(k => (
+                          <span key={k} className="zeus-notif-kind-badge">{k}</span>
+                        ))}
+                      </span>
+                    )}
+                    <span className="zeus-notif-time">{formatTimeAgo(n.created_at)}</span>
+                  </div>
+                  <div className="zeus-notif-content">
+                    <ZeusMarkdown>{n.content || n.preview}</ZeusMarkdown>
+                  </div>
+                </div>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Panel de recomendaciones de código */}
         <AnimatePresence>
           {showCodeRecs && (
@@ -1913,7 +2000,10 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                 </div>
               )}
 
-              {messages.map((m, i) => (
+              {/* Filtro 2026-04-23: los proactive pings NO se mezclan con
+                  el flow del chat. Viven en el panel 🔔 Notificaciones
+                  (nuevo) para no saturar la conversación del creador. */}
+              {messages.filter(m => !m.proactive && m.role !== 'system_greeting').map((m, i) => (
                 <MessageBubble
                   key={i}
                   message={m}
@@ -1994,11 +2084,12 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   );
 }
 
-function ZeusPalette({ onClose, onSelect, codeRecsPending, archDrafts, prefDrafts }) {
+function ZeusPalette({ onClose, onSelect, codeRecsPending, archDrafts, prefDrafts, notificationsUnread }) {
   const items = [
     {
       group: 'Lo que Zeus usa para pensar',
       entries: [
+        { key: 'notifications', emoji: '🔔', label: 'Notificaciones', desc: 'Alertas proactivas de Zeus', badge: notificationsUnread },
         { key: 'memory', emoji: '💭', label: 'Memoria', desc: 'Preferencias persistentes', badge: prefDrafts },
         { key: 'calendar', emoji: '📅', label: 'Calendario', desc: 'Eventos estacionales' },
         { key: 'conversations', emoji: '📁', label: 'Conversaciones', desc: 'Historial de chats' }

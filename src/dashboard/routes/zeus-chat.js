@@ -361,6 +361,70 @@ router.get('/chat/unread', async (req, res) => {
   }
 });
 
+// ═══ GET /chat/notifications — lista proactive pings para panel 🔔 ═══
+// Separado del chat flow: estos mensajes NO se muestran en la conversación
+// del creador, solo en el panel de notificaciones. Fix 2026-04-23 — antes
+// saturaban el chat con 3+ repeticiones del mismo tema cada 30 min.
+router.get('/chat/notifications', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit || '40', 10), 100);
+    const onlyUnread = req.query.unread === 'true';
+    const hours = Math.min(parseInt(req.query.hours || '72', 10), 336);
+
+    const filter = {
+      proactive: true,
+      created_at: { $gte: new Date(Date.now() - hours * 3600000) }
+    };
+    if (onlyUnread) filter.read_at = null;
+
+    const notifs = await ZeusChatMessage.find(filter)
+      .sort({ created_at: -1 })
+      .limit(limit)
+      .lean();
+
+    // Enriquecer con metadata para UI
+    const enriched = notifs.map(n => {
+      const kinds = (n.context_snapshot?.signals || []).map(s => s.kind).filter(Boolean);
+      const uniqueKinds = [...new Set(kinds)];
+      return {
+        id: n._id,
+        content: n.content,
+        created_at: n.created_at,
+        read_at: n.read_at,
+        conversation_id: n.conversation_id,
+        signal_kinds: uniqueKinds,
+        preview: stripMarkdownForPreview(n.content || '').substring(0, 200)
+      };
+    });
+
+    const unreadCount = enriched.filter(n => !n.read_at).length;
+
+    res.json({
+      notifications: enriched,
+      total: enriched.length,
+      unread: unreadCount,
+      window_hours: hours
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══ POST /chat/notifications/:id/read — marcar una como leída ═══
+router.post('/chat/notifications/:id/read', async (req, res) => {
+  try {
+    const updated = await ZeusChatMessage.findByIdAndUpdate(
+      req.params.id,
+      { $set: { read_at: new Date() } },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ error: 'notificación no encontrada' });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ═══ POST /chat/mark-read — marca todos los proactivos como leídos ═══
 router.post('/chat/mark-read', async (req, res) => {
   try {

@@ -57,11 +57,12 @@ function isCriticalEnoughToBreakQuiet(signal) {
 }
 
 /**
- * Retorna las entidades que YA fueron mencionadas en pings recientes.
- * Extrae entity_name / entity_id / ids de mensajes proactive con
- * context_snapshot.signals en los últimos ENTITY_DEDUP_WINDOW_HOURS.
+ * Retorna tanto entidades como kinds YA mencionados en pings recientes.
+ * Fix 2026-04-23: antes solo trackeaba entities → signals sin entity
+ * (stale_recs, bulk_kills, kill_switch) se repetían cada 30min porque el
+ * dedup no los filtraba. Ahora también trackea kinds.
  */
-async function getRecentlyAlertedEntities() {
+async function getRecentlyAlerted() {
   const since = new Date(Date.now() - ENTITY_DEDUP_WINDOW_HOURS * 3600000);
   const recent = await ZeusChatMessage.find({
     proactive: true,
@@ -69,33 +70,45 @@ async function getRecentlyAlertedEntities() {
     created_at: { $gte: since }
   }).lean();
 
-  const names = new Set();
+  const entities = new Set();
+  const kindsWithoutEntity = new Set(); // kinds que no tienen entity específica
+
+  // Kinds que son agregados (no tienen entity) — si ya se emitió, dedup full
+  const AGGREGATE_KINDS = new Set([
+    'stale_recs', 'bulk_kills', 'kill_switch', 'follow_up_review',
+    'platform_degraded_enter', 'watcher_triggered'
+  ]);
+
   for (const msg of recent) {
     const signals = msg.context_snapshot?.signals || [];
     for (const s of signals) {
-      if (s.entity) names.add(String(s.entity).toLowerCase());
+      if (s.entity) entities.add(String(s.entity).toLowerCase());
+      if (s.kind && AGGREGATE_KINDS.has(s.kind) && !s.entity) {
+        kindsWithoutEntity.add(s.kind);
+      }
       if (s.title) {
-        // Heurística: extraer nombre de entity de titles como "Colapso ROAS: <name>"
         const match = s.title.match(/:\s*([^·]+?)(?:\s*·|$)/);
-        if (match) names.add(match[1].trim().toLowerCase());
+        if (match) entities.add(match[1].trim().toLowerCase());
       }
     }
-    // También del content del mensaje, extraer nombres entre backticks o comillas
+    // Del content del mensaje, extraer nombres entre backticks o comillas
     const content = msg.content || '';
     const backticks = content.match(/`([^`]+)`/g) || [];
-    for (const b of backticks) names.add(b.replace(/`/g, '').toLowerCase());
+    for (const b of backticks) entities.add(b.replace(/`/g, '').toLowerCase());
   }
-  return names;
+  return { entities, kindsWithoutEntity };
 }
 
 /**
- * Filtra signals: si la entidad ya fue alertada recientemente, skip.
+ * Filtra signals: si entidad o kind-aggregate ya fue alertado, skip.
  */
-function filterDedupedSignals(signals, recentEntities) {
+function filterDedupedSignals(signals, recent) {
   return signals.filter(s => {
+    // Si es un kind agregado (stale_recs, bulk_kills, etc.) ya emitido → skip
+    if (recent.kindsWithoutEntity.has(s.kind)) return false;
+    // Si tiene entity y ya fue mencionada → skip
     const entityKey = (s.entity || '').toLowerCase();
-    if (!entityKey) return true; // sin entidad concreta, no se puede dedup
-    if (recentEntities.has(entityKey)) return false;
+    if (entityKey && recent.entities.has(entityKey)) return false;
     return true;
   });
 }
@@ -537,15 +550,15 @@ async function runProactiveCycle() {
 
     const initialCount = signals.length;
 
-    // Gate 1: dedup por entidad — skip signals de entidades ya mencionadas en
-    // los últimos ENTITY_DEDUP_WINDOW_HOURS en pings proactivos.
+    // Gate 1: dedup por entidad + kind agregado — skip si ya se alertó
+    // en los últimos ENTITY_DEDUP_WINDOW_HOURS en pings proactivos.
     try {
-      const recentEntities = await getRecentlyAlertedEntities();
-      if (recentEntities.size > 0) {
+      const recent = await getRecentlyAlerted();
+      if (recent.entities.size > 0 || recent.kindsWithoutEntity.size > 0) {
         const before = signals.length;
-        signals = filterDedupedSignals(signals, recentEntities);
+        signals = filterDedupedSignals(signals, recent);
         const deduped = before - signals.length;
-        if (deduped > 0) logger.info(`[ZEUS-PROACTIVE] dedup: ${deduped} signals skipped (entidades alertadas en últimas ${ENTITY_DEDUP_WINDOW_HOURS}h)`);
+        if (deduped > 0) logger.info(`[ZEUS-PROACTIVE] dedup: ${deduped} signals skipped (${recent.entities.size} entidades, ${recent.kindsWithoutEntity.size} kinds agregados en últimas ${ENTITY_DEDUP_WINDOW_HOURS}h)`);
       }
     } catch (err) {
       logger.warn(`[ZEUS-PROACTIVE] dedup falló (non-critical): ${err.message}`);

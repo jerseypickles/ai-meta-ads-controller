@@ -5515,3 +5515,127 @@
   }
 }
 
+/* ═══ Panel 🔔 Notificaciones (proactive pings separados del chat) ═══ */
+.zeus-notifications-panel {
+  overflow: hidden;
+  background: rgba(10, 14, 39, 0.7);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  max-height: 520px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.zeus-notifications-header {
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(236, 72, 153, 0.05);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.zeus-notifications-title {
+  font-size: 0.72rem;
+  color: #ec4899;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  flex: 1;
+}
+
+.zeus-notif-mark-all {
+  font-size: 0.6rem;
+  background: transparent;
+  border: 1px solid rgba(236, 72, 153, 0.3);
+  color: #ec4899;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+}
+.zeus-notif-mark-all:hover {
+  background: rgba(236, 72, 153, 0.1);
+}
+
+.zeus-notif-empty {
+  padding: 30px 20px;
+  text-align: center;
+  color: var(--bos-text-dim);
+  font-size: 0.78rem;
+  font-style: italic;
+  line-height: 1.5;
+}
+
+.zeus-notif-item {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.zeus-notif-item:hover {
+  background: rgba(236, 72, 153, 0.04);
+}
+.zeus-notif-item.is-unread {
+  background: rgba(236, 72, 153, 0.06);
+  border-left: 3px solid #ec4899;
+  padding-left: 13px;
+}
+.zeus-notif-item.is-read {
+  opacity: 0.55;
+}
+
+.zeus-notif-item-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.zeus-notif-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ec4899;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px rgba(236, 72, 153, 0.6);
+}
+
+.zeus-notif-kinds {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.zeus-notif-kind-badge {
+  font-size: 0.55rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(236, 72, 153, 0.12);
+  color: #f9a8d4;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  text-transform: lowercase;
+  letter-spacing: 0.03em;
+}
+
+.zeus-notif-time {
+  margin-left: auto;
+  font-size: 0.6rem;
+  color: var(--bos-text-dim);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.zeus-notif-content {
+  font-size: 0.76rem;
+  color: var(--bos-text);
+  line-height: 1.5;
+}
+.zeus-notif-content p { margin: 0.3em 0; }
+.zeus-notif-content p:first-child { margin-top: 0; }
+.zeus-notif-content p:last-child { margin-bottom: 0; }
+
