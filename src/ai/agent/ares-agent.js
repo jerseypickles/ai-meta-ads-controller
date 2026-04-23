@@ -198,8 +198,38 @@ async function findDuplicationCandidates() {
 /**
  * Duplicar un ad set ganador a la campana ABO de Ares.
  * Cada clon tiene su propio budget ($30/dia).
+ *
+ * Fase 2 gate compuesto (2026-04-23): antes de duplicar, chequea el health
+ * snapshot de la CBO destino. Si está saturada (conc >70% + favorito sano +
+ * no declining) → SKIP duplicación. Meta no distribuiría al clon, sería
+ * tirar plata. Requiere un BrainRecommendation de refresh del favorito
+ * primero (ver ares-portfolio-manager.js).
  */
 async function duplicateWinner(candidate, aresCampaignId) {
+  // Gate compuesto — consulta último snapshot de la CBO destino
+  try {
+    const CBOHealthSnapshot = require('../../db/models/CBOHealthSnapshot');
+    const { shouldBlockDuplicationToCBO } = require('./ares-portfolio-manager');
+    const latestSnap = await CBOHealthSnapshot.findOne({ campaign_id: aresCampaignId })
+      .sort({ snapshot_at: -1 }).lean();
+    if (latestSnap && !latestSnap.is_zombie) {
+      const gate = shouldBlockDuplicationToCBO(latestSnap);
+      if (gate.block) {
+        logger.warn(`[ARES] SKIP duplicación "${candidate.entity_name}" → CBO ${aresCampaignId}: ${gate.reason} — ${gate.detail}`);
+        return {
+          skipped: true,
+          reason: gate.reason,
+          detail: gate.detail,
+          cbo_campaign_id: aresCampaignId,
+          candidate_name: candidate.entity_name
+        };
+      }
+    }
+  } catch (err) {
+    // Fail-open: si el gate falla, proceder con la duplicación (modo legacy)
+    logger.warn(`[ARES] gate check falló (fail-open): ${err.message}`);
+  }
+
   const { getMetaClient } = require('../../meta/client');
   const meta = getMetaClient();
 
@@ -743,30 +773,41 @@ async function runAresAgent() {
     };
   }
 
-  // Fase 0.5: CBO Health observation (Fase 1 del plan — solo lee, no bloquea).
-  // Lee los snapshots más recientes generados por el monitor cada 2h y loggea
-  // findings para trazabilidad. En Fase 2 estos snapshots van a alimentar el
-  // gate compuesto que decide si duplicar o proponer refresh/rescue en su lugar.
+  // Fase 0.5: CBO Health observation + Portfolio analysis propose-only.
+  // Fase 1 del plan: solo lee snapshots y loggea.
+  // Fase 2+3A (adelantada 2026-04-23): corre detectores que generan
+  // BrainRecommendations pending (propose-only) sobre starved winners,
+  // underperformers, saturation, starvation. NINGUNO ejecuta autónomo — el
+  // creador aprueba en el panel. Ver src/ai/agent/ares-portfolio-manager.js.
+  let cboSnapsCache = null;  // cache para el gate de duplicación más abajo
   try {
+    const { runPortfolioAnalysis } = require('./ares-portfolio-manager');
     const CBOHealthSnapshot = require('../../db/models/CBOHealthSnapshot');
+
     const recentCBOs = await CBOHealthSnapshot.aggregate([
-      { $match: { snapshot_at: { $gte: new Date(Date.now() - 3 * 3600000) } } }, // últimas 3h
+      { $match: { snapshot_at: { $gte: new Date(Date.now() - 3 * 3600000) } } },
       { $sort: { campaign_id: 1, snapshot_at: -1 } },
       { $group: { _id: '$campaign_id', doc: { $first: '$$ROOT' } } },
       { $replaceRoot: { newRoot: '$doc' } }
     ]);
+    cboSnapsCache = recentCBOs;
+
     if (recentCBOs.length > 0) {
       const zombies = recentCBOs.filter(s => s.is_zombie).length;
       const collapsing = recentCBOs.filter(s => s.collapse_detected).length;
       const saturating = recentCBOs.filter(s =>
-        s.concentration_sustained_3d && s.favorite_declining && s.favorite_freq > 2
+        s.concentration_index_3d >= 0.7 && s.favorite_roas_7d >= 2.5 && !s.favorite_declining
       ).length;
-      logger.info(`[ARES] CBO health (obs): ${recentCBOs.length} CBOs · zombies=${zombies} · colapsando=${collapsing} · saturando=${saturating}`);
+      logger.info(`[ARES] CBO health: ${recentCBOs.length} CBOs · zombies=${zombies} · colapsando=${collapsing} · saturando=${saturating}`);
+
+      // Run portfolio analysis — genera BrainRecommendations pending
+      const analysis = await runPortfolioAnalysis();
+      logger.info(`[ARES] Portfolio analysis: ${analysis.recs_created} recs propuestas (${JSON.stringify(analysis.by_detector)})`);
     } else {
-      logger.info('[ARES] CBO health: sin snapshots recientes (monitor todavía no corrió?)');
+      logger.info('[ARES] CBO health: sin snapshots recientes, skip portfolio analysis');
     }
   } catch (err) {
-    logger.warn(`[ARES] CBO health observation falló (no crítico): ${err.message}`);
+    logger.warn(`[ARES] CBO health + portfolio analysis falló (no crítico): ${err.message}`);
   }
 
   // Fase 1: Obtener o crear campana Ares
