@@ -22,6 +22,113 @@ const claude = new Anthropic({ apiKey: config.claude.apiKey });
 const MODEL = 'claude-opus-4-7';
 const LAST_CHECK_KEY = 'zeus_proactive_last_check';
 
+// Quiet hours ET — emitir solo casos verdaderamente críticos entre 23:00–07:00
+// (kill switch, circuit breaker abierto, etc). Lo demás acumula y se consolida
+// a las 07:00 en un solo ping. Fix 2026-04-23: el creador recibió 5 pings entre
+// 04:30 y 07:00 por repetición de insights de los mismos ads. Quieter por default
+// nocturno + dedup por entidad previene eso.
+const QUIET_HOUR_START_ET = 23;  // 11pm ET
+const QUIET_HOUR_END_ET = 7;     // 7am ET
+// Ventana de dedup por entidad — si ya alertamos sobre la misma entidad en
+// este lapso, skip ese signal. 4h balancea "no spammear" vs "si algo se agrava
+// realmente diferente, poder alertar".
+const ENTITY_DEDUP_WINDOW_HOURS = 4;
+
+/**
+ * Retorna true si estamos dentro de las quiet hours ET.
+ */
+function isQuietHoursET() {
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const hour = nowET.getHours();
+  if (QUIET_HOUR_START_ET > QUIET_HOUR_END_ET) {
+    return hour >= QUIET_HOUR_START_ET || hour < QUIET_HOUR_END_ET;
+  }
+  return hour >= QUIET_HOUR_START_ET && hour < QUIET_HOUR_END_ET;
+}
+
+/**
+ * Signals "verdaderamente críticos" que rompen quiet hours. Solo los que
+ * requieren acción inmediata del creador, no insights de performance.
+ */
+function isCriticalEnoughToBreakQuiet(signal) {
+  if (signal.kind === 'safety_event' && signal.severity === 'critical') return true;
+  if (signal.kind === 'watcher_triggered') return true; // el creador explícitamente lo pidió
+  return false;
+}
+
+/**
+ * Retorna las entidades que YA fueron mencionadas en pings recientes.
+ * Extrae entity_name / entity_id / ids de mensajes proactive con
+ * context_snapshot.signals en los últimos ENTITY_DEDUP_WINDOW_HOURS.
+ */
+async function getRecentlyAlertedEntities() {
+  const since = new Date(Date.now() - ENTITY_DEDUP_WINDOW_HOURS * 3600000);
+  const recent = await ZeusChatMessage.find({
+    proactive: true,
+    role: 'assistant',
+    created_at: { $gte: since }
+  }).lean();
+
+  const names = new Set();
+  for (const msg of recent) {
+    const signals = msg.context_snapshot?.signals || [];
+    for (const s of signals) {
+      if (s.entity) names.add(String(s.entity).toLowerCase());
+      if (s.title) {
+        // Heurística: extraer nombre de entity de titles como "Colapso ROAS: <name>"
+        const match = s.title.match(/:\s*([^·]+?)(?:\s*·|$)/);
+        if (match) names.add(match[1].trim().toLowerCase());
+      }
+    }
+    // También del content del mensaje, extraer nombres entre backticks o comillas
+    const content = msg.content || '';
+    const backticks = content.match(/`([^`]+)`/g) || [];
+    for (const b of backticks) names.add(b.replace(/`/g, '').toLowerCase());
+  }
+  return names;
+}
+
+/**
+ * Filtra signals: si la entidad ya fue alertada recientemente, skip.
+ */
+function filterDedupedSignals(signals, recentEntities) {
+  return signals.filter(s => {
+    const entityKey = (s.entity || '').toLowerCase();
+    if (!entityKey) return true; // sin entidad concreta, no se puede dedup
+    if (recentEntities.has(entityKey)) return false;
+    return true;
+  });
+}
+
+/**
+ * Consolida signals del mismo kind si son 3+, convirtiéndolos en un solo
+ * signal agregado. Evita que 5 "anomaly" críticas se reporten como 5 pings.
+ */
+function consolidateSignals(signals) {
+  const byKind = {};
+  for (const s of signals) {
+    if (!byKind[s.kind]) byKind[s.kind] = [];
+    byKind[s.kind].push(s);
+  }
+  const out = [];
+  for (const [kind, list] of Object.entries(byKind)) {
+    if (list.length >= 3) {
+      // Consolidar — usar el primero como representativo + agregar count/summary
+      out.push({
+        kind,
+        consolidated: true,
+        severity: list.some(s => s.severity === 'critical') ? 'critical' : list[0].severity || 'high',
+        count: list.length,
+        entities: list.slice(0, 5).map(s => s.entity || s.title || s.name).filter(Boolean),
+        sample_titles: list.slice(0, 3).map(s => s.title || s.reason || '').filter(Boolean)
+      });
+    } else {
+      out.push(...list);
+    }
+  }
+  return out;
+}
+
 /**
  * Detecta señales que ameriten un mensaje proactivo.
  * Retorna array de signals con tipo + info; si vacío, no enviamos nada.
@@ -422,13 +529,51 @@ async function runProactiveCycle() {
       logger.error(`[ZEUS-PROACTIVE] watchers check failed: ${err.message}`);
     }
 
-    const signals = [...watcherSignals, ...await detectSignals(lastCheck)];
+    let signals = [...watcherSignals, ...await detectSignals(lastCheck)];
     if (signals.length === 0) {
       await SystemConfig.set(LAST_CHECK_KEY, { at: now.toISOString() });
       return { signals: 0, sent: false };
     }
 
-    logger.info(`[ZEUS-PROACTIVE] ${signals.length} signals detected: ${signals.map(s => s.kind).join(', ')}`);
+    const initialCount = signals.length;
+
+    // Gate 1: dedup por entidad — skip signals de entidades ya mencionadas en
+    // los últimos ENTITY_DEDUP_WINDOW_HOURS en pings proactivos.
+    try {
+      const recentEntities = await getRecentlyAlertedEntities();
+      if (recentEntities.size > 0) {
+        const before = signals.length;
+        signals = filterDedupedSignals(signals, recentEntities);
+        const deduped = before - signals.length;
+        if (deduped > 0) logger.info(`[ZEUS-PROACTIVE] dedup: ${deduped} signals skipped (entidades alertadas en últimas ${ENTITY_DEDUP_WINDOW_HOURS}h)`);
+      }
+    } catch (err) {
+      logger.warn(`[ZEUS-PROACTIVE] dedup falló (non-critical): ${err.message}`);
+    }
+
+    // Gate 2: quiet hours — solo emitir si hay signal verdaderamente crítico.
+    // El resto acumula (se emite cuando salga de quiet hours con la consolidación).
+    if (isQuietHoursET()) {
+      const critical = signals.filter(isCriticalEnoughToBreakQuiet);
+      if (critical.length === 0) {
+        logger.info(`[ZEUS-PROACTIVE] quiet hours (${QUIET_HOUR_START_ET}-${QUIET_HOUR_END_ET}h ET) · ${signals.length} signals acumulados sin emitir (ninguno crítico enough)`);
+        // NO avanzamos LAST_CHECK_KEY — así los signals quedan disponibles para
+        // el primer ciclo fuera de quiet hours, que los consolidará.
+        return { signals: signals.length, sent: false, quiet_hours: true };
+      }
+      signals = critical;
+      logger.info(`[ZEUS-PROACTIVE] quiet hours · ${critical.length} signals críticos rompen el silencio`);
+    }
+
+    // Gate 3: consolidación — si hay 3+ signals mismo kind, agregarlos en uno.
+    signals = consolidateSignals(signals);
+
+    if (signals.length === 0) {
+      await SystemConfig.set(LAST_CHECK_KEY, { at: now.toISOString() });
+      return { signals: 0, sent: false, filtered_out: initialCount };
+    }
+
+    logger.info(`[ZEUS-PROACTIVE] ${signals.length} signals post-gates (${initialCount} inicial): ${signals.map(s => s.kind + (s.consolidated ? `×${s.count}` : '')).join(', ')}`);
 
     // Encontrar la current conversation del creador (última que tuvo actividad)
     const lastMsg = await ZeusChatMessage.findOne().sort({ created_at: -1 }).lean();
