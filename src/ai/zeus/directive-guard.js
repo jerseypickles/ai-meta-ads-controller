@@ -104,4 +104,98 @@ async function getActiveConstraints(agentName) {
   };
 }
 
-module.exports = { isAgentBlocked, getActiveConstraints };
+/**
+ * Parser de texto de directiva → Set de action_types que bloquea.
+ * Heurística por keywords. Si no hay match claro, default conservador:
+ * bloquea solo el action más literal de la categoría.
+ *
+ * Agregado 2026-04-23 para dar granularidad al ares-portfolio-manager —
+ * una directiva "no new duplications" no debería bloquear kills ni scales.
+ */
+function parseBlockedActions(directiveText) {
+  const t = (directiveText || '').toLowerCase();
+  const blocked = new Set();
+
+  // Duplicaciones
+  if (/\bduplic/.test(t) || /\bclone/.test(t) || /no new/.test(t)) {
+    blocked.add('duplicate_adset');
+    blocked.add('fast_track_duplicate');
+  }
+  // Pauses / kills
+  if (/\bpaus/.test(t) || /\bkill/.test(t)) {
+    blocked.add('pause');
+    blocked.add('update_ad_status');
+  }
+  // Budget changes
+  if (/\bbudget\b/.test(t) || /\bscale\b/.test(t) || /\bescalar\b/.test(t)) {
+    blocked.add('scale_up');
+    blocked.add('scale_down');
+    blocked.add('move_budget');
+  }
+  // Creative changes
+  if (/\bcreativ/.test(t) || /\brefresh\b/.test(t)) {
+    blocked.add('creative_refresh');
+    blocked.add('create_ad');
+    blocked.add('update_ad_creative');
+  }
+  // Tests
+  if (/\btest/.test(t) || /\blaunch\b/.test(t) || /\blanzar\b/.test(t)) {
+    blocked.add('launch_test');
+    blocked.add('graduate');
+  }
+
+  // Si no matcheó ningún keyword específico, es una directiva genérica →
+  // bloquear TODO por seguridad (patrón actual pre-granularidad).
+  if (blocked.size === 0) {
+    return { scope: 'all', actions: null };
+  }
+
+  return { scope: 'specific', actions: blocked };
+}
+
+/**
+ * Como isAgentBlocked pero con granularidad por action_type.
+ * Retorna blocked=true SOLO si alguna directiva avoid activa incluye
+ * ese action específico en su scope (parseado del texto).
+ *
+ * Uso:
+ *   const block = await isActionBlockedForAgent('ares', 'pause');
+ *   if (block.blocked) skip;
+ */
+async function isActionBlockedForAgent(agentName, actionType) {
+  const now = new Date();
+  const directives = await ZeusDirective.find({
+    active: true,
+    directive_type: 'avoid',
+    $or: [{ target_agent: agentName }, { target_agent: 'all' }],
+    $and: [{ $or: [{ expires_at: null }, { expires_at: { $gt: now } }] }]
+  }).sort({ confidence: -1 }).lean();
+
+  if (directives.length === 0) return { blocked: false };
+
+  for (const d of directives) {
+    const parsed = parseBlockedActions(d.directive);
+    // scope='all' = directiva genérica, bloquea todo
+    if (parsed.scope === 'all') {
+      return {
+        blocked: true,
+        reason: d.directive,
+        directive_id: d._id,
+        scope: 'all_actions_genericamente'
+      };
+    }
+    if (parsed.actions.has(actionType)) {
+      return {
+        blocked: true,
+        reason: d.directive,
+        directive_id: d._id,
+        scope: 'specific',
+        blocked_actions: Array.from(parsed.actions)
+      };
+    }
+  }
+
+  return { blocked: false };
+}
+
+module.exports = { isAgentBlocked, isActionBlockedForAgent, getActiveConstraints, parseBlockedActions };

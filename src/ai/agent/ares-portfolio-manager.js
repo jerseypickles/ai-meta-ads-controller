@@ -108,10 +108,25 @@ async function logAction({ entity_id, entity_name, entity_type, action, before_v
 }
 
 /**
- * Gate pre-acción: valida cooldown + guard-rail + portfolio capacity.
+ * Gate pre-acción: valida cooldown + guard-rail + portfolio capacity +
+ * directiva Zeus granular por action_type.
  * Retorna { allowed: true } o { allowed: false, reason: '...' }.
  */
 async function validateSafetyGates({ entity_id, action_type, before_value, after_value }) {
+  // 0. Directiva Zeus granular por action_type — nuevo 2026-04-23
+  try {
+    const { isActionBlockedForAgent } = require('../zeus/directive-guard');
+    const directiveBlock = await isActionBlockedForAgent('ares', action_type);
+    if (directiveBlock.blocked) {
+      return {
+        allowed: false,
+        reason: `directiva Zeus bloquea '${action_type}': ${directiveBlock.reason}`
+      };
+    }
+  } catch (err) {
+    logger.warn(`[ARES-PORTFOLIO] directive check failed (fail-open): ${err.message}`);
+  }
+
   // 1. Cooldown per-entity
   try {
     const cool = await cooldowns.isOnCooldown(entity_id);
@@ -122,12 +137,16 @@ async function validateSafetyGates({ entity_id, action_type, before_value, after
     logger.warn(`[ARES-PORTFOLIO] cooldown check failed (fail-open): ${err.message}`);
   }
 
-  // 2. Guard-rail para acciones de budget
+  // 2. Guard-rail para acciones de budget — cap 50% por ciclo
+  // (más permisivo que 25% default del sistema global porque estas acciones
+  // ya pasan por cooldown 36h + detector con thresholds específicos +
+  // cap primera semana +$100. El 25% bloqueaba starvation scales legítimos
+  // de Medicion $200→$300 que son exactamente el objetivo del detector.)
   if (action_type === 'scale_up' || action_type === 'scale_down') {
     if (before_value && after_value) {
       const pct = Math.abs((after_value - before_value) / before_value);
-      if (pct > 0.25) {
-        return { allowed: false, reason: `guard-rail: cambio ${(pct*100).toFixed(0)}% > 25% max` };
+      if (pct > 0.50) {
+        return { allowed: false, reason: `guard-rail: cambio ${(pct*100).toFixed(0)}% > 50% max` };
       }
     }
   }
@@ -527,17 +546,11 @@ async function runPortfolioAnalysis() {
     return { analyzed: 0, executed: 0, skipped: 'flag_off' };
   }
 
-  // Respetar directivas avoid de Zeus sobre 'ares'
-  try {
-    const { isAgentBlocked } = require('../zeus/directive-guard');
-    const block = await isAgentBlocked('ares');
-    if (block.blocked) {
-      logger.info(`[ARES-PORTFOLIO] SKIP por directiva Zeus: ${block.reason}`);
-      return { analyzed: 0, executed: 0, skipped: 'zeus_avoid' };
-    }
-  } catch (err) {
-    logger.warn(`[ARES-PORTFOLIO] directive-guard check falló (fail-open): ${err.message}`);
-  }
+  // Fix 2026-04-23: antes hacíamos isAgentBlocked global → una directiva
+  // "no new duplications" bloqueaba TODO el subsystem (kills + scales).
+  // Ahora cada executor chequea granularmente con isActionBlockedForAgent
+  // por su tipo de acción. La directiva se respeta pero solo para actions
+  // que realmente caen en su scope.
 
   const since = new Date(Date.now() - 3 * 3600000);
   const latestSnaps = await CBOHealthSnapshot.aggregate([
