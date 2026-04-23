@@ -428,8 +428,14 @@ MODO CHAT:
     uiContextLine = `\nEL CREADOR ESTÁ ACTUALMENTE VIENDO: ${label}.\nSi usa referencias como "este", "aquí", "lo que tengo abierto", probablemente se refiere a lo que está viendo en ese panel. Usá las tools para investigar lo relevante.\n`;
   }
 
-  const systemPrompt = `${ZEUS_PERSONA}
-
+  // Prompt caching: separamos en 2 bloques — persona estable (cacheable) +
+  // contexto dinámico (cambia cada turno). El bloque 1 es ~20K tokens que
+  // Anthropic cachea con 90% descuento en lecturas subsiguientes. Ver pricing:
+  //   Opus 4.7 input: $15/M · cached read: $1.50/M · cache write: $18.75/M
+  // TTL del cache: 5 min — beneficia sesiones activas + rounds internos de
+  // tool use (MAX_TOOL_ROUNDS=15 rounds del mismo turno golpean el mismo cache).
+  const systemBlockStable = ZEUS_PERSONA;
+  const systemBlockDynamic = `
 ═══════════════════════════════════════════
 FECHA Y HORA ACTUAL (zona New York / ET):
   Hoy: ${dateNowLong}
@@ -450,6 +456,23 @@ ${contextText}
 ${uiContextLine}
 ${modeInstructions}`;
 
+  // Formato de system para Anthropic SDK — array de content blocks con
+  // cache_control en el primero (persona). Todo desde el inicio hasta ese
+  // breakpoint se cachea.
+  const systemBlocks = [
+    { type: 'text', text: systemBlockStable, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: systemBlockDynamic }
+  ];
+
+  // Tools con cache_control en la última — cachea las 60+ tool definitions
+  // (~8-12K tokens que nunca cambian entre llamadas).
+  const toolsCached = TOOL_DEFINITIONS.length > 0
+    ? [
+        ...TOOL_DEFINITIONS.slice(0, -1),
+        { ...TOOL_DEFINITIONS[TOOL_DEFINITIONS.length - 1], cache_control: { type: 'ephemeral' } }
+      ]
+    : TOOL_DEFINITIONS;
+
   // 3. Build messages
   const messages = [...history];
   if (userMessage) {
@@ -462,6 +485,11 @@ ${modeInstructions}`;
   let finalText = '';
   const toolCallsExecuted = [];
   let tokensUsed = 0;
+  // Cache metrics — Anthropic devuelve usage.cache_creation_input_tokens (primera
+  // escritura) y cache_read_input_tokens (lecturas subsiguientes). Trackeamos
+  // ambas para medir efectividad real del caching.
+  let cacheCreationTokens = 0;
+  let cacheReadTokens = 0;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     let response;
@@ -472,8 +500,8 @@ ${modeInstructions}`;
         max_tokens: MAX_TOKENS,
         thinking: { type: 'adaptive' },
         output_config: { effort: THINKING_EFFORT },
-        system: systemPrompt,
-        tools: TOOL_DEFINITIONS,
+        system: systemBlocks,   // 2 bloques: persona cacheada + contexto dinámico
+        tools: toolsCached,     // tools con cache_control en la última
         messages
       });
 
@@ -506,6 +534,8 @@ ${modeInstructions}`;
     }
 
     tokensUsed += (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0);
+    cacheCreationTokens += response.usage?.cache_creation_input_tokens || 0;
+    cacheReadTokens += response.usage?.cache_read_input_tokens || 0;
 
     const blockTypes = response.content.map(b => b.type).join(',');
     if (response.stop_reason && response.stop_reason !== 'tool_use' && response.stop_reason !== 'end_turn') {
@@ -565,10 +595,15 @@ ${modeInstructions}`;
   if (!finalText || finalText.trim().length === 0) {
     logger.warn(`[ZEUS-ORACLE] Loop terminó sin texto — tokens=${tokensUsed}, tools=${toolCallsExecuted.length}. Intentando fallback sin thinking...`);
     try {
+      // Fallback usa el mismo persona cacheado + añade instrucción anti-tool
+      const fallbackSystemBlocks = [
+        { type: 'text', text: systemBlockStable, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: systemBlockDynamic + '\n\nIMPORTANTE: Respondé ahora directamente con texto. No invoques más tools.' }
+      ];
       const fallbackStream = claude.messages.stream({
         model: MODEL,
         max_tokens: 2000,
-        system: systemPrompt + '\n\nIMPORTANTE: Respondé ahora directamente con texto. No invoques más tools.',
+        system: fallbackSystemBlocks,
         messages
       });
       fallbackStream.on('streamEvent', (event) => {
@@ -579,6 +614,8 @@ ${modeInstructions}`;
       });
       const fallbackResponse = await fallbackStream.finalMessage();
       tokensUsed += (fallbackResponse.usage?.input_tokens || 0) + (fallbackResponse.usage?.output_tokens || 0);
+      cacheCreationTokens += fallbackResponse.usage?.cache_creation_input_tokens || 0;
+      cacheReadTokens += fallbackResponse.usage?.cache_read_input_tokens || 0;
     } catch (fallbackErr) {
       logger.error(`[ZEUS-ORACLE] Fallback también falló: ${fallbackErr.message}`);
     }
@@ -602,13 +639,28 @@ ${modeInstructions}`;
     onEvent('followups', { items: followups });
   }
 
-  onEvent('done', { tokens_used: tokensUsed, tool_calls: toolCallsExecuted.length });
+  // Cache efficiency — % del input que vino del cache. >50% = caching dando
+  // beneficio real. <20% = primeras llamadas o cache miss (TTL vencido).
+  const totalInputTokens = tokensUsed; // approx, incluye output también pero es el proxy
+  const cacheHitRatio = (cacheReadTokens + cacheCreationTokens) > 0
+    ? cacheReadTokens / (cacheReadTokens + cacheCreationTokens)
+    : 0;
+  logger.info(`[ZEUS-ORACLE] tokens: total=${tokensUsed} · cache_read=${cacheReadTokens} · cache_write=${cacheCreationTokens} · hit_ratio=${(cacheHitRatio * 100).toFixed(1)}%`);
+
+  onEvent('done', {
+    tokens_used: tokensUsed,
+    tool_calls: toolCallsExecuted.length,
+    cache_read_tokens: cacheReadTokens,
+    cache_creation_tokens: cacheCreationTokens
+  });
 
   return {
     text: cleanText,
     followups,
     tool_calls: toolCallsExecuted,
     tokens_used: tokensUsed,
+    cache_read_tokens: cacheReadTokens,
+    cache_creation_tokens: cacheCreationTokens,
     model: MODEL,
     context_snapshot: ctx
   };

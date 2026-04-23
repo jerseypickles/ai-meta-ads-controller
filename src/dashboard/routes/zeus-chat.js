@@ -103,6 +103,8 @@ router.get('/greeting/stream', async (req, res) => {
       tool_calls: result.tool_calls,
       context_snapshot: result.context_snapshot,
       tokens_used: result.tokens_used,
+      cache_read_tokens: result.cache_read_tokens || 0,
+      cache_creation_tokens: result.cache_creation_tokens || 0,
       ai_model: result.model
     });
 
@@ -231,6 +233,8 @@ router.get('/chat/stream', async (req, res) => {
       followups: result.followups || [],
       tool_calls: result.tool_calls,
       tokens_used: result.tokens_used,
+      cache_read_tokens: result.cache_read_tokens || 0,
+      cache_creation_tokens: result.cache_creation_tokens || 0,
       ai_model: result.model
     });
 

@@ -37,6 +37,11 @@ const zeusChatMessageSchema = new mongoose.Schema({
   context_snapshot: { type: mongoose.Schema.Types.Mixed, default: null },
 
   tokens_used: { type: Number, default: 0 },
+  // Cache metrics de Anthropic — permite monitorear efectividad del prompt
+  // caching. cache_read_tokens: lecturas desde cache (90% descuento).
+  // cache_creation_tokens: primera escritura del cache (25% surcharge).
+  cache_read_tokens: { type: Number, default: 0 },
+  cache_creation_tokens: { type: Number, default: 0 },
   ai_model: { type: String, default: null },
 
   // Si la respuesta se truncó porque runOracle falló mid-stream. Permite
