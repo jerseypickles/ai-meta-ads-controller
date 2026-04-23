@@ -163,15 +163,19 @@ async function checkDeliveryHealth() {
   else if (issues.some(i => i.severity === 'high')) status = 'degraded';
   else if (issues.length > 0) status = 'watch';
 
+  // Nota: spend_yesterday/impressions_yesterday no se exponen porque el schema
+  // no tiene ventana "ayer" (solo today/3d/7d/14d/30d). Antes estas líneas
+  // referenciaban totalSpend1d e totalImpressions1d — variables nunca definidas
+  // que causaban ReferenceError al ejecutar query_delivery_health.
+  // Fijado 2026-04-23. Si se necesita "ayer" en el futuro, implementar via
+  // query a MetricSnapshot histórico buscando el último snapshot del día D-1.
   return {
     status,
     summary: {
       active_adsets: active.length,
       spend_today: Math.round(totalSpendToday),
-      spend_yesterday: Math.round(totalSpend1d),
       avg_daily_7d: Math.round(avgDailySpend),
-      impressions_today: totalImpressionsToday,
-      impressions_yesterday: totalImpressions1d
+      impressions_today: totalImpressionsToday
     },
     issues,
     issues_count: issues.length,
