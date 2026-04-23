@@ -52,104 +52,116 @@ router.get('/directives', async (req, res) => {
 });
 
 // ═══ GET /intelligence — Resumen completo de lo que Zeus sabe ═══
+// Fix 2026-04-23: antes ejecutaba 8 queries secuenciales con await → 1.5-3s.
+// Ahora Promise.all en paralelo → ~300-500ms (bound por la más lenta:
+// scenePatterns con $lookup). Ninguna query depende de otra, así que el
+// paralelismo es seguro.
 router.get('/intelligence', async (req, res) => {
   try {
-    // Directivas activas
-    const directives = await ZeusDirective.find({ active: true }).sort({ confidence: -1 }).lean();
+    const ZeusConversation = require('../../db/models/ZeusConversation');
 
-    // Summary guardado
-    const summary = await SystemConfig.get('zeus_intelligence_summary', null);
+    const [
+      directives,
+      summary,
+      testStats,
+      scenePatternsRaw,
+      thoughts,
+      conversations,
+      hypotheses,
+      directivesTotalEver
+    ] = await Promise.all([
+      // 1. Directivas activas
+      ZeusDirective.find({ active: true }).sort({ confidence: -1 }).lean(),
 
-    // Stats de tests
-    const testStats = await TestRun.aggregate([
-      { $group: { _id: '$phase', count: { $sum: 1 }, avg_roas: { $avg: '$metrics.roas' }, total_spend: { $sum: '$metrics.spend' } } }
+      // 2. Summary guardado
+      SystemConfig.get('zeus_intelligence_summary', null),
+
+      // 3. Stats de tests por fase
+      TestRun.aggregate([
+        { $group: { _id: '$phase', count: { $sum: 1 }, avg_roas: { $avg: '$metrics.roas' }, total_spend: { $sum: '$metrics.spend' } } }
+      ]),
+
+      // 4. Patrones por escena (la más pesada — $lookup + unwind + group)
+      TestRun.aggregate([
+        // Incluir todas las fases pero excluir kills con spend <$10 (muestra insuficiente)
+        { $match: {
+          $or: [
+            { phase: { $in: ['learning', 'evaluating', 'graduated', 'expired'] } },
+            { phase: 'killed', 'metrics.spend': { $gte: 10 } }
+          ]
+        }},
+        { $lookup: { from: 'creativeproposals', localField: 'proposal_id', foreignField: '_id', as: 'proposal' } },
+        { $unwind: { path: '$proposal', preserveNullAndEmptyArrays: true } },
+        { $group: {
+          _id: '$proposal.scene_short',
+          total: { $sum: 1 },
+          // Wins: graduated O tests con compras (señal positiva)
+          wins: { $sum: { $cond: [
+            { $or: [
+              { $eq: ['$phase', 'graduated'] },
+              { $gt: ['$metrics.purchases', 0] }
+            ]},
+            1, 0
+          ]} },
+          total_spend: { $sum: '$metrics.spend' },
+          total_purchases: { $sum: '$metrics.purchases' },
+          // Revenue = roas * spend por test
+          total_revenue: { $sum: { $multiply: ['$metrics.roas', '$metrics.spend'] } },
+          active_count: { $sum: { $cond: [
+            { $in: ['$phase', ['learning', 'evaluating']] }, 1, 0
+          ]}}
+        }},
+        { $match: { _id: { $ne: null } } },
+        // Calcular ROAS ponderado
+        { $addFields: {
+          weighted_roas: { $cond: [
+            { $gt: ['$total_spend', 0] },
+            { $divide: ['$total_revenue', '$total_spend'] },
+            0
+          ]}
+        }},
+        { $sort: { total_purchases: -1, weighted_roas: -1 } },
+        { $limit: 15 }
+      ]),
+
+      // 5. Thoughts (stream de consciencia)
+      BrainInsight.find({
+        $or: [
+          { generated_by: 'zeus' },
+          { insight_type: { $in: ['brain_thinking', 'brain_activity', 'summary'] } }
+        ]
+      }).sort({ created_at: -1 }).limit(20).lean(),
+
+      // 6. Conversaciones
+      ZeusConversation.find().sort({ created_at: -1 }).limit(30).lean(),
+
+      // 7. Hypotheses
+      BrainInsight.find({
+        insight_type: 'hypothesis',
+        generated_by: 'zeus'
+      }).sort({ created_at: -1 }).limit(15).lean(),
+
+      // 8. Count total directivas
+      ZeusDirective.countDocuments()
     ]);
+
+    // Procesamiento post-paralelo (CPU bound, rápido)
     const testMap = {};
     for (const t of testStats) testMap[t._id] = t;
-
-    // Graduation rate
     const graduated = testMap.graduated?.count || 0;
     const killed = testMap.killed?.count || 0;
     const expired = testMap.expired?.count || 0;
     const totalFinished = graduated + killed + expired;
     const graduationRate = totalFinished > 0 ? Math.round((graduated / totalFinished) * 100) : 0;
-
-    // Patrones por escena — incluye tests activos, excluye kills insignificantes
-    // Ganadores = tests con compras (sea graduated o activo con purchases)
-    // ROAS = ponderado por spend (no promedio simple)
-    const scenePatterns = await TestRun.aggregate([
-      // Incluir todas las fases pero excluir kills con spend <$10 (muestra insuficiente)
-      { $match: {
-        $or: [
-          { phase: { $in: ['learning', 'evaluating', 'graduated', 'expired'] } },
-          { phase: 'killed', 'metrics.spend': { $gte: 10 } }
-        ]
-      }},
-      { $lookup: { from: 'creativeproposals', localField: 'proposal_id', foreignField: '_id', as: 'proposal' } },
-      { $unwind: { path: '$proposal', preserveNullAndEmptyArrays: true } },
-      { $group: {
-        _id: '$proposal.scene_short',
-        total: { $sum: 1 },
-        // Wins: graduated O tests con compras (señal positiva)
-        wins: { $sum: { $cond: [
-          { $or: [
-            { $eq: ['$phase', 'graduated'] },
-            { $gt: ['$metrics.purchases', 0] }
-          ]},
-          1, 0
-        ]} },
-        total_spend: { $sum: '$metrics.spend' },
-        total_purchases: { $sum: '$metrics.purchases' },
-        // Revenue = roas * spend por test
-        total_revenue: { $sum: { $multiply: ['$metrics.roas', '$metrics.spend'] } },
-        active_count: { $sum: { $cond: [
-          { $in: ['$phase', ['learning', 'evaluating']] }, 1, 0
-        ]}}
-      }},
-      { $match: { _id: { $ne: null } } },
-      // Calcular ROAS ponderado
-      { $addFields: {
-        weighted_roas: { $cond: [
-          { $gt: ['$total_spend', 0] },
-          { $divide: ['$total_revenue', '$total_spend'] },
-          0
-        ]}
-      }},
-      { $sort: { total_purchases: -1, weighted_roas: -1 } },
-      { $limit: 15 }
-    ]);
-
-    // Intelligence score (0-100 basado en datos disponibles)
     const dataPoints = totalFinished * 3 + directives.length * 5;
     const intelligenceScore = Math.min(100, Math.round(dataPoints / 2));
-
-    // Thoughts (stream de consciencia) — BrainInsights de Zeus
-    const thoughts = await BrainInsight.find({
-      $or: [
-        { generated_by: 'zeus' },
-        { insight_type: { $in: ['brain_thinking', 'brain_activity', 'summary'] } }
-      ]
-    }).sort({ created_at: -1 }).limit(20).lean();
-
-    // Conversations — ZeusConversation
-    const ZeusConversation = require('../../db/models/ZeusConversation');
-    const conversations = await ZeusConversation.find()
-      .sort({ created_at: -1 })
-      .limit(30)
-      .lean();
-
-    // Hypotheses — BrainInsights type='hypothesis' de Zeus
-    const hypotheses = await BrainInsight.find({
-      insight_type: 'hypothesis',
-      generated_by: 'zeus'
-    }).sort({ created_at: -1 }).limit(15).lean();
 
     res.json({
       summary: summary?.summary || 'Zeus aun esta recopilando datos...',
       intelligence_score: intelligenceScore,
       directives: {
         active: directives,
-        total_ever: await ZeusDirective.countDocuments()
+        total_ever: directivesTotalEver
       },
       thoughts,
       conversations,
@@ -161,7 +173,7 @@ router.get('/intelligence', async (req, res) => {
         avg_roas_graduated: Math.round((testMap.graduated?.avg_roas || 0) * 100) / 100,
         total_spend: Object.values(testMap).reduce((s, t) => s + (t.total_spend || 0), 0)
       },
-      scene_patterns: scenePatterns.map(s => ({
+      scene_patterns: scenePatternsRaw.map(s => ({
         scene: s._id,
         win_rate: s.total > 0 ? Math.round((s.wins / s.total) * 100) : 0,
         wins: s.wins,
