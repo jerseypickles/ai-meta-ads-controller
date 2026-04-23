@@ -21,6 +21,7 @@ const roasColor = (r) => r >= 3 ? '#10b981' : r >= 1.5 ? '#f59e0b' : r > 0 ? '#e
 export default function AresPanel() {
   const [data, setData] = useState(null);
   const [cboHealth, setCboHealth] = useState(null);
+  const [portfolioActions, setPortfolioActions] = useState(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [activeSection, setActiveSection] = useState('overview');
@@ -33,13 +34,14 @@ export default function AresPanel() {
 
   async function loadData() {
     try {
-      const [aresRes, healthRes] = await Promise.all([
+      const [aresRes, healthRes, actionsRes] = await Promise.all([
         getAresIntelligence().catch(() => null),
-        // Health monitor endpoint — nuevo
-        api.get('/api/ares/cbo-health').then(r => r.data).catch(() => null)
+        api.get('/api/ares/cbo-health').then(r => r.data).catch(() => null),
+        api.get('/api/ares/portfolio-actions?hours=72').then(r => r.data).catch(() => null)
       ]);
       setData(aresRes || {});
       setCboHealth(healthRes);
+      setPortfolioActions(actionsRes);
     } catch (err) {
       console.error('Ares load error:', err);
     } finally {
@@ -194,6 +196,7 @@ export default function AresPanel() {
       }}>
         {[
           { k: 'overview', l: 'Resumen', c: ARES_COLOR },
+          { k: 'actions', l: 'Acciones', c: '#10b981', n: portfolioActions?.summary?.total },
           { k: 'health', l: 'Salud CBOs', c: '#10b981', n: cboHealth?.summary?.total },
           { k: 'cbo1', l: 'CBO 1 · Probados', c: '#ef4444', n: cbo1.active_clones },
           { k: 'cbo2', l: 'CBO 2 · Nuevos', c: '#f59e0b', n: cbo2.active_clones },
@@ -247,6 +250,9 @@ export default function AresPanel() {
           )}
           {activeSection === 'health' && (
             <CBOHealthSection health={cboHealth} />
+          )}
+          {activeSection === 'actions' && (
+            <PortfolioActionsSection data={portfolioActions} />
           )}
           {activeSection === 'cbo1' && (
             <CBODetailSection label="CBO 1 — Ganadores Probados" color="#ef4444" stats={cbo1} campaignId={data?.campaign_id} />
@@ -958,6 +964,194 @@ function CBOHealthCard({ snap, history }) {
             </div>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PortfolioActionsSection — timeline de acciones del Portfolio Manager
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DETECTOR_LABELS = {
+  starved_winner_rescue: { icon: '🆘', color: '#10b981', label: 'Rescue' },
+  underperformer_kill: { icon: '✗', color: '#ef4444', label: 'Kill' },
+  cbo_saturated_winner: { icon: '📈', color: '#60a5fa', label: 'Scale saturado' },
+  cbo_starvation: { icon: '💧', color: '#f97316', label: 'Scale starvation' }
+};
+
+const ACTION_ICONS_PORTFOLIO = {
+  duplicate_adset: '⎘',
+  pause: '⏸',
+  scale_up: '↑',
+  scale_down: '↓',
+  reactivate: '▶'
+};
+
+function fmtRelative(ts) {
+  if (!ts) return '';
+  const diffMin = Math.floor((Date.now() - new Date(ts).getTime()) / 60000);
+  if (diffMin < 1) return 'ahora';
+  if (diffMin < 60) return `${diffMin}m`;
+  const h = Math.floor(diffMin / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
+function PortfolioActionsSection({ data }) {
+  if (!data) {
+    return <div style={{ padding: 40, textAlign: 'center', color: 'var(--bos-text-dim)' }}>Cargando acciones…</div>;
+  }
+
+  const actions = data.actions || [];
+  const summary = data.summary || {};
+
+  if (actions.length === 0) {
+    return (
+      <div style={{ padding: 40, textAlign: 'center', color: 'var(--bos-text-dim)', fontStyle: 'italic' }}>
+        Sin acciones en las últimas {data.window_hours}h.<br />
+        Ares ejecuta portfolio actions cuando corre su cron (8am + 4pm ET) y detecta patrones.
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Resumen */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 14 }}>
+        <ActionsSummaryCard label="Total" value={summary.total} color="#60a5fa" />
+        <ActionsSummaryCard label="Portfolio auto" value={summary.portfolio_actions} color="#10b981" />
+        <ActionsSummaryCard label="Budget moves" value={summary.scale_ups} color="#f59e0b" />
+        <ActionsSummaryCard label="Failures" value={summary.failures} color="#ef4444" warn={summary.failures > 0} />
+      </div>
+
+      {/* Breakdown por detector */}
+      {Object.keys(summary.by_detector || {}).length > 0 && (
+        <div style={{
+          display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14,
+          padding: '8px 12px', background: 'rgba(16, 185, 129, 0.06)',
+          border: '1px solid rgba(16, 185, 129, 0.15)', borderRadius: 8
+        }}>
+          <span style={{ fontSize: '0.62rem', color: 'var(--bos-text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700, marginRight: 6 }}>
+            Por detector:
+          </span>
+          {Object.entries(summary.by_detector).map(([det, count]) => {
+            const cfg = DETECTOR_LABELS[det] || { icon: '·', color: '#6b7280', label: det };
+            return (
+              <span key={det} style={{
+                fontSize: '0.66rem', fontFamily: 'JetBrains Mono, monospace',
+                color: cfg.color, fontWeight: 600
+              }}>
+                {cfg.icon} {cfg.label} ({count})
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Timeline */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {actions.map(a => <ActionTimelineItem key={a.id} action={a} />)}
+      </div>
+    </div>
+  );
+}
+
+function ActionsSummaryCard({ label, value, color, warn }) {
+  return (
+    <div style={{
+      background: warn ? `${color}15` : 'rgba(17, 21, 51, 0.4)',
+      border: `1px solid ${warn ? color + '40' : 'rgba(255,255,255,0.05)'}`,
+      borderRadius: 8, padding: '10px 12px', textAlign: 'center'
+    }}>
+      <div style={{ fontSize: '1.3rem', fontWeight: 700, color, fontFamily: 'JetBrains Mono, monospace', lineHeight: 1 }}>
+        {value ?? 0}
+      </div>
+      <div style={{ fontSize: '0.56rem', color: 'var(--bos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: 4 }}>
+        {label}
+      </div>
+    </div>
+  );
+}
+
+function ActionTimelineItem({ action }) {
+  const detector = DETECTOR_LABELS[action.detector] || null;
+  const icon = ACTION_ICONS_PORTFOLIO[action.action] || '·';
+  const bgColor = !action.success ? 'rgba(239, 68, 68, 0.08)' :
+                   action.is_portfolio ? 'rgba(16, 185, 129, 0.06)' :
+                   'rgba(17, 21, 51, 0.5)';
+  const borderColor = !action.success ? '#ef4444' :
+                       detector?.color || '#6b7280';
+
+  return (
+    <div style={{
+      background: bgColor, borderRadius: 8, padding: '10px 14px',
+      borderLeft: `3px solid ${borderColor}`
+    }}>
+      {/* Head */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
+        <span style={{ fontSize: '1rem', fontWeight: 700, color: borderColor }}>{icon}</span>
+        {detector && (
+          <span style={{
+            fontSize: '0.55rem', padding: '2px 7px', borderRadius: 4,
+            background: `${detector.color}22`, color: detector.color,
+            fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em',
+            whiteSpace: 'nowrap'
+          }}>
+            {detector.icon} {detector.label}
+          </span>
+        )}
+        <span style={{ fontSize: '0.68rem', color: 'var(--bos-text)', fontFamily: 'JetBrains Mono, monospace', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {action.entity_name}
+        </span>
+        {!action.success && (
+          <span style={{ fontSize: '0.56rem', color: '#ef4444', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            failed
+          </span>
+        )}
+        <span style={{ fontSize: '0.6rem', color: 'var(--bos-text-dim)', fontFamily: 'JetBrains Mono, monospace' }}>
+          {fmtRelative(action.executed_at)}
+        </span>
+      </div>
+
+      {/* Budget change visible */}
+      {(action.action === 'scale_up' || action.action === 'scale_down') && action.before_value != null && action.after_value != null && (
+        <div style={{ fontSize: '0.66rem', color: 'var(--bos-text-muted)', fontFamily: 'JetBrains Mono, monospace', marginBottom: 3 }}>
+          Budget: ${action.before_value} → <span style={{ color: '#10b981', fontWeight: 600 }}>${action.after_value}</span>
+          {action.before_value > 0 && (
+            <span style={{ color: 'var(--bos-text-dim)', marginLeft: 6 }}>
+              ({Math.round((action.after_value - action.before_value) / action.before_value * 100)}%)
+            </span>
+          )}
+        </div>
+      )}
+      {action.action === 'pause' && (
+        <div style={{ fontSize: '0.66rem', color: '#ef4444', fontFamily: 'JetBrains Mono, monospace', marginBottom: 3 }}>
+          ACTIVE → PAUSED
+        </div>
+      )}
+      {action.action === 'duplicate_adset' && action.metadata?.new_adset_id && (
+        <div style={{ fontSize: '0.66rem', color: 'var(--bos-text-muted)', fontFamily: 'JetBrains Mono, monospace', marginBottom: 3 }}>
+          Nuevo: <span style={{ color: '#10b981' }}>{action.metadata.new_adset_id}</span> {action.metadata.new_adset_status && `(${action.metadata.new_adset_status})`}
+        </div>
+      )}
+
+      {/* Reasoning */}
+      {action.reasoning && (
+        <div style={{ fontSize: '0.66rem', color: 'var(--bos-text-muted)', lineHeight: 1.5, marginTop: 4 }}>
+          {action.reasoning}
+        </div>
+      )}
+
+      {/* Error si falló */}
+      {!action.success && action.error && (
+        <div style={{
+          fontSize: '0.64rem', color: '#ef4444', marginTop: 4,
+          padding: '4px 8px', background: 'rgba(239, 68, 68, 0.08)',
+          borderRadius: 4, fontFamily: 'JetBrains Mono, monospace'
+        }}>
+          {action.error.substring(0, 200)}
+        </div>
       )}
     </div>
   );

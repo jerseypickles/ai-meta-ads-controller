@@ -208,6 +208,57 @@ router.get('/cbo-health', async (req, res) => {
   }
 });
 
+// ═══ GET /portfolio-actions — timeline de acciones del Portfolio Manager ═══
+router.get('/portfolio-actions', async (req, res) => {
+  try {
+    const hours = Math.min(parseInt(req.query.hours || '72', 10), 336);
+    const since = new Date(Date.now() - hours * 3600000);
+
+    const actions = await ActionLog.find({
+      agent_type: { $in: ['ares_portfolio', 'ares_agent'] },
+      executed_at: { $gte: since }
+    }).sort({ executed_at: -1 }).limit(100).lean();
+
+    // Enriquecer con metadata para render
+    const enriched = actions.map(a => ({
+      id: a._id,
+      action: a.action,
+      entity_type: a.entity_type,
+      entity_id: a.entity_id,
+      entity_name: a.entity_name,
+      agent_type: a.agent_type,
+      executed_at: a.executed_at,
+      success: a.success,
+      before_value: a.before_value,
+      after_value: a.after_value,
+      reasoning: a.reasoning,
+      detector: a.metadata?.detector || null,
+      error: a.error,
+      is_portfolio: a.agent_type === 'ares_portfolio',
+      metadata: a.metadata || {}
+    }));
+
+    // Resumen por tipo
+    const summary = {
+      total: enriched.length,
+      portfolio_actions: enriched.filter(e => e.is_portfolio).length,
+      duplications: enriched.filter(e => e.action === 'duplicate_adset').length,
+      pauses: enriched.filter(e => e.action === 'pause').length,
+      scale_ups: enriched.filter(e => e.action === 'scale_up').length,
+      failures: enriched.filter(e => !e.success).length,
+      by_detector: {}
+    };
+    for (const a of enriched.filter(e => e.detector)) {
+      summary.by_detector[a.detector] = (summary.by_detector[a.detector] || 0) + 1;
+    }
+
+    res.json({ actions: enriched, summary, window_hours: hours });
+  } catch (err) {
+    logger.error(`[ARES-API] Error en /portfolio-actions: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ═══ POST /cbo-health/run — trigger manual del monitor ═══
 router.post('/cbo-health/run', async (req, res) => {
   try {

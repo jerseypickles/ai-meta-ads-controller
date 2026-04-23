@@ -57,12 +57,20 @@ async function buildOracleContext(lastSeenAt = null) {
     success: true
   });
 
-  // Ares duplications
+  // Ares duplications (legacy agent)
   const aresActions = await ActionLog.find({
     agent_type: 'ares_agent',
     executed_at: { $gte: since },
     success: true
   }).sort({ executed_at: -1 }).limit(5).lean();
+
+  // Ares Portfolio Manager (autónomo desde 2026-04-23) — nuevo subsystem
+  // que opera sobre CBOs: rescues, kills, budget scales. Zeus debe razonar
+  // sobre estas acciones al responder al creador.
+  const aresPortfolioActions = await ActionLog.find({
+    agent_type: 'ares_portfolio',
+    executed_at: { $gte: since }
+  }).sort({ executed_at: -1 }).limit(10).lean();
 
   // Tests
   const testsSince = await TestRun.find({
@@ -91,6 +99,14 @@ async function buildOracleContext(lastSeenAt = null) {
     .sort({ 'fitness.avg_roas': -1, 'fitness.sample_confidence': -1 })
     .lean();
 
+  // Resumen de acciones del Portfolio Manager autónomo por detector
+  const portfolioByDetector = {};
+  for (const a of aresPortfolioActions) {
+    const d = a.metadata?.detector || 'unknown';
+    portfolioByDetector[d] = (portfolioByDetector[d] || 0) + (a.success ? 1 : 0);
+  }
+  const portfolioFailures = aresPortfolioActions.filter(a => !a.success).length;
+
   ctx.activity_since_last = {
     window_hours: Math.round(hoursSinceLast * 10) / 10,
     athena_actions: athenaActions,
@@ -99,6 +115,19 @@ async function buildOracleContext(lastSeenAt = null) {
       original: a.entity_name,
       clone: a.after_value,
       roas: +(a.metrics_at_execution?.roas_7d || 0).toFixed(2)
+    })),
+    // Ares Portfolio Manager — autónomo sobre CBOs
+    ares_portfolio_actions: aresPortfolioActions.length,
+    ares_portfolio_by_detector: portfolioByDetector,
+    ares_portfolio_failures: portfolioFailures,
+    ares_portfolio_detail: aresPortfolioActions.slice(0, 5).map(a => ({
+      action: a.action,
+      detector: a.metadata?.detector,
+      entity: a.entity_name,
+      before: a.before_value,
+      after: a.after_value,
+      success: a.success,
+      reasoning: (a.reasoning || '').substring(0, 140)
     })),
     tests_launched: testsLaunched,
     tests_graduated: testsGraduated,
@@ -237,6 +266,17 @@ function formatContextForPrompt(ctx) {
   lines.push(`\nACTIVIDAD (últimas ~${a.window_hours}h):`);
   lines.push(`  Athena/Brain: ${a.athena_actions} acciones ejecutadas`);
   lines.push(`  Ares: ${a.ares_duplications} duplicaciones${a.ares_duplications_detail.length ? ' (' + a.ares_duplications_detail.map(d => `${d.original}→${d.roas}x`).join('; ') + ')' : ''}`);
+  // Ares Portfolio Manager (autónomo 2026-04-23): rescues + kills + scales por CBO
+  if (a.ares_portfolio_actions > 0) {
+    const byDet = Object.entries(a.ares_portfolio_by_detector || {})
+      .map(([k, v]) => `${v} ${k}`).join(', ');
+    lines.push(`  Ares Portfolio (autónomo): ${a.ares_portfolio_actions} acciones — ${byDet}${a.ares_portfolio_failures > 0 ? ` (${a.ares_portfolio_failures} failed)` : ''}`);
+    for (const d of (a.ares_portfolio_detail || []).slice(0, 3)) {
+      const status = d.success ? '✓' : '✗';
+      const budgetDelta = (d.before != null && d.after != null && d.action.includes('scale')) ? ` $${d.before}→$${d.after}` : '';
+      lines.push(`    ${status} ${d.action} ${d.entity || ''}${budgetDelta} · ${d.detector}`);
+    }
+  }
   lines.push(`  Prometheus: ${a.tests_launched} tests lanzados, ${a.tests_graduated} graduados, ${a.tests_killed} killed`);
   lines.push(`  Apollo: ${a.apollo_proposals_generated} proposals generadas`);
 
