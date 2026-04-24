@@ -16,13 +16,24 @@ const AGENT_COLORS = {
   ares: '#a78bfa',       // violet-400 — Portfolio
   satellite: '#94a3b8',  // slate-400 — sub-nodes
   cbo: '#c084fc',        // purple-400 — CBOs (Ares children)
-  directive: '#38bdf8'   // sky-400 — directives
+  directive: '#38bdf8',  // sky-400 — directives
+
+  // ─── Planned / coming soon ───
+  hermes: '#06b6d4',     // cyan-500 — Comms/Ops (Slack, alerts)
+  artemis: '#ec4899',    // pink-500 — Audiences (lookalike, custom)
+  hefesto: '#f97316',    // orange-500 — Platform Eng (infra, deploys)
+  demeter: '#14b8a6',    // teal-500 — Analytics (LTV, reports)
+  planned: '#475569'     // slate-600 — fallback para planned features
 };
 
 const AGENT_ICONS = {
   zeus: '⚡', athena: '🦉', apollo: '☀️',
   prometheus: '🔥', ares: '⚔️',
-  cbo: '◎', test: '⚗', directive: '▣', pool: '✦'
+  cbo: '◎', test: '⚗', directive: '▣', pool: '✦',
+
+  // Planned
+  hermes: '✉', artemis: '☽', hefesto: '⚒', demeter: '✿',
+  video: '▶', audio: '♪', crossplatform: '⊛', memory: '◈'
 };
 
 export default function NeuralGraphView({ onAgentClick }) {
@@ -165,6 +176,36 @@ export default function NeuralGraphView({ onAgentClick }) {
       });
     });
 
+    // ─── PLANNED AGENTS (coming soon — ghosted) ───────────────────────────
+    const plannedAgents = [
+      { id: 'hermes', label: 'HERMES', sub: 'Comms · Slack', color: AGENT_COLORS.hermes, icon: AGENT_ICONS.hermes },
+      { id: 'artemis', label: 'ARTEMIS', sub: 'Audiences · LAL', color: AGENT_COLORS.artemis, icon: AGENT_ICONS.artemis },
+      { id: 'hefesto', label: 'HEFESTO', sub: 'Infra · Deploys', color: AGENT_COLORS.hefesto, icon: AGENT_ICONS.hefesto },
+      { id: 'demeter', label: 'DEMETER', sub: 'Analytics · LTV', color: AGENT_COLORS.demeter, icon: AGENT_ICONS.demeter }
+    ];
+    plannedAgents.forEach(a => {
+      nodes.push({
+        id: a.id, group: 'planned', tier: 1, size: 11,
+        label: a.label, sub: a.sub, color: a.color, icon: a.icon,
+        planned: true, status: 'planned'
+      });
+    });
+
+    // ─── PLANNED SUB-FEATURES (future extensions) ────────────────────────
+    const plannedFeatures = [
+      { id: 'video-pipeline', parent: 'apollo', label: 'Video', sub: 'pipeline', icon: AGENT_ICONS.video, color: AGENT_COLORS.apollo },
+      { id: 'audio-pipeline', parent: 'apollo', label: 'Audio', sub: 'pipeline', icon: AGENT_ICONS.audio, color: AGENT_COLORS.apollo },
+      { id: 'crossplatform', parent: 'ares', label: 'TikTok', sub: '+ Google', icon: AGENT_ICONS.crossplatform, color: AGENT_COLORS.ares },
+      { id: 'memory-db', parent: 'zeus', label: 'Memory', sub: 'Vector DB', icon: AGENT_ICONS.memory, color: AGENT_COLORS.zeus }
+    ];
+    plannedFeatures.forEach(f => {
+      nodes.push({
+        id: f.id, group: 'planned-feature', tier: 2, size: 7,
+        label: f.label, sub: f.sub, color: f.color, icon: f.icon,
+        planned: true, status: 'planned', parent: f.parent
+      });
+    });
+
     // ─── Links ────────────────────────────────────────────────────────────
     const links = [
       { source: 'zeus', target: 'athena', kind: 'primary', active: athenaOps > 0 },
@@ -177,11 +218,25 @@ export default function NeuralGraphView({ onAgentClick }) {
       { source: 'prometheus', target: 'ares', kind: 'workflow', active: prometheusTests > 0 }
     ];
 
+    // Planned agent links — Zeus como hub también de los futuros
+    plannedAgents.forEach(a => {
+      links.push({ source: 'zeus', target: a.id, kind: 'primary', planned: true });
+    });
+    // Cross-agent planned workflows (Hermes recibe signals de todos, Demeter agrega data)
+    links.push({ source: 'athena', target: 'demeter', kind: 'workflow', planned: true });
+    links.push({ source: 'ares', target: 'demeter', kind: 'workflow', planned: true });
+    links.push({ source: 'artemis', target: 'apollo', kind: 'workflow', planned: true });
+
     // Satellite links
     for (let i = 0; i < nDirs; i++) links.push({ source: 'zeus', target: `dir-${i}`, kind: 'satellite' });
     links.push({ source: 'apollo', target: 'apollo-pool', kind: 'satellite' });
     for (let i = 0; i < nTests; i++) links.push({ source: 'prometheus', target: `test-${i}`, kind: 'satellite' });
     cboList.forEach(c => links.push({ source: 'ares', target: c.id, kind: 'satellite', active: c.id === 'cbo-dup' }));
+
+    // Planned feature links
+    plannedFeatures.forEach(f => {
+      links.push({ source: f.parent, target: f.id, kind: 'satellite', planned: true });
+    });
 
     // Index neighbors para highlight
     const neighborIndex = {};
@@ -198,35 +253,63 @@ export default function NeuralGraphView({ onAgentClick }) {
       linksIndex[s].add(l);
       linksIndex[t].add(l);
     });
+    // Arrays no Sets — Sets pueden romper cuando react-force-graph
+    // hace operaciones internas sobre los nodes (copy, serialize)
     nodes.forEach(n => {
-      n.neighbors = neighborIndex[n.id] || new Set();
-      n.linkset = linksIndex[n.id] || new Set();
+      n.neighbors = Array.from(neighborIndex[n.id] || []);
+      n.linkset = Array.from(linksIndex[n.id] || []);
     });
 
     return { nodes, links };
   }, [status]);
 
-  // Auto-zoom inicial una vez que hay data
+  // Configurar physics forces vía ref (API de react-force-graph)
+  // NO es una prop del componente — debe llamarse post-mount
   useEffect(() => {
-    if (!hasInitialZoom && graphData.nodes.length > 0 && fgRef.current) {
-      const t = setTimeout(() => {
-        try { fgRef.current.zoomToFit(600, 60); setHasInitialZoom(true); } catch (_) {}
-      }, 500);
-      return () => clearTimeout(t);
+    if (!fgRef.current || graphData.nodes.length === 0) return;
+    try {
+      const fg = fgRef.current;
+      fg.d3Force('charge')?.strength((n) =>
+        n.tier === 0 ? -900 : n.tier === 1 ? -600 : -120
+      );
+      fg.d3Force('link')?.distance((l) => {
+        if (l.kind === 'primary') return 180;
+        if (l.kind === 'workflow') return 200;
+        return 45;
+      });
+    } catch (err) {
+      console.warn('[NeuralGraphView] d3Force config failed:', err);
     }
-  }, [graphData.nodes.length, hasInitialZoom]);
+  }, [graphData.nodes.length]);
+
+  // Auto-zoom via onEngineStop — corre cuando la simulación converge
+  const handleEngineStop = useCallback(() => {
+    if (!hasInitialZoom && fgRef.current) {
+      try {
+        fgRef.current.zoomToFit(400, 120);  // más padding (120 vs 60)
+        setHasInitialZoom(true);
+      } catch (_) {}
+    }
+  }, [hasInitialZoom]);
 
   // ─── Custom node rendering con glow radial ──────────────────────────────
   const drawNode = useCallback((node, ctx, globalScale) => {
-    const { x, y, size = 8, color, icon, label, sub, status, tier } = node;
+    // Guard: al inicio antes que la simulación asigne posiciones,
+    // x/y pueden ser undefined o NaN
+    if (!node || typeof node.x !== 'number' || typeof node.y !== 'number' ||
+        !isFinite(node.x) || !isFinite(node.y)) return;
+
+    const { x, y, size = 8, color = '#94a3b8', icon, label, sub, status, tier = 2, planned } = node;
     const isHover = hoverNode === node || hoverNeighbors.has(node.id);
     const isFaded = hoverNode && !isHover;
-    const opacity = isFaded ? 0.25 : 1;
+    // Planned nodes SIEMPRE a 45% opacidad (más atenuados aún si están faded)
+    const opacity = planned ? (isFaded ? 0.18 : 0.5) : (isFaded ? 0.25 : 1);
 
-    // Glow radial — el alma del look Obsidian
+    // Glow radial — para planned es más tenue
     const glowR = size * 3;
     const gradient = ctx.createRadialGradient(x, y, 0, x, y, glowR);
-    const baseAlpha = isHover ? 0.55 : (tier === 0 ? 0.45 : (tier === 1 ? 0.35 : 0.18));
+    const baseAlphaRaw = isHover ? 0.55 : (tier === 0 ? 0.45 : (tier === 1 ? 0.35 : 0.18));
+    const baseAlpha = planned ? baseAlphaRaw * 0.35 : baseAlphaRaw;
     gradient.addColorStop(0, hexToRgba(color, baseAlpha * opacity));
     gradient.addColorStop(0.5, hexToRgba(color, baseAlpha * 0.4 * opacity));
     gradient.addColorStop(1, hexToRgba(color, 0));
@@ -235,26 +318,38 @@ export default function NeuralGraphView({ onAgentClick }) {
     ctx.fillStyle = gradient;
     ctx.fill();
 
-    // Core circle
-    ctx.beginPath();
-    ctx.arc(x, y, size, 0, 2 * Math.PI);
-    const coreGrad = ctx.createRadialGradient(x - size * 0.3, y - size * 0.3, 0, x, y, size);
-    coreGrad.addColorStop(0, hexToRgba(lightenColor(color, 30), opacity));
-    coreGrad.addColorStop(1, hexToRgba(color, opacity));
-    ctx.fillStyle = coreGrad;
-    ctx.fill();
+    // Core — planned es hueco con dashed outline (estilo wireframe)
+    if (planned) {
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, 2 * Math.PI);
+      ctx.fillStyle = hexToRgba(color, 0.08 * opacity);  // fill tenue
+      ctx.fill();
+      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = hexToRgba(color, 0.7 * opacity);
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    } else {
+      // Normal: gradient fill sólido
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, 2 * Math.PI);
+      const coreGrad = ctx.createRadialGradient(x - size * 0.3, y - size * 0.3, 0, x, y, size);
+      coreGrad.addColorStop(0, hexToRgba(lightenColor(color, 30), opacity));
+      coreGrad.addColorStop(1, hexToRgba(color, opacity));
+      ctx.fillStyle = coreGrad;
+      ctx.fill();
 
-    // Border brighter si hover o status running
-    const border = isHover
-      ? '#ffffff'
-      : status === 'running'
-        ? lightenColor(color, 40)
-        : status === 'paused'
-          ? hexToRgba(color, 0.4 * opacity)
-          : hexToRgba(color, 0.7 * opacity);
-    ctx.strokeStyle = border;
-    ctx.lineWidth = isHover ? 2.5 : (tier === 0 ? 2 : 1.2);
-    ctx.stroke();
+      const border = isHover
+        ? '#ffffff'
+        : status === 'running'
+          ? lightenColor(color, 40)
+          : status === 'paused'
+            ? hexToRgba(color, 0.4 * opacity)
+            : hexToRgba(color, 0.7 * opacity);
+      ctx.strokeStyle = border;
+      ctx.lineWidth = isHover ? 2.5 : (tier === 0 ? 2 : 1.2);
+      ctx.stroke();
+    }
 
     // Icon/emoji dentro del nodo
     if (icon) {
@@ -295,9 +390,12 @@ export default function NeuralGraphView({ onAgentClick }) {
         }
       }
 
-      // Status dot pequeño (running/idle/paused) para core
+      // Status dot pequeño (running/idle/paused) para core. Planned = dashed
       if (tier <= 1 && status) {
-        const statusColor = status === 'running' ? '#34d399' : status === 'paused' ? '#fbbf24' : '#64748b';
+        const statusColor = status === 'running' ? '#34d399'
+          : status === 'paused' ? '#fbbf24'
+          : status === 'planned' ? hexToRgba(color, 0.8)
+          : '#64748b';
         ctx.beginPath();
         ctx.arc(x + size - 2, y - size + 2, 2.5, 0, 2 * Math.PI);
         ctx.fillStyle = statusColor;
@@ -305,6 +403,25 @@ export default function NeuralGraphView({ onAgentClick }) {
         ctx.strokeStyle = 'rgba(15, 23, 42, 0.8)';
         ctx.lineWidth = 1;
         ctx.stroke();
+      }
+
+      // Badge "soon" debajo de planned agents (tier 1 solamente)
+      if (planned && tier === 1) {
+        const badgeY = y + size + 4 + 11 + (sub ? 12 : 0) + 8;
+        const badgeText = 'SOON';
+        ctx.font = `bold 7px JetBrains Mono, ui-monospace, monospace`;
+        const bw = ctx.measureText(badgeText).width + 8;
+        const bh = 10;
+        ctx.fillStyle = hexToRgba(color, 0.15 * opacity);
+        ctx.strokeStyle = hexToRgba(color, 0.5 * opacity);
+        ctx.lineWidth = 0.8;
+        roundRect(ctx, x - bw / 2, badgeY, bw, bh, 3);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = hexToRgba(color, opacity);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(badgeText, x, badgeY + bh / 2 + 0.5);
       }
     }
   }, [hoverNode, hoverNeighbors]);
@@ -334,9 +451,55 @@ export default function NeuralGraphView({ onAgentClick }) {
     if (isFaded) return hexToRgba(baseColor, 0.08);
     if (isHover) return hexToRgba(baseColor, 0.9);
 
+    // Planned links — más tenues siempre
+    if (link.planned) {
+      const plannedAlpha = link.kind === 'primary' ? 0.22 : 0.15;
+      return hexToRgba(baseColor, plannedAlpha);
+    }
     const kindAlpha = link.kind === 'primary' ? 0.5 : link.kind === 'workflow' ? 0.3 : 0.15;
     return hexToRgba(baseColor, kindAlpha);
   }, [hoverLinks, hoverNode, hoverNeighbors]);
+
+  // Render custom para links — nos permite dashed en planned
+  const drawLink = useCallback((link, ctx) => {
+    const src = typeof link.source === 'object' ? link.source : null;
+    const tgt = typeof link.target === 'object' ? link.target : null;
+    if (!src || !tgt || typeof src.x !== 'number' || typeof tgt.x !== 'number') return;
+
+    const color = linkColor(link);
+    const width = hoverLinks.has(link) ? 2.5
+      : link.planned ? 0.8
+      : link.kind === 'primary' ? 1.2
+      : link.kind === 'workflow' ? 0.8
+      : 0.5;
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    if (link.planned) ctx.setLineDash([4, 4]);
+
+    if (link.kind === 'workflow') {
+      // Curvar links workflow levemente
+      const mx = (src.x + tgt.x) / 2;
+      const my = (src.y + tgt.y) / 2;
+      const dx = tgt.x - src.x;
+      const dy = tgt.y - src.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const nx = -dy / dist;
+      const ny = dx / dist;
+      const cx = mx + nx * dist * 0.18;
+      const cy = my + ny * dist * 0.18;
+      ctx.beginPath();
+      ctx.moveTo(src.x, src.y);
+      ctx.quadraticCurveTo(cx, cy, tgt.x, tgt.y);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(src.x, src.y);
+      ctx.lineTo(tgt.x, tgt.y);
+      ctx.stroke();
+    }
+    if (link.planned) ctx.setLineDash([]);
+  }, [linkColor, hoverLinks]);
 
   const handleHover = useCallback((node) => {
     const neighbors = new Set();
@@ -369,30 +532,21 @@ export default function NeuralGraphView({ onAgentClick }) {
         nodeCanvasObject={drawNode}
         nodePointerAreaPaint={drawPointerArea}
         nodeRelSize={1}
-        linkColor={linkColor}
-        linkWidth={(link) => hoverLinks.has(link) ? 2.5 : link.kind === 'primary' ? 1.2 : link.kind === 'workflow' ? 0.8 : 0.5}
-        linkDirectionalParticles={(link) => link.active ? 3 : 0}
+        linkCanvasObjectMode={() => 'replace'}
+        linkCanvasObject={drawLink}
+        linkDirectionalParticles={(link) => (link.active && !link.planned) ? 3 : 0}
         linkDirectionalParticleSpeed={() => 0.008}
         linkDirectionalParticleWidth={(link) => hoverLinks.has(link) ? 3 : 2}
         linkDirectionalParticleColor={(link) => {
           const src = typeof link.source === 'object' ? link.source : null;
           return src?.color || '#60a5fa';
         }}
-        linkCurvature={(link) => link.kind === 'workflow' ? 0.25 : 0}
         onNodeHover={handleHover}
         onNodeClick={handleClick}
-        cooldownTicks={80}
-        d3AlphaDecay={0.02}
-        d3VelocityDecay={0.3}
-        d3Force={(engine) => {
-          // Zeus al centro, agents en un ring, satellites afuera
-          engine('charge')?.strength((n) => n.tier === 0 ? -450 : n.tier === 1 ? -280 : -60);
-          engine('link')?.distance((l) => {
-            if (l.kind === 'primary') return 110;
-            if (l.kind === 'workflow') return 130;
-            return 35;  // satellites pegados al parent
-          });
-        }}
+        cooldownTicks={120}
+        d3AlphaDecay={0.025}
+        d3VelocityDecay={0.35}
+        onEngineStop={handleEngineStop}
         enableNodeDrag
         enableZoomInteraction
         enablePanInteraction
@@ -412,7 +566,12 @@ export default function NeuralGraphView({ onAgentClick }) {
           fontFamily: '-apple-system, system-ui, sans-serif', maxWidth: 260,
           backdropFilter: 'blur(8px)', boxShadow: `0 0 24px ${hexToRgba(hoverNode.color, 0.15)}`
         }}>
-          <div style={{ fontWeight: 600, color: hoverNode.color, letterSpacing: '0.02em' }}>{hoverNode.label || hoverNode.id}</div>
+          <div style={{ fontWeight: 600, color: hoverNode.color, letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: 6 }}>
+            {hoverNode.label || hoverNode.id}
+            {hoverNode.planned && (
+              <span style={{ fontSize: '0.55rem', padding: '2px 6px', borderRadius: 3, background: hexToRgba(hoverNode.color, 0.15), border: `1px solid ${hexToRgba(hoverNode.color, 0.35)}`, letterSpacing: '0.1em' }}>ROADMAP</span>
+            )}
+          </div>
           {hoverNode.sub && <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: 2 }}>{hoverNode.sub}</div>}
           {hoverNode.metric !== undefined && hoverNode.metricLabel && (
             <div style={{ marginTop: 6, fontFamily: 'JetBrains Mono, monospace', fontSize: '0.72rem' }}>
@@ -422,7 +581,15 @@ export default function NeuralGraphView({ onAgentClick }) {
           )}
           {hoverNode.status && (
             <div style={{ marginTop: 6, fontSize: '0.65rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              {hoverNode.status === 'running' ? '● running' : hoverNode.status === 'paused' ? '◌ paused' : '○ idle'}
+              {hoverNode.status === 'running' ? '● running'
+                : hoverNode.status === 'paused' ? '◌ paused'
+                : hoverNode.status === 'planned' ? '◇ coming soon'
+                : '○ idle'}
+            </div>
+          )}
+          {hoverNode.planned && (
+            <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(71, 85, 105, 0.3)', fontSize: '0.65rem', color: '#64748b', lineHeight: 1.5 }}>
+              Planeado para roadmap futuro. No operativo aún.
             </div>
           )}
         </div>
@@ -442,6 +609,20 @@ function hexToRgba(hex, alpha = 1) {
   const g = (bigint >> 8) & 255;
   const b = bigint & 255;
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
 }
 
 function lightenColor(hex, amount = 20) {

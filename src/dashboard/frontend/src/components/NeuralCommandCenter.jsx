@@ -1,6 +1,45 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Component } from 'react';
 import NeuralGraphView from './NeuralGraphView';
 import api from '../api';
+
+// ErrorBoundary para aislar crashes del graph — si react-force-graph o
+// el render custom fallan, mostramos fallback en vez de tumbar /brain
+class GraphErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error('[NeuralGraph crash]', error, info); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{
+          width: '100%', height: '100%', display: 'flex', alignItems: 'center',
+          justifyContent: 'center', flexDirection: 'column', gap: 12, padding: 32,
+          background: 'radial-gradient(ellipse at center, #0b1120 0%, #050816 70%)'
+        }}>
+          <div style={{ fontSize: '0.85rem', color: '#f87171', fontFamily: 'JetBrains Mono, monospace' }}>
+            ⚠ Graph view crash
+          </div>
+          <div style={{ fontSize: '0.72rem', color: '#94a3b8', maxWidth: 560, textAlign: 'center' }}>
+            {String(this.state.error?.message || this.state.error)}
+          </div>
+          <button
+            onClick={() => this.setState({ error: null })}
+            style={{
+              marginTop: 8, padding: '6px 16px', fontSize: '0.7rem',
+              background: 'rgba(59, 130, 246, 0.15)', border: '1px solid rgba(59, 130, 246, 0.3)',
+              color: '#60a5fa', borderRadius: 6, cursor: 'pointer'
+            }}>
+            retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // NEURAL COMMAND CENTER — wrapper que agrega header con KPIs + graph view
@@ -38,7 +77,9 @@ export default function NeuralCommandCenter({ onAgentClick }) {
         </div>
       </div>
       <div className="neural-canvas">
-        <NeuralGraphView onAgentClick={onAgentClick} />
+        <GraphErrorBoundary>
+          <NeuralGraphView onAgentClick={onAgentClick} />
+        </GraphErrorBoundary>
       </div>
     </div>
   );
