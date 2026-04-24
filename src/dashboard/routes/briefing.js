@@ -15,6 +15,34 @@ const claude = new Anthropic({ apiKey: config.claude.apiKey });
 
 const CACHE_KEY = 'brain_briefing_cache';
 const CACHE_TTL_MIN = 15;
+// Cache de context separado — mucho más corto (60s) que el briefing porque el
+// NCC polle cada 30s y necesita data razonablemente fresca. Antes se
+// re-ejecutaba gatherSystemContext() completo en cada request (19s p99 real)
+// por 2 queries costosas sin índices (adsetMetrics con regex = 10.7s,
+// strategyBreakdown aggregate = 7.1s). Cache 60s = cache hit ~50ms.
+const CONTEXT_CACHE_KEY = 'brain_briefing_context_cache';
+const CONTEXT_CACHE_TTL_SEC = 60;
+
+async function getContextCached() {
+  try {
+    const cached = await SystemConfig.get(CONTEXT_CACHE_KEY, null);
+    if (cached && cached.generated_at) {
+      const ageSec = (Date.now() - new Date(cached.generated_at).getTime()) / 1000;
+      if (ageSec < CONTEXT_CACHE_TTL_SEC) {
+        return { context: cached.context, from_cache: true, age_sec: Math.round(ageSec) };
+      }
+    }
+  } catch (_) { /* cache miss → regenerar */ }
+
+  const context = await gatherSystemContext();
+  try {
+    await SystemConfig.set(CONTEXT_CACHE_KEY, {
+      context,
+      generated_at: new Date().toISOString()
+    }, 'briefing');
+  } catch (_) { /* silent — no bloquear response si cache set falla */ }
+  return { context, from_cache: false, age_sec: 0 };
+}
 
 async function gatherSystemContext() {
   const now = Date.now();
@@ -214,16 +242,17 @@ Genera el briefing con este formato JSON exacto (sin backticks, solo JSON válid
   return JSON.parse(jsonMatch[0]);
 }
 
-// GET /api/brain/briefing — morning briefing (cached 15min)
+// GET /api/brain/briefing — morning briefing (cached 15min) + context (cached 60s)
 router.get('/briefing', async (req, res) => {
   try {
     const cached = await SystemConfig.get(CACHE_KEY, null);
     if (cached && cached.generated_at) {
       const ageMin = (Date.now() - new Date(cached.generated_at).getTime()) / 60000;
       if (ageMin < CACHE_TTL_MIN && !req.query.force) {
-        // El briefing se cachea 15min pero el context lo re-generamos siempre
-        // para que el NeuralCommandCenter tenga data fresca de stats.
-        const freshContext = await gatherSystemContext().catch(() => cached.context);
+        // Briefing cached 15min OK. Context usa su propio cache 60s — antes
+        // re-ejecutaba gatherSystemContext() cada llamada (19s real), ahora
+        // hit cache ~50ms cuando NCC polle cada 30s.
+        const { context: freshContext } = await getContextCached().catch(() => ({ context: cached.context }));
         return res.json({
           ...cached.briefing,
           context: freshContext || cached.context,
@@ -233,7 +262,9 @@ router.get('/briefing', async (req, res) => {
       }
     }
 
-    const context = await gatherSystemContext();
+    // Cache miss full: regenerar briefing + context (context usa su cache
+    // interno si otra request en paralelo ya lo pobló).
+    const { context } = await getContextCached();
     const briefing = await generateBriefing(context);
 
     await SystemConfig.set(CACHE_KEY, {
