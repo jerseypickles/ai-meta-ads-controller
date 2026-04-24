@@ -174,14 +174,34 @@ async function isActionBlockedForAgent(agentName, actionType) {
   if (directives.length === 0) return { blocked: false };
 
   for (const d of directives) {
+    // PRIORITY 1: action_scope structured (añadido 2026-04-24)
+    // Si la directiva declara scope explícito, usarlo tal cual — sin parse.
+    if (Array.isArray(d.action_scope) && d.action_scope.length > 0) {
+      if (d.action_scope.includes(actionType)) {
+        return {
+          blocked: true,
+          reason: d.directive,
+          directive_id: d._id,
+          scope: 'structured',
+          blocked_actions: d.action_scope,
+          llm_can_override: !!d.llm_can_override,
+          source: d.source
+        };
+      }
+      // action_scope definido pero NO incluye esta action → libre
+      continue;
+    }
+
+    // PRIORITY 2 (fallback retrocompat): parse del texto
     const parsed = parseBlockedActions(d.directive);
-    // scope='all' = directiva genérica, bloquea todo
     if (parsed.scope === 'all') {
       return {
         blocked: true,
         reason: d.directive,
         directive_id: d._id,
-        scope: 'all_actions_genericamente'
+        scope: 'all_actions_genericamente',
+        llm_can_override: !!d.llm_can_override,
+        source: d.source
       };
     }
     if (parsed.actions.has(actionType)) {
@@ -190,7 +210,9 @@ async function isActionBlockedForAgent(agentName, actionType) {
         reason: d.directive,
         directive_id: d._id,
         scope: 'specific',
-        blocked_actions: Array.from(parsed.actions)
+        blocked_actions: Array.from(parsed.actions),
+        llm_can_override: !!d.llm_can_override,
+        source: d.source
       };
     }
   }

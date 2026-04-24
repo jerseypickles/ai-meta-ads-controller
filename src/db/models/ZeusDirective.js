@@ -39,6 +39,32 @@ const zeusDirectiveSchema = new mongoose.Schema({
     default: 'general'
   },
 
+  // Scope explícito de actions que esta directiva bloquea.
+  // Si null/undefined, directive-guard parsea el texto (retrocompat).
+  // Si es array, directive-guard SOLO bloquea esos action_types específicos.
+  //
+  // Usar action_scope es MÁS PRECISO que parseo de texto. El learner debe
+  // setear esto cuando emita avoids — ej. 'force_duplicate' (acción propia
+  // del learner/creador) NO bloquea 'duplicate_adset' (acción autónoma del
+  // portfolio-manager que tiene sus propios safety gates).
+  //
+  // Añadido 2026-04-24 para resolver: el guardrail del learner
+  // "No new duplications" bloqueaba todo duplicado, incluyendo los que
+  // Portfolio/Brain ejecutan con thresholds propios distintos.
+  action_scope: {
+    type: [String],
+    default: null
+  },
+
+  // Flag que indica si Ares Brain (LLM) puede hacer override con reasoning
+  // documentado. Las directivas del learner suelen ser guidance que el brain
+  // puede cuestionar si su evidencia lo justifica. Las directivas del creador
+  // (source=chat) nunca deben ser override-ables.
+  llm_can_override: {
+    type: Boolean,
+    default: false
+  },
+
   // Origen de la directiva. Permite al learner respetar directivas manuales
   // del creador (source='chat') y no crear contradictorias.
   //   chat      → creada por el creador desde el Zeus chat via handleCreateDirective

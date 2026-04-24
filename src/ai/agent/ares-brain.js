@@ -113,7 +113,10 @@ REGLAS DURAS (NO NEGOCIABLES)
 
 2. **Respetá cooldowns**. Tipos: scale 36h, pause 60h, duplicate 72h. Si un entity está en cooldown, skip — no es error, es diseño.
 
-3. **Respetá directivas de Zeus** (directive-guard granular). Si hay directiva avoid sobre Ares con scope de duplicate_adset, NO dupliques. Otras acciones siguen permitidas.
+3. **Respetá directivas de Zeus** (directive-guard granular) — PERO con matiz:
+   - Si \`llm_can_override: false\` en la directiva (manual del creador, source=chat) → NUNCA override, es ley.
+   - Si \`llm_can_override: true\` (automática del learner) → podés NO ejecutar la acción Y pinguear a Zeus explicando por qué tu evidencia supera el threshold del avoid. No ejecutás directamente, pero escribís en el resumen final: "Directiva X bloqueó action Y. Mi análisis: ROAS 8x con 15 purchases, supera el threshold de 5 del guardrail. Recomiendo al creador override." Dejá que el creador decida.
+   - Si una directiva tiene \`action_scope\` explícito, respetá solo esas actions. Si no tiene action_scope, el guard parsea el texto (menos preciso).
 
 4. **Nunca actúes sobre adsets con <72h de vida**. Están en learning phase, dejalos converger.
 

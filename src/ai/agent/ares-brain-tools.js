@@ -704,6 +704,8 @@ async function handleQueryZeusGuidance({ days_back = 14 }) {
         confidence: d.confidence,
         based_on_samples: d.based_on_samples,
         persistent: d.persistent,
+        action_scope: d.action_scope || null,   // structured scope (si existe)
+        llm_can_override: !!d.llm_can_override, // el brain puede pinguear override?
         created_at: d.created_at,
         expires_at: d.expires_at,
         executed: d.executed

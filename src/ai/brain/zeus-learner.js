@@ -1115,6 +1115,12 @@ Rules:
   * adjust + new_budget: Change CBO CAMPAIGN budget (NOT individual clone — CBO distributes globally). data={new_budget: 200, reason: "..."}
   * prioritize: Strategic guidance for Ares (e.g. "focus on BYB products", "slow down duplications")
   * alert: Flag something for Ares attention (e.g. "clone X cannibalizing original")
+- ACTION_SCOPE (CRITICAL — always include in avoid directives): When you emit directive_type="avoid", you MUST include action_scope array declaring EXACTLY which action_types this directive blocks. Examples:
+  * "No new duplications sample guard 100 spend" → action_scope: ["force_duplicate"]. This blocks YOUR own force_duplicate recommendations but does NOT block duplicate_adset that Ares Portfolio Manager / Ares Brain execute autonomously with their own safety gates.
+  * "Pause clone X" for target_agent="athena" → action_scope: ["pause_clone"]
+  * "Hold all scaling until next week" → action_scope: ["scale_up", "scale_down"]
+  * Generic "avoid risky ops" without specific action_scope → action_scope: [] (empty triggers legacy text parse).
+  Valid action_types: force_duplicate, duplicate_adset, scale_up, scale_down, pause, pause_adset, pause_clone, create_ad, create_campaign, launch_test, graduate, update_ad_creative, move_budget. The action_scope field goes alongside target_agent in the directive JSON.
 - ARES CLONES SAFETY: Do NOT recommend killing, pausing, or alerting about any Ares clone with less than 7 REAL days of existence. Clones need time to exit learning phase and accumulate data. Even if a clone has $30-50 spend and 0 purchases at day 2-3, that is NORMAL — it is still in Meta learning phase. ONLY flag clones that have 7+ real days AND ROAS < 2x with meaningful spend ($50+). When in doubt, HOLD.
 - ARES CBO 3 — TIER DE RESCATE/MEDICION (abril 2026): CBO 3 es un tier experimental donde se duplican ad sets que estaban starved en CBO 1 o CBO 2. Proposito: dar delivery garantizado (porque poblacion homogeneamente low-confidence → Meta distribuye mas parejo). Reglas especificas:
   * NO pedir pausar clones en CBO 3 antes de dia 14 (experimento necesita run completo)
@@ -1258,6 +1264,15 @@ Rules:
         continue;
       }
 
+      // action_scope structured (2026-04-24) — si el JSON del learner lo
+      // provee, usar esos action_types explícitos. Si no, dejar null y que
+      // directive-guard haga text parsing (retrocompat).
+      // Las directivas del learner SON overridable por el brain — son
+      // guidance basado en samples, no reglas duras del creador.
+      const actionScope = Array.isArray(d.action_scope) && d.action_scope.length > 0
+        ? d.action_scope.filter(s => typeof s === 'string').slice(0, 10)
+        : null;
+
       try {
         await ZeusDirective.create({
           target_agent: target,
@@ -1267,8 +1282,10 @@ Rules:
           confidence: Math.min(1, Math.max(0, d.confidence || 0.5)),
           based_on_samples: totalDataPoints,
           category,
-          source: 'learner',   // marca de autoría — permite filtrar en fixes futuros
+          source: 'learner',
           active: true,
+          action_scope: actionScope,
+          llm_can_override: true,
           expires_at: new Date(Date.now() + 72 * 3600000)
         });
       } catch (createErr) {
