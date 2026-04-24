@@ -6,7 +6,11 @@
  * ejecutar acciones bounded con safety gates.
  *
  * Commit 1 (read-only): solo queries.
- * Commit 2 añadirá: scale_cbo_budget, pause_adset, duplicate_adset_to_cbo.
+ * Commit 2 (2026-04-24): añadidas 3 action tools — scale_cbo_budget,
+ *   pause_adset, duplicate_adset_to_cbo. Todas pasan por los mismos safety
+ *   gates del portfolio-manager procedural (cooldown + guard-rail + directive
+ *   + capacity). Todas loggean ActionLog con agent_type='ares_brain' para
+ *   distinguir de decisiones procedurales.
  * Commit 3 añadirá: create_new_cbo (con safety de Ola 3).
  */
 
@@ -16,7 +20,31 @@ const ActionLog = require('../../db/models/ActionLog');
 const TestRun = require('../../db/models/TestRun');
 const SystemConfig = require('../../db/models/SystemConfig');
 const logger = require('../../utils/logger');
-const { runPortfolioAnalysis } = require('./ares-portfolio-manager');
+const { runPortfolioAnalysis, _helpers: portfolioHelpers } = require('./ares-portfolio-manager');
+const { CooldownManager } = require('../../safety/cooldown-manager');
+const cooldowns = new CooldownManager();
+
+// Cap absoluto por cambio de budget — aún si el LLM pide más, clamp aquí.
+// Protección contra fuga de contexto o alucinación del modelo.
+const BRAIN_BUDGET_CHANGE_MAX_PCT = 0.50;
+const BRAIN_BUDGET_FLOOR = 30;  // no bajar CBO debajo de $30/d (coherente con portfolio floor $50, pero damos margen a tests)
+
+async function logBrainAction({ entity_id, entity_name, entity_type, action, before_value, after_value, reasoning, metadata, success, error }) {
+  try {
+    await ActionLog.create({
+      entity_type, entity_id, entity_name,
+      action, success: !!success,
+      executed_at: new Date(),
+      agent_type: 'ares_brain',
+      reasoning,
+      before_value, after_value,
+      metadata: metadata || {},
+      error: error || null
+    });
+  } catch (err) {
+    logger.error(`[ARES-BRAIN-TOOLS] logAction failed: ${err.message}`);
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TOOL DEFINITIONS (Anthropic format)
@@ -80,6 +108,47 @@ const TOOL_DEFINITIONS = [
     name: 'query_account_caps',
     description: 'Estado actual de los caps del account: max_active_adsets, max_scale_24h, max_duplications_24h, daily spend ceiling, circuit breaker status. Usá esto antes de decisiones que acerquen a caps.',
     input_schema: { type: 'object', properties: {}, required: [] }
+  },
+  // ─── WRITE TOOLS (Commit 2, 2026-04-24) ────────────────────────────────
+  {
+    name: 'scale_cbo_budget',
+    description: 'Ajusta daily_budget de una CBO. Usá esto cuando hayas decidido scale_up/scale_down basado en tu análisis. Pasa por: cooldown 36h, guard-rail cap 50%, capacity, directive-guard. Si alguno bloquea, te lo digo y no se ejecuta — no es error, es diseño. Para scale_up: CBO healthy con evidencia ROAS sostenido. Para scale_down: protegé capital en CBOs underperforming. Reasoning obligatorio — queda auditable.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        campaign_id: { type: 'string', description: 'ID de la CBO a ajustar' },
+        new_daily_budget: { type: 'number', description: 'Nuevo budget en USD. Debe ser realista — si el cambio excede ±50% del actual, te lo rechazo.' },
+        reasoning: { type: 'string', description: '2-3 oraciones con evidencia numérica. Ej: "ROAS 7d 3.2x sostenido con top-2 concentrando 88% spend. Scale +15% para que Meta explote cluster."' }
+      },
+      required: ['campaign_id', 'new_daily_budget', 'reasoning']
+    }
+  },
+  {
+    name: 'pause_adset',
+    description: 'Pausa un adset (cambia status a PAUSED). Usá para: zombies confirmados (spend significativo + 0 conv + edad >5d), underperformers sostenidos, adsets en CBO saturada consumiendo overhead. Pasa por: cooldown 60h, directive-guard, capacity. NO pausá adsets en LEARNING (<72h). Reasoning obligatorio.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        adset_id: { type: 'string', description: 'ID del adset a pausar' },
+        reasoning: { type: 'string', description: '2-3 oraciones con evidencia. Ej: "$75 spend 7d, 0 compras, 8d edad, ya salió de learning. Dentro de CBO saturada, consume overhead."' }
+      },
+      required: ['adset_id', 'reasoning']
+    }
+  },
+  {
+    name: 'duplicate_adset_to_cbo',
+    description: 'PATRÓN "MOVE" = duplica adset a CBO destino + pausa el original. Meta API NO permite mover adsets entre campañas, este es el workaround canónico. El duplicado se crea en PAUSED para que revises/actives manualmente. Si `pause_original: true` (default), el adset fuente se pausa como parte del mismo flujo. Usá para: rebalancear winners starved, mover graduates a CBO estable, redistribuir de CBO saturada a CBO con headroom. Cooldown 72h por entity.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        source_adset_id: { type: 'string', description: 'ID del adset fuente' },
+        target_campaign_id: { type: 'string', description: 'ID de la CBO destino' },
+        new_daily_budget: { type: 'number', description: 'Budget del adset duplicado en USD. Default $75 si no se especifica. Conservá bajo — el duplicado arranca en learning.' },
+        pause_original: { type: 'boolean', description: 'Si true (default), pausa el adset fuente al completar duplicación exitosa. Si false, solo duplica sin tocar el fuente (útil para testing en paralelo).' },
+        reasoning: { type: 'string', description: '2-3 oraciones con evidencia de por qué mover. Ej: "Winner starved: ROAS 7d 3.4x, 3 compras, solo 2.1% del spend de CBO origen (saturada por cluster). Moviendo a CBO B con headroom."' }
+      },
+      required: ['source_adset_id', 'target_campaign_id', 'reasoning']
+    }
   }
 ];
 
@@ -383,6 +452,310 @@ async function handleGetPortfolioRecommendations() {
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ACTION HANDLERS (commit 2 — 2026-04-24)
+// Todas respetan los mismos safety gates que ares-portfolio-manager
+// (cooldown, guard-rail, directive-guard granular, portfolio-capacity) +
+// loggean ActionLog con agent_type='ares_brain' para auditoría separada.
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function handleScaleCBOBudget({ campaign_id, new_daily_budget, reasoning }) {
+  if (!campaign_id) return { error: 'campaign_id requerido' };
+  if (typeof new_daily_budget !== 'number' || new_daily_budget <= 0) return { error: 'new_daily_budget inválido' };
+  if (!reasoning || reasoning.length < 20) return { error: 'reasoning obligatorio (min 20 chars)' };
+
+  // Cargar snapshot actual para before_value
+  const snap = await MetricSnapshot.findOne({
+    entity_type: 'campaign',
+    entity_id: campaign_id
+  }).sort({ snapshot_at: -1 }).lean();
+  if (!snap) return { error: `campaign ${campaign_id} no encontrada` };
+
+  const currentBudget = snap.daily_budget || 0;
+  if (currentBudget <= 0) return { error: 'campaign sin daily_budget (ABO?)' };
+
+  // Clamp absoluto independiente del LLM
+  const pct = Math.abs((new_daily_budget - currentBudget) / currentBudget);
+  if (pct > BRAIN_BUDGET_CHANGE_MAX_PCT) {
+    return {
+      rejected: true,
+      reason: `cambio ${(pct*100).toFixed(0)}% > ${BRAIN_BUDGET_CHANGE_MAX_PCT*100}% max permitido por ciclo`,
+      suggestion: `new_daily_budget debería estar entre $${Math.round(currentBudget * (1 - BRAIN_BUDGET_CHANGE_MAX_PCT))} y $${Math.round(currentBudget * (1 + BRAIN_BUDGET_CHANGE_MAX_PCT))}`
+    };
+  }
+  const target = Math.max(Math.round(new_daily_budget), BRAIN_BUDGET_FLOOR);
+  if (target === currentBudget) return { rejected: true, reason: 'nuevo budget idéntico al actual' };
+
+  const actionType = target > currentBudget ? 'scale_up' : 'scale_down';
+
+  // Gate compuesto — reusa el del portfolio-manager
+  const gate = await portfolioHelpers.validateSafetyGates({
+    entity_id: campaign_id,
+    action_type: actionType,
+    before_value: currentBudget,
+    after_value: target
+  });
+  if (!gate.allowed) {
+    await logBrainAction({
+      entity_type: 'campaign', entity_id: campaign_id, entity_name: snap.entity_name,
+      action: actionType, before_value: currentBudget, after_value: target,
+      reasoning, metadata: { blocked_by: gate.reason, source: 'ares_brain_decision' },
+      success: false, error: `gate_blocked: ${gate.reason}`
+    });
+    return { blocked: true, reason: gate.reason };
+  }
+
+  // Dedup LLM: si ares_brain ya scaled misma CBO en últimas 24h, skip
+  const recentBrain = await ActionLog.findOne({
+    entity_id: campaign_id,
+    action: { $in: ['scale_up', 'scale_down'] },
+    agent_type: 'ares_brain',
+    executed_at: { $gte: new Date(Date.now() - 24 * 3600000) }
+  }).lean();
+  if (recentBrain) {
+    return { blocked: true, reason: `brain ya actuó sobre esta CBO en últimas 24h (${recentBrain.action} a las ${recentBrain.executed_at})` };
+  }
+
+  try {
+    const { getMetaClient } = require('../../meta/client');
+    const meta = getMetaClient();
+    await meta.updateBudget(campaign_id, target);
+
+    await cooldowns.setCooldown(campaign_id, 'campaign', actionType, 'ares_brain');
+    await logBrainAction({
+      entity_type: 'campaign',
+      entity_id: campaign_id,
+      entity_name: snap.entity_name,
+      action: actionType,
+      before_value: currentBudget,
+      after_value: target,
+      reasoning,
+      metadata: { source: 'ares_brain_decision', pct_change: +pct.toFixed(3) },
+      success: true
+    });
+    logger.info(`[ARES-BRAIN] ${actionType === 'scale_up' ? '↑' : '↓'} CBO "${snap.entity_name}" $${currentBudget}→$${target} (brain decision)`);
+    return { executed: true, before: currentBudget, after: target, action: actionType };
+  } catch (err) {
+    await logBrainAction({
+      entity_type: 'campaign', entity_id: campaign_id, entity_name: snap.entity_name,
+      action: actionType, before_value: currentBudget, after_value: target,
+      reasoning, metadata: { source: 'ares_brain_decision' },
+      success: false, error: err.message
+    });
+    logger.error(`[ARES-BRAIN] scale_cbo_budget falló ${campaign_id}: ${err.message}`);
+    return { error: `meta API falló: ${err.message}` };
+  }
+}
+
+async function handlePauseAdset({ adset_id, reasoning }) {
+  if (!adset_id) return { error: 'adset_id requerido' };
+  if (!reasoning || reasoning.length < 20) return { error: 'reasoning obligatorio (min 20 chars)' };
+
+  const snap = await MetricSnapshot.findOne({
+    entity_type: 'adset',
+    entity_id: adset_id
+  }).sort({ snapshot_at: -1 }).lean();
+  if (!snap) return { error: `adset ${adset_id} no encontrado` };
+  if (snap.status !== 'ACTIVE') return { rejected: true, reason: `adset ya está en estado ${snap.status}` };
+
+  // Proteger learning phase — hard rule del brain, no dejamos que Opus salte
+  const first = await MetricSnapshot.findOne({
+    entity_type: 'adset',
+    entity_id: adset_id
+  }).sort({ snapshot_at: 1 }).lean();
+  const ageHours = first
+    ? (Date.now() - new Date(first.snapshot_at).getTime()) / 3600000
+    : 999;
+  if (ageHours < 72) {
+    return { blocked: true, reason: `adset con <72h en sistema (${Math.round(ageHours)}h) — protegido en learning phase` };
+  }
+
+  const gate = await portfolioHelpers.validateSafetyGates({
+    entity_id: adset_id,
+    action_type: 'pause'
+  });
+  if (!gate.allowed) {
+    await logBrainAction({
+      entity_type: 'adset', entity_id: adset_id, entity_name: snap.entity_name,
+      action: 'pause', before_value: 'ACTIVE', after_value: 'PAUSED',
+      reasoning, metadata: { blocked_by: gate.reason, source: 'ares_brain_decision' },
+      success: false, error: `gate_blocked: ${gate.reason}`
+    });
+    return { blocked: true, reason: gate.reason };
+  }
+
+  try {
+    const { getMetaClient } = require('../../meta/client');
+    const meta = getMetaClient();
+    await meta.updateStatus(adset_id, 'PAUSED');
+
+    await cooldowns.setCooldown(adset_id, 'adset', 'pause', 'ares_brain');
+    await logBrainAction({
+      entity_type: 'adset',
+      entity_id: adset_id,
+      entity_name: snap.entity_name,
+      action: 'pause',
+      before_value: 'ACTIVE',
+      after_value: 'PAUSED',
+      reasoning,
+      metadata: { source: 'ares_brain_decision', parent_cbo: snap.campaign_id, age_hours: Math.round(ageHours) },
+      success: true
+    });
+    logger.info(`[ARES-BRAIN] ✓ paused adset "${snap.entity_name}" (brain decision)`);
+    return { executed: true, adset_name: snap.entity_name, age_hours: Math.round(ageHours) };
+  } catch (err) {
+    await logBrainAction({
+      entity_type: 'adset', entity_id: adset_id, entity_name: snap.entity_name,
+      action: 'pause', before_value: 'ACTIVE', after_value: 'PAUSED',
+      reasoning, metadata: { source: 'ares_brain_decision' },
+      success: false, error: err.message
+    });
+    logger.error(`[ARES-BRAIN] pause_adset falló ${adset_id}: ${err.message}`);
+    return { error: `meta API falló: ${err.message}` };
+  }
+}
+
+async function handleDuplicateAdsetToCBO({ source_adset_id, target_campaign_id, new_daily_budget, pause_original, reasoning }) {
+  if (!source_adset_id) return { error: 'source_adset_id requerido' };
+  if (!target_campaign_id) return { error: 'target_campaign_id requerido' };
+  if (!reasoning || reasoning.length < 20) return { error: 'reasoning obligatorio (min 20 chars)' };
+
+  const budget = typeof new_daily_budget === 'number' && new_daily_budget > 0 ? new_daily_budget : 75;
+  const shouldPauseOriginal = pause_original !== false;
+
+  const srcSnap = await MetricSnapshot.findOne({
+    entity_type: 'adset',
+    entity_id: source_adset_id
+  }).sort({ snapshot_at: -1 }).lean();
+  if (!srcSnap) return { error: `source adset ${source_adset_id} no encontrado` };
+
+  // Protección: no duplicar a misma CBO (sería ruido, no rebalanceo)
+  if (srcSnap.campaign_id === target_campaign_id) {
+    return { rejected: true, reason: 'target_campaign_id == source campaign_id — sería duplicar dentro del mismo CBO' };
+  }
+
+  // Validar target existe y es CBO activa
+  const targetSnap = await MetricSnapshot.findOne({
+    entity_type: 'campaign',
+    entity_id: target_campaign_id
+  }).sort({ snapshot_at: -1 }).lean();
+  if (!targetSnap) return { error: `target campaign ${target_campaign_id} no encontrada` };
+  if (targetSnap.status !== 'ACTIVE') return { rejected: true, reason: `target campaign en estado ${targetSnap.status}` };
+  if (!(targetSnap.daily_budget > 0)) return { rejected: true, reason: 'target no es CBO (sin daily_budget)' };
+
+  // Gate: duplicate_adset action
+  const gate = await portfolioHelpers.validateSafetyGates({
+    entity_id: source_adset_id,
+    action_type: 'duplicate_adset'
+  });
+  if (!gate.allowed) {
+    await logBrainAction({
+      entity_type: 'adset', entity_id: source_adset_id, entity_name: srcSnap.entity_name,
+      action: 'duplicate_adset',
+      reasoning, metadata: { blocked_by: gate.reason, source: 'ares_brain_decision' },
+      success: false, error: `gate_blocked: ${gate.reason}`
+    });
+    return { blocked: true, reason: gate.reason };
+  }
+
+  // Si vamos a pausar el original, chequear cooldown de pause también
+  if (shouldPauseOriginal) {
+    const pauseGate = await portfolioHelpers.validateSafetyGates({
+      entity_id: source_adset_id,
+      action_type: 'pause'
+    });
+    if (!pauseGate.allowed) {
+      return { blocked: true, reason: `duplicate OK pero pause original bloqueada (${pauseGate.reason}). Corré con pause_original=false o esperá.` };
+    }
+  }
+
+  const cloneName = `[Ares-Brain] ${srcSnap.entity_name}`;
+
+  try {
+    const { getMetaClient } = require('../../meta/client');
+    const meta = getMetaClient();
+
+    // 1. Duplicar
+    const dupResult = await meta.duplicateAdSet(source_adset_id, {
+      campaign_id: target_campaign_id,
+      deep_copy: true,
+      name: cloneName,
+      status: 'PAUSED'  // duplicado siempre PAUSED — brain no activa, review manual
+    });
+
+    if (!dupResult?.success || !dupResult?.new_adset_id) {
+      throw new Error(dupResult?.error || 'duplicateAdSet sin new_adset_id');
+    }
+
+    await cooldowns.setCooldown(source_adset_id, 'adset', 'duplicate_adset', 'ares_brain');
+    await logBrainAction({
+      entity_type: 'adset',
+      entity_id: source_adset_id,
+      entity_name: srcSnap.entity_name,
+      action: 'duplicate_adset',
+      before_value: srcSnap.campaign_id,
+      after_value: target_campaign_id,
+      reasoning,
+      metadata: {
+        source: 'ares_brain_decision',
+        new_adset_id: dupResult.new_adset_id,
+        target_campaign_id,
+        target_campaign_name: targetSnap.entity_name,
+        clone_status: 'PAUSED',
+        clone_budget: budget,
+        pause_original_planned: shouldPauseOriginal
+      },
+      success: true
+    });
+    logger.info(`[ARES-BRAIN] ✓ duplicated "${srcSnap.entity_name}" → "${targetSnap.entity_name}" (new_id=${dupResult.new_adset_id}, PAUSED)`);
+
+    // 2. Pausar original (opcional — el "move" pattern)
+    let pausedOriginal = false;
+    let pauseError = null;
+    if (shouldPauseOriginal) {
+      try {
+        await meta.updateStatus(source_adset_id, 'PAUSED');
+        await cooldowns.setCooldown(source_adset_id, 'adset', 'pause', 'ares_brain');
+        await logBrainAction({
+          entity_type: 'adset', entity_id: source_adset_id, entity_name: srcSnap.entity_name,
+          action: 'pause', before_value: 'ACTIVE', after_value: 'PAUSED',
+          reasoning: `Pause original tras duplicar "${srcSnap.entity_name}" → CBO "${targetSnap.entity_name}" (new_id=${dupResult.new_adset_id}). Motivo del move: ${reasoning}`,
+          metadata: {
+            source: 'ares_brain_decision',
+            move_pair: dupResult.new_adset_id,
+            parent_cbo: srcSnap.campaign_id
+          },
+          success: true
+        });
+        pausedOriginal = true;
+        logger.info(`[ARES-BRAIN] ✓ paused original "${srcSnap.entity_name}" (move pair ${dupResult.new_adset_id})`);
+      } catch (err) {
+        pauseError = err.message;
+        logger.error(`[ARES-BRAIN] duplicate OK pero pause original falló: ${err.message}`);
+      }
+    }
+
+    return {
+      executed: true,
+      new_adset_id: dupResult.new_adset_id,
+      new_adset_status: 'PAUSED',
+      source_paused: pausedOriginal,
+      source_pause_error: pauseError,
+      target_cbo_name: targetSnap.entity_name,
+      requires_manual_activation: true
+    };
+  } catch (err) {
+    await logBrainAction({
+      entity_type: 'adset', entity_id: source_adset_id, entity_name: srcSnap.entity_name,
+      action: 'duplicate_adset',
+      reasoning, metadata: { source: 'ares_brain_decision', target_campaign_id },
+      success: false, error: err.message
+    });
+    logger.error(`[ARES-BRAIN] duplicate_adset_to_cbo falló ${source_adset_id}: ${err.message}`);
+    return { error: `meta API falló: ${err.message}` };
+  }
+}
+
 async function handleQueryAccountCaps() {
   try {
     const { getCapStatus } = require('../zeus/portfolio-capacity');
@@ -408,6 +781,10 @@ async function executeTool(name, input) {
       case 'query_recent_actions': return await handleQueryRecentActions(input || {});
       case 'get_portfolio_recommendations': return await handleGetPortfolioRecommendations();
       case 'query_account_caps': return await handleQueryAccountCaps();
+      // Action tools (commit 2)
+      case 'scale_cbo_budget': return await handleScaleCBOBudget(input || {});
+      case 'pause_adset': return await handlePauseAdset(input || {});
+      case 'duplicate_adset_to_cbo': return await handleDuplicateAdsetToCBO(input || {});
       default: return { error: `tool no reconocida: ${name}` };
     }
   } catch (err) {

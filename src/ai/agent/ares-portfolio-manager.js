@@ -884,6 +884,7 @@ module.exports = {
   _helpers: {
     validateSafetyGates,
     alreadyActedOn,
-    inferRescueCbo
+    inferRescueCbo,
+    logAction
   }
 };

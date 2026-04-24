@@ -15,7 +15,13 @@
  *     portfolio-capacity (mismos gates que portfolio manager procedural)
  *
  * Commit 1: core + prompt + tools READ-ONLY. DRY_RUN siempre ON.
- * Commit 2 añadirá: tools de acción (scale/pause/duplicate).
+ * Commit 2 (2026-04-24): DRY_RUN default OFF — tools write habilitadas
+ *   (scale_cbo_budget, pause_adset, duplicate_adset_to_cbo). Cada tool
+ *   aplica sus propios safety gates (cooldown + guard-rail + directive +
+ *   capacity). El flag ARES_BRAIN_DRY_RUN=true sigue disponible para smoke
+ *   testing sin ejecutar (las tools write detectan DRY_RUN y retornan
+ *   "would_execute" sin llamar Meta API — pendiente implementar si se
+ *   necesita; por ahora el flag solo afecta el prompt).
  * Commit 3 añadirá: tool create_new_cbo + safety Ola 3.
  */
 
@@ -128,17 +134,33 @@ Al final de tu análisis, escribí un resumen final en markdown con:
 Sos pragmático y directo. Si no hay nada accionable, decilo: "Portfolio sano, no actúo este ciclo. Vigilar X." No inventes acciones por inventar.
 
 ═══════════════════════════════════════════════════════════════════════════
-MODO ACTUAL: DRY-RUN (2026-04-24)
+TOOLS WRITE DISPONIBLES (2026-04-24 Commit 2)
 ═══════════════════════════════════════════════════════════════════════════
 
-IMPORTANTE: estás en **modo solo-lectura**. Las tools de acción (scale/pause/duplicate/create) aún no están disponibles. Tu output va a ser solo análisis + recomendaciones al creador, no ejecución. Usá este ciclo para **demostrar tu razonamiento** — si funciona bien, el próximo commit te da acceso a tools write.`;
+Tenés 3 tools write a tu disposición:
+
+- \`scale_cbo_budget\` — ajusta daily_budget de una CBO. Max ±50% por ciclo. Dedup 24h (no re-scaleás misma CBO dos veces).
+- \`pause_adset\` — cambia status a PAUSED. Hard-blocked si adset tiene <72h en sistema.
+- \`duplicate_adset_to_cbo\` — el patrón "move" (dup + pause original). El duplicado se crea en PAUSED → el creador revisa y activa manualmente. Esto es intencional: decisiones de move son costosas, queremos human-in-the-loop antes de activar.
+
+Cada tool aplica los mismos safety gates que el portfolio-manager procedural:
+1. directive-guard granular por action_type
+2. cooldown per-entity tiered
+3. guard-rail budget caps
+4. portfolio-capacity (max_scale_24h, max_dup_24h)
+
+Si una tool retorna \`{blocked: true, reason: ...}\` no es error — es safety funcionando. Seguí con otras acciones o terminá el ciclo.
+
+\`create_new_cbo\` aún NO está disponible (commit 3). Si detectás cluster de winners sin home apropiado, mencionalo en el summary final como señal al operador — no intentes hackearlo con duplicate_adset_to_cbo a campaña inexistente.`;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // RUN BRAIN CYCLE
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function runAresBrain(opts = {}) {
-  const dryRun = opts.dryRun !== false && (process.env.ARES_BRAIN_DRY_RUN !== 'false');
+  // dryRun default FALSE (commit 2) — el brain tiene tools write habilitadas
+  // con safety gates por acción. Opt-in: ARES_BRAIN_DRY_RUN=true para smoke.
+  const dryRun = opts.dryRun === true || process.env.ARES_BRAIN_DRY_RUN === 'true';
   const autonomousEnabled = process.env.ARES_BRAIN_ENABLED !== 'false';
 
   if (!autonomousEnabled) {
@@ -174,7 +196,7 @@ async function runAresBrain(opts = {}) {
       ]
     : TOOL_DEFINITIONS;
 
-  const userMessage = `Corré tu ciclo de Portfolio Manager. ${dryRun ? 'Modo DRY-RUN — solo análisis, sin ejecución.' : 'Modo LIVE.'} Empezá observando el estado del portfolio y decidí si hay acciones a tomar hoy.`;
+  const userMessage = `Corré tu ciclo de Portfolio Manager. ${dryRun ? 'Modo DRY-RUN — análisis sin ejecución, describí qué harías.' : 'Modo LIVE con tools write — ejecutá las acciones que el análisis justifique.'} Empezá observando el estado del portfolio y decidí si hay acciones a tomar hoy.`;
 
   const messages = [{ role: 'user', content: userMessage }];
 
