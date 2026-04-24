@@ -734,43 +734,39 @@ async function runAresAgent() {
     logger.warn(`[ARES] platform circuit breaker check falló, continúo: ${err.message}`);
   }
 
-  // Fase -1: Chequear directivas 'avoid' activas de Zeus (ej billing freeze)
+  // Fase -1: Chequear directivas 'avoid' granulares de Zeus.
+  // FIX 2026-04-24: antes hacíamos isAgentBlocked global y early-return,
+  // lo que causaba que una directiva "No new duplications" del learner
+  // bloqueara el CICLO ENTERO incluyendo runPortfolioAnalysis (que tiene
+  // sus propios gates granulares). Ahora solo marcamos flag para saltar
+  // duplicaciones legacy, dejando que portfolio analysis + brain corran.
+  let duplicationsBlocked = false;
+  let dupBlockReason = null;
   try {
-    const { isAgentBlocked } = require('../zeus/directive-guard');
-    const block = await isAgentBlocked('ares');
+    const { isActionBlockedForAgent } = require('../zeus/directive-guard');
+    const block = await isActionBlockedForAgent('ares', 'duplicate_adset');
     if (block.blocked) {
-      logger.info(`[ARES] Cycle SKIP por directiva de Zeus: "${block.reason}"${block.expires_at ? ` (expira ${new Date(block.expires_at).toISOString()})` : ''}`);
-      return {
-        skipped: true,
-        reason: block.reason,
-        directive_id: block.directive_id,
-        elapsed: '0s',
-        cycle_id: cycleId
-      };
+      logger.info(`[ARES] Duplications SKIP por directiva: "${block.reason}" (portfolio analysis continúa)`);
+      duplicationsBlocked = true;
+      dupBlockReason = block.reason;
     }
   } catch (err) {
     logger.warn(`[ARES] directive-guard check falló, continúo: ${err.message}`);
   }
 
-  // Fase 0: Portfolio capacity — si hit limits, skip duplications (solo para este ciclo)
-  let capacityBlocked = false;
+  // Fase 0: Portfolio capacity — chequea duplicate_adset. Mismo fix: flag,
+  // no early return. Portfolio analysis tiene sus propios capacity checks
+  // para scale_up/scale_down/pause por separado.
   try {
     const { canExecuteAction } = require('../zeus/portfolio-capacity');
     const cap = await canExecuteAction('duplicate_adset');
     if (!cap.allowed) {
       logger.warn(`[ARES] Duplications SKIP por capacidad: ${cap.reason}`);
-      capacityBlocked = true;
+      duplicationsBlocked = true;
+      if (!dupBlockReason) dupBlockReason = `capacity: ${cap.reason}`;
     }
   } catch (err) {
     logger.warn(`[ARES] capacity check falló, continúo: ${err.message}`);
-  }
-  if (capacityBlocked) {
-    return {
-      skipped: true,
-      reason: 'portfolio_capacity_limit',
-      elapsed: '0s',
-      cycle_id: cycleId
-    };
   }
 
   // Fase 0.5: CBO Health observation + Portfolio analysis propose-only.
@@ -855,6 +851,21 @@ async function runAresAgent() {
     retirementResults = await retireFromCBO3();
   } catch (err) {
     logger.error(`[ARES] Error en retirement: ${err.message}`);
+  }
+
+  // Si duplicaciones bloqueadas (directiva o capacidad), skip fases 1-3.
+  // Portfolio analysis + brain ya corrieron arriba con sus propios gates.
+  if (duplicationsBlocked) {
+    const elapsed = `${((Date.now() - startTime) / 1000).toFixed(1)}s`;
+    logger.info(`═══ Ares Agent completado [${cycleId}]: duplications blocked (${dupBlockReason}) — portfolio analysis sí corrió — ${elapsed} ═══`);
+    return {
+      duplicated: 0,
+      candidates: 0,
+      skipped_duplications: true,
+      reason: dupBlockReason,
+      elapsed,
+      cycle_id: cycleId
+    };
   }
 
   // Fase 1: Encontrar candidatos (duplicacion autonoma)
