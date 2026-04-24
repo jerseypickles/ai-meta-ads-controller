@@ -11,11 +11,12 @@ AI-powered autonomous Meta Ads optimization system for **Jersey Pickles** (food/
 | Runtime | Node.js >= 18, CommonJS (`require`/`module.exports`) |
 | Backend | Express 4.18, node-cron scheduling |
 | Database | MongoDB 8.0 via Mongoose ODM (pool: 10) |
-| AI | Anthropic Claude (`@anthropic-ai/sdk`), OpenAI (image gen), Google GenAI |
+| AI | Anthropic Claude (`@anthropic-ai/sdk`), Google GenAI (image gen), OpenAI (embeddings) |
 | Frontend | React 19 + Vite 7, React Router 7, Recharts, Three.js (3D orbs) |
 | Auth | JWT (24h expiry), single hardcoded user |
 | Ads API | Meta Marketing API v21.0 via axios + Bottleneck rate limiter |
-| Image Gen | OpenAI gpt-image-1.5, BFL FLUX 2 Pro, Freepik Seedream, xAI Grok |
+| Image Gen | **Google Gemini 3 Pro Image Preview** (único motor operativo desde 2026-04-24). Config aspectRatio '9:16' / '1:1', imageSize '2K'. Helper compartido en `src/ai/creative/gemini-image.js` con retry robusto 3x + exponential backoff. BFL / Freepik / xAI Grok mencionados en config pero SIN implementación. |
+| Embeddings | OpenAI `text-embedding-3-small` (solo para memoria episódica de Zeus, NO para imágenes) |
 | Deployment | Render.yaml (Node runtime, 1GB upload disk) |
 
 ## Directory Structure
@@ -228,7 +229,7 @@ npm run seed         # Seed config to MongoDB
 ```
 
 ## Environment Variables (42 total)
-Key groups: Meta API (APP_ID, APP_SECRET, ACCESS_TOKEN, AD_ACCOUNT_ID), Anthropic (ANTHROPIC_API_KEY), MongoDB (MONGODB_URI), Dashboard (DASHBOARD_PORT, SECRET, USER, PASSWORD), Image Gen (OPENAI_API_KEY, BFL_API_KEY, FREEPIK_API_KEY, XAI_API_KEY), Search (BRAVE_SEARCH_API_KEY, SERP_API_KEY).
+Key groups: Meta API (APP_ID, APP_SECRET, ACCESS_TOKEN, AD_ACCOUNT_ID), Anthropic (ANTHROPIC_API_KEY), MongoDB (MONGODB_URI), Dashboard (DASHBOARD_PORT, SECRET, USER, PASSWORD), Image Gen (**GOOGLE_AI_API_KEY** — único motor en producción desde 2026-04-24, usa `gemini-3-pro-image-preview`), Embeddings (OPENAI_API_KEY — solo episodic memory de Zeus), Search (BRAVE_SEARCH_API_KEY, SERP_API_KEY). Env vars BFL_API_KEY / FREEPIK_API_KEY / XAI_API_KEY quedan en config pero sin código que las consuma.
 
 ## Important Implementation Notes
 

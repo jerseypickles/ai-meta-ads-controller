@@ -1,9 +1,9 @@
 const Anthropic = require('@anthropic-ai/sdk');
-const { GoogleGenAI } = require('@google/genai');
 const fs = require('fs');
 const path = require('path');
 const config = require('../../../config');
 const logger = require('../../utils/logger');
+const { generateImageWithGemini } = require('../creative/gemini-image');
 const BrainMemory = require('../../db/models/BrainMemory');
 const BrainInsight = require('../../db/models/BrainInsight');
 const ProductBank = require('../../db/models/ProductBank');
@@ -128,65 +128,18 @@ function buildImagePrompt(productName, scene, refTypes, style, isCombo = false, 
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// GEMINI IMAGE GENERATION
+// GEMINI IMAGE GENERATION (wrapper del helper compartido)
 // ═══════════════════════════════════════════════════════════════════════════════
+// Refactor 2026-04-24: la lógica inline se mudó a src/ai/creative/gemini-image.js
+// para compartirla con el UI del dashboard (image-generator.js). Retorna base64
+// directo para mantener el contrato histórico con los callers del cron.
 async function generateImage(prompt, referenceImages) {
-  const apiKey = process.env.GOOGLE_AI_API_KEY;
-  if (!apiKey) throw new Error('GOOGLE_AI_API_KEY not configured');
-
-  const genAI = new GoogleGenAI({ apiKey });
-
-  // Build parts: text prompt + reference images (base64 from DB or file paths)
-  const parts = [{ text: prompt }];
-
-  for (const ref of referenceImages) {
-    try {
-      let base64, mimeType;
-
-      if (ref.image_base64) {
-        // Directo de DB (nuevo flujo)
-        base64 = ref.image_base64;
-        mimeType = ref.mime_type || 'image/jpeg';
-      } else if (ref.path) {
-        // Fallback: leer de disco (productos viejos)
-        const absPath = path.resolve(ref.path);
-        const imageData = fs.readFileSync(absPath);
-        base64 = imageData.toString('base64');
-        const ext = path.extname(ref.path).toLowerCase();
-        mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
-      } else {
-        continue;
-      }
-
-      parts.push({
-        inlineData: { mimeType, data: base64 }
-      });
-    } catch (err) {
-      logger.warn(`[CREATIVE-AGENT] Could not load reference image: ${err.message}`);
-    }
-  }
-
-  const response = await genAI.models.generateContent({
-    model: 'gemini-3-pro-image-preview',
-    contents: [{ role: 'user', parts }],
-    config: {
-      responseModalities: ['IMAGE', 'TEXT'],
-      imageConfig: {
-        aspectRatio: '9:16',
-        imageSize: '2K'
-      }
-    }
+  const result = await generateImageWithGemini(prompt, {
+    referenceImages,
+    aspectRatio: '9:16',
+    imageSize: '2K'
   });
-
-  // Extract image as base64 directly — no filesystem needed
-  for (const part of response.candidates[0].content.parts) {
-    if (part.inlineData) {
-      logger.info('[CREATIVE-AGENT] Image generated (in-memory base64)');
-      return part.inlineData.data; // already base64 string
-    }
-  }
-
-  throw new Error('Gemini did not return an image');
+  return result.base64;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

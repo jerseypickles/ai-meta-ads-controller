@@ -1,15 +1,25 @@
 /**
- * Image Generator — OpenAI gpt-image-1.5
- * Genera imagenes para Meta Ads usando la imagen del producto como input (image-to-image).
+ * Image Generator — Gemini 3 Pro Image Preview
+ *
+ * Refactor 2026-04-24: este módulo ANTES usaba OpenAI gpt-image-1.5 pero el
+ * pipeline autónomo de Apollo (creative-agent.js:cron) ya usaba Gemini. Había
+ * 2 motores distintos para generación — el UI del dashboard usaba uno y el cron
+ * usaba otro. Ahora ambos unifican en gemini-image.js (helper compartido).
+ *
+ * API pública mantenida intacta (generateImage / generateBatch /
+ * generateDualFormatBatch) para no romper callers del dashboard.
+ * Cambios en el return:
+ *   - engine: 'openai' → 'gemini'
+ *   - model: 'gpt-image-1.5' → 'gemini-3-pro-image-preview'
+ *   - file_type: mantenido 'image/png' (Gemini puede devolver PNG o WEBP)
  */
 
-const OpenAI = require('openai');
-const { toFile } = require('openai');
 const config = require('../../../config');
 const logger = require('../../utils/logger');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { generateImageWithGemini } = require('./gemini-image');
 
 const GENERATED_DIR = path.join(config.system.uploadsDir, 'generated');
 
@@ -19,124 +29,86 @@ function ensureDir() {
   }
 }
 
-/**
- * Detect MIME type from file path
- */
-function getMimeType(filePath) {
-  const ext = path.extname(filePath).toLowerCase();
-  const types = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' };
-  return types[ext] || 'image/png';
-}
-
-function getOpenAISize(format) {
-  if (format === 'stories') return '1024x1536';
-  return '1024x1024';
-}
-
-/**
- * Sleep utility
- */
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Mapeo formato (feed/stories) → aspectRatio de Gemini
+function getAspectRatio(format) {
+  if (format === 'stories') return '9:16';
+  return '1:1';
+}
+
+// Mapeo formato → label en config (preservado para compat con la UI)
+function getFormatLabel(format) {
+  return config.imageGen.formats?.[format]?.label || format;
+}
+
 /**
- * Genera una imagen editada con OpenAI gpt-image-1.5
- * Includes automatic retry on 429 rate limit errors.
+ * Genera una imagen con Gemini usando la imagen del producto como referencia.
+ * Mantiene la misma API que la versión OpenAI anterior — los callers no
+ * necesitan cambiar nada. Retry robusto (3 intentos, exponential backoff)
+ * delegado al helper gemini-image.
+ *
+ * @param {string} prompt - Texto del prompt
+ * @param {string} format - 'feed' (1:1) o 'stories' (9:16)
+ * @param {string} productImagePath - Path a la imagen del producto (referencia)
+ * @param {number} [maxRetries=3] - Intentos máximos (se pasan al helper)
  */
 async function generateImage(prompt, format, productImagePath, maxRetries = 3) {
-  const apiKey = config.imageGen.openai.apiKey;
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY no configurada — revisar .env');
-  }
-
   if (!productImagePath || !fs.existsSync(productImagePath)) {
     throw new Error('Se requiere imagen de producto para generar');
   }
 
-  const client = new OpenAI({ apiKey });
-  const size = getOpenAISize(format);
-  const mimeType = getMimeType(productImagePath);
+  const aspectRatio = getAspectRatio(format);
+  const startTime = Date.now();
 
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      logger.info(`[IMAGE-GEN] OpenAI ${config.imageGen.openai.model} editando imagen ${size}... (intento ${attempt}/${maxRetries})`);
-      const startTime = Date.now();
+  const result = await generateImageWithGemini(prompt, {
+    productImagePath,
+    aspectRatio,
+    imageSize: '2K',
+    maxRetries
+  });
 
-      // Use toFile helper to properly wrap the image with MIME type
-      const imageFile = await toFile(fs.createReadStream(productImagePath), null, {
-        type: mimeType
-      });
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
-      const result = await client.images.edit({
-        model: config.imageGen.openai.model,
-        image: imageFile,
-        prompt,
-        size,
-        n: 1,
-        input_fidelity: 'high'
-      });
+  // Persistir a disco — callers del dashboard leen file_path para servir
+  // previews. Mantenemos este contrato histórico.
+  ensureDir();
+  const ext = result.mimeType === 'image/webp' ? 'webp' : 'png';
+  const filename = `gemini-${crypto.randomBytes(8).toString('hex')}.${ext}`;
+  const filePath = path.join(GENERATED_DIR, filename);
+  const buffer = Buffer.from(result.base64, 'base64');
+  fs.writeFileSync(filePath, buffer);
 
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      logger.info(`[IMAGE-GEN] OpenAI completo en ${elapsed}s`);
-
-      const b64 = result.data[0].b64_json;
-      if (!b64) throw new Error('OpenAI no retorno imagen');
-
-      ensureDir();
-      const filename = `openai-${crypto.randomBytes(8).toString('hex')}.png`;
-      const filePath = path.join(GENERATED_DIR, filename);
-      const buffer = Buffer.from(b64, 'base64');
-      fs.writeFileSync(filePath, buffer);
-
-      return {
-        engine: 'openai',
-        model: config.imageGen.openai.model,
-        filename,
-        file_path: filePath,
-        file_type: 'image/png',
-        size_bytes: buffer.length,
-        generation_time_s: parseFloat(elapsed),
-        prompt,
-        format,
-        format_label: config.imageGen.formats[format]?.label || format
-      };
-    } catch (err) {
-      const is429 = err.status === 429 || err.code === 'rate_limit_exceeded' || (err.message && err.message.includes('Rate limit'));
-      if (is429 && attempt < maxRetries) {
-        // Parse retry-after from error message or default to 15s
-        const retryMatch = err.message?.match(/try again in (\d+\.?\d*)s/i);
-        const waitSec = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) + 2 : 15;
-        logger.warn(`[IMAGE-GEN] Rate limit (429) — esperando ${waitSec}s antes de reintentar (intento ${attempt}/${maxRetries})`);
-        await sleep(waitSec * 1000);
-        continue;
-      }
-      throw err;
-    }
-  }
+  return {
+    engine: 'gemini',
+    model: result.model,
+    filename,
+    file_path: filePath,
+    file_type: result.mimeType,
+    size_bytes: buffer.length,
+    generation_time_s: parseFloat(elapsed),
+    prompt,
+    format,
+    format_label: getFormatLabel(format),
+    attempts: result.attempts
+  };
 }
 
 /**
- * Genera multiples imagenes secuencialmente con OpenAI.
- * Respeta rate limit de 5 imagenes/minuto con pausas entre llamadas.
- * Cada llamada individual tiene retry automático en caso de 429.
- *
- * @param {Array<{prompt: string, scene_label: string}>} prompts - Array de prompts con scene_label
- * @param {string} format - 'feed' o 'stories'
- * @param {string} productImagePath - Path a la imagen del producto
- * @returns {Array} - Resultados por cada prompt
+ * Genera múltiples imágenes secuencialmente. El helper interno maneja
+ * retry per-imagen con backoff, así que acá solo orquestamos secuencial
+ * con un pequeño delay entre calls (respeta rate limits sanamente).
  */
 async function generateBatch(prompts, format, productImagePath) {
   if (!productImagePath || !fs.existsSync(productImagePath)) {
     throw new Error('Se requiere imagen de producto para generar');
   }
 
-  // OpenAI rate limit: 5 images/minute. Sequential processing already spaces calls
-  // naturally (~50s per image). Add a small gap only as safety buffer.
-  // The retry logic in generateImage handles any 429s that slip through.
   const DELAY_BETWEEN_MS = 2000;
 
-  logger.info(`[IMAGE-GEN] Batch: generando ${prompts.length} imagenes secuencialmente (${DELAY_BETWEEN_MS / 1000}s entre cada una)...`);
+  logger.info(`[IMAGE-GEN] Batch Gemini: ${prompts.length} imágenes secuenciales...`);
 
   const output = [];
   for (let i = 0; i < prompts.length; i++) {
@@ -151,11 +123,7 @@ async function generateBatch(prompts, format, productImagePath) {
       output.push({ error: err.message || 'Error desconocido', scene_label: p.scene_label });
     }
 
-    // Wait between calls (skip after last one)
-    if (i < prompts.length - 1) {
-      logger.info(`[IMAGE-GEN] Esperando ${DELAY_BETWEEN_MS / 1000}s antes de la siguiente imagen...`);
-      await sleep(DELAY_BETWEEN_MS);
-    }
+    if (i < prompts.length - 1) await sleep(DELAY_BETWEEN_MS);
   }
 
   const successCount = output.filter(o => !o.error).length;
@@ -165,13 +133,9 @@ async function generateBatch(prompts, format, productImagePath) {
 }
 
 /**
- * Genera imagenes en AMBOS formatos (1:1 feed + 9:16 stories) para cada prompt.
- * 3 prompts × 2 formats = 6 imagenes total.
- * Prefixes format instruction to each prompt before sending to OpenAI.
- *
- * @param {Array<{prompt: string, scene_label: string}>} prompts - Array de prompts (format-agnostic)
- * @param {string} productImagePath - Path a la imagen del producto
- * @returns {Array} - Resultados con format tag (feed/stories) per image
+ * Genera ambos formatos (feed 1:1 + stories 9:16) para cada prompt.
+ * 3 prompts × 2 formats = 6 imágenes. Prefixes format instruction para
+ * guiar mejor al motor aunque ya pasamos el aspectRatio en config.
  */
 async function generateDualFormatBatch(prompts, productImagePath) {
   if (!productImagePath || !fs.existsSync(productImagePath)) {
@@ -181,7 +145,7 @@ async function generateDualFormatBatch(prompts, productImagePath) {
   const DELAY_BETWEEN_MS = 2000;
   const totalImages = prompts.length * 2;
 
-  logger.info(`[IMAGE-GEN] Dual-format batch: ${prompts.length} escenas × 2 formatos = ${totalImages} imagenes...`);
+  logger.info(`[IMAGE-GEN] Dual-format Gemini: ${prompts.length} escenas × 2 formatos = ${totalImages} imágenes...`);
 
   const output = [];
   let imageNum = 0;
@@ -189,7 +153,6 @@ async function generateDualFormatBatch(prompts, productImagePath) {
   for (let i = 0; i < prompts.length; i++) {
     const p = prompts[i];
 
-    // Generate both formats for this scene
     for (const fmt of ['feed', 'stories']) {
       imageNum++;
       const formatPrefix = fmt === 'stories'
@@ -208,16 +171,12 @@ async function generateDualFormatBatch(prompts, productImagePath) {
         output.push({ error: err.message || 'Error desconocido', scene_label: p.scene_label, ad_format: fmt });
       }
 
-      // Wait between calls (skip after last one)
-      if (imageNum < totalImages) {
-        logger.info(`[IMAGE-GEN] Esperando ${DELAY_BETWEEN_MS / 1000}s antes de la siguiente imagen...`);
-        await sleep(DELAY_BETWEEN_MS);
-      }
+      if (imageNum < totalImages) await sleep(DELAY_BETWEEN_MS);
     }
   }
 
   const successCount = output.filter(o => !o.error).length;
-  logger.info(`[IMAGE-GEN] Dual-format batch completo: ${successCount}/${totalImages} exitosas`);
+  logger.info(`[IMAGE-GEN] Dual-format completo: ${successCount}/${totalImages} exitosas`);
 
   return output;
 }
