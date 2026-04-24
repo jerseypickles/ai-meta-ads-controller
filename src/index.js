@@ -715,6 +715,32 @@ async function jobCBOHealthMonitor() {
 }
 
 /**
+ * Job: Ares Brain — Portfolio Manager con Opus 4.7 (2026-04-24).
+ * Cada 6h el brain LLM analiza el portfolio completo, consulta los
+ * detectores procedurales como segunda opinión, y toma decisiones.
+ *
+ * Feature flags:
+ *   ARES_BRAIN_ENABLED=true   → corre (default)
+ *   ARES_BRAIN_DRY_RUN=true   → solo análisis, sin ejecutar (default hasta
+ *                               commits 2+3 que agregan tools write)
+ */
+async function jobAresBrain() {
+  try {
+    const { runAresBrain } = require('./ai/agent/ares-brain');
+    const result = await runAresBrain();
+    if (result.skipped) {
+      logger.info(`[CRON] Ares Brain: skipped (${result.skipped})`);
+    } else if (result.error) {
+      logger.error(`[CRON] Ares Brain error: ${result.error}`);
+    } else {
+      logger.info(`[CRON] Ares Brain: ${result.tool_calls_executed} tools · ${result.tokens_used} tokens · cache ${Math.round((result.cache_hit_ratio || 0)*100)}%`);
+    }
+  } catch (error) {
+    logger.error('[CRON] Error en Ares Brain:', error);
+  }
+}
+
+/**
  * Job: Directive Cleanup — marca active=false las directivas expiradas
  * (expires_at<now y NO persistent). Evita zombies acumulados en DB.
  */
@@ -1270,6 +1296,14 @@ function initCronJobs() {
     name: 'cbo-health-monitor'
   });
   logger.info('  [*] CBO Health Monitor — cada 2h, 24/7');
+
+  // Ares Brain — Portfolio Manager LLM con Opus 4.7, cada 6h (4x/día)
+  // Corre a 1am/7am/1pm/7pm ET. No colisiona con ares-agent (8am/4pm).
+  cron.schedule('0 1,7,13,19 * * *', jobAresBrain, {
+    timezone: TIMEZONE,
+    name: 'ares-brain'
+  });
+  logger.info('  [*] Ares Brain — cada 6h (1am/7am/1pm/7pm ET)');
 
   // AI Ops metrics refresh — cada 15 min, 24/7
   cron.schedule('5,20,35,50 * * * *', jobAIOpsRefresh, {
