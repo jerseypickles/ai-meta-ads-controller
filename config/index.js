@@ -11,6 +11,12 @@ module.exports = {
     pageId: process.env.META_PAGE_ID || '',
     pixelId: process.env.META_PIXEL_ID || '',
     defaultLinkUrl: process.env.META_DEFAULT_LINK_URL || '',
+    // Prometheus Creative Testing Pipeline campaign ID. Si está vacío,
+    // testing-agent.js:getTestingCampaignId() cae a SystemConfig y después
+    // auto-crea la campaña. Declarado acá 2026-04-24 para trazabilidad —
+    // antes se leía directo de process.env sin pasar por config (único env
+    // var high-impact sin declarar).
+    testingCampaignId: process.env.TESTING_CAMPAIGN_ID || '',
     rateLimit: {
       maxCalls: 200,
       perHour: 1,

@@ -32,7 +32,26 @@ const metaAuthRoutes = require('./routes/meta-auth');
 const app = express();
 
 // Middleware
-app.use(cors());
+// CORS restringido — fix security 2026-04-24: antes cors() sin options
+// permitía cualquier origen hacer requests con credentials. El frontend se
+// sirve desde el mismo host via express.static, así que en producción no
+// debería haber cross-origin real. Env var CORS_ALLOWED_ORIGINS (CSV) para
+// casos especiales (ej. staging separado, preview deploys).
+const corsAllowed = (process.env.CORS_ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+app.use(cors({
+  origin: function (origin, callback) {
+    // Same-origin o tools sin origen (curl, healthchecks): permitir
+    if (!origin) return callback(null, true);
+    if (corsAllowed.length === 0) {
+      // Sin whitelist → solo same-origin (rechazar cross-origin)
+      return callback(null, false);
+    }
+    if (corsAllowed.includes(origin)) return callback(null, true);
+    logger.warn(`[CORS] origin rechazado: ${origin}`);
+    return callback(null, false);
+  },
+  credentials: true
+}));
 app.use(express.json());
 
 // Servir frontend estático
@@ -44,13 +63,32 @@ app.use('/uploads', express.static(config.system.uploadsDir));
 // Auth middleware simple (JWT)
 const jwt = require('jsonwebtoken');
 
+// Paths SSE donde query token es NECESARIO — EventSource no puede setear
+// headers. Fix security 2026-04-24: antes aceptábamos ?token= en todo /api
+// → JWT leaked en logs de Nginx/CF/Express. Ahora SOLO se acepta para SSE.
+// Para resto, requerir Authorization header (no queda en access logs).
+const SSE_PATHS = [
+  '/metrics/stream',
+  '/zeus/chat/stream',
+  '/zeus/greeting/stream',
+  '/brain/stream'  // defensivo por si hay más en el futuro
+];
+
+function isSSEPath(pathname) {
+  return SSE_PATHS.some(p => pathname === p || pathname.startsWith(p));
+}
+
 function authMiddleware(req, res, next) {
   // Rutas públicas (req.path es relativo a /api cuando se monta con app.use('/api'))
   if (req.path === '/auth/login') return next();
   if (req.path.startsWith('/auth/meta/callback')) return next();
 
-  // Support token from header or query param (needed for SSE/EventSource which can't set headers)
-  const token = req.headers.authorization?.replace('Bearer ', '') || req.query.token;
+  // Token: siempre preferir header. Solo caer a query para paths SSE
+  // (EventSource no puede setear headers).
+  let token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token && isSSEPath(req.path)) {
+    token = req.query.token;
+  }
   if (!token) {
     return res.status(401).json({ error: 'Token requerido' });
   }

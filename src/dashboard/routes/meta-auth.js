@@ -1,11 +1,38 @@
 const express = require('express');
 const axios = require('axios');
+const crypto = require('crypto');
 const config = require('../../../config');
 const MetaToken = require('../../db/models/MetaToken');
+const SystemConfig = require('../../db/models/SystemConfig');
 const logger = require('../../utils/logger');
 const router = express.Router();
 
 const META_GRAPH_URL = `https://graph.facebook.com/${config.meta.apiVersion}`;
+
+// OAuth state TTL — 10 min razonable para flow interactivo
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Persiste un state en SystemConfig con timestamp para validar en callback.
+ * Fix security 2026-04-24: antes generábamos state con Date.now() pero el
+ * callback no lo validaba — CSRF attack vector clásico.
+ */
+async function issueOAuthState() {
+  const state = crypto.randomBytes(32).toString('hex');
+  await SystemConfig.set(`oauth_state_${state}`, { issued_at: Date.now() }, 'meta_oauth');
+  return state;
+}
+
+async function consumeOAuthState(state) {
+  if (!state || typeof state !== 'string' || state.length < 16) return false;
+  const stored = await SystemConfig.get(`oauth_state_${state}`, null);
+  if (!stored) return false;
+  const age = Date.now() - (stored.issued_at || 0);
+  if (age > OAUTH_STATE_TTL_MS) return false;
+  // One-shot: invalidar tras uso
+  try { await SystemConfig.set(`oauth_state_${state}`, null, 'meta_oauth'); } catch (_) {}
+  return true;
+}
 
 // Permisos necesarios para el Marketing API
 const REQUIRED_SCOPES = [
@@ -54,7 +81,7 @@ router.get('/status', async (req, res) => {
 });
 
 // GET /api/auth/meta/login-url — Genera la URL de login de Facebook OAuth
-router.get('/login-url', (req, res) => {
+router.get('/login-url', async (req, res) => {
   const appId = config.meta.appId;
 
   if (!appId || appId === 'your_app_id') {
@@ -66,12 +93,14 @@ router.get('/login-url', (req, res) => {
   // Redirect URI — el frontend manejará el callback
   const redirectUri = req.query.redirect_uri || `${req.protocol}://${req.get('host')}/api/auth/meta/callback`;
 
+  const state = await issueOAuthState();
+
   const params = new URLSearchParams({
     client_id: appId,
     redirect_uri: redirectUri,
     scope: REQUIRED_SCOPES.join(','),
     response_type: 'code',
-    state: 'meta_oauth_' + Date.now()
+    state
   });
 
   const loginUrl = `https://www.facebook.com/${config.meta.apiVersion}/dialog/oauth?${params.toString()}`;
@@ -85,7 +114,7 @@ router.get('/login-url', (req, res) => {
 
 // GET /api/auth/meta/callback — Callback de OAuth (recibe el code)
 router.get('/callback', async (req, res) => {
-  const { code, error: oauthError, error_description } = req.query;
+  const { code, error: oauthError, error_description, state } = req.query;
 
   if (oauthError) {
     logger.error(`OAuth error: ${oauthError} — ${error_description}`);
@@ -95,6 +124,13 @@ router.get('/callback', async (req, res) => {
 
   if (!code) {
     return res.redirect('/meta-connect?error=No se recibió código de autorización');
+  }
+
+  // Validar state — previene CSRF. Fix security 2026-04-24.
+  const stateOk = await consumeOAuthState(state);
+  if (!stateOk) {
+    logger.warn(`[META-AUTH] state inválido o expirado en callback: ${String(state).substring(0, 20)}`);
+    return res.redirect('/meta-connect?error=Sesión OAuth inválida o expirada — reiniciá el flujo');
   }
 
   try {

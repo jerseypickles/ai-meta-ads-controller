@@ -357,7 +357,12 @@ async function applyFallback(agent, reason) {
       reason: `${agent} briefing failed, fallback ${stale_window_ok ? 'stale yesterday' : 'default steady'}: ${reason}`,
       data: { agent, yesterday_id: yesterday?._id, reason }
     });
-  } catch (_) {}
+  } catch (safetyErr) {
+    // Fix silent failure 2026-04-24: antes `catch(_) {}` tragaba el único
+    // registro de auditoría del fallback. Sin este log, fallbacks silenciosos
+    // quedaban sin trazabilidad en ningún lado.
+    logger.error(`[STANCE-BRIEFING] ${agent} fallback SafetyEvent create falló: ${safetyErr.message} · reason='${reason}' · yesterday_id=${yesterday?._id || 'none'}`);
+  }
 
   if (stale_window_ok) {
     logger.warn(`[STANCE-BRIEFING] ${agent} fallback: extendiendo stance de ayer con stale=true (${yesterday.stance})`);

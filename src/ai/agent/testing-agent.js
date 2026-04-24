@@ -38,8 +38,9 @@ const MIN_READY_POOL = 5;
  * Siguientes: lee de SystemConfig.
  */
 async function getTestingCampaignId() {
-  // 1. Env var
-  if (process.env.TESTING_CAMPAIGN_ID) return process.env.TESTING_CAMPAIGN_ID;
+  // 1. Config (de TESTING_CAMPAIGN_ID env var, declarado en config/index.js)
+  const config = require('../../../config');
+  if (config.meta.testingCampaignId) return config.meta.testingCampaignId;
 
   // 2. SystemConfig
   const stored = await SystemConfig.get('testing_campaign_id', null);
