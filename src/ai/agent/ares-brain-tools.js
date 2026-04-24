@@ -11,7 +11,10 @@
  *   gates del portfolio-manager procedural (cooldown + guard-rail + directive
  *   + capacity). Todas loggean ActionLog con agent_type='ares_brain' para
  *   distinguir de decisiones procedurales.
- * Commit 3 añadirá: create_new_cbo (con safety de Ola 3).
+ * Commit 3 (2026-04-24): create_new_cbo — creación autónoma de CBOs con
+ *   Ola 3 safety completa: cooldown cross-cycle 72h, max 2/week, emit
+ *   SafetyEvent, ping proactivo a Zeus. Sin cap máximo de CBOs totales
+ *   (decisión del creador).
  */
 
 const MetricSnapshot = require('../../db/models/MetricSnapshot');
@@ -28,6 +31,14 @@ const cooldowns = new CooldownManager();
 // Protección contra fuga de contexto o alucinación del modelo.
 const BRAIN_BUDGET_CHANGE_MAX_PCT = 0.50;
 const BRAIN_BUDGET_FLOOR = 30;  // no bajar CBO debajo de $30/d (coherente con portfolio floor $50, pero damos margen a tests)
+
+// Ola 3 — creación autónoma de CBOs
+const CBO_CREATE_COOLDOWN_HOURS = 72;         // Mínimo entre creaciones
+const CBO_CREATE_MAX_PER_WEEK = 2;            // Cap duro semanal
+const CBO_CREATE_BUDGET_MIN = 50;             // $50/d piso
+const CBO_CREATE_BUDGET_MAX = 500;            // $500/d techo inicial (puede escalarse post-creación)
+const CBO_CREATE_BUDGET_DEFAULT = 150;        // $150/d default si el LLM no pide
+const CBO_CREATE_COOLDOWN_KEY = 'ares_brain_last_cbo_creation';  // SystemConfig key
 
 async function logBrainAction({ entity_id, entity_name, entity_type, action, before_value, after_value, reasoning, metadata, success, error }) {
   try {
@@ -133,6 +144,21 @@ const TOOL_DEFINITIONS = [
         reasoning: { type: 'string', description: '2-3 oraciones con evidencia. Ej: "$75 spend 7d, 0 compras, 8d edad, ya salió de learning. Dentro de CBO saturada, consume overhead."' }
       },
       required: ['adset_id', 'reasoning']
+    }
+  },
+  {
+    name: 'create_new_cbo',
+    description: 'Crea una CBO nueva en la cuenta de Meta. Úsala cuando: (a) hay cluster de 3+ winners (ROAS >3x) starved en CBOs saturadas y duplicate_adset_to_cbo no tiene target con headroom, (b) Prometheus graduates merecen campaign propia con budget dedicado, (c) diversificación: >70% del spend total concentrado en 1-2 CBOs. Safety Ola 3: cooldown 72h cross-cycle (no dos creaciones seguidas), max 2/semana total, emit SafetyEvent + ping a Zeus. La CBO se crea ACTIVA pero los adsets seed se duplican PAUSED para review. Reasoning debe ser excepcional — esta es la acción de mayor blast radius.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Nombre de la CBO. Convención: "[Ares-Brain] Descripción - YYYY-MM-DD". Ej: "[Ares-Brain] Cluster Graduates - 2026-04-24"' },
+        daily_budget: { type: 'number', description: `Daily budget en USD. Rango permitido: $${CBO_CREATE_BUDGET_MIN}-$${CBO_CREATE_BUDGET_MAX}. Default $${CBO_CREATE_BUDGET_DEFAULT}.` },
+        objective: { type: 'string', description: 'Default OUTCOME_SALES (casi siempre esto para Jersey Pickles). Válidos: OUTCOME_SALES, OUTCOME_TRAFFIC, OUTCOME_LEADS.' },
+        seed_adset_ids: { type: 'array', items: { type: 'string' }, description: 'IDs de adsets a duplicar a esta nueva CBO como seeds (PAUSED). Mínimo 1, máximo 5. Típicamente graduates de Prometheus o winners starved rescatados.' },
+        reasoning: { type: 'string', description: '3-5 oraciones con evidencia detallada. Esta es la acción con mayor blast radius — justificá por qué una CBO NUEVA vs. duplicate_adset_to_cbo a una existente. Mencioná el cluster específico (nombres + ROAS + share actual).' }
+      },
+      required: ['name', 'daily_budget', 'seed_adset_ids', 'reasoning']
     }
   },
   {
@@ -756,6 +782,286 @@ async function handleDuplicateAdsetToCBO({ source_adset_id, target_campaign_id, 
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CREATE NEW CBO (commit 3 — Ola 3 safety)
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function emitSafetyEvent({ type, severity, description, details, entity_id, entity_name }) {
+  try {
+    const SafetyEvent = require('../../db/models/SafetyEvent');
+    await SafetyEvent.create({
+      event_type: type,
+      severity,
+      description,
+      details: details || {},
+      entity_id: entity_id || null,
+      entity_name: entity_name || null,
+      created_at: new Date()
+    });
+  } catch (err) {
+    logger.error(`[ARES-BRAIN-TOOLS] SafetyEvent emit failed: ${err.message}`);
+  }
+}
+
+async function pingZeusProactive({ content, context_snapshot }) {
+  try {
+    const ZeusChatMessage = require('../../db/models/ZeusChatMessage');
+    const lastMsg = await ZeusChatMessage.findOne({}).sort({ created_at: -1 }).lean();
+    if (!lastMsg?.conversation_id) {
+      logger.warn('[ARES-BRAIN-TOOLS] no conversation found, skip Zeus ping');
+      return { sent: false, reason: 'no_conversation' };
+    }
+    await ZeusChatMessage.create({
+      conversation_id: lastMsg.conversation_id,
+      role: 'assistant',
+      content,
+      proactive: true,
+      context_snapshot: context_snapshot || {}
+    });
+    logger.info(`[ARES-BRAIN-TOOLS] ping proactivo a Zeus (conv=${lastMsg.conversation_id})`);
+    return { sent: true, conversation_id: lastMsg.conversation_id };
+  } catch (err) {
+    logger.error(`[ARES-BRAIN-TOOLS] Zeus ping falló: ${err.message}`);
+    return { sent: false, error: err.message };
+  }
+}
+
+async function handleCreateNewCBO({ name, daily_budget, objective, seed_adset_ids, reasoning }) {
+  // Validaciones de input
+  if (!name || name.length < 10) return { error: 'name obligatorio (min 10 chars, usá convención "[Ares-Brain] ...")' };
+  if (!reasoning || reasoning.length < 60) return { error: 'reasoning obligatorio (min 60 chars — esta acción requiere justificación detallada)' };
+  if (!Array.isArray(seed_adset_ids) || seed_adset_ids.length === 0) {
+    return { error: 'seed_adset_ids requerido (al menos 1 adset existente para duplicar a la CBO)' };
+  }
+  if (seed_adset_ids.length > 5) {
+    return { rejected: true, reason: `max 5 seeds por CBO nueva (pediste ${seed_adset_ids.length})` };
+  }
+  const validObjectives = ['OUTCOME_SALES', 'OUTCOME_TRAFFIC', 'OUTCOME_LEADS'];
+  const resolvedObjective = objective || 'OUTCOME_SALES';
+  if (!validObjectives.includes(resolvedObjective)) {
+    return { error: `objective "${resolvedObjective}" inválido. Válidos: ${validObjectives.join(', ')}` };
+  }
+
+  // Budget clamp
+  const budgetNum = typeof daily_budget === 'number' ? daily_budget : CBO_CREATE_BUDGET_DEFAULT;
+  if (budgetNum < CBO_CREATE_BUDGET_MIN || budgetNum > CBO_CREATE_BUDGET_MAX) {
+    return {
+      rejected: true,
+      reason: `daily_budget $${budgetNum} fuera de rango permitido [$${CBO_CREATE_BUDGET_MIN}-$${CBO_CREATE_BUDGET_MAX}]`
+    };
+  }
+  const resolvedBudget = Math.round(budgetNum);
+
+  // ─── SAFETY OLA 3 ────────────────────────────────────────────────────
+
+  // 1. Cooldown cross-cycle 72h via SystemConfig
+  try {
+    const lastCreation = await SystemConfig.get(CBO_CREATE_COOLDOWN_KEY);
+    if (lastCreation?.at) {
+      const hoursSince = (Date.now() - new Date(lastCreation.at).getTime()) / 3600000;
+      if (hoursSince < CBO_CREATE_COOLDOWN_HOURS) {
+        const remainingH = Math.round(CBO_CREATE_COOLDOWN_HOURS - hoursSince);
+        await emitSafetyEvent({
+          type: 'autonomous_cbo_blocked',
+          severity: 'info',
+          description: `CBO creation blocked por cooldown 72h (${remainingH}h restantes)`,
+          details: { attempted_name: name, reasoning: reasoning.substring(0, 300), blocked_reason: 'cooldown_72h', last_creation_at: lastCreation.at }
+        });
+        return { blocked: true, reason: `cooldown 72h: última creación hace ${Math.round(hoursSince)}h, esperá ${remainingH}h más`, last_creation_at: lastCreation.at };
+      }
+    }
+  } catch (err) {
+    logger.warn(`[ARES-BRAIN-TOOLS] cooldown check falló (fail-open): ${err.message}`);
+  }
+
+  // 2. Max 2/week via ActionLog query
+  try {
+    const weekAgo = new Date(Date.now() - 7 * 86400000);
+    const creationsThisWeek = await ActionLog.countDocuments({
+      agent_type: 'ares_brain',
+      action: 'create_campaign',
+      success: true,
+      executed_at: { $gte: weekAgo }
+    });
+    if (creationsThisWeek >= CBO_CREATE_MAX_PER_WEEK) {
+      await emitSafetyEvent({
+        type: 'autonomous_cbo_blocked',
+        severity: 'warning',
+        description: `CBO creation blocked por cap semanal (${creationsThisWeek}/${CBO_CREATE_MAX_PER_WEEK})`,
+        details: { attempted_name: name, reasoning: reasoning.substring(0, 300), blocked_reason: 'weekly_cap', creations_this_week: creationsThisWeek }
+      });
+      return { blocked: true, reason: `cap semanal alcanzado: ${creationsThisWeek}/${CBO_CREATE_MAX_PER_WEEK} CBOs creadas en últimos 7d`, creations_this_week: creationsThisWeek };
+    }
+  } catch (err) {
+    logger.warn(`[ARES-BRAIN-TOOLS] weekly cap check falló (fail-open): ${err.message}`);
+  }
+
+  // 3. Directive guard
+  try {
+    const { isActionBlockedForAgent } = require('../zeus/directive-guard');
+    const directiveBlock = await isActionBlockedForAgent('ares', 'create_campaign');
+    if (directiveBlock.blocked) {
+      await emitSafetyEvent({
+        type: 'autonomous_cbo_blocked',
+        severity: 'warning',
+        description: `CBO creation blocked por directiva Zeus: ${directiveBlock.reason}`,
+        details: { attempted_name: name, blocked_reason: 'directive' }
+      });
+      return { blocked: true, reason: `directiva Zeus: ${directiveBlock.reason}` };
+    }
+  } catch (err) {
+    logger.warn(`[ARES-BRAIN-TOOLS] directive check falló (fail-open): ${err.message}`);
+  }
+
+  // 4. Validar seed adsets existen y están ACTIVE
+  const seedSnaps = [];
+  for (const sid of seed_adset_ids) {
+    const snap = await MetricSnapshot.findOne({ entity_type: 'adset', entity_id: sid })
+      .sort({ snapshot_at: -1 }).lean();
+    if (!snap) return { error: `seed adset ${sid} no encontrado` };
+    if (snap.status !== 'ACTIVE') return { rejected: true, reason: `seed adset ${sid} en estado ${snap.status}` };
+    seedSnaps.push(snap);
+  }
+
+  // ─── EJECUCIÓN ───────────────────────────────────────────────────────
+
+  let campaignId = null;
+  let createdAt = null;
+  try {
+    const { getMetaClient } = require('../../meta/client');
+    const meta = getMetaClient();
+
+    // Crear CBO ACTIVA (los seeds entran PAUSED, así que no hay spend aún)
+    const result = await meta.createCampaign({
+      name,
+      objective: resolvedObjective,
+      status: 'ACTIVE',
+      daily_budget: resolvedBudget
+    });
+
+    if (!result?.campaign_id) throw new Error('createCampaign sin campaign_id');
+    campaignId = result.campaign_id;
+    createdAt = new Date();
+
+    // Persistir cooldown timestamp antes de intentar seeds — si los seeds fallan,
+    // la CBO existe y ya consumió el cooldown
+    await SystemConfig.set(CBO_CREATE_COOLDOWN_KEY, { at: createdAt.toISOString(), campaign_id: campaignId, name });
+
+    await logBrainAction({
+      entity_type: 'campaign',
+      entity_id: campaignId,
+      entity_name: name,
+      action: 'create_campaign',
+      before_value: null,
+      after_value: resolvedBudget,
+      reasoning,
+      metadata: {
+        source: 'ares_brain_decision',
+        objective: resolvedObjective,
+        daily_budget: resolvedBudget,
+        seed_count: seed_adset_ids.length,
+        ola: 3
+      },
+      success: true
+    });
+    logger.info(`[ARES-BRAIN] ✓✓ CREATED CBO "${name}" id=${campaignId} budget=$${resolvedBudget}/d`);
+  } catch (err) {
+    await logBrainAction({
+      entity_type: 'campaign', entity_id: 'new', entity_name: name,
+      action: 'create_campaign', before_value: null, after_value: resolvedBudget,
+      reasoning, metadata: { source: 'ares_brain_decision', ola: 3 },
+      success: false, error: err.message
+    });
+    logger.error(`[ARES-BRAIN] create_new_cbo falló: ${err.message}`);
+    return { error: `meta API falló al crear CBO: ${err.message}` };
+  }
+
+  // ─── DUPLICAR SEEDS A LA NUEVA CBO (PAUSED) ──────────────────────────
+
+  const seedsResult = [];
+  for (const snap of seedSnaps) {
+    try {
+      const { getMetaClient } = require('../../meta/client');
+      const meta = getMetaClient();
+      const dup = await meta.duplicateAdSet(snap.entity_id, {
+        campaign_id: campaignId,
+        deep_copy: true,
+        name: `[Seed] ${snap.entity_name}`,
+        status: 'PAUSED'
+      });
+      if (dup?.success && dup?.new_adset_id) {
+        await logBrainAction({
+          entity_type: 'adset',
+          entity_id: snap.entity_id,
+          entity_name: snap.entity_name,
+          action: 'duplicate_adset',
+          before_value: snap.campaign_id,
+          after_value: campaignId,
+          reasoning: `Seed de CBO nueva "${name}" (${campaignId})`,
+          metadata: {
+            source: 'ares_brain_decision',
+            parent_action: 'create_campaign',
+            new_adset_id: dup.new_adset_id,
+            new_cbo_id: campaignId,
+            new_adset_status: 'PAUSED'
+          },
+          success: true
+        });
+        seedsResult.push({ source_id: snap.entity_id, source_name: snap.entity_name, new_adset_id: dup.new_adset_id, ok: true });
+      } else {
+        seedsResult.push({ source_id: snap.entity_id, source_name: snap.entity_name, ok: false, error: dup?.error || 'unknown' });
+      }
+    } catch (err) {
+      seedsResult.push({ source_id: snap.entity_id, source_name: snap.entity_name, ok: false, error: err.message });
+      logger.error(`[ARES-BRAIN] seed dup falló ${snap.entity_id}: ${err.message}`);
+    }
+  }
+  const seedsOk = seedsResult.filter(s => s.ok).length;
+
+  // ─── SAFETY EVENT + PROACTIVE PING ──────────────────────────────────
+
+  await emitSafetyEvent({
+    type: 'autonomous_cbo_created',
+    severity: 'warning',
+    description: `Ares Brain creó CBO autónoma "${name}" con budget $${resolvedBudget}/d + ${seedsOk}/${seed_adset_ids.length} seeds`,
+    entity_id: campaignId,
+    entity_name: name,
+    details: {
+      campaign_id: campaignId,
+      daily_budget: resolvedBudget,
+      objective: resolvedObjective,
+      seeds: seedsResult,
+      reasoning: reasoning.substring(0, 500),
+      created_at: createdAt
+    }
+  });
+
+  const zeusMsg = `**Ares Brain creó CBO nueva:** "${name}"\n\n- Campaign ID: \`${campaignId}\`\n- Budget: $${resolvedBudget}/d\n- Seeds duplicados (PAUSED): ${seedsOk}/${seed_adset_ids.length}\n- Objective: ${resolvedObjective}\n\n**Razón:** ${reasoning}\n\n_Los seeds están PAUSED — revisalos y activá los que quieras. La CBO madre está ACTIVA pero sin spend hasta que se activen adsets. Esta es decisión Ola 3 autónoma, sale en \`autonomous_cbo_created\` SafetyEvent._`;
+
+  await pingZeusProactive({
+    content: zeusMsg,
+    context_snapshot: {
+      source: 'ares_brain_create_cbo',
+      campaign_id: campaignId,
+      seeds: seedsResult
+    }
+  });
+
+  return {
+    executed: true,
+    campaign_id: campaignId,
+    campaign_name: name,
+    daily_budget: resolvedBudget,
+    objective: resolvedObjective,
+    seeds_duplicated: seedsOk,
+    seeds_failed: seedsResult.length - seedsOk,
+    seeds_detail: seedsResult,
+    safety_event_emitted: true,
+    zeus_pinged: true,
+    note: 'CBO activa, seeds PAUSED para review'
+  };
+}
+
 async function handleQueryAccountCaps() {
   try {
     const { getCapStatus } = require('../zeus/portfolio-capacity');
@@ -785,6 +1091,8 @@ async function executeTool(name, input) {
       case 'scale_cbo_budget': return await handleScaleCBOBudget(input || {});
       case 'pause_adset': return await handlePauseAdset(input || {});
       case 'duplicate_adset_to_cbo': return await handleDuplicateAdsetToCBO(input || {});
+      // Ola 3 (commit 3) — autonomous CBO creation
+      case 'create_new_cbo': return await handleCreateNewCBO(input || {});
       default: return { error: `tool no reconocida: ${name}` };
     }
   } catch (err) {

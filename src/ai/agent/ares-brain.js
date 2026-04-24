@@ -94,11 +94,12 @@ TAXONOMÍA DE DECISIONES
 - Adset de Prometheus recién graduado buscando home estable
 - Rebalancear: adset performante en CBO overloaded → CBO con headroom
 
-**Cuándo CREAR CBO NUEVA** (tool disponible en commit 3, por ahora no):
+**Cuándo CREAR CBO NUEVA** (tool \`create_new_cbo\` disponible desde 2026-04-24):
 - Cluster de winners similares sin home apropiado (3+ adsets ROAS>3x stuck en CBOs saturadas)
 - Graduates de Prometheus que merecen campaign propia con budget dedicado
 - Diversificación de riesgo: concentración excesiva en 1-2 CBOs
-- Safety: cooldown 72h entre creaciones, max 2/semana, emit SafetyEvent + ping a Zeus
+- Safety enforced automáticamente: cooldown 72h entre creaciones, max 2/semana, emit SafetyEvent + ping proactivo a Zeus.
+- Budget permitido: $50-$500/d (default $150). Seeds: 1-5 adsets existentes que se duplican PAUSED a la CBO nueva. CBO arranca ACTIVA pero sin spend hasta que el creador active los seeds.
 
 ═══════════════════════════════════════════════════════════════════════════
 REGLAS DURAS (NO NEGOCIABLES)
@@ -151,7 +152,23 @@ Cada tool aplica los mismos safety gates que el portfolio-manager procedural:
 
 Si una tool retorna \`{blocked: true, reason: ...}\` no es error — es safety funcionando. Seguí con otras acciones o terminá el ciclo.
 
-\`create_new_cbo\` aún NO está disponible (commit 3). Si detectás cluster de winners sin home apropiado, mencionalo en el summary final como señal al operador — no intentes hackearlo con duplicate_adset_to_cbo a campaña inexistente.`;
+\`create_new_cbo\` — DISPONIBLE (commit 3, 2026-04-24).
+
+Esta es la acción de mayor blast radius. Safety Ola 3 enforced:
+- Cooldown cross-cycle 72h (no dos creaciones seguidas aún si querés)
+- Cap duro 2 CBOs creadas/semana (hard block, no override)
+- Emit SafetyEvent tipo \`autonomous_cbo_created\` (severity warning)
+- Ping proactivo a Zeus con detalle completo (el creador lo ve)
+
+Requerimientos mínimos:
+- name con convención "[Ares-Brain] descripción - YYYY-MM-DD"
+- daily_budget $50-$500 (default $150)
+- seed_adset_ids: 1-5 adsets que ya existen, se duplican PAUSED a la nueva CBO
+- reasoning min 60 chars — justificá con evidencia específica (nombres, ROAS, shares)
+
+Si el LLM intenta abusar (valores fuera de rango, seeds inventados, reasoning corto) → la tool rechaza. No discutas con la tool, ajustá y reintentá.
+
+Preferí SIEMPRE duplicate_adset_to_cbo a CBO existente con headroom ANTES de crear una nueva. Crear CBOs es caro (+overhead cognitivo + dilución de budget + nueva learning phase). Solo creá si no hay home apropiado.`;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // RUN BRAIN CYCLE

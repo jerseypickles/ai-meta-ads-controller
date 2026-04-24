@@ -14,7 +14,9 @@ const safetyEventSchema = new mongoose.Schema({
       'operating_hours_deferred',
       'manual_override',
       'anomaly_detected',
-      'creative_rotation_forced'
+      'creative_rotation_forced',
+      'autonomous_cbo_created',
+      'autonomous_cbo_blocked'
     ],
     required: true,
     index: true
