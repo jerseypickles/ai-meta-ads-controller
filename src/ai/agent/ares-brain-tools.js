@@ -15,6 +15,11 @@
  *   Ola 3 safety completa: cooldown cross-cycle 72h, max 2/week, emit
  *   SafetyEvent, ping proactivo a Zeus. Sin cap máximo de CBOs totales
  *   (decisión del creador).
+ * Commit 4 (2026-04-24): learning loop — query_action_outcomes (lee
+ *   ActionLog impact T+1d/3d/7d) + query_zeus_guidance (directives +
+ *   journal + lessons). Ahora el brain ve qué funcionó y qué no de sus
+ *   ciclos pasados, y lee lo que Zeus le enseñó. Self-calibration cycle
+ *   to cycle.
  */
 
 const MetricSnapshot = require('../../db/models/MetricSnapshot');
@@ -119,6 +124,31 @@ const TOOL_DEFINITIONS = [
     name: 'query_account_caps',
     description: 'Estado actual de los caps del account: max_active_adsets, max_scale_24h, max_duplications_24h, daily spend ceiling, circuit breaker status. Usá esto antes de decisiones que acerquen a caps.',
     input_schema: { type: 'object', properties: {}, required: [] }
+  },
+  // ─── LEARNING LOOP (Commit 4, 2026-04-24) ──────────────────────────────
+  {
+    name: 'query_action_outcomes',
+    description: 'LO MÁS IMPORTANTE para aprendizaje. Retorna tus acciones pasadas (ares_brain + ares_portfolio) de los últimos N días CON sus outcomes medidos: ROAS delta 1d/3d/7d, CPA delta, verdict (positive/negative/neutral/pending). Usalo al INICIO de cada ciclo para ver qué funcionó y qué no. Si hiciste +15% y ROAS quedó flat → el paso fue tímido, next time ir más fuerte. Si pausaste zombie y CBO padre mejoró ROAS → confirma tesis. Si duplicaste y el clone no convirtió → ajustá criterio.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        days_back: { type: 'number', default: 7, description: 'Ventana en días. Default 7. Max 30.' },
+        only_measured: { type: 'boolean', default: true, description: 'Si true, solo retorna acciones con impact ya medido (T+1d+). Si false, incluye pending.' },
+        entity_id: { type: 'string', description: 'Opcional. Si pasás esto, filtra solo outcomes sobre esta CBO/adset.' }
+      },
+      required: []
+    }
+  },
+  {
+    name: 'query_zeus_guidance',
+    description: 'Lee lo que Zeus (CEO) te está diciendo: (a) directivas activas para "ares" o "all", (b) últimos journal entries tipo lesson/mistake/pattern que puedan aplicarte, (c) hypotheses abiertas tocando portfolio. Usá esto cuando vayas a tomar una decisión grande (crear CBO, scale agresivo, kill batch) — chequeá si Zeus ya te dio contexto sobre esto. Hoy ya respetás directivas como bloqueos, esta tool te las muestra como ENSEÑANZA ("por qué existen"), no solo como reglas.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        days_back: { type: 'number', default: 14, description: 'Cuántos días atrás leer journal. Default 14.' }
+      },
+      required: []
+    }
   },
   // ─── WRITE TOOLS (Commit 2, 2026-04-24) ────────────────────────────────
   {
@@ -475,6 +505,234 @@ async function handleGetPortfolioRecommendations() {
   return {
     total: candidates.length,
     candidates
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LEARNING LOOP HANDLERS (commit 4 — 2026-04-24)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Computa el delta porcentual real entre dos valores numéricos de roas/cpa.
+ * Retorna número redondeado 2 decimales o null si no computable.
+ */
+function deltaPct(before, after) {
+  if (typeof before !== 'number' || typeof after !== 'number') return null;
+  if (before === 0) return null;
+  return +(((after - before) / before) * 100).toFixed(2);
+}
+
+/**
+ * Interpreta el outcome de una acción en lenguaje que el LLM entiende.
+ * Esto es la capa que transforma números en aprendizaje accionable.
+ */
+function interpretOutcome(action, before, after1d, after3d, after7d) {
+  // Deltas ROAS y spend
+  const roasDelta1d = deltaPct(before.roas_7d, after1d?.roas_7d);
+  const roasDelta3d = deltaPct(before.roas_7d, after3d?.roas_7d);
+  const roasDelta7d = deltaPct(before.roas_7d, after7d?.roas_7d);
+  const spendDelta1d = deltaPct(before.spend_today, after1d?.spend_today);
+  const spendDelta3d = deltaPct(before.spend_today, after3d?.spend_today);
+
+  // Verdict heurístico (el explicit follow_up_verdict también viene del documento)
+  let heuristic_verdict = 'insufficient_data';
+  const main_delta = roasDelta7d ?? roasDelta3d ?? roasDelta1d;
+  if (main_delta !== null) {
+    if (main_delta > 5) heuristic_verdict = 'improved';
+    else if (main_delta < -5) heuristic_verdict = 'worsened';
+    else heuristic_verdict = 'flat';
+  }
+
+  // Lección derivada — qué aprender de este outcome
+  let lesson = null;
+  if (action === 'scale_up' || action === 'scale_down') {
+    if (heuristic_verdict === 'flat' && Math.abs(spendDelta3d || 0) > 5) {
+      lesson = `Scale tuvo efecto en spend (${spendDelta3d}%) pero ROAS quedó flat — step fue tímido o CBO saturada. Next time: considerar step más agresivo O evaluar alternativa (create_cbo, mass_pause).`;
+    } else if (heuristic_verdict === 'worsened') {
+      lesson = `Scale empeoró ROAS (${main_delta}%). Si fue scale_up, puede ser que aumentamos budget en CBO sin winner claro. Si fue scale_down, puede que cortamos capital a CBO que sí estaba funcionando.`;
+    } else if (heuristic_verdict === 'improved') {
+      lesson = `Scale funcionó — ROAS mejoró ${main_delta}%. Patrón válido para CBOs similares.`;
+    }
+  } else if (action === 'pause' || action === 'pause_adset') {
+    if (after3d?.roas_7d && before.roas_7d) {
+      const parentImproved = heuristic_verdict === 'improved';
+      lesson = parentImproved
+        ? `Pause liberó capital y ROAS padre mejoró ${main_delta}%. Confirma tesis del zombie.`
+        : `Pause no movió ROAS — quizás el adset no era el problema o la CBO padre tiene otros issues.`;
+    }
+  } else if (action === 'duplicate_adset') {
+    lesson = 'Para duplicate outcomes, chequeá el adset clon en query_adset_detail — el impact measurement del source no refleja performance del clone.';
+  }
+
+  return {
+    roas_delta_1d_pct: roasDelta1d,
+    roas_delta_3d_pct: roasDelta3d,
+    roas_delta_7d_pct: roasDelta7d,
+    spend_delta_1d_pct: spendDelta1d,
+    spend_delta_3d_pct: spendDelta3d,
+    heuristic_verdict,
+    lesson
+  };
+}
+
+async function handleQueryActionOutcomes({ days_back = 7, only_measured = true, entity_id = null }) {
+  const clampedDays = Math.min(Math.max(days_back, 1), 30);
+  const since = new Date(Date.now() - clampedDays * 86400000);
+
+  const query = {
+    agent_type: { $in: ['ares_brain', 'ares_portfolio'] },
+    success: true,
+    executed_at: { $gte: since }
+  };
+  if (only_measured) {
+    query.$or = [
+      { impact_1d_measured: true },
+      { impact_measured: true },
+      { impact_7d_measured: true }
+    ];
+  }
+  if (entity_id) query.entity_id = entity_id;
+
+  const actions = await ActionLog.find(query)
+    .sort({ executed_at: -1 })
+    .limit(30)
+    .lean();
+
+  const outcomes = actions.map(a => {
+    const before = a.metrics_at_execution || {};
+    const interpretation = interpretOutcome(a.action, before, a.metrics_after_1d, a.metrics_after_3d, a.metrics_after_7d);
+    return {
+      action_id: a._id,
+      executed_at: a.executed_at,
+      agent: a.agent_type,
+      action: a.action,
+      entity_type: a.entity_type,
+      entity_id: a.entity_id,
+      entity_name: a.entity_name,
+      before_value: a.before_value,
+      after_value: a.after_value,
+      reasoning: (a.reasoning || '').substring(0, 300),
+      detector: a.metadata?.detector || (a.metadata?.source === 'ares_brain_decision' ? 'brain_llm' : null),
+      measured: {
+        impact_1d: a.impact_1d_measured,
+        impact_3d: a.impact_measured,
+        impact_7d: a.impact_7d_measured
+      },
+      // Explicit follow_up_verdict del documento (si está set) + heurístico nuestro
+      follow_up_verdict: a.follow_up_verdict,
+      follow_up_deltas: a.follow_up_deltas,
+      outcome: interpretation
+    };
+  });
+
+  // Agregados para señales rápidas
+  const aggregates = {
+    total: outcomes.length,
+    by_verdict: outcomes.reduce((acc, o) => {
+      const v = o.outcome.heuristic_verdict;
+      acc[v] = (acc[v] || 0) + 1;
+      return acc;
+    }, {}),
+    by_action: outcomes.reduce((acc, o) => {
+      acc[o.action] = (acc[o.action] || 0) + 1;
+      return acc;
+    }, {})
+  };
+
+  return {
+    days_back: clampedDays,
+    only_measured,
+    filtered_by_entity: entity_id || null,
+    aggregates,
+    outcomes
+  };
+}
+
+async function handleQueryZeusGuidance({ days_back = 14 }) {
+  const ZeusDirective = require('../../db/models/ZeusDirective');
+  const ZeusJournalEntry = require('../../db/models/ZeusJournalEntry');
+  const ZeusHypothesis = require('../../db/models/ZeusHypothesis');
+
+  const clampedDays = Math.min(Math.max(days_back, 1), 60);
+  const since = new Date(Date.now() - clampedDays * 86400000);
+
+  const [directives, journalEntries, hypotheses] = await Promise.all([
+    // Directivas activas para ares o all
+    ZeusDirective.find({
+      target_agent: { $in: ['ares', 'all'] },
+      active: true,
+      $or: [
+        { expires_at: null },
+        { expires_at: { $gt: new Date() } }
+      ]
+    }).sort({ created_at: -1 }).limit(20).lean().catch(() => []),
+
+    // Journal entries recientes que puedan aplicar
+    ZeusJournalEntry.find({
+      entry_type: { $in: ['lesson', 'mistake', 'pattern', 'weekly_reflection', 'observation'] },
+      created_at: { $gte: since }
+    }).sort({ created_at: -1 }).limit(15).lean().catch(() => []),
+
+    // Hipótesis relacionadas a portfolio (si el modelo existe)
+    ZeusHypothesis.find({
+      status: { $in: ['open', 'testing', 'monitoring'] }
+    }).sort({ created_at: -1 }).limit(10).lean().catch(() => [])
+  ]);
+
+  // Filtrar journal entries a los que tengan relevancia para ares/portfolio
+  const arePortfolioKeywords = /ares|portfolio|cbo|budget|scale|starvation|saturation|winner|graduate|duplicate/i;
+  const relevantJournal = journalEntries.filter(e => {
+    const text = `${e.title || ''} ${e.content || ''} ${(e.tags || []).join(' ')}`.toLowerCase();
+    return arePortfolioKeywords.test(text);
+  });
+
+  const relevantHypotheses = hypotheses.filter(h => {
+    const text = `${h.title || ''} ${h.hypothesis || ''} ${h.target_pattern || ''}`.toLowerCase();
+    return arePortfolioKeywords.test(text);
+  });
+
+  return {
+    directives: {
+      total: directives.length,
+      items: directives.map(d => ({
+        id: d._id,
+        target: d.target_agent,
+        type: d.directive_type,
+        text: d.directive,
+        category: d.category,
+        source: d.source,
+        confidence: d.confidence,
+        based_on_samples: d.based_on_samples,
+        persistent: d.persistent,
+        created_at: d.created_at,
+        expires_at: d.expires_at,
+        executed: d.executed
+      }))
+    },
+    lessons: {
+      total: relevantJournal.length,
+      items: relevantJournal.map(e => ({
+        id: e._id,
+        type: e.entry_type,
+        title: e.title,
+        content: (e.content || '').substring(0, 500),
+        importance: e.importance,
+        tags: e.tags,
+        created_at: e.created_at
+      }))
+    },
+    hypotheses: {
+      total: relevantHypotheses.length,
+      items: relevantHypotheses.map(h => ({
+        id: h._id,
+        title: h.title,
+        hypothesis: (h.hypothesis || '').substring(0, 400),
+        status: h.status,
+        target_pattern: h.target_pattern,
+        predicted_impact: h.predicted_impact,
+        created_at: h.created_at
+      }))
+    }
   };
 }
 
@@ -1087,6 +1345,9 @@ async function executeTool(name, input) {
       case 'query_recent_actions': return await handleQueryRecentActions(input || {});
       case 'get_portfolio_recommendations': return await handleGetPortfolioRecommendations();
       case 'query_account_caps': return await handleQueryAccountCaps();
+      // Learning loop (commit 4)
+      case 'query_action_outcomes': return await handleQueryActionOutcomes(input || {});
+      case 'query_zeus_guidance': return await handleQueryZeusGuidance(input || {});
       // Action tools (commit 2)
       case 'scale_cbo_budget': return await handleScaleCBOBudget(input || {});
       case 'pause_adset': return await handlePauseAdset(input || {});
