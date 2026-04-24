@@ -43,7 +43,7 @@ const { isCBO } = require('./cbo-health-monitor');
 const { CooldownManager } = require('../../safety/cooldown-manager');
 const cooldowns = new CooldownManager();
 
-// Thresholds configurables — ajustados a la data real observada 2026-04-23.
+// Thresholds configurables — ajustados a la data real observada 2026-04-23/24.
 const STARVED_WINNER_SHARE_MAX = 0.03;   // <3% del spend de su CBO
 const STARVED_WINNER_ROAS_MIN = 2.0;      // ROAS mínimo para considerar "winner"
 const STARVED_WINNER_PURCHASES_MIN = 1;   // al menos 1 compra histórica
@@ -52,17 +52,54 @@ const STARVED_RESCUE_BUDGET = 75;         // budget inicial del adset duplicado 
 const UNDERPERFORMER_SPEND_MIN = 50;      // primera semana conservador (normal $30)
 const UNDERPERFORMER_AGE_DAYS_MIN = 5;    // ≥5 días de edad
 
-const CBO_SATURATION_CONC_MIN = 0.70;     // top adset >70% del spend 3d
+// Saturation single-favorite (legacy detector)
+const CBO_SATURATION_CONC_MIN = 0.70;     // top 1 adset >70% del spend 3d
 const CBO_SATURATION_ROAS_MIN = 2.5;      // favorito ROAS mínimo
 const CBO_SATURATION_SCALE_PCT = 0.15;    // +15% budget CBO
+// Fix 2026-04-24: antes cualquier favorite_declining bloqueaba el scale_up.
+// Meta tiene drift natural turno-a-turno (ej. 3.51x→3.27x = 7% drop = OK).
+// Ahora solo bloquea si ROAS 3d cae debajo de CBO_SATURATION_DECLINING_FLOOR
+// (caída real, no drift normal).
+const CBO_SATURATION_DECLINING_FLOOR = 2.0;
 
+// Cluster saturation (nuevo 2026-04-24) — Meta típicamente elige 2-3 ganadores
+// y deja el resto muerto. Si top-2 combinado ≥85% o top-3 ≥90% sostenido,
+// hay saturation por cluster. Acción: scale_up porque Meta convergió en core
+// productivo y el spend adicional va al cluster automáticamente.
+const CLUSTER_TOP2_SHARE_MIN = 0.85;
+const CLUSTER_TOP3_SHARE_MIN = 0.90;
+const CLUSTER_ROAS_MIN = 2.5;
+const CLUSTER_SCALE_PCT = 0.15;
+
+// Underperforming CBO (nuevo 2026-04-24) — CBO gasta significativo sin ROAS.
+// Trigger: ROAS 3d bajo AND ROAS 7d también bajo (no flash drop) AND spend
+// significativo (>50% del daily budget diario efectivo). Acción: scale_down
+// para proteger capital.
+const CBO_UNDERPERFORMING_ROAS_3D_MAX = 1.5;
+const CBO_UNDERPERFORMING_ROAS_7D_MAX = 2.0;
+const CBO_UNDERPERFORMING_SPEND_RATIO_MIN = 0.5;  // spend_3d/(budget*3) >= 50%
+const CBO_UNDERPERFORMING_SCALE_DOWN_PCT = 0.15;  // bajar 15%
+const CBO_UNDERPERFORMING_BUDGET_FLOOR = 50;      // no bajar debajo de $50/d
+
+// Mass zombie kill (nuevo 2026-04-24) — adsets muertos de hambre por
+// saturation bimodal. Batch pause para liberar overhead de la CBO.
+// Mass zombie kill — 2026-04-24 relajado: en prod vimos que MetricSnapshot
+// no popula created_time confiablemente (23/23 adsets con age_days=null en
+// Duplicados Ganadores). Meta también marca LEARNING incorrectamente en
+// adsets starved (19/23 en LEARNING aunque llevan meses). Dependemos solo
+// de spend_cumul como señal "ya tuvo chance".
+const ZOMBIE_SHARE_MAX = 0.01;            // <1% del spend 3d
+const ZOMBIE_SPEND_CUMUL_MIN = 30;        // ≥$30 gastados en 7d (subido de $20 porque removimos age gate)
+const ZOMBIE_MAX_PAUSES_PER_CBO = 10;     // cap pauses por CBO por ciclo
+
+// CBO starvation (Fase 1 original) — pulse bajo + muchos adsets
 const CBO_STARVATION_PULSE_MAX = 20;      // budget/adset <$20
 const CBO_STARVATION_ADSETS_MIN = 8;      // ≥8 adsets activos
 const CBO_STARVATION_TARGET_PULSE = 25;   // pulse objetivo tras scale
 const CBO_STARVATION_WEEK1_CAP = 100;     // primera semana: +$100 max por ciclo
 
 // Caps operativos generales
-const MAX_ACTIONS_PER_CYCLE = 8;           // total acciones ejecutadas por corrida
+const MAX_ACTIONS_PER_CYCLE = 15;          // subido de 8 → 15 (más detectores activos)
 const DEDUP_WINDOW_HOURS = 24;             // no repetir misma action+entity <24h
 
 // CBO 3 ID — hardcoded a la CBO de rescate. Se infiere del snapshot si no
@@ -345,7 +382,10 @@ async function executeKill(cboSnapshot, adsets) {
 async function executeSaturatedWinner(cboSnapshot, adsets) {
   if (cboSnapshot.concentration_index_3d < CBO_SATURATION_CONC_MIN) return [];
   if (cboSnapshot.favorite_roas_7d < CBO_SATURATION_ROAS_MIN) return [];
-  if (cboSnapshot.favorite_declining) return [];
+  // Fix 2026-04-24: relajamos favorite_declining — solo bloquea si ROAS 3d
+  // cae debajo del floor (caída real). Drift normal turno-a-turno (ej.
+  // 3.51x→3.27x = 7% drop) no bloquea scale_up.
+  if (cboSnapshot.favorite_declining && cboSnapshot.favorite_roas_3d < CBO_SATURATION_DECLINING_FLOOR) return [];
   if (await alreadyActedOn(cboSnapshot.campaign_id, 'scale_up')) return [];
 
   const currentBudget = cboSnapshot.daily_budget;
@@ -467,7 +507,232 @@ async function executeCBOStarvation(cboSnapshot) {
 }
 
 /**
- * Ejecuta los 4 detectores sobre UNA CBO. Cada uno corre autónomo.
+ * Detector 5 → EJECUTOR: cluster_saturation
+ * Meta eligió 2-3 ganadores (concentración distribuida). Scale_up al
+ * cluster sano. 2026-04-24: complementa cbo_saturated_winner (que solo
+ * mira top-1). Este detector captura saturation bimodal/trimodal.
+ */
+async function executeClusterSaturation(cboSnapshot, adsets) {
+  // adsets ya vienen ordenados por spend_share_7d en getAdsetsWithMetrics
+  // pero queremos share_3d para saturation actual. Reordenamos.
+  const sorted = [...adsets].sort((a, b) => (b.spend_share_3d || 0) - (a.spend_share_3d || 0));
+  if (sorted.length < 2) return [];
+
+  const top2Share = (sorted[0]?.spend_share_3d || 0) + (sorted[1]?.spend_share_3d || 0);
+  const top3Share = top2Share + (sorted[2]?.spend_share_3d || 0);
+
+  const isCluster2 = top2Share >= CLUSTER_TOP2_SHARE_MIN;
+  const isCluster3 = top3Share >= CLUSTER_TOP3_SHARE_MIN && sorted.length >= 3;
+  if (!isCluster2 && !isCluster3) return [];
+
+  // Validar que el cluster sea sano: ROAS promedio ponderado por spend >= min
+  const clusterSize = isCluster2 ? 2 : 3;
+  const clusterAdsets = sorted.slice(0, clusterSize);
+  const clusterSpend = clusterAdsets.reduce((s, a) => s + (a.spend_7d || 0), 0);
+  const clusterRevenue = clusterAdsets.reduce((s, a) => s + (a.spend_7d * a.roas_7d || 0), 0);
+  const clusterRoas = clusterSpend > 0 ? clusterRevenue / clusterSpend : 0;
+  if (clusterRoas < CLUSTER_ROAS_MIN) return [];
+
+  // Skip si cbo_saturated_winner (single favorite) ya tocó esta CBO en mismo ciclo
+  if (await alreadyActedOn(cboSnapshot.campaign_id, 'scale_up')) return [];
+
+  const currentBudget = cboSnapshot.daily_budget;
+  const newBudget = Math.round(currentBudget * (1 + CLUSTER_SCALE_PCT));
+  const gate = await validateSafetyGates({
+    entity_id: cboSnapshot.campaign_id,
+    action_type: 'scale_up',
+    before_value: currentBudget,
+    after_value: newBudget
+  });
+  if (!gate.allowed) {
+    logger.info(`[ARES-PORTFOLIO] SKIP cluster scale ${cboSnapshot.campaign_name}: ${gate.reason}`);
+    return [];
+  }
+
+  const reasoning = `Cluster saturation: top-${clusterSize} concentra ${Math.round((isCluster2 ? top2Share : top3Share) * 100)}% spend 3d, ROAS cluster ${clusterRoas.toFixed(2)}x sano. Meta convergió en core productivo. Scale_up +15% va directo al cluster.`;
+
+  try {
+    const { getMetaClient } = require('../../meta/client');
+    const meta = getMetaClient();
+    await meta.updateBudget(cboSnapshot.campaign_id, newBudget);
+
+    await cooldowns.setCooldown(cboSnapshot.campaign_id, 'campaign', 'scale_up', 'ares_portfolio');
+    await logAction({
+      entity_type: 'campaign',
+      entity_id: cboSnapshot.campaign_id,
+      entity_name: cboSnapshot.campaign_name,
+      action: 'scale_up',
+      before_value: currentBudget,
+      after_value: newBudget,
+      reasoning,
+      metadata: {
+        detector: 'cluster_saturation',
+        cluster_size: clusterSize,
+        cluster_share: +(isCluster2 ? top2Share : top3Share).toFixed(3),
+        cluster_roas: +clusterRoas.toFixed(2),
+        top_adsets: clusterAdsets.map(a => ({ name: a.name, share: +(a.spend_share_3d || 0).toFixed(3), roas: +(a.roas_7d || 0).toFixed(2) }))
+      },
+      success: true
+    });
+    logger.info(`[ARES-PORTFOLIO] ✓ scaled CBO "${cboSnapshot.campaign_name}" $${currentBudget}→$${newBudget} (cluster-${clusterSize} ${Math.round((isCluster2 ? top2Share : top3Share)*100)}%)`);
+    return [{ kind: 'cluster_saturation', cbo: cboSnapshot.campaign_name, before: currentBudget, after: newBudget, cluster_size: clusterSize }];
+  } catch (err) {
+    await logAction({
+      entity_type: 'campaign', entity_id: cboSnapshot.campaign_id, entity_name: cboSnapshot.campaign_name,
+      action: 'scale_up', reasoning, success: false, error: err.message,
+      metadata: { detector: 'cluster_saturation' }
+    });
+    logger.error(`[ARES-PORTFOLIO] cluster scale falló: ${err.message}`);
+    return [];
+  }
+}
+
+/**
+ * Detector 6 → EJECUTOR: cbo_underperforming
+ * CBO gastando significativo con ROAS malo sostenido → scale_down para
+ * proteger capital. 2026-04-24 nuevo.
+ */
+async function executeCBOUnderperforming(cboSnapshot, adsets) {
+  if (cboSnapshot.cbo_roas_3d >= CBO_UNDERPERFORMING_ROAS_3D_MAX) return [];
+  if (cboSnapshot.cbo_roas_7d >= CBO_UNDERPERFORMING_ROAS_7D_MAX) return [];
+
+  const expectedSpend3d = cboSnapshot.daily_budget * 3;
+  const spendRatio = expectedSpend3d > 0 ? cboSnapshot.cbo_spend_3d / expectedSpend3d : 0;
+  if (spendRatio < CBO_UNDERPERFORMING_SPEND_RATIO_MIN) return [];
+
+  if (await alreadyActedOn(cboSnapshot.campaign_id, 'scale_down')) return [];
+
+  const currentBudget = cboSnapshot.daily_budget;
+  const rawNewBudget = Math.round(currentBudget * (1 - CBO_UNDERPERFORMING_SCALE_DOWN_PCT));
+  const newBudget = Math.max(rawNewBudget, CBO_UNDERPERFORMING_BUDGET_FLOOR);
+
+  if (newBudget >= currentBudget) return []; // floor ya alcanzado
+
+  const gate = await validateSafetyGates({
+    entity_id: cboSnapshot.campaign_id,
+    action_type: 'scale_down',
+    before_value: currentBudget,
+    after_value: newBudget
+  });
+  if (!gate.allowed) {
+    logger.info(`[ARES-PORTFOLIO] SKIP underperforming scale_down ${cboSnapshot.campaign_name}: ${gate.reason}`);
+    return [];
+  }
+
+  const reasoning = `CBO underperforming: ROAS 3d ${cboSnapshot.cbo_roas_3d.toFixed(2)}x < ${CBO_UNDERPERFORMING_ROAS_3D_MAX} · ROAS 7d ${cboSnapshot.cbo_roas_7d.toFixed(2)}x < ${CBO_UNDERPERFORMING_ROAS_7D_MAX} · spend ratio ${(spendRatio*100).toFixed(0)}% del budget asignado. Scale_down -15% para proteger capital.`;
+
+  try {
+    const { getMetaClient } = require('../../meta/client');
+    const meta = getMetaClient();
+    await meta.updateBudget(cboSnapshot.campaign_id, newBudget);
+
+    await cooldowns.setCooldown(cboSnapshot.campaign_id, 'campaign', 'scale_down', 'ares_portfolio');
+    await logAction({
+      entity_type: 'campaign',
+      entity_id: cboSnapshot.campaign_id,
+      entity_name: cboSnapshot.campaign_name,
+      action: 'scale_down',
+      before_value: currentBudget,
+      after_value: newBudget,
+      reasoning,
+      metadata: {
+        detector: 'cbo_underperforming',
+        roas_3d: +cboSnapshot.cbo_roas_3d.toFixed(2),
+        roas_7d: +cboSnapshot.cbo_roas_7d.toFixed(2),
+        spend_ratio_3d: +spendRatio.toFixed(2)
+      },
+      success: true
+    });
+    logger.info(`[ARES-PORTFOLIO] ↓ scaled CBO "${cboSnapshot.campaign_name}" $${currentBudget}→$${newBudget} (underperforming)`);
+    return [{ kind: 'cbo_underperforming', cbo: cboSnapshot.campaign_name, before: currentBudget, after: newBudget }];
+  } catch (err) {
+    await logAction({
+      entity_type: 'campaign', entity_id: cboSnapshot.campaign_id, entity_name: cboSnapshot.campaign_name,
+      action: 'scale_down', reasoning, success: false, error: err.message,
+      metadata: { detector: 'cbo_underperforming' }
+    });
+    logger.error(`[ARES-PORTFOLIO] underperforming scale_down falló: ${err.message}`);
+    return [];
+  }
+}
+
+/**
+ * Detector 7 → EJECUTOR: mass_zombie_kill
+ * En CBOs saturadas (cluster or single-favorite), pausar en batch adsets
+ * con <1% share + 0 conv + edad >7d + spend_cumul >$20 (ya probaron, no
+ * fresh). Libera overhead y budget re-asigna automáticamente al cluster.
+ */
+async function executeMassZombieKill(cboSnapshot, adsets) {
+  // Solo disparar si la CBO está saturada (single o cluster)
+  const sorted = [...adsets].sort((a, b) => (b.spend_share_3d || 0) - (a.spend_share_3d || 0));
+  const top1 = sorted[0]?.spend_share_3d || 0;
+  const top2 = top1 + (sorted[1]?.spend_share_3d || 0);
+  const top3 = top2 + (sorted[2]?.spend_share_3d || 0);
+  const isSaturated = top1 >= CBO_SATURATION_CONC_MIN || top2 >= CLUSTER_TOP2_SHARE_MIN || top3 >= CLUSTER_TOP3_SHARE_MIN;
+  if (!isSaturated) return [];
+
+  // Identificar zombies. Nota 2026-04-24: removidos los filtros de age_days
+  // y learning_stage por poco confiables en prod. Usamos solo spend_cumul
+  // ≥$30 como "ya tuvo chance real". Es más estricto que antes con $20
+  // para compensar la pérdida de protecciones.
+  const zombies = adsets.filter(a => {
+    if (a.purchases_7d > 0) return false;
+    if ((a.spend_share_3d || 0) >= ZOMBIE_SHARE_MAX) return false;
+    if ((a.spend_7d || 0) < ZOMBIE_SPEND_CUMUL_MIN) return false;
+    return true;
+  }).slice(0, ZOMBIE_MAX_PAUSES_PER_CBO);
+
+  if (zombies.length === 0) return [];
+
+  const executed = [];
+  for (const z of zombies) {
+    if (await alreadyActedOn(z.id, 'pause')) continue;
+
+    const gate = await validateSafetyGates({ entity_id: z.id, action_type: 'pause' });
+    if (!gate.allowed) {
+      logger.info(`[ARES-PORTFOLIO] SKIP zombie pause ${z.name}: ${gate.reason}`);
+      continue;
+    }
+
+    const reasoning = `Zombie en CBO saturada: share 3d ${((z.spend_share_3d || 0)*100).toFixed(1)}%, 0 compras 7d, spend 7d $${Math.round(z.spend_7d || 0)}. Meta ya eligió cluster ganador; este adset consume overhead sin retornar. Pause libera budget al cluster.`;
+
+    try {
+      const { getMetaClient } = require('../../meta/client');
+      const meta = getMetaClient();
+      await meta.updateStatus(z.id, 'PAUSED');
+
+      await cooldowns.setCooldown(z.id, 'adset', 'pause', 'ares_portfolio');
+      await logAction({
+        entity_type: 'adset', entity_id: z.id, entity_name: z.name,
+        action: 'pause',
+        before_value: 'ACTIVE', after_value: 'PAUSED',
+        reasoning,
+        metadata: {
+          detector: 'mass_zombie_kill',
+          parent_cbo: cboSnapshot.campaign_name,
+          spend_share_3d: +(z.spend_share_3d || 0).toFixed(4),
+          spend_cumul_7d: Math.round(z.spend_7d || 0)
+        },
+        success: true
+      });
+      executed.push({ kind: 'mass_zombie_kill', adset: z.name, cbo: cboSnapshot.campaign_name });
+      logger.info(`[ARES-PORTFOLIO] ✓ zombie paused "${z.name}" (share ${((z.spend_share_3d || 0)*100).toFixed(1)}% · 0 conv · $${Math.round(z.spend_7d)} gastados)`);
+    } catch (err) {
+      await logAction({
+        entity_type: 'adset', entity_id: z.id, entity_name: z.name,
+        action: 'pause', reasoning, success: false, error: err.message,
+        metadata: { detector: 'mass_zombie_kill' }
+      });
+      logger.error(`[ARES-PORTFOLIO] zombie pause falló para ${z.name}: ${err.message}`);
+    }
+  }
+
+  return executed;
+}
+
+/**
+ * Ejecuta los 7 detectores sobre UNA CBO (4 originales + 3 nuevos de Ola 1).
+ * Cada uno corre autónomo con su propio gate + cooldown.
  * Retorna array de acciones ejecutadas exitosamente.
  */
 async function executePortfolioActionsForCBO(cboSnapshot, rescueCboId, remainingBudget) {
@@ -477,21 +742,26 @@ async function executePortfolioActionsForCBO(cboSnapshot, rescueCboId, remaining
   if (adsets.length === 0) return { executed: [], skipped: 'no_adsets' };
 
   const executed = [];
+  // Orden importa: primero las acciones bounded más específicas/seguras
+  // (rescue individual, kill individual), después las batch (zombie kill),
+  // después scale actions CBO-level. Así si se llena el cap, al menos
+  // tocamos las acciones de menor riesgo primero.
+  const runners = [
+    () => executeStarvedRescue(cboSnapshot, adsets, rescueCboId),
+    () => executeKill(cboSnapshot, adsets),
+    () => executeMassZombieKill(cboSnapshot, adsets),         // Ola 1.3
+    () => executeClusterSaturation(cboSnapshot, adsets),      // Ola 1.2 — más específico que saturated_winner, va primero
+    () => executeSaturatedWinner(cboSnapshot, adsets),        // single-favorite legacy fallback
+    () => executeCBOStarvation(cboSnapshot),
+    () => executeCBOUnderperforming(cboSnapshot, adsets)      // Ola 1.1
+  ];
+
   try {
-    const r1 = await executeStarvedRescue(cboSnapshot, adsets, rescueCboId);
-    executed.push(...r1);
-    if (executed.length >= remainingBudget) return { executed };
-
-    const r2 = await executeKill(cboSnapshot, adsets);
-    executed.push(...r2);
-    if (executed.length >= remainingBudget) return { executed };
-
-    const r3 = await executeSaturatedWinner(cboSnapshot, adsets);
-    executed.push(...r3);
-    if (executed.length >= remainingBudget) return { executed };
-
-    const r4 = await executeCBOStarvation(cboSnapshot);
-    executed.push(...r4);
+    for (const runner of runners) {
+      if (executed.length >= remainingBudget) break;
+      const result = await runner();
+      executed.push(...result);
+    }
   } catch (err) {
     logger.error(`[ARES-PORTFOLIO] ejecutor falló para ${cboSnapshot.campaign_id}: ${err.message}`);
   }
@@ -606,7 +876,10 @@ module.exports = {
     executeStarvedRescue,
     executeKill,
     executeSaturatedWinner,
-    executeCBOStarvation
+    executeCBOStarvation,
+    executeClusterSaturation,     // Ola 1.2
+    executeCBOUnderperforming,    // Ola 1.1
+    executeMassZombieKill         // Ola 1.3
   },
   _helpers: {
     validateSafetyGates,
