@@ -79,4 +79,11 @@ metricSnapshotSchema.index({ campaign_id: 1, entity_type: 1, snapshot_at: -1 });
 metricSnapshotSchema.index({ entity_type: 1, parent_id: 1, snapshot_at: -1 });
 metricSnapshotSchema.index({ entity_type: 1, entity_id: 1, snapshot_at: -1 });
 
+// Índice 2026-04-24: cover query de briefing "adsets en LEARNING con más conv"
+// que antes hacía full scan con regex sobre entity_name (10.7s real).
+metricSnapshotSchema.index({ entity_type: 1, learning_stage: 1, snapshot_at: -1 });
+// Índice prefix sobre entity_name — ayuda a regex parcialmente anclados
+// (ej. [Prometheus], [Ares]) que son naming conventions del sistema.
+metricSnapshotSchema.index({ entity_name: 1 });
+
 module.exports = mongoose.model('MetricSnapshot', metricSnapshotSchema);

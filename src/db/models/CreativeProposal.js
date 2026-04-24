@@ -77,4 +77,9 @@ const creativeProposalSchema = new mongoose.Schema({
 
 creativeProposalSchema.index({ status: 1, created_at: -1 });
 
+// Índice 2026-04-24: covering para strategyBreakdown del briefing
+// aggregate {$match: {created_at: >=T}, $group: {_id: '$evolution_strategy'}}
+// que antes tardaba 7.1s real. Con compound, Mongo puede usar index-only scan.
+creativeProposalSchema.index({ created_at: -1, evolution_strategy: 1 });
+
 module.exports = mongoose.model('CreativeProposal', creativeProposalSchema);

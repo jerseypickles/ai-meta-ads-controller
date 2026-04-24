@@ -48,34 +48,87 @@ async function gatherSystemContext() {
   const now = Date.now();
   const DAY = 86400000;
 
-  // Actions last 24h
-  const actionsBy = await ActionLog.aggregate([
-    { $match: { executed_at: { $gte: new Date(now - DAY) }, success: true } },
-    { $group: { _id: '$agent_type', actions: { $sum: 1 }, last: { $max: '$executed_at' } } }
+  // Paralelizamos las 11 queries — post-índices 2026-04-24 ya no compiten
+  // entre sí (antes el paralelo era peor que serial porque 2 queries sin
+  // índice saturaban el pool). Con índices: 19.4s serie → 2s paralelo.
+  const [
+    actionsBy,
+    zeusDirs,
+    adsetSnapshots,
+    testsLast24h,
+    graduatedLast24h,
+    killedLast24h,
+    activeTests,
+    adsetMetrics,
+    activeDirectives,
+    readyPool,
+    strategyBreakdown
+  ] = await Promise.all([
+    // Actions last 24h
+    ActionLog.aggregate([
+      { $match: { executed_at: { $gte: new Date(now - DAY) }, success: true } },
+      { $group: { _id: '$agent_type', actions: { $sum: 1 }, last: { $max: '$executed_at' } } }
+    ]),
+    // Zeus directives last 24h
+    ZeusDirective.find({ created_at: { $gte: new Date(now - DAY) } }).lean(),
+    // Account metrics hoy + 7d
+    MetricSnapshot.aggregate([
+      { $match: { entity_type: 'adset', snapshot_at: { $gte: new Date(now - DAY) } } },
+      { $sort: { entity_id: 1, snapshot_at: -1 } },
+      { $group: {
+        _id: '$entity_id',
+        status: { $first: '$status' },
+        spend_today: { $first: '$metrics.today.spend' },
+        revenue_today: { $first: '$metrics.today.purchase_value' },
+        spend_7d: { $first: '$metrics.last_7d.spend' },
+        revenue_7d: { $first: '$metrics.last_7d.purchase_value' }
+      }},
+      { $match: { status: 'ACTIVE' } }
+    ]),
+    // Tests outcomes last 24h
+    TestRun.countDocuments({
+      $or: [
+        { graduated_at: { $gte: new Date(now - DAY) } },
+        { killed_at: { $gte: new Date(now - DAY) } },
+        { expired_at: { $gte: new Date(now - DAY) } }
+      ]
+    }),
+    TestRun.countDocuments({ graduated_at: { $gte: new Date(now - DAY) } }),
+    TestRun.countDocuments({ killed_at: { $gte: new Date(now - DAY) } }),
+    // Graduates cohort — closest to SUCCESS
+    TestRun.find({ phase: { $in: ['learning', 'evaluating'] } }).lean(),
+    // Prometheus adsets en learning — usa índice entity_type+learning_stage
+    MetricSnapshot.aggregate([
+      { $match: { entity_type: 'adset', learning_stage: 'LEARNING' } },
+      { $sort: { snapshot_at: -1 } },
+      { $group: {
+        _id: '$entity_id',
+        name: { $first: '$entity_name' },
+        stage: { $first: '$learning_stage' },
+        conv: { $first: '$learning_stage_conversions' },
+        roas_7d: { $first: '$metrics.last_7d.roas' }
+      }},
+      { $match: { stage: 'LEARNING', name: { $regex: '\\[Prometheus\\]' } } },
+      { $sort: { conv: -1 } },
+      { $limit: 5 }
+    ]),
+    // Pending recommendations / alerts
+    ZeusDirective.find({ active: true, executed: false }).lean(),
+    // Apollo pool
+    CreativeProposal.countDocuments({ status: 'ready' }),
+    // Proposals strategy breakdown 7d — usa índice created_at+evolution_strategy
+    CreativeProposal.aggregate([
+      { $match: { created_at: { $gte: new Date(now - 7 * DAY) } } },
+      { $group: { _id: '$evolution_strategy', count: { $sum: 1 } } }
+    ])
   ]);
 
-  // Zeus directives last 24h
-  const zeusDirs = await ZeusDirective.find({ created_at: { $gte: new Date(now - DAY) } }).lean();
+  // Procesamiento post-paralelo (CPU bound, rápido)
   const zeusDirsExec = zeusDirs.filter(d => d.executed).length;
   const zeusCycles = new Set(zeusDirs.map(d => {
     const d2 = new Date(d.created_at);
     return Math.floor(d2.getTime() / (6 * 3600000));
   })).size;
-
-  // Account metrics hoy + 7d
-  const adsetSnapshots = await MetricSnapshot.aggregate([
-    { $match: { entity_type: 'adset', snapshot_at: { $gte: new Date(now - DAY) } } },
-    { $sort: { entity_id: 1, snapshot_at: -1 } },
-    { $group: {
-      _id: '$entity_id',
-      status: { $first: '$status' },
-      spend_today: { $first: '$metrics.today.spend' },
-      revenue_today: { $first: '$metrics.today.purchase_value' },
-      spend_7d: { $first: '$metrics.last_7d.spend' },
-      revenue_7d: { $first: '$metrics.last_7d.purchase_value' }
-    }},
-    { $match: { status: 'ACTIVE' } }
-  ]);
 
   const todaySpend = adsetSnapshots.reduce((s, a) => s + (a.spend_today || 0), 0);
   const todayRev = adsetSnapshots.reduce((s, a) => s + (a.revenue_today || 0), 0);
@@ -83,48 +136,6 @@ async function gatherSystemContext() {
   const rev7d = adsetSnapshots.reduce((s, a) => s + (a.revenue_7d || 0), 0);
   const roas_today = todaySpend > 0 ? todayRev / todaySpend : 0;
   const roas_7d = spend7d > 0 ? rev7d / spend7d : 0;
-
-  // Tests outcomes last 24h
-  const testsLast24h = await TestRun.countDocuments({
-    $or: [
-      { graduated_at: { $gte: new Date(now - DAY) } },
-      { killed_at: { $gte: new Date(now - DAY) } },
-      { expired_at: { $gte: new Date(now - DAY) } }
-    ]
-  });
-  const graduatedLast24h = await TestRun.countDocuments({ graduated_at: { $gte: new Date(now - DAY) } });
-  const killedLast24h = await TestRun.countDocuments({ killed_at: { $gte: new Date(now - DAY) } });
-
-  // Graduates cohort — closest to SUCCESS
-  const activeTests = await TestRun.find({ phase: { $in: ['learning', 'evaluating'] } }).lean();
-
-  // Pickled Heat type progress — top closest to SUCCESS
-  const adsetMetrics = await MetricSnapshot.aggregate([
-    { $match: { entity_type: 'adset', entity_name: { $regex: '\\[Prometheus\\]' } } },
-    { $sort: { snapshot_at: -1 } },
-    { $group: {
-      _id: '$entity_id',
-      name: { $first: '$entity_name' },
-      stage: { $first: '$learning_stage' },
-      conv: { $first: '$learning_stage_conversions' },
-      roas_7d: { $first: '$metrics.last_7d.roas' }
-    }},
-    { $match: { stage: 'LEARNING' } },
-    { $sort: { conv: -1 } },
-    { $limit: 5 }
-  ]);
-
-  // Pending recommendations / alerts
-  const activeDirectives = await ZeusDirective.find({ active: true, executed: false }).lean();
-
-  // Apollo pool
-  const readyPool = await CreativeProposal.countDocuments({ status: 'ready' });
-
-  // Proposals strategy breakdown 7d
-  const strategyBreakdown = await CreativeProposal.aggregate([
-    { $match: { created_at: { $gte: new Date(now - 7 * DAY) } } },
-    { $group: { _id: '$evolution_strategy', count: { $sum: 1 } } }
-  ]);
 
   return {
     zeus: {
