@@ -338,6 +338,8 @@ export default function ZeusSpeaks() {
               onClose={() => { setDrawerOpen(false); setPendingInitialMessage(null); }}
               initialMessage={pendingInitialMessage}
               onInitialMessageConsumed={() => setPendingInitialMessage(null)}
+              unreadCount={unreadCount}
+              onAllMarkedRead={() => setUnreadCount(0)}
             />
           )}
         </AnimatePresence>,
@@ -605,7 +607,7 @@ function toolLabel(tool) {
 // DRAWER — chat de texto
 // ═══════════════════════════════════════════════════════════════════════════
 
-function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage, onInitialMessageConsumed }) {
+function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage, onInitialMessageConsumed, unreadCount = 0, onAllMarkedRead }) {
   // Inicializa mensajes con cache local (instant show mientras server fetch corre en paralelo)
   const [messages, setMessages] = useState(() => {
     try {
@@ -748,7 +750,8 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
     try {
       await api.post('/api/zeus/chat/mark-read');
       setNotifications((prev) => prev.map(n => ({ ...n, read_at: n.read_at || new Date().toISOString() })));
-      setUnreadCount(0);
+      // setUnreadCount vive en ZeusSpeaks (parent) — callback via prop
+      if (typeof onAllMarkedRead === 'function') onAllMarkedRead();
     } catch (err) { /* silent */ }
   }
 
