@@ -8,3 +8,4 @@ uploads/
 src/dashboard/frontend/dist/
 src/dashboard/frontend/node_modules/
 Jersey-Pickles-Project/
+.smoke-tmp.js
