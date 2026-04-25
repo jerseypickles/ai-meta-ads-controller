@@ -62,6 +62,24 @@ async function logBrainAction({ entity_id, entity_name, entity_type, action, bef
   }
 }
 
+/**
+ * Helper para mergear shadow_cash_consideration al metadata de ActionLog.
+ * Si el brain proveyó análisis shadow, lo persistimos para análisis post-hoc.
+ * Validación liviana — campos opcionales, todos string/number.
+ */
+function withShadow(baseMetadata, shadow) {
+  if (!shadow || typeof shadow !== 'object') return baseMetadata;
+  const safe = {
+    cash_roas_at_decision: typeof shadow.cash_roas_at_decision === 'number' ? +shadow.cash_roas_at_decision.toFixed(3) : null,
+    zone_at_decision: typeof shadow.zone_at_decision === 'string' ? shadow.zone_at_decision.substring(0, 20) : null,
+    trend_at_decision: typeof shadow.trend_at_decision === 'string' ? shadow.trend_at_decision.substring(0, 20) : null,
+    alt_decision: typeof shadow.alt_decision === 'string' ? shadow.alt_decision.substring(0, 20) : null,
+    reasoning_diff: typeof shadow.reasoning_diff === 'string' ? shadow.reasoning_diff.substring(0, 500) : null,
+    recorded_at: new Date()
+  };
+  return { ...baseMetadata, shadow_cash_consideration: safe };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // TOOL DEFINITIONS (Anthropic format)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -150,6 +168,15 @@ const TOOL_DEFINITIONS = [
       required: []
     }
   },
+  {
+    name: 'query_cash_roas_signal',
+    description: 'Lee la métrica de cash ROAS REAL del negocio según Demeter (account-level). Esto NO es Meta ROAS. Cash ROAS = cash neto post-tax post-shipping / Meta spend. Es la métrica que importa para decidir scaling. Usá esta tool en MODO SHADOW: después de tu decisión normal con Meta ROAS por CBO, considerá si el cash ROAS account-level te haría reconsiderar. Por ejemplo: CBO Meta ROAS 3.5x dice "sí escalar" pero cash ROAS 7d cayó de 3.1x a 2.4x → el negocio real está empeorando aunque Meta lo oculte. En ese caso, tu shadow consideration debería decir "hubiera holdeado scale_up". HOY ESTO NO CAMBIA TU DECISIÓN — solo lo loggeás para que el creador analice si activar cash-aware decisions en el futuro.',
+    input_schema: {
+      type: 'object',
+      properties: {},
+      required: []
+    }
+  },
   // ─── WRITE TOOLS (Commit 2, 2026-04-24) ────────────────────────────────
   {
     name: 'scale_cbo_budget',
@@ -159,7 +186,18 @@ const TOOL_DEFINITIONS = [
       properties: {
         campaign_id: { type: 'string', description: 'ID de la CBO a ajustar' },
         new_daily_budget: { type: 'number', description: 'Nuevo budget en USD. Debe ser realista — si el cambio excede ±50% del actual, te lo rechazo.' },
-        reasoning: { type: 'string', description: '2-3 oraciones con evidencia numérica. Ej: "ROAS 7d 3.2x sostenido con top-2 concentrando 88% spend. Scale +15% para que Meta explote cluster."' }
+        reasoning: { type: 'string', description: '2-3 oraciones con evidencia numérica. Ej: "ROAS 7d 3.2x sostenido con top-2 concentrando 88% spend. Scale +15% para que Meta explote cluster."' },
+        shadow_cash_consideration: {
+          type: 'object',
+          description: 'OPCIONAL pero MUY recomendado. Después de tu decisión, si llamaste a query_cash_roas_signal, considerá si esa info te hubiera hecho decidir distinto y registralo aquí. NO cambia tu decisión real (modo shadow). Se usa para análisis retrospectivo del creador.',
+          properties: {
+            cash_roas_at_decision: { type: 'number', description: 'cash_roas_7d que reportó query_cash_roas_signal' },
+            zone_at_decision: { type: 'string', enum: ['green', 'yellow', 'orange', 'red'], description: 'zona reportada' },
+            trend_at_decision: { type: 'string', enum: ['mejorando', 'estable', 'empeorando'] },
+            alt_decision: { type: 'string', enum: ['same', 'hold', 'less_aggressive', 'more_aggressive'], description: 'qué hubieras hecho con cash awareness: same=igual, hold=no actuar, less_aggressive=mismo tipo pero más chico, more_aggressive=mismo tipo pero más fuerte' },
+            reasoning_diff: { type: 'string', description: '1-2 oraciones explicando POR QUÉ cambiarías o no la decisión con cash awareness' }
+          }
+        }
       },
       required: ['campaign_id', 'new_daily_budget', 'reasoning']
     }
@@ -171,7 +209,18 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       properties: {
         adset_id: { type: 'string', description: 'ID del adset a pausar' },
-        reasoning: { type: 'string', description: '2-3 oraciones con evidencia. Ej: "$75 spend 7d, 0 compras, 8d edad, ya salió de learning. Dentro de CBO saturada, consume overhead."' }
+        reasoning: { type: 'string', description: '2-3 oraciones con evidencia. Ej: "$75 spend 7d, 0 compras, 8d edad, ya salió de learning. Dentro de CBO saturada, consume overhead."' },
+        shadow_cash_consideration: {
+          type: 'object',
+          description: 'OPCIONAL pero recomendado. Tu consideración shadow del cash ROAS sobre esta decisión. No cambia la acción.',
+          properties: {
+            cash_roas_at_decision: { type: 'number' },
+            zone_at_decision: { type: 'string', enum: ['green', 'yellow', 'orange', 'red'] },
+            trend_at_decision: { type: 'string', enum: ['mejorando', 'estable', 'empeorando'] },
+            alt_decision: { type: 'string', enum: ['same', 'hold', 'less_aggressive', 'more_aggressive'] },
+            reasoning_diff: { type: 'string' }
+          }
+        }
       },
       required: ['adset_id', 'reasoning']
     }
@@ -201,7 +250,18 @@ const TOOL_DEFINITIONS = [
         target_campaign_id: { type: 'string', description: 'ID de la CBO destino' },
         new_daily_budget: { type: 'number', description: 'Budget del adset duplicado en USD. Default $75 si no se especifica. Conservá bajo — el duplicado arranca en learning.' },
         pause_original: { type: 'boolean', description: 'Si true (default), pausa el adset fuente al completar duplicación exitosa. Si false, solo duplica sin tocar el fuente (útil para testing en paralelo).' },
-        reasoning: { type: 'string', description: '2-3 oraciones con evidencia de por qué mover. Ej: "Winner starved: ROAS 7d 3.4x, 3 compras, solo 2.1% del spend de CBO origen (saturada por cluster). Moviendo a CBO B con headroom."' }
+        reasoning: { type: 'string', description: '2-3 oraciones con evidencia de por qué mover. Ej: "Winner starved: ROAS 7d 3.4x, 3 compras, solo 2.1% del spend de CBO origen (saturada por cluster). Moviendo a CBO B con headroom."' },
+        shadow_cash_consideration: {
+          type: 'object',
+          description: 'OPCIONAL. Tu consideración shadow del cash ROAS sobre esta decisión.',
+          properties: {
+            cash_roas_at_decision: { type: 'number' },
+            zone_at_decision: { type: 'string', enum: ['green', 'yellow', 'orange', 'red'] },
+            trend_at_decision: { type: 'string', enum: ['mejorando', 'estable', 'empeorando'] },
+            alt_decision: { type: 'string', enum: ['same', 'hold', 'less_aggressive', 'more_aggressive'] },
+            reasoning_diff: { type: 'string' }
+          }
+        }
       },
       required: ['source_adset_id', 'target_campaign_id', 'reasoning']
     }
@@ -738,6 +798,90 @@ async function handleQueryZeusGuidance({ days_back = 14 }) {
   };
 }
 
+/**
+ * query_cash_roas_signal — lee Demeter snapshots para señalar al brain
+ * cómo va el cash ROAS real del negocio. SHADOW MODE: el brain considera
+ * pero no decide con esto (todavía).
+ */
+async function handleQueryCashRoasSignal() {
+  try {
+    const DemeterSnapshot = require('../../db/models/DemeterSnapshot');
+
+    const todayEt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York',
+      year: 'numeric', month: '2-digit', day: '2-digit'
+    }).format(new Date());
+
+    // Últimos 14 días para ver tendencia (7d actuales vs 7d previos)
+    const since14d = new Date(Date.now() - 14 * 86400000);
+    since14d.setUTCHours(0, 0, 0, 0);
+    const sinceDateEt = since14d.toISOString().slice(0, 10);
+
+    const snaps = await DemeterSnapshot.find({
+      date_et: { $gte: sinceDateEt, $lte: todayEt }
+    }).sort({ date_et: -1 }).lean();
+
+    if (snaps.length < 4) {
+      return {
+        available: false,
+        reason: 'datos insuficientes (Demeter necesita ≥4 días para señal confiable)',
+        snapshots_count: snaps.length
+      };
+    }
+
+    const sum = (arr, k) => arr.reduce((a, s) => a + (s[k] || 0), 0);
+    const last7 = snaps.slice(0, Math.min(7, snaps.length));
+    const prev7 = snaps.slice(7, 14);
+
+    const cashRoas7d = sum(last7, 'meta_spend') > 0
+      ? sum(last7, 'net_for_merchant') / sum(last7, 'meta_spend') : 0;
+    const metaRoas7d = sum(last7, 'meta_spend') > 0
+      ? sum(last7, 'meta_purchase_value') / sum(last7, 'meta_spend') : 0;
+    const gap7d = metaRoas7d > 0 ? ((metaRoas7d - cashRoas7d) / metaRoas7d) * 100 : 0;
+
+    let trend = 'estable';
+    let cashRoasPrev7d = null;
+    if (prev7.length >= 4) {
+      cashRoasPrev7d = sum(prev7, 'meta_spend') > 0
+        ? sum(prev7, 'net_for_merchant') / sum(prev7, 'meta_spend') : 0;
+      const delta = cashRoas7d - cashRoasPrev7d;
+      if (delta > 0.15) trend = 'mejorando';
+      else if (delta < -0.15) trend = 'empeorando';
+    }
+
+    // Zonas conceptuales basadas en cash ROAS
+    let zone, zoneHint;
+    if (cashRoas7d >= 3.0) { zone = 'green'; zoneHint = 'cash ROAS sano — escalamiento agresivo es defendible'; }
+    else if (cashRoas7d >= 2.0) { zone = 'yellow'; zoneHint = 'cash ROAS aceptable — escalar con moderación'; }
+    else if (cashRoas7d >= 1.5) { zone = 'orange'; zoneHint = 'cash ROAS bajo — preferí hold sobre scale_up'; }
+    else { zone = 'red'; zoneHint = 'cash ROAS crítico — considerá scale_down hasta investigar'; }
+
+    return {
+      available: true,
+      // Estado actual
+      cash_roas_7d: +cashRoas7d.toFixed(2),
+      meta_roas_7d: +metaRoas7d.toFixed(2),
+      gap_pct_7d: +gap7d.toFixed(1),
+      // Trend
+      cash_roas_prev_7d: cashRoasPrev7d != null ? +cashRoasPrev7d.toFixed(2) : null,
+      trend,
+      delta_pct: cashRoasPrev7d != null && cashRoasPrev7d > 0
+        ? +(((cashRoas7d - cashRoasPrev7d) / cashRoasPrev7d) * 100).toFixed(1) : null,
+      // Zona + hint
+      zone,
+      zone_hint: zoneHint,
+      // Volumen agregado
+      total_spend_7d: Math.round(sum(last7, 'meta_spend')),
+      total_net_for_merchant_7d: Math.round(sum(last7, 'net_for_merchant')),
+      // Reminder
+      shadow_mode: true,
+      shadow_instruction: 'No cambies tu decisión real con esto. Solo loggeá en tu acción si esta info habría modificado lo que decidiste.'
+    };
+  } catch (err) {
+    return { available: false, error: err.message };
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ACTION HANDLERS (commit 2 — 2026-04-24)
 // Todas respetan los mismos safety gates que ares-portfolio-manager
@@ -745,7 +889,7 @@ async function handleQueryZeusGuidance({ days_back = 14 }) {
 // loggean ActionLog con agent_type='ares_brain' para auditoría separada.
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function handleScaleCBOBudget({ campaign_id, new_daily_budget, reasoning }) {
+async function handleScaleCBOBudget({ campaign_id, new_daily_budget, reasoning, shadow_cash_consideration }) {
   if (!campaign_id) return { error: 'campaign_id requerido' };
   if (typeof new_daily_budget !== 'number' || new_daily_budget <= 0) return { error: 'new_daily_budget inválido' };
   if (!reasoning || reasoning.length < 20) return { error: 'reasoning obligatorio (min 20 chars)' };
@@ -816,7 +960,7 @@ async function handleScaleCBOBudget({ campaign_id, new_daily_budget, reasoning }
       before_value: currentBudget,
       after_value: target,
       reasoning,
-      metadata: { source: 'ares_brain_decision', pct_change: +pct.toFixed(3) },
+      metadata: withShadow({ source: 'ares_brain_decision', pct_change: +pct.toFixed(3) }, shadow_cash_consideration),
       success: true
     });
     logger.info(`[ARES-BRAIN] ${actionType === 'scale_up' ? '↑' : '↓'} CBO "${snap.entity_name}" $${currentBudget}→$${target} (brain decision)`);
@@ -833,7 +977,7 @@ async function handleScaleCBOBudget({ campaign_id, new_daily_budget, reasoning }
   }
 }
 
-async function handlePauseAdset({ adset_id, reasoning }) {
+async function handlePauseAdset({ adset_id, reasoning, shadow_cash_consideration }) {
   if (!adset_id) return { error: 'adset_id requerido' };
   if (!reasoning || reasoning.length < 20) return { error: 'reasoning obligatorio (min 20 chars)' };
 
@@ -884,7 +1028,7 @@ async function handlePauseAdset({ adset_id, reasoning }) {
       before_value: 'ACTIVE',
       after_value: 'PAUSED',
       reasoning,
-      metadata: { source: 'ares_brain_decision', parent_cbo: snap.campaign_id, age_hours: Math.round(ageHours) },
+      metadata: withShadow({ source: 'ares_brain_decision', parent_cbo: snap.campaign_id, age_hours: Math.round(ageHours) }, shadow_cash_consideration),
       success: true
     });
     logger.info(`[ARES-BRAIN] ✓ paused adset "${snap.entity_name}" (brain decision)`);
@@ -901,7 +1045,7 @@ async function handlePauseAdset({ adset_id, reasoning }) {
   }
 }
 
-async function handleDuplicateAdsetToCBO({ source_adset_id, target_campaign_id, new_daily_budget, pause_original, reasoning }) {
+async function handleDuplicateAdsetToCBO({ source_adset_id, target_campaign_id, new_daily_budget, pause_original, reasoning, shadow_cash_consideration }) {
   if (!source_adset_id) return { error: 'source_adset_id requerido' };
   if (!target_campaign_id) return { error: 'target_campaign_id requerido' };
   if (!reasoning || reasoning.length < 20) return { error: 'reasoning obligatorio (min 20 chars)' };
@@ -982,7 +1126,7 @@ async function handleDuplicateAdsetToCBO({ source_adset_id, target_campaign_id, 
       before_value: srcSnap.campaign_id,
       after_value: target_campaign_id,
       reasoning,
-      metadata: {
+      metadata: withShadow({
         source: 'ares_brain_decision',
         new_adset_id: dupResult.new_adset_id,
         target_campaign_id,
@@ -990,7 +1134,7 @@ async function handleDuplicateAdsetToCBO({ source_adset_id, target_campaign_id, 
         clone_status: 'PAUSED',
         clone_budget: budget,
         pause_original_planned: shouldPauseOriginal
-      },
+      }, shadow_cash_consideration),
       success: true
     });
     logger.info(`[ARES-BRAIN] ✓ duplicated "${srcSnap.entity_name}" → "${targetSnap.entity_name}" (new_id=${dupResult.new_adset_id}, PAUSED)`);
@@ -1350,6 +1494,7 @@ async function executeTool(name, input) {
       // Learning loop (commit 4)
       case 'query_action_outcomes': return await handleQueryActionOutcomes(input || {});
       case 'query_zeus_guidance': return await handleQueryZeusGuidance(input || {});
+      case 'query_cash_roas_signal': return await handleQueryCashRoasSignal();
       // Action tools (commit 2)
       case 'scale_cbo_budget': return await handleScaleCBOBudget(input || {});
       case 'pause_adset': return await handlePauseAdset(input || {});

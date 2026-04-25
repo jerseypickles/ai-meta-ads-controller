@@ -113,7 +113,8 @@ const TABS = [
   { id: 'last_month', label: 'Mes Pasado' },
   { id: 'rolling_30', label: 'Últimos 30d' },
   { id: 'rolling_90', label: 'Últimos 90d' },
-  { id: 'all', label: 'Todo' }
+  { id: 'all', label: 'Todo' },
+  { id: 'shadow', label: '🔍 Shadow', special: true }  // tab especial: análisis cash-aware
 ];
 
 export default function DemeterPanel() {
@@ -381,17 +382,22 @@ export default function DemeterPanel() {
           </div>
         )}
 
-        {/* Acordeón "Cómo se calcula" — colapsado por default */}
-        {summary && summary.days_count > 0 && (
+        {/* Acordeón "Cómo se calcula" — colapsado por default. Hide en tab shadow */}
+        {activeTab !== 'shadow' && summary && summary.days_count > 0 && (
           <CalculationBreakdown summary={summary} />
         )}
       </div>
+
+      {/* SHADOW MODE TAB — análisis cash-aware vs decisión real del brain */}
+      {activeTab === 'shadow' && <ShadowComparisonView />}
 
       {/* FORECAST — solo cuando tab es 'this_month' y mes está en curso */}
       {activeTab === 'this_month' && forecast?.month_status === 'in_progress' && forecast?.projection && (
         <ForecastCard forecast={forecast} />
       )}
 
+      {/* Charts y tabla — esconder en tab shadow (que tiene su propia view) */}
+      {activeTab !== 'shadow' && (<>
       {/* CHART 1 — ROAS comparison */}
       <Section title="ROAS · Meta atribuído vs Cash real" subtitle={`${range.label} · línea punteada = target ROAS 3x`}>
         <div style={{ height: 240 }}>
@@ -483,6 +489,7 @@ export default function DemeterPanel() {
         {' '}Net incluye Shopify fees est. (2.9% + $0.30/order) — no incluye shipping costs ni COGS.
         {' '}Refunds retroactivos: el cron re-computa últimos 7 días cada 00:05 ET.
       </div>
+      </>)}
     </div>
   );
 }
@@ -704,6 +711,235 @@ function CascadeLine({ label, value, note, bold, big, highlight, color }) {
       }}>
         {display}
       </div>
+    </div>
+  );
+}
+
+// ─── SHADOW COMPARISON VIEW — análisis cash-aware del Ares Brain ─────────
+
+function ShadowComparisonView() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [days, setDays] = useState(14);
+
+  useEffect(() => {
+    let alive = true;
+    async function load() {
+      setLoading(true);
+      try {
+        const r = await api.get(`/api/demeter/shadow-comparison?days=${days}`);
+        if (!alive) return;
+        setData(r.data);
+        setError(null);
+      } catch (err) {
+        if (!alive) return;
+        setError(err.response?.data?.error || err.message);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+    load();
+    return () => { alive = false; };
+  }, [days]);
+
+  if (loading && !data) return <Section title="Shadow Mode" subtitle="cargando...">cargando</Section>;
+  if (error) return <Section title="Shadow Mode" subtitle="error">{error}</Section>;
+
+  const items = data?.items || [];
+  const agg = data?.aggregates || {};
+  const verdict = data?.verdict || {};
+
+  // Filtrar a las decisiones donde el brain razonó que cash hubiera dicho distinto
+  const disagreements = items.filter(i => i.shadow.alt_decision && i.shadow.alt_decision !== 'same');
+  const agreements = items.filter(i => i.shadow.alt_decision === 'same' || !i.shadow.alt_decision);
+
+  const altLabels = {
+    same: { label: 'mismo', color: 'var(--bos-text-muted)', icon: '=' },
+    hold: { label: 'hubiera holdeado', color: COLOR_GAP_WARN, icon: '✋' },
+    less_aggressive: { label: 'menos agresivo', color: '#fbbf24', icon: '↓' },
+    more_aggressive: { label: 'más agresivo', color: '#a78bfa', icon: '↑' }
+  };
+
+  const zoneColors = {
+    green: COLOR_CASH,
+    yellow: '#fbbf24',
+    orange: '#f97316',
+    red: COLOR_GAP_BAD
+  };
+
+  return (
+    <div style={{ marginTop: 0 }}>
+      {/* HEADER explicativo */}
+      <div style={{
+        marginBottom: 18,
+        padding: '14px 18px',
+        background: 'rgba(167, 139, 250, 0.06)',
+        border: '1px solid rgba(167, 139, 250, 0.2)',
+        borderRadius: 12
+      }}>
+        <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#a78bfa', marginBottom: 6, letterSpacing: '0.04em' }}>
+          🔍 SHADOW MODE — análisis cash-aware del Ares Brain
+        </div>
+        <div style={{ fontSize: '0.74rem', color: 'var(--bos-text-muted)', lineHeight: 1.6 }}>
+          El brain decide con Meta ROAS por CBO. Pero ANTES de ejecutar consulta cash ROAS account-level (Demeter)
+          y registra "qué hubiera hecho con cash awareness". <strong>NO cambia decisiones reales</strong> —
+          solo loguea para que decidas si activar cash-aware decisions en el futuro.
+        </div>
+        <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+          {[7, 14, 30, 60].map(d => (
+            <button
+              key={d}
+              onClick={() => setDays(d)}
+              style={{
+                padding: '4px 12px',
+                borderRadius: 6,
+                fontSize: '0.7rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                border: days === d ? `1px solid #a78bfa` : '1px solid rgba(255,255,255,0.08)',
+                background: days === d ? `rgba(167, 139, 250, 0.15)` : 'rgba(17, 21, 51, 0.5)',
+                color: days === d ? '#a78bfa' : 'var(--bos-text-muted)'
+              }}
+            >
+              {d}d
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* AGREGADOS */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+        gap: 12, marginBottom: 18
+      }}>
+        <KpiCard label="Acciones con shadow" value={agg.total || 0} sub={`últimos ${days}d`} color="#a78bfa" />
+        <KpiCard label="Coincidencias" value={agg.by_alt?.same || 0} sub="cash diría lo mismo" color={COLOR_CASH} />
+        <KpiCard label="Hubiera holdeado" value={agg.by_alt?.hold || 0} sub="cash hubiera frenado" color={COLOR_GAP_WARN} />
+        <KpiCard label="Discrepancias" value={disagreements.length} sub="decisión distinta" color="#a78bfa" />
+      </div>
+
+      {/* VEREDICTO RETROSPECTIVO */}
+      {verdict.disagreements_total > 0 && (
+        <Section
+          title="Veredicto retrospectivo"
+          subtitle={`De ${verdict.disagreements_total} discrepancias con outcome medido (T+3d/7d)`}
+        >
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+            <VerdictCard label="Cash tenía razón" value={verdict.cash_was_right || 0} color={COLOR_CASH}
+              note="cash habría prevenido mal outcome o capturado upside" />
+            <VerdictCard label="Cash estaba equivocado" value={verdict.cash_was_wrong || 0} color={COLOR_GAP_BAD}
+              note="Meta tenía razón, cash habría perdido oportunidad" />
+            <VerdictCard label="Ambiguo" value={verdict.ambiguous || 0} color="var(--bos-text-muted)"
+              note="outcome neutral o inconcluyente" />
+          </div>
+          {(verdict.cash_was_right + verdict.cash_was_wrong) >= 5 && (
+            <div style={{
+              marginTop: 14, padding: '10px 14px',
+              background: 'rgba(167, 139, 250, 0.08)',
+              borderRadius: 8,
+              fontSize: '0.74rem',
+              color: 'var(--bos-text)',
+              lineHeight: 1.6
+            }}>
+              <strong style={{ color: '#a78bfa' }}>Análisis:</strong>{' '}
+              {verdict.cash_was_right > verdict.cash_was_wrong * 1.5
+                ? `cash awareness habría mejorado ${verdict.cash_was_right} de ${verdict.cash_was_right + verdict.cash_was_wrong} decisiones — señal fuerte para activar Nivel 2.`
+                : verdict.cash_was_wrong > verdict.cash_was_right * 1.5
+                ? `cash awareness habría sido demasiado conservador — Meta ROAS por CBO sigue siendo predictor primario.`
+                : `mixed results — necesita más data antes de activar cash-aware decisions.`}
+            </div>
+          )}
+        </Section>
+      )}
+
+      {/* TABLA DE DISCREPANCIAS */}
+      <Section title="Discrepancias detalladas" subtitle="acciones donde el brain razonó cambio con cash awareness">
+        {disagreements.length === 0 ? (
+          <div style={{ padding: '20px 12px', color: 'var(--bos-text-muted)', fontSize: '0.78rem', textAlign: 'center' }}>
+            Sin discrepancias en este período. El brain coincidió con cash awareness en todas las decisiones.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {disagreements.map(d => {
+              const alt = altLabels[d.shadow.alt_decision] || altLabels.same;
+              const zone = zoneColors[d.shadow.zone_at_decision] || 'var(--bos-text-muted)';
+              const delta = d.outcome.roas_delta_7d_pct ?? d.outcome.roas_delta_3d_pct;
+              return (
+                <div key={d.action_id} style={{
+                  background: 'rgba(17, 21, 51, 0.5)',
+                  border: `1px solid ${alt.color}33`,
+                  borderRadius: 10,
+                  padding: '12px 14px'
+                }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'baseline', marginBottom: 6 }}>
+                    <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--bos-text)' }}>
+                      {d.action} · {d.entity_name}
+                    </span>
+                    <span style={{ fontSize: '0.66rem', padding: '2px 8px', borderRadius: 4, background: `${alt.color}22`, color: alt.color, fontWeight: 600 }}>
+                      {alt.icon} {alt.label}
+                    </span>
+                    <span style={{ fontSize: '0.66rem', padding: '2px 8px', borderRadius: 4, background: `${zone}22`, color: zone, fontFamily: 'JetBrains Mono, monospace' }}>
+                      cash {d.shadow.cash_roas_at_decision?.toFixed(2)}x · {d.shadow.zone_at_decision}
+                    </span>
+                    <span style={{ fontSize: '0.66rem', color: 'var(--bos-text-dim)', fontFamily: 'JetBrains Mono, monospace', marginLeft: 'auto' }}>
+                      {new Date(d.executed_at).toLocaleString('es-AR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                  {d.shadow.reasoning_diff && (
+                    <div style={{ fontSize: '0.72rem', color: 'var(--bos-text-muted)', fontStyle: 'italic', marginBottom: 6, lineHeight: 1.5 }}>
+                      "{d.shadow.reasoning_diff}"
+                    </div>
+                  )}
+                  {(d.outcome.measured_3d || d.outcome.measured_7d) && (
+                    <div style={{ fontSize: '0.7rem', fontFamily: 'JetBrains Mono, monospace', color: 'var(--bos-text-muted)' }}>
+                      Outcome real: ROAS delta{' '}
+                      {d.outcome.measured_7d ? `7d ${delta != null ? (delta > 0 ? '+' : '') + delta + '%' : '?'}` : `3d ${delta != null ? (delta > 0 ? '+' : '') + delta + '%' : '?'}`}
+                      {delta != null && <span style={{ color: delta > 0 ? COLOR_CASH : COLOR_GAP_BAD, marginLeft: 6 }}>
+                        {delta > 0 ? '✓ outcome positivo' : '✗ outcome negativo'}
+                      </span>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Section>
+
+      {/* AGREEMENTS (collapsed visualmente) */}
+      {agreements.length > 0 && (
+        <Section title={`Coincidencias (${agreements.length})`} subtitle="el brain ya estaba alineado con cash">
+          <div style={{ fontSize: '0.74rem', color: 'var(--bos-text-muted)' }}>
+            En estas {agreements.length} decisiones el brain razonó que cash awareness no cambiaba nada.
+            No las muestro acá para no llenar el panel — están en ActionLog si querés revisarlas.
+          </div>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function VerdictCard({ label, value, color, note }) {
+  return (
+    <div style={{
+      background: 'rgba(17, 21, 51, 0.55)',
+      border: `1px solid ${color}33`,
+      borderRadius: 10,
+      padding: '14px 16px'
+    }}>
+      <div style={{ fontSize: '0.62rem', color: 'var(--bos-text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: '1.6rem', fontWeight: 700, color, fontFamily: 'JetBrains Mono, monospace', lineHeight: 1.1 }}>
+        {value}
+      </div>
+      {note && (
+        <div style={{ fontSize: '0.66rem', color: 'var(--bos-text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+          {note}
+        </div>
+      )}
     </div>
   );
 }

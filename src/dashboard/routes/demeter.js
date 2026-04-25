@@ -270,6 +270,115 @@ router.get('/forecast', async (req, res) => {
   }
 });
 
+// GET /shadow-comparison?days=14
+//
+// Lee acciones de ares_brain con shadow_cash_consideration en metadata.
+// Cruza con su outcome (ActionLog.metrics_after_3d / 7d) si está medido.
+// Retorna comparativa decisión-real vs decisión-cash-aware + outcomes.
+router.get('/shadow-comparison', async (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.query.days || '14', 10), 60);
+    const since = new Date(Date.now() - days * 86400000);
+
+    const ActionLog = require('../../db/models/ActionLog');
+    const actions = await ActionLog.find({
+      agent_type: 'ares_brain',
+      success: true,
+      executed_at: { $gte: since },
+      'metadata.shadow_cash_consideration': { $exists: true }
+    }).sort({ executed_at: -1 }).limit(100).lean();
+
+    // Computar deltas ROAS si hay measurement
+    function delta(before, after) {
+      if (typeof before !== 'number' || typeof after !== 'number' || before === 0) return null;
+      return +(((after - before) / before) * 100).toFixed(1);
+    }
+
+    const items = actions.map(a => {
+      const shadow = a.metadata?.shadow_cash_consideration || {};
+      const before = a.metrics_at_execution || {};
+      const after3d = a.metrics_after_3d;
+      const after7d = a.metrics_after_7d;
+      return {
+        action_id: a._id,
+        executed_at: a.executed_at,
+        action: a.action,
+        entity_name: a.entity_name,
+        before_value: a.before_value,
+        after_value: a.after_value,
+        reasoning: (a.reasoning || '').substring(0, 200),
+        shadow: {
+          cash_roas_at_decision: shadow.cash_roas_at_decision,
+          zone_at_decision: shadow.zone_at_decision,
+          trend_at_decision: shadow.trend_at_decision,
+          alt_decision: shadow.alt_decision || 'same',
+          reasoning_diff: shadow.reasoning_diff
+        },
+        outcome: {
+          measured_3d: a.impact_measured,
+          measured_7d: a.impact_7d_measured,
+          roas_delta_3d_pct: delta(before.roas_7d, after3d?.roas_7d),
+          roas_delta_7d_pct: delta(before.roas_7d, after7d?.roas_7d)
+        }
+      };
+    });
+
+    // Agregados para análisis rápido
+    const aggregates = {
+      total: items.length,
+      by_alt: items.reduce((acc, i) => {
+        const k = i.shadow.alt_decision || 'unknown';
+        acc[k] = (acc[k] || 0) + 1;
+        return acc;
+      }, {}),
+      by_zone: items.reduce((acc, i) => {
+        const k = i.shadow.zone_at_decision || 'unknown';
+        acc[k] = (acc[k] || 0) + 1;
+        return acc;
+      }, {})
+    };
+
+    // Veredicto retrospectivo: para acciones con alt_decision !== 'same' Y
+    // outcome medido, ¿el outcome real fue bueno o malo?
+    const disagreements = items.filter(i =>
+      i.shadow.alt_decision && i.shadow.alt_decision !== 'same' &&
+      (i.outcome.measured_3d || i.outcome.measured_7d)
+    );
+    const verdictBuckets = { cash_was_right: 0, cash_was_wrong: 0, ambiguous: 0 };
+    disagreements.forEach(d => {
+      const delta = d.outcome.roas_delta_7d_pct ?? d.outcome.roas_delta_3d_pct;
+      if (delta == null) { verdictBuckets.ambiguous++; return; }
+      // Si cash sugería holdear/less_aggressive y outcome real fue malo (delta <0) → cash had a point
+      // Si cash sugería holdear/less_aggressive y outcome real fue bueno → Meta tenía razón, cash too conservative
+      const cashWasMoreCautious = ['hold', 'less_aggressive'].includes(d.shadow.alt_decision);
+      if (cashWasMoreCautious) {
+        if (delta < -5) verdictBuckets.cash_was_right++;
+        else if (delta > 5) verdictBuckets.cash_was_wrong++;
+        else verdictBuckets.ambiguous++;
+      } else {
+        // more_aggressive: cash queria más fuerte. Si outcome bueno, cash had a point.
+        if (delta > 5) verdictBuckets.cash_was_right++;
+        else if (delta < -5) verdictBuckets.cash_was_wrong++;
+        else verdictBuckets.ambiguous++;
+      }
+    });
+
+    res.json({
+      days_window: days,
+      aggregates,
+      verdict: {
+        disagreements_total: disagreements.length,
+        ...verdictBuckets,
+        explanation: 'cash_was_right = decisión cash-aware coincide con outcome real (cash hubiera prevenido pérdida o capturado upside)'
+      },
+      items
+    });
+  } catch (err) {
+    logger.error(`[demeter route] shadow-comparison: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /run-now — manual trigger (corre días=opcional, default 7)
 router.post('/run-now', async (req, res) => {
   try {
