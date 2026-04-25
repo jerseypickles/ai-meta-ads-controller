@@ -79,6 +79,7 @@ const SSE_PATHS = [
 // token. Mismo tradeoff que SSE (token en logs de access).
 const QUERY_TOKEN_ASSET_PATHS = [
   '/testing-agent/tests/',  // /testing-agent/tests/:id/image
+  '/creative-agent/',       // /creative-agent/proposals/:id/image + products
   '/creatives/',            // futuros endpoints de preview
   '/ai-creations/'
 ];
