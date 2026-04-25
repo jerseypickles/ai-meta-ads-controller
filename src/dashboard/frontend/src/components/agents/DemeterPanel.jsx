@@ -617,40 +617,51 @@ function CalculationBreakdown({ summary }) {
           fontFamily: 'JetBrains Mono, monospace',
           lineHeight: 1.7
         }}>
-          {/* Bloque 1: Total ventas Shopify */}
-          <BreakdownLine label="Total ventas Shopify" value={summary.total_sales} bold note="lo que ves en Shopify Analytics" />
-          <BreakdownSubline label="Productos (subtotal)" value={summary.total_gross_sales} />
-          <BreakdownSubline label="Shipping cobrado" value={summary.total_shipping} note="paga el cliente" />
-          <BreakdownSubline label="Tax cobrado" value={summary.total_taxes} note="recolectado para el gobierno" color={COLOR_GAP_WARN} />
+          {/* PASO 1: composición del Total ventas Shopify */}
+          <div style={{ fontSize: '0.66rem', color: 'var(--bos-text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
+            ① Composición del Total ventas
+          </div>
+          <BreakdownLine label="Productos (subtotal post-descuentos)" value={summary.total_gross_sales} />
+          <BreakdownLine label="Shipping cobrado" value={summary.total_shipping} note="paga el cliente, vos pagás al carrier" />
+          <BreakdownLine label="Tax cobrado" value={summary.total_taxes} note="recolectado para el gobierno" color={COLOR_GAP_WARN} />
 
-          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed rgba(255,255,255,0.08)' }}>
-            <BreakdownLine label="Discounts" value={-summary.total_discounts} dim />
-            <BreakdownLine label="Refunds" value={-summary.total_refunds} color={summary.total_refunds > 0 ? COLOR_GAP_BAD : 'var(--bos-text-dim)'} />
-            <BreakdownLine label="Shopify fees (2.9% + $0.30/order)" value={-summary.total_fees} dim />
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(20, 184, 166, 0.3)' }}>
+            <BreakdownLine label="Total ventas Shopify" value={summary.total_sales} bold note={`= productos + shipping + tax · matchea Shopify Analytics${summary.total_discounts > 0 ? ` · (ya descontó $${(summary.total_discounts/1000).toFixed(1)}k de discounts)` : ''}`} />
           </div>
 
-          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(20, 184, 166, 0.3)' }}>
-            <BreakdownLine label="Cash que entró al banco" value={summary.total_cash_to_bank} bold color={COLOR_CASH} note="lo que efectivamente recibiste" />
+          {/* PASO 2: del total al banco */}
+          <div style={{ fontSize: '0.66rem', color: 'var(--bos-text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: 18, marginBottom: 8 }}>
+            ② Del total al banco (lo que cobra Shopify y devuelve refunds)
+          </div>
+          <BreakdownLine label="Refunds" value={-summary.total_refunds} color={summary.total_refunds > 0 ? COLOR_GAP_BAD : 'var(--bos-text-dim)'} />
+          <BreakdownLine label="Shopify fees (2.9% + $0.30/order)" value={-summary.total_fees} dim />
+
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(20, 184, 166, 0.3)' }}>
+            <BreakdownLine label="Cash que entró al banco" value={summary.total_cash_to_bank} bold color={COLOR_CASH} note="= total ventas − refunds − fees · esto es lo que tenés en la cuenta" />
           </div>
 
-          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed rgba(255,255,255,0.08)' }}>
-            <BreakdownLine label="Tax a pagar al gobierno" value={-summary.total_taxes} color={COLOR_GAP_WARN} note="lo recolectaste, no es tuyo" />
+          {/* PASO 3: del banco a tuyo real */}
+          <div style={{ fontSize: '0.66rem', color: 'var(--bos-text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: 18, marginBottom: 8 }}>
+            ③ Del banco a tuyo real (separar lo que es del gobierno)
+          </div>
+          <BreakdownLine label="Tax a pagar al gobierno" value={-summary.total_taxes} color={COLOR_GAP_WARN} note="lo recolectaste pero no es tuyo" />
+
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(20, 184, 166, 0.6)' }}>
+            <BreakdownLine label="TUYO REAL (post-tax)" value={summary.total_net_for_merchant} bold big color={COLOR_CASH} note="lo que es realmente del negocio, antes de costos operativos" />
           </div>
 
-          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(20, 184, 166, 0.5)' }}>
-            <BreakdownLine label="TUYO REAL (post-tax)" value={summary.total_net_for_merchant} bold big color={COLOR_CASH} note="antes de descontar COGS y costos operativos" />
+          {/* PASO 4: profit pre-COGS */}
+          <div style={{ fontSize: '0.66rem', color: 'var(--bos-text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: 18, marginBottom: 8 }}>
+            ④ Profit pre-COGS (descontando ad spend)
           </div>
+          <BreakdownLine label="Gasto Meta Ads" value={-summary.total_meta_spend} dim />
 
-          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed rgba(255,255,255,0.08)' }}>
-            <BreakdownLine label="Gasto Meta Ads" value={-summary.total_meta_spend} dim />
-          </div>
-
-          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(20, 184, 166, 0.7)' }}>
-            <BreakdownLine label="PROFIT pre-COGS" value={summary.net_profit} bold big color={summary.net_profit >= 0 ? COLOR_CASH : COLOR_GAP_BAD} note="esto va a margen antes de costos del producto" />
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(20, 184, 166, 0.8)' }}>
+            <BreakdownLine label="PROFIT pre-COGS" value={summary.net_profit} bold big color={summary.net_profit >= 0 ? COLOR_CASH : COLOR_GAP_BAD} note="margen antes de costos del producto y operativos" />
           </div>
 
           <div style={{
-            marginTop: 16, padding: '10px 12px',
+            marginTop: 18, padding: '10px 12px',
             background: 'rgba(20, 184, 166, 0.06)',
             borderRadius: 6,
             fontSize: '0.7rem',
@@ -659,9 +670,9 @@ function CalculationBreakdown({ summary }) {
             fontFamily: '-apple-system, system-ui, sans-serif'
           }}>
             <strong style={{ color: DEMETER_COLOR }}>No tracked aquí:</strong>
-            {' '}COGS (costo de producir/comprar el pickle), shipping al carrier (lo que pagás a USPS/UPS),
-            costos operativos (rent, salarios, software). Para el profit real del negocio,
-            descontá esos del PROFIT pre-COGS arriba.
+            {' '}COGS (costo de producir/comprar el pickle), shipping al carrier (lo que vos pagás a USPS/UPS),
+            costos operativos (rent, salarios, software, payment processor disputes). Para el profit real
+            del negocio, descontá esos del PROFIT pre-COGS arriba.
           </div>
         </div>
       )}
