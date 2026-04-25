@@ -118,6 +118,7 @@ const TABS = [
 
 export default function DemeterPanel() {
   const [allSnapshots, setAllSnapshots] = useState([]);
+  const [forecast, setForecast] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('this_month');
@@ -131,10 +132,12 @@ export default function DemeterPanel() {
 
   async function loadAll() {
     try {
-      // Pedimos histórico amplio (365d) y filtramos por tab client-side.
-      // Si hay menos snapshots, retorna lo que haya.
-      const r = await api.get('/api/demeter/snapshots?days=365');
-      setAllSnapshots(r.data?.snapshots || []);
+      const [snapsR, fcR] = await Promise.all([
+        api.get('/api/demeter/snapshots?days=365'),
+        api.get('/api/demeter/forecast').catch(() => ({ data: null }))
+      ]);
+      setAllSnapshots(snapsR.data?.snapshots || []);
+      setForecast(fcR.data || null);
       setError(null);
     } catch (err) {
       setError(err.response?.data?.error || err.message);
@@ -386,6 +389,11 @@ export default function DemeterPanel() {
         )}
       </div>
 
+      {/* FORECAST — solo cuando tab es 'this_month' y mes está en curso */}
+      {activeTab === 'this_month' && forecast?.month_status === 'in_progress' && forecast?.projection && (
+        <ForecastCard forecast={forecast} />
+      )}
+
       {/* CHART 1 — ROAS comparison */}
       <Section title="ROAS · Meta atribuído vs Cash real" subtitle={`${range.label} · línea punteada = target ROAS 3x`}>
         <div style={{ height: 240 }}>
@@ -557,6 +565,135 @@ function MiniStat({ label, value, color = 'var(--bos-text)' }) {
         textOverflow: 'ellipsis'
       }}>
         {value}
+      </div>
+    </div>
+  );
+}
+
+// ─── FORECAST CARD ────────────────────────────────────────────────────────
+
+function ForecastCard({ forecast }) {
+  const { mtd, run_rate, projection, confidence, month_label, month_total_days } = forecast;
+  const daysElapsed = mtd.days_with_data;
+  const progressPct = (daysElapsed / month_total_days) * 100;
+
+  const confidenceLabels = {
+    high: { label: 'alta', color: COLOR_CASH, hint: 'run-rate consistente últimos 7d' },
+    medium: { label: 'media', color: COLOR_GAP_WARN, hint: 'algo de variabilidad en el run-rate' },
+    low: { label: 'baja', color: COLOR_GAP_BAD, hint: 'pocos días o run-rate muy volátil' }
+  };
+  const conf = confidenceLabels[confidence] || confidenceLabels.low;
+
+  // Delta projection vs MTD scaled (lo que iría si no cambia nada)
+  const projVsActual = (key) => {
+    const proj = projection[`projected_${key}`];
+    const actual = mtd[key === 'meta_spend' ? 'meta_spend' : key === 'net_after_fees' ? 'net_after_fees' : key];
+    const linearScale = actual * (month_total_days / daysElapsed);
+    const diff = proj - linearScale;
+    return diff;
+  };
+
+  return (
+    <div style={{
+      marginBottom: 20,
+      background: `linear-gradient(135deg, ${DEMETER_COLOR}11 0%, rgba(96, 165, 250, 0.05) 100%)`,
+      border: `1px solid ${DEMETER_COLOR}33`,
+      borderRadius: 14,
+      padding: '18px 22px',
+      minWidth: 0,
+      overflow: 'hidden'
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+        <div>
+          <div style={{ fontSize: '0.66rem', color: DEMETER_COLOR, textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600 }}>
+            📊 Proyección al cierre · {month_label}
+          </div>
+          <div style={{ fontSize: '0.74rem', color: 'var(--bos-text-muted)', marginTop: 4 }}>
+            Run-rate últimos {run_rate.days} días · {projection.days_remaining} días restantes
+          </div>
+        </div>
+        <div style={{
+          fontSize: '0.66rem',
+          padding: '4px 10px',
+          borderRadius: 6,
+          background: `${conf.color}22`,
+          border: `1px solid ${conf.color}55`,
+          color: conf.color,
+          fontWeight: 600,
+          letterSpacing: '0.05em'
+        }} title={conf.hint}>
+          confianza {conf.label}
+        </div>
+      </div>
+
+      {/* Progress bar mes */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{
+          height: 6, background: 'rgba(17, 21, 51, 0.6)', borderRadius: 3, overflow: 'hidden',
+          position: 'relative'
+        }}>
+          <div style={{
+            height: '100%', width: `${progressPct}%`,
+            background: `linear-gradient(90deg, ${DEMETER_COLOR}, ${COLOR_CASH})`,
+            transition: 'width 0.4s'
+          }} />
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, fontSize: '0.62rem', color: 'var(--bos-text-dim)', fontFamily: 'JetBrains Mono, monospace' }}>
+          <span>día {daysElapsed}/{month_total_days}</span>
+          <span>{progressPct.toFixed(0)}% completo</span>
+        </div>
+      </div>
+
+      {/* Stats: actual MTD → proyección cierre */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+        gap: 12,
+        marginBottom: 12
+      }}>
+        <ForecastStat label="Spend mes" actual={mtd.meta_spend} projected={projection.projected_meta_spend} />
+        <ForecastStat label="Cash neto mes" actual={mtd.net_after_fees} projected={projection.projected_net_after_fees} color={COLOR_CASH} />
+        <ForecastStat label="Profit mes" actual={mtd.profit} projected={projection.projected_profit} color={projection.projected_profit >= 0 ? COLOR_CASH : COLOR_GAP_BAD} />
+        <ForecastStat label="Cash ROAS mes" actual={mtd.cash_roas} projected={projection.projected_cash_roas} format="roas" color={COLOR_CASH} />
+        <ForecastStat label="Órdenes mes" actual={mtd.orders} projected={projection.projected_orders} format="int" />
+      </div>
+
+      <div style={{
+        fontSize: '0.68rem',
+        color: 'var(--bos-text-muted)',
+        lineHeight: 1.6,
+        paddingTop: 10,
+        borderTop: '1px solid rgba(255,255,255,0.05)'
+      }}>
+        Run-rate diario: <span style={{ color: 'var(--bos-text)', fontFamily: 'JetBrains Mono, monospace' }}>${Math.round(run_rate.avg_meta_spend).toLocaleString()}/d spend</span>
+        {' · '}
+        <span style={{ color: COLOR_CASH, fontFamily: 'JetBrains Mono, monospace' }}>${Math.round(run_rate.avg_net_after_fees).toLocaleString()}/d cash net</span>
+        {' · '}
+        cash ROAS <span style={{ color: COLOR_CASH, fontFamily: 'JetBrains Mono, monospace' }}>{run_rate.avg_cash_roas.toFixed(2)}x</span>
+      </div>
+    </div>
+  );
+}
+
+function ForecastStat({ label, actual, projected, format = 'money', color = 'var(--bos-text)' }) {
+  const fmt = (v) => {
+    if (format === 'roas') return fmtRoas(v);
+    if (format === 'int') return Math.round(v).toLocaleString();
+    return fmtMoney(v);
+  };
+  return (
+    <div style={{ minWidth: 0, overflow: 'hidden' }}>
+      <div style={{ fontSize: '0.58rem', color: 'var(--bos-text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>
+        {label}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: '0.74rem', color: 'var(--bos-text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>
+          {fmt(actual)}
+        </div>
+        <span style={{ fontSize: '0.68rem', color: 'var(--bos-text-dim)' }}>→</span>
+        <div style={{ fontSize: '1.05rem', fontWeight: 700, color, fontFamily: 'JetBrains Mono, monospace' }}>
+          {fmt(projected)}
+        </div>
       </div>
     </div>
   );

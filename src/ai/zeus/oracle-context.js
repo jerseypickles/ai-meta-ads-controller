@@ -248,6 +248,72 @@ async function buildOracleContext(lastSeenAt = null) {
     ctx.agent_stances = stances;
   } catch (_) { ctx.agent_stances = {}; }
 
+  // Demeter — cash reconciliation MTD + projection cierre del mes
+  try {
+    const DemeterSnapshot = require('../../db/models/DemeterSnapshot');
+    const todayEt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York',
+      year: 'numeric', month: '2-digit', day: '2-digit'
+    }).format(new Date());
+    const monthStart = todayEt.slice(0, 7) + '-01';
+    const mtdSnaps = await DemeterSnapshot.find({
+      date_et: { $gte: monthStart, $lte: todayEt }
+    }).sort({ date_et: 1 }).lean();
+
+    if (mtdSnaps.length > 0) {
+      const sum = (k) => mtdSnaps.reduce((a, s) => a + (s[k] || 0), 0);
+      const mtdSpend = sum('meta_spend');
+      const mtdNet = sum('net_after_fees');
+      const mtdOrders = sum('orders_count');
+      const mtdCashRoas = mtdSpend > 0 ? mtdNet / mtdSpend : 0;
+      const mtdMetaRoas = mtdSpend > 0 ? sum('meta_purchase_value') / mtdSpend : 0;
+      const mtdGap = mtdMetaRoas > 0 ? ((mtdMetaRoas - mtdCashRoas) / mtdMetaRoas) * 100 : 0;
+
+      // Run-rate últimos 7 días
+      const last7 = mtdSnaps.slice(-7);
+      const rrAvgSpend = last7.reduce((a, s) => a + (s.meta_spend || 0), 0) / last7.length;
+      const rrAvgNet = last7.reduce((a, s) => a + (s.net_after_fees || 0), 0) / last7.length;
+      const rrCashRoas = rrAvgSpend > 0 ? rrAvgNet / rrAvgSpend : 0;
+
+      // Projection
+      const [year, month] = todayEt.split('-').map(Number);
+      const monthTotalDays = new Date(year, month, 0).getDate();
+      const daysRemaining = monthTotalDays - mtdSnaps.length;
+      const projSpend = mtdSpend + rrAvgSpend * daysRemaining;
+      const projNet = mtdNet + rrAvgNet * daysRemaining;
+      const projProfit = projNet - projSpend;
+      const projCashRoas = projSpend > 0 ? projNet / projSpend : 0;
+
+      ctx.demeter = {
+        mtd: {
+          days: mtdSnaps.length,
+          meta_spend: Math.round(mtdSpend),
+          net_after_fees: Math.round(mtdNet),
+          profit: Math.round(mtdNet - mtdSpend),
+          orders: mtdOrders,
+          cash_roas: +mtdCashRoas.toFixed(2),
+          meta_roas: +mtdMetaRoas.toFixed(2),
+          gap_pct: +mtdGap.toFixed(1)
+        },
+        run_rate_7d: {
+          avg_spend_daily: Math.round(rrAvgSpend),
+          avg_net_daily: Math.round(rrAvgNet),
+          cash_roas: +rrCashRoas.toFixed(2)
+        },
+        projection_eom: {
+          days_remaining: daysRemaining,
+          total_days: monthTotalDays,
+          spend: Math.round(projSpend),
+          net_after_fees: Math.round(projNet),
+          profit: Math.round(projProfit),
+          cash_roas: +projCashRoas.toFixed(2)
+        }
+      };
+    }
+  } catch (err) {
+    // No log — Demeter es informativo, no crítico para Zeus
+  }
+
   return ctx;
 }
 
@@ -286,6 +352,15 @@ function formatContextForPrompt(ctx) {
   if (s.top_dna) {
     const d = s.top_dna.dimensions;
     lines.push(`  Top DNA: ${d.style || '?'} + ${d.copy_angle || '?'} @ ${s.top_dna.avg_roas}x (${s.top_dna.tests} tests)`);
+  }
+
+  // Demeter — cash reconciliation real (Meta atribuye, Shopify factura)
+  if (ctx.demeter) {
+    const dm = ctx.demeter;
+    lines.push(`\nDEMETER (cash reconciliation, mes en curso):`);
+    lines.push(`  MTD día ${dm.mtd.days}/${dm.projection_eom.total_days}: $${dm.mtd.meta_spend} spend · $${dm.mtd.net_after_fees} cash net · profit $${dm.mtd.profit} · cash ROAS ${dm.mtd.cash_roas}x (Meta dice ${dm.mtd.meta_roas}x, gap ${dm.mtd.gap_pct}%)`);
+    lines.push(`  Run-rate 7d: $${dm.run_rate_7d.avg_spend_daily}/d spend · $${dm.run_rate_7d.avg_net_daily}/d cash net · ROAS ${dm.run_rate_7d.cash_roas}x`);
+    lines.push(`  Proyección cierre: $${dm.projection_eom.spend} spend · $${dm.projection_eom.net_after_fees} cash net · profit $${dm.projection_eom.profit} · ROAS ${dm.projection_eom.cash_roas}x (${dm.projection_eom.days_remaining} días restantes)`);
   }
 
   if (ctx.active_directives.length) {
