@@ -26,7 +26,20 @@ const AGENT_SCHEDULES = [
     label: 'prometheus cycle',
     times: [{ h: 6, m: 30 }, { h: 10, m: 30 }, { h: 14, m: 30 }, { h: 18, m: 30 }, { h: 22, m: 30 }]
   },
-  { agent: 'ares', label: 'ares cycle', times: [{ h: 8 }, { h: 16 }] }
+  {
+    agent: 'ares',
+    label: 'ares cycle',
+    // ares-agent (legacy) 8,16 + ares-brain (LLM Opus) 1,7,13,19
+    times: [
+      { h: 1 }, { h: 7 }, { h: 8 }, { h: 13 }, { h: 16 }, { h: 19 }
+    ]
+  },
+  {
+    agent: 'demeter',
+    label: 'demeter cycle',
+    // daily snapshot 00:05 (cierre del día anterior, lo más relevante)
+    times: [{ h: 0, m: 5 }]
+  }
 ];
 
 // Detectar offset de ET dinámicamente (maneja EDT/EST)
@@ -299,7 +312,8 @@ export default function TemporalSpine() {
           { k: 'athena', c: 'var(--bos-bio)' },
           { k: 'apollo', c: 'var(--bos-warn)' },
           { k: 'prometheus', c: 'var(--bos-danger)' },
-          { k: 'ares', c: 'var(--bos-electric)' }
+          { k: 'ares', c: 'var(--bos-electric)' },
+          { k: 'demeter', c: '#14b8a6' }
         ].map(a => (
           <div key={a.k} style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--bos-text-muted)' }}>
             <div style={{ width: 8, height: 8, borderRadius: 4, background: a.c }} />

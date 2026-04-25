@@ -412,6 +412,7 @@
 .temporal-event.apollo { background: var(--bos-warn); }
 .temporal-event.prometheus { background: var(--bos-danger); }
 .temporal-event.ares { background: var(--bos-electric); }
+.temporal-event.demeter { background: #14b8a6; }
 
 /* Ticks programados (crons futuros + pasado cercano) */
 .temporal-schedule {
@@ -456,6 +457,7 @@
 .temporal-schedule.apollo { background: var(--bos-warn); color: var(--bos-warn); }
 .temporal-schedule.prometheus { background: var(--bos-danger); color: var(--bos-danger); }
 .temporal-schedule.ares { background: var(--bos-electric); color: var(--bos-electric); }
+.temporal-schedule.demeter { background: #14b8a6; color: #14b8a6; }
 
 .temporal-now-line {
   position: absolute;
