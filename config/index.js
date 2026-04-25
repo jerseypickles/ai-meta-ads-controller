@@ -21,6 +21,23 @@ module.exports = {
       maxCalls: 200,
       perHour: 1,
       batchSize: 50
+    },
+
+    // Advantage+ Standard Enhancements — features que Meta aplica auto al
+    // creative para mejorar performance (Marketing API v25.0+).
+    //
+    // Modo: 'off' | 'safe' | 'all'
+    //   off  — no opt-in (estado actual, no cambia visuals de Apollo)
+    //   safe — solo features que NO transforman la imagen original:
+    //          text_optimizations, image_brightness_and_contrast,
+    //          video_auto_crop, image_uncrop
+    //   all  — opt-in global a standard_enhancements (incluye image_expansion,
+    //          background_generation, 3d_animation, music — pueden distorsionar
+    //          creatives de Apollo con estilo intencional ugly-ad/POV/etc)
+    //
+    // Default: 'off'. El user prende cuando quiera testear.
+    advantagePlus: {
+      mode: process.env.META_ADVANTAGE_PLUS_MODE || 'off'
     }
   },
 

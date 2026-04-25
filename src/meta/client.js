@@ -1392,7 +1392,31 @@ class MetaClient {
       })
     };
 
-    logger.info(`Creando ad creative: "${headline}"`);
+    // Advantage+ Standard Enhancements (Meta API v25.0+) — solo si el flag
+    // está habilitado en config. Default off para no afectar el estilo
+    // intencional de los creatives de Apollo.
+    const apMode = config?.meta?.advantagePlus?.mode || 'off';
+    if (apMode === 'all') {
+      // Opt-in global — todas las features (puede distorsionar visuals)
+      creativeParams.degrees_of_freedom_spec = JSON.stringify({
+        creative_features_spec: {
+          standard_enhancements: { enroll_status: 'OPT_IN' }
+        }
+      });
+    } else if (apMode === 'safe') {
+      // Solo features no-transformativas — respetan visuals originales
+      creativeParams.degrees_of_freedom_spec = JSON.stringify({
+        creative_features_spec: {
+          text_optimizations: { enroll_status: 'OPT_IN' },
+          image_brightness_and_contrast: { enroll_status: 'OPT_IN' },
+          video_auto_crop: { enroll_status: 'OPT_IN' },
+          image_uncrop: { enroll_status: 'OPT_IN' }
+        }
+      });
+    }
+    // 'off' (default) → no field, igual al estado actual
+
+    logger.info(`Creando ad creative: "${headline}" · advantage+ mode: ${apMode}`);
     const result = await this.post(`/${this.adAccountId}/adcreatives`, creativeParams);
 
     return {
