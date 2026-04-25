@@ -724,6 +724,23 @@ async function jobCBOHealthMonitor() {
  *   ARES_BRAIN_DRY_RUN=true   → solo análisis, sin ejecutar (default hasta
  *                               commits 2+3 que agregan tools write)
  */
+async function jobDemeterDaily() {
+  try {
+    const { backfillSnapshots } = require('./ai/agent/demeter-agent');
+    // Re-computa últimos 7 días — captura refunds retroactivos de Shopify.
+    // Idempotente, no duplica nada.
+    const results = await backfillSnapshots(7);
+    const ok = results.filter(r => r.ok).length;
+    logger.info(`[DEMETER-CRON] ✓ ${ok}/${results.length} snapshots actualizados`);
+    if (results.length - ok > 0) {
+      const failed = results.filter(r => !r.ok).map(r => `${r.date_et}:${r.error}`);
+      logger.warn(`[DEMETER-CRON] failures: ${failed.join(', ')}`);
+    }
+  } catch (err) {
+    logger.error(`[DEMETER-CRON] cycle falló: ${err.message}`);
+  }
+}
+
 async function jobAresBrain() {
   try {
     const { runAresBrain } = require('./ai/agent/ares-brain');
@@ -1304,6 +1321,14 @@ function initCronJobs() {
     name: 'ares-brain'
   });
   logger.info('  [*] Ares Brain — cada 6h (1am/7am/1pm/7pm ET)');
+
+  // Demeter — cash reconciliation diario a las 00:05 ET (día anterior cerrado)
+  // Re-computa últimos 7 días para capturar refunds retroactivos de Shopify.
+  cron.schedule('5 0 * * *', jobDemeterDaily, {
+    timezone: TIMEZONE,
+    name: 'demeter-daily'
+  });
+  logger.info('  [*] Demeter — diario 00:05 ET (cash reconciliation)');
 
   // AI Ops metrics refresh — cada 15 min, 24/7
   cron.schedule('5,20,35,50 * * * *', jobAIOpsRefresh, {
