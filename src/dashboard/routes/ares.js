@@ -215,7 +215,7 @@ router.get('/portfolio-actions', async (req, res) => {
     const since = new Date(Date.now() - hours * 3600000);
 
     const actions = await ActionLog.find({
-      agent_type: { $in: ['ares_portfolio', 'ares_agent'] },
+      agent_type: { $in: ['ares_portfolio', 'ares_agent', 'ares_brain'] },
       executed_at: { $gte: since }
     }).sort({ executed_at: -1 }).limit(100).lean();
 
@@ -232,9 +232,11 @@ router.get('/portfolio-actions', async (req, res) => {
       before_value: a.before_value,
       after_value: a.after_value,
       reasoning: a.reasoning,
-      detector: a.metadata?.detector || null,
+      detector: a.metadata?.detector
+        || (a.agent_type === 'ares_brain' ? 'brain_llm' : null),
       error: a.error,
       is_portfolio: a.agent_type === 'ares_portfolio',
+      is_brain: a.agent_type === 'ares_brain',
       metadata: a.metadata || {}
     }));
 
@@ -242,6 +244,7 @@ router.get('/portfolio-actions', async (req, res) => {
     const summary = {
       total: enriched.length,
       portfolio_actions: enriched.filter(e => e.is_portfolio).length,
+      brain_actions: enriched.filter(e => e.is_brain).length,
       duplications: enriched.filter(e => e.action === 'duplicate_adset').length,
       pauses: enriched.filter(e => e.action === 'pause').length,
       scale_ups: enriched.filter(e => e.action === 'scale_up').length,

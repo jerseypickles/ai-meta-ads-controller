@@ -977,7 +977,11 @@ const DETECTOR_LABELS = {
   starved_winner_rescue: { icon: '🆘', color: '#10b981', label: 'Rescue' },
   underperformer_kill: { icon: '✗', color: '#ef4444', label: 'Kill' },
   cbo_saturated_winner: { icon: '📈', color: '#60a5fa', label: 'Scale saturado' },
-  cbo_starvation: { icon: '💧', color: '#f97316', label: 'Scale starvation' }
+  cbo_starvation: { icon: '💧', color: '#f97316', label: 'Scale starvation' },
+  cluster_saturation: { icon: '◉', color: '#3b82f6', label: 'Cluster' },
+  cbo_underperforming: { icon: '↓', color: '#dc2626', label: 'Underperformer' },
+  mass_zombie_kill: { icon: '☠', color: '#7c3aed', label: 'Zombie kill' },
+  brain_llm: { icon: '🧠', color: '#a78bfa', label: 'Brain (Opus)' }
 };
 
 const ACTION_ICONS_PORTFOLIO = {
@@ -1078,9 +1082,11 @@ function ActionTimelineItem({ action }) {
   const detector = DETECTOR_LABELS[action.detector] || null;
   const icon = ACTION_ICONS_PORTFOLIO[action.action] || '·';
   const bgColor = !action.success ? 'rgba(239, 68, 68, 0.08)' :
+                   action.is_brain ? 'rgba(167, 139, 250, 0.08)' :
                    action.is_portfolio ? 'rgba(16, 185, 129, 0.06)' :
                    'rgba(17, 21, 51, 0.5)';
   const borderColor = !action.success ? '#ef4444' :
+                       action.is_brain ? '#a78bfa' :
                        detector?.color || '#6b7280';
 
   return (
