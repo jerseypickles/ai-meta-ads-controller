@@ -94,6 +94,22 @@ async function getOrdersForDateRange(startUtc, endUtc) {
   const orders = [];
   const limit = 250;
   let pageInfo = null;
+  let pageNum = 0;
+
+  // Count previo — sabemos cuántas páginas esperar (1 call extra, vale la pena)
+  let expectedTotal = null;
+  try {
+    const { data: countData } = await get('/orders/count.json', {
+      status: 'any',
+      created_at_min: startUtc.toISOString(),
+      created_at_max: endUtc.toISOString()
+    });
+    expectedTotal = countData.count;
+    const expectedPages = Math.ceil(expectedTotal / limit);
+    logger.info(`[shopify] orders/count: ${expectedTotal} orders, ~${expectedPages} pages`);
+  } catch (err) {
+    logger.warn(`[shopify] count call falló (sigo igual): ${err.message}`);
+  }
 
   // Initial query con date range
   const initialParams = {
@@ -106,17 +122,25 @@ async function getOrdersForDateRange(startUtc, endUtc) {
 
   let { data, headers } = await get('/orders.json', initialParams);
   orders.push(...(data.orders || []));
+  pageNum++;
   pageInfo = parseNextCursor(headers.link);
+  logger.info(`[shopify] page ${pageNum}: +${data.orders?.length || 0} orders, total ${orders.length}${expectedTotal ? `/${expectedTotal}` : ''}`);
 
   // Pagination loop — Shopify cursor based, NO date params allowed con page_info
   while (pageInfo) {
     ({ data, headers } = await get('/orders.json', { limit, page_info: pageInfo }));
     orders.push(...(data.orders || []));
+    pageNum++;
     pageInfo = parseNextCursor(headers.link);
+    if (pageNum % 5 === 0 || !pageInfo) {
+      logger.info(`[shopify] page ${pageNum}: +${data.orders?.length || 0} orders, total ${orders.length}${expectedTotal ? `/${expectedTotal}` : ''}`);
+    }
   }
 
   // Filtrar canceladas (Shopify las incluye con status=any)
-  return orders.filter(o => !o.cancelled_at);
+  const valid = orders.filter(o => !o.cancelled_at);
+  logger.info(`[shopify] fetch done: ${orders.length} raw → ${valid.length} valid (canceled excluded)`);
+  return valid;
 }
 
 /**
