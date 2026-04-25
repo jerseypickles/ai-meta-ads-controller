@@ -229,6 +229,14 @@ const actionLogSchema = new mongoose.Schema({
   learned_7d_at: { type: Date, default: null, index: true },
   learned_7d_reward: { type: Number, default: null },
 
+  // Metadata libre — usado por agents para guardar context arbitrario:
+  // detector, source, shadow_cash_consideration, parent_adset, etc.
+  // Bug histórico (fixed 2026-04-25): este campo no existía en schema,
+  // Mongoose silenciosamente descartaba todos los metadata writes. Por
+  // eso ares_brain ActionLogs perdían source='ares_brain_decision' etc.
+  // Ahora declarado como Mixed para aceptar shape arbitraria.
+  metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+
   // Meta context — segunda derivada para hypothesis engine (timing, concurrencia, cohorte)
   // Populado por pattern-enricher en pre-save hook.
   meta_context: {
