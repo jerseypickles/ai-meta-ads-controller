@@ -611,68 +611,46 @@ function CalculationBreakdown({ summary }) {
 
       {expanded && (
         <div style={{
-          padding: '14px 18px 18px',
+          padding: '16px 20px 20px',
           borderTop: '1px solid rgba(255,255,255,0.05)',
-          fontSize: '0.78rem',
+          fontSize: '0.82rem',
           fontFamily: 'JetBrains Mono, monospace',
-          lineHeight: 1.7
+          lineHeight: 2
         }}>
-          {/* PASO 1: composición del Total ventas Shopify */}
-          <div style={{ fontSize: '0.66rem', color: 'var(--bos-text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 8 }}>
-            ① Composición del Total ventas
-          </div>
-          <BreakdownLine label="Productos (subtotal post-descuentos)" value={summary.total_gross_sales} />
-          <BreakdownLine label="Shipping cobrado" value={summary.total_shipping} note="paga el cliente, vos pagás al carrier" />
-          <BreakdownLine label="Tax cobrado" value={summary.total_taxes} note="recolectado para el gobierno" color={COLOR_GAP_WARN} />
+          {/* Cascada plana — empieza arriba con lo que entró, va restando hacia abajo */}
 
-          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(20, 184, 166, 0.3)' }}>
-            <BreakdownLine label="Total ventas Shopify" value={summary.total_sales} bold note={`= productos + shipping + tax · matchea Shopify Analytics${summary.total_discounts > 0 ? ` · (ya descontó $${(summary.total_discounts/1000).toFixed(1)}k de discounts)` : ''}`} />
-          </div>
+          <CascadeLine label="Total ventas Shopify" value={summary.total_sales} bold note="lo que cobraste en Shopify" />
 
-          {/* PASO 2: del total al banco */}
-          <div style={{ fontSize: '0.66rem', color: 'var(--bos-text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: 18, marginBottom: 8 }}>
-            ② Del total al banco (lo que cobra Shopify y devuelve refunds)
-          </div>
-          <BreakdownLine label="Refunds" value={-summary.total_refunds} color={summary.total_refunds > 0 ? COLOR_GAP_BAD : 'var(--bos-text-dim)'} />
-          <BreakdownLine label="Shopify fees (2.9% + $0.30/order)" value={-summary.total_fees} dim />
+          <CascadeLine label="− Shipping cobrado" value={-summary.total_shipping} note="va al carrier (USPS/UPS), no es tuyo" />
 
-          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(20, 184, 166, 0.3)' }}>
-            <BreakdownLine label="Cash que entró al banco" value={summary.total_cash_to_bank} bold color={COLOR_CASH} note="= total ventas − refunds − fees · esto es lo que tenés en la cuenta" />
-          </div>
+          <CascadeLine label="− Tax cobrado" value={-summary.total_taxes} note="va al gobierno, no es tuyo" />
 
-          {/* PASO 3: del banco a tuyo real */}
-          <div style={{ fontSize: '0.66rem', color: 'var(--bos-text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: 18, marginBottom: 8 }}>
-            ③ Del banco a tuyo real (separar lo que es del gobierno)
-          </div>
-          <BreakdownLine label="Tax a pagar al gobierno" value={-summary.total_taxes} color={COLOR_GAP_WARN} note="lo recolectaste pero no es tuyo" />
+          <CascadeLine label="− Refunds" value={-summary.total_refunds} note="devoluciones procesadas" />
 
-          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(20, 184, 166, 0.6)' }}>
-            <BreakdownLine label="TUYO REAL (post-tax)" value={summary.total_net_for_merchant} bold big color={COLOR_CASH} note="lo que es realmente del negocio, antes de costos operativos" />
-          </div>
+          <CascadeLine label="− Shopify fees" value={-summary.total_fees} note="2.9% + $0.30 por orden" />
 
-          {/* PASO 4: profit pre-COGS */}
-          <div style={{ fontSize: '0.66rem', color: 'var(--bos-text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: 18, marginBottom: 8 }}>
-            ④ Profit pre-COGS (descontando ad spend)
-          </div>
-          <BreakdownLine label="Gasto Meta Ads" value={-summary.total_meta_spend} dim />
+          <CascadeLine label="− Gasto Meta Ads" value={-summary.total_meta_spend} note="lo que pagaste a Meta" />
 
-          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(20, 184, 166, 0.8)' }}>
-            <BreakdownLine label="PROFIT pre-COGS" value={summary.net_profit} bold big color={summary.net_profit >= 0 ? COLOR_CASH : COLOR_GAP_BAD} note="margen antes de costos del producto y operativos" />
-          </div>
+          <CascadeLine
+            label="= PROFIT pre-COGS"
+            value={summary.net_profit}
+            bold big highlight
+            color={summary.net_profit >= 0 ? COLOR_CASH : COLOR_GAP_BAD}
+            note="lo que te queda antes de costos del producto"
+          />
 
           <div style={{
-            marginTop: 18, padding: '10px 12px',
+            marginTop: 16, padding: '10px 14px',
             background: 'rgba(20, 184, 166, 0.06)',
             borderRadius: 6,
-            fontSize: '0.7rem',
+            fontSize: '0.74rem',
             color: 'var(--bos-text-muted)',
             lineHeight: 1.6,
             fontFamily: '-apple-system, system-ui, sans-serif'
           }}>
-            <strong style={{ color: DEMETER_COLOR }}>No tracked aquí:</strong>
-            {' '}COGS (costo de producir/comprar el pickle), shipping al carrier (lo que vos pagás a USPS/UPS),
-            costos operativos (rent, salarios, software, payment processor disputes). Para el profit real
-            del negocio, descontá esos del PROFIT pre-COGS arriba.
+            <strong style={{ color: DEMETER_COLOR }}>Falta restar (no tracked aquí):</strong>
+            {' '}COGS del producto, costos operativos (rent, salarios, software). El número de arriba
+            es <strong>profit pre-COGS</strong>, no profit final.
           </div>
         </div>
       )}
@@ -680,73 +658,51 @@ function CalculationBreakdown({ summary }) {
   );
 }
 
-function BreakdownLine({ label, value, bold, big, dim, color, note }) {
+function CascadeLine({ label, value, note, bold, big, highlight, color }) {
   const negative = value < 0;
-  const displayValue = `${negative ? '-' : ''}${fmtMoney(Math.abs(value))}`;
+  const display = `${negative ? '−' : ''}${fmtMoney(Math.abs(value))}`;
   return (
     <div style={{
       display: 'flex',
       alignItems: 'baseline',
       justifyContent: 'space-between',
-      gap: 14,
-      marginBottom: 4,
-      opacity: dim ? 0.7 : 1
+      gap: 16,
+      padding: highlight ? '12px 14px' : '4px 0',
+      marginTop: highlight ? 12 : 0,
+      borderTop: highlight ? `1px solid ${color || COLOR_CASH}88` : 'none',
+      borderRadius: highlight ? 6 : 0,
+      background: highlight ? `${color || COLOR_CASH}11` : 'transparent'
     }}>
       <div style={{
-        fontSize: big ? '0.86rem' : '0.78rem',
-        fontWeight: bold ? 700 : 400,
+        fontSize: big ? '0.95rem' : '0.86rem',
+        fontWeight: bold ? 700 : 500,
         color: bold ? (color || 'var(--bos-text)') : 'var(--bos-text-muted)',
         fontFamily: '-apple-system, system-ui, sans-serif',
-        flex: '1 1 auto'
+        flex: '1 1 auto',
+        minWidth: 0
       }}>
-        {label}
+        <span>{label}</span>
         {note && (
-          <span style={{ fontSize: '0.66rem', color: 'var(--bos-text-dim)', marginLeft: 8, fontStyle: 'italic' }}>
-            ← {note}
+          <span style={{
+            display: 'block',
+            fontSize: '0.7rem',
+            color: 'var(--bos-text-dim)',
+            fontStyle: 'italic',
+            marginTop: -2,
+            marginLeft: bold ? 0 : 14
+          }}>
+            {note}
           </span>
         )}
       </div>
       <div style={{
-        fontSize: big ? '1rem' : '0.82rem',
+        fontSize: big ? '1.15rem' : '0.92rem',
         fontWeight: bold ? 700 : 600,
         color: color || (negative ? '#94a3b8' : 'var(--bos-text)'),
         fontFamily: 'JetBrains Mono, monospace',
         flexShrink: 0
       }}>
-        {displayValue}
-      </div>
-    </div>
-  );
-}
-
-function BreakdownSubline({ label, value, note, color }) {
-  return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'baseline',
-      justifyContent: 'space-between',
-      gap: 14,
-      marginLeft: 18,
-      marginBottom: 2
-    }}>
-      <div style={{
-        fontSize: '0.72rem',
-        color: 'var(--bos-text-muted)',
-        fontFamily: '-apple-system, system-ui, sans-serif'
-      }}>
-        ├─ {label}
-        {note && (
-          <span style={{ fontSize: '0.64rem', color: 'var(--bos-text-dim)', marginLeft: 6, fontStyle: 'italic' }}>
-            ({note})
-          </span>
-        )}
-      </div>
-      <div style={{
-        fontSize: '0.76rem',
-        color: color || 'var(--bos-text-muted)',
-        fontFamily: 'JetBrains Mono, monospace'
-      }}>
-        {fmtMoney(value)}
+        {display}
       </div>
     </div>
   );

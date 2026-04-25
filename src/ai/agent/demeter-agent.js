@@ -141,21 +141,26 @@ function estimateShopifyFees(totalSales, ordersCount) {
  * Helper único para no duplicar lógica entre runDailySnapshot y
  * runDailySnapshotFromMaster.
  *
- * Nuevo flujo de cash (2026-04-25):
- *   total_sales       = matchea Shopify "Total sales" (total_price)
+ * Flujo de cash (2026-04-25 v2):
+ *   total_sales       = Shopify "Total sales" (total_price agregado)
  *   cash_to_bank      = total_sales − refunds − shopify_fees_est
- *   net_for_merchant  = cash_to_bank − taxes (tuyo de verdad post-tax)
- *   cash_roas         = net_for_merchant / meta_spend (la métrica real)
+ *   net_for_merchant  = cash_to_bank − taxes − shipping
+ *                       (descuenta shipping porque va al carrier, y tax
+ *                        porque va al gobierno — no es del merchant)
+ *   cash_roas         = net_for_merchant / meta_spend
  */
 function buildSnapshotDoc({ dateEt, startUtc, endUtc, metaTotals, sh, computationError, elapsed }) {
-  // Fees aplicados sobre total_sales (no subtotal — fix más correcto)
   const shopifyFees = estimateShopifyFees(sh.total_sales, sh.orders_count);
 
   // Cash que entra al banco: total ventas − refunds − fees Shopify
   const cashToBank = +(sh.total_sales - sh.refunds - shopifyFees).toFixed(2);
 
-  // Tuyo de verdad: cash_to_bank − tax que vas a pagar al gobierno
-  const netForMerchant = +(cashToBank - sh.taxes).toFixed(2);
+  // Tuyo de verdad: cash al banco menos lo que NO es del merchant
+  // (shipping → carrier, tax → gobierno).
+  // Asunción conservadora: shipping cobrado al cliente = shipping pagado
+  // al carrier (net 0). Si el merchant gana margen en shipping, esto
+  // sub-estima ligeramente. Pero es la asunción correcta por default.
+  const netForMerchant = +(cashToBank - sh.taxes - sh.shipping).toFixed(2);
 
   // Legacy field (productos puros - fees) — mantenido para compat
   const netAfterFees = +(sh.net_sales - shopifyFees).toFixed(2);
