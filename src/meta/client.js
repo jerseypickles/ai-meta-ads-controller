@@ -1179,9 +1179,24 @@ class MetaClient {
     try {
       result = await this.post(`/${adSetId}/copies`, params);
     } catch (err) {
-      // Capturar error detallado de Meta para debugging
+      // Capturar error detallado de Meta y enriquecer el message para que
+      // se persista en ActionLog (no solo logs de Render).
       const metaErr = err.response?.data?.error || {};
-      logger.error(`[duplicateAdSet] Error 400 detalle: code=${metaErr.code} type=${metaErr.type} subcode=${metaErr.error_subcode} msg=${metaErr.message || err.message} user_title=${metaErr.error_user_title || 'n/a'}`);
+      const detail = [
+        metaErr.error_user_title || metaErr.message,
+        metaErr.code ? `(code ${metaErr.code}` + (metaErr.error_subcode ? `/${metaErr.error_subcode})` : ')') : null,
+        metaErr.error_user_msg ? `— ${metaErr.error_user_msg}` : null
+      ].filter(Boolean).join(' ');
+
+      logger.error(`[duplicateAdSet] ${adSetId} → ${options.campaign_id || 'same campaign'} falló: ${detail || err.message}`);
+
+      // Mutar el err.message para que ActionLog tenga detalle real
+      if (detail) {
+        const enriched = new Error(`Meta API: ${detail}`);
+        enriched.response = err.response;
+        enriched.original = err;
+        throw enriched;
+      }
       throw err;
     }
 
