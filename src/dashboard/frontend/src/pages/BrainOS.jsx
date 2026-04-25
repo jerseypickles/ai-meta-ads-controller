@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import '../brain-os.css';
 import ZeusSpeaks from '../components/ZeusSpeaks';
 import NeuralCommandCenter from '../components/NeuralCommandCenter';
-import DemeterWidget from '../components/DemeterWidget';
 import TemporalSpine from '../components/TemporalSpine';
 import DNAGenomeSpace from '../components/DNAGenomeSpace';
 import ZeusPanel from '../components/agents/ZeusPanel';
@@ -11,6 +10,7 @@ import AthenaPanel from '../components/agents/AthenaPanel';
 import ApolloPanel from '../components/agents/ApolloPanel';
 import PrometheusPanel from '../components/agents/PrometheusPanel';
 import AresPanel from '../components/agents/AresPanel';
+import DemeterPanel from '../components/agents/DemeterPanel';
 
 export default function BrainOS() {
   const [selectedAgent, setSelectedAgent] = useState(null);
@@ -45,7 +45,7 @@ export default function BrainOS() {
       };
 
       const targetAgent = agentMap[kind];
-      if (targetAgent && ['zeus', 'athena', 'apollo', 'prometheus', 'ares'].includes(targetAgent)) {
+      if (targetAgent && ['zeus', 'athena', 'apollo', 'prometheus', 'ares', 'demeter'].includes(targetAgent)) {
         setSelectedAgent(targetAgent);
         if (id) setFocusRequest({ kind, id, ts: Date.now() });
       }
@@ -62,9 +62,6 @@ export default function BrainOS() {
 
         {/* Neural Command Center */}
         <NeuralCommandCenter onAgentClick={setSelectedAgent} />
-
-        {/* Demeter — Cash Reconciliation Widget */}
-        <DemeterWidget />
 
         {/* Toggle DNA Genome */}
         <motion.div
@@ -145,7 +142,8 @@ function AgentDetailPanel({ agent, focusRequest, onClose, onFocused }) {
     athena: <AthenaPanel focusRequest={athenaFocus} onFocused={onFocused} />,
     apollo: <ApolloPanel />,
     prometheus: <PrometheusPanel />,
-    ares: <AresPanel />
+    ares: <AresPanel />,
+    demeter: <DemeterPanel />
   };
 
   return (
