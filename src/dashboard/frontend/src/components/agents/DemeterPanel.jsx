@@ -247,41 +247,44 @@ export default function DemeterPanel() {
   const today = snapshots[0];
 
   return (
-    <div>
+    <div style={{ minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
       {/* HERO */}
       <div style={{
         background: 'radial-gradient(ellipse at top left, rgba(20, 184, 166, 0.14) 0%, transparent 50%), radial-gradient(ellipse at bottom right, rgba(52, 211, 153, 0.08) 0%, transparent 50%)',
         borderRadius: 16,
         padding: '20px 24px',
         marginBottom: 20,
-        border: '1px solid rgba(20, 184, 166, 0.22)'
+        border: '1px solid rgba(20, 184, 166, 0.22)',
+        minWidth: 0,
+        overflow: 'hidden'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16, flexWrap: 'wrap' }}>
           <motion.div
             initial={{ scale: 0.5, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ type: 'spring' }}
             style={{
-              width: 64, height: 64, borderRadius: '50%',
+              width: 56, height: 56, borderRadius: '50%',
               background: `${DEMETER_COLOR}15`,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               border: `2px solid ${DEMETER_COLOR}40`,
               filter: `drop-shadow(0 0 20px ${DEMETER_COLOR})`,
-              fontSize: '2rem'
+              fontSize: '1.7rem',
+              flexShrink: 0
             }}
           >
             ✿
           </motion.div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: '1.5rem', fontWeight: 700, color: DEMETER_COLOR, letterSpacing: '0.02em' }}>
+          <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: DEMETER_COLOR, letterSpacing: '0.02em' }}>
               DEMETER
             </div>
-            <div style={{ fontSize: '0.78rem', color: 'var(--bos-text-muted)' }}>
-              Reconciliación de caja — Meta spend vs Shopify net
+            <div style={{ fontSize: '0.72rem', color: 'var(--bos-text-muted)' }}>
+              Reconciliación de caja
             </div>
           </div>
           <button onClick={handleRunNow} disabled={running} style={runBtnStyle}>
-            {running ? '⟳ computando...' : '↻ Refresh data'}
+            {running ? '⟳' : '↻ Refresh'}
           </button>
         </div>
 
@@ -322,31 +325,36 @@ export default function DemeterPanel() {
           </span>
         </div>
 
-        {/* KPI cards principales — 4 grandes */}
+        {/* KPI cards principales — responsive auto-fit, mín 160px por card */}
         {summary ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 14 }}>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+            gap: 12,
+            marginBottom: 14
+          }}>
             <KpiCard
-              label="Gasto Meta Ads"
-              value={fmtMoney(summary.total_meta_spend, true)}
-              sub={`${summary.days_count} días`}
+              label="Gasto Meta"
+              value={fmtMoney(summary.total_meta_spend)}
+              sub={`${summary.days_count}d`}
               color="#94a3b8"
             />
             <KpiCard
-              label="Cash neto (post-fees)"
-              value={fmtMoney(summary.total_net_after_fees, true)}
-              sub={`${summary.total_orders.toLocaleString()} órdenes`}
+              label="Cash neto"
+              value={fmtMoney(summary.total_net_after_fees)}
+              sub={`${summary.total_orders.toLocaleString()} ord.`}
               color={COLOR_CASH}
             />
             <KpiCard
-              label="Cash ROAS real"
+              label="Cash ROAS"
               value={fmtRoas(summary.avg_cash_roas)}
-              sub={`Meta dice ${fmtRoas(summary.avg_meta_roas)}`}
+              sub={`Meta ${fmtRoas(summary.avg_meta_roas)}`}
               color={COLOR_CASH}
               big
             />
             <KpiCard
-              label="Profit (cash − ad spend)"
-              value={fmtMoney(summary.net_profit, true)}
+              label="Profit"
+              value={fmtMoney(summary.net_profit)}
               sub={`AOV ${fmtMoney(summary.avg_order_value)}`}
               color={summary.net_profit >= 0 ? COLOR_CASH : COLOR_GAP_BAD}
               big
@@ -358,16 +366,18 @@ export default function DemeterPanel() {
           </div>
         )}
 
-        {/* Mini stats row — desglose Shopify */}
+        {/* Mini stats row — desglose Shopify, responsive */}
         {summary && summary.days_count > 0 && (
           <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10,
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
+            gap: 10,
             padding: '12px 14px',
             background: 'rgba(17, 21, 51, 0.4)',
             borderRadius: 10,
             fontSize: '0.74rem'
           }}>
-            <MiniStat label="Gross sales" value={fmtMoney(summary.total_gross_sales, true)} />
+            <MiniStat label="Gross sales" value={fmtMoney(summary.total_gross_sales)} />
             <MiniStat label="Discounts" value={`-${fmtMoney(summary.total_discounts)}`} color="#94a3b8" />
             <MiniStat label="Refunds" value={`-${fmtMoney(summary.total_refunds)}`} color={summary.total_refunds > 0 ? COLOR_GAP_BAD : 'var(--bos-text-muted)'} />
             <MiniStat label="Shopify fees" value={`-${fmtMoney(summary.total_fees)}`} color="#94a3b8" />
@@ -477,16 +487,44 @@ function KpiCard({ label, value, sub, color, big }) {
       background: 'rgba(17, 21, 51, 0.55)',
       border: `1px solid ${big ? color + '33' : 'rgba(255,255,255,0.06)'}`,
       borderRadius: 10,
-      padding: big ? '16px 18px' : '14px 16px'
+      padding: big ? '14px 16px' : '12px 14px',
+      minWidth: 0,
+      overflow: 'hidden'
     }}>
-      <div style={{ fontSize: '0.62rem', color: 'var(--bos-text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
+      <div style={{
+        fontSize: '0.6rem',
+        color: 'var(--bos-text-dim)',
+        textTransform: 'uppercase',
+        letterSpacing: '0.08em',
+        marginBottom: 6,
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis'
+      }}>
         {label}
       </div>
-      <div style={{ fontSize: big ? '1.9rem' : '1.5rem', fontWeight: 700, color, fontFamily: 'JetBrains Mono, monospace', lineHeight: 1.1 }}>
+      <div style={{
+        fontSize: big ? '1.5rem' : '1.25rem',
+        fontWeight: 700,
+        color,
+        fontFamily: 'JetBrains Mono, monospace',
+        lineHeight: 1.1,
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis'
+      }}>
         {value}
       </div>
       {sub && (
-        <div style={{ fontSize: '0.68rem', color: 'var(--bos-text-muted)', marginTop: 6, fontFamily: 'JetBrains Mono, monospace' }}>
+        <div style={{
+          fontSize: '0.66rem',
+          color: 'var(--bos-text-muted)',
+          marginTop: 5,
+          fontFamily: 'JetBrains Mono, monospace',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis'
+        }}>
           {sub}
         </div>
       )}
@@ -496,11 +534,28 @@ function KpiCard({ label, value, sub, color, big }) {
 
 function MiniStat({ label, value, color = 'var(--bos-text)' }) {
   return (
-    <div>
-      <div style={{ fontSize: '0.58rem', color: 'var(--bos-text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>
+    <div style={{ minWidth: 0, overflow: 'hidden' }}>
+      <div style={{
+        fontSize: '0.56rem',
+        color: 'var(--bos-text-dim)',
+        textTransform: 'uppercase',
+        letterSpacing: '0.08em',
+        marginBottom: 2,
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis'
+      }}>
         {label}
       </div>
-      <div style={{ fontSize: '0.86rem', fontWeight: 600, color, fontFamily: 'JetBrains Mono, monospace' }}>
+      <div style={{
+        fontSize: '0.82rem',
+        fontWeight: 600,
+        color,
+        fontFamily: 'JetBrains Mono, monospace',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis'
+      }}>
         {value}
       </div>
     </div>
@@ -514,7 +569,9 @@ function Section({ title, subtitle, children }) {
       background: 'rgba(10, 14, 39, 0.4)',
       border: '1px solid rgba(255,255,255,0.05)',
       borderRadius: 12,
-      padding: '16px 20px'
+      padding: '16px 20px',
+      minWidth: 0,
+      overflow: 'hidden'
     }}>
       <div style={{ marginBottom: 12 }}>
         <div style={{ fontSize: '0.86rem', fontWeight: 600, color: 'var(--bos-text)' }}>{title}</div>
