@@ -722,6 +722,8 @@ function ShadowComparisonView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [days, setDays] = useState(14);
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillResult, setBackfillResult] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -741,7 +743,20 @@ function ShadowComparisonView() {
     }
     load();
     return () => { alive = false; };
-  }, [days]);
+  }, [days, backfillResult]);  // refresh data después de backfill
+
+  async function handleBackfill() {
+    if (!confirm(`Backfill retrospectivo: re-evaluar acciones del brain de los últimos ${days} días con cash awareness usando Opus. Costo aproximado: $0.10 por acción. ¿Continuar?`)) return;
+    setBackfilling(true);
+    try {
+      const r = await api.post('/api/demeter/shadow-backfill', { days });
+      setBackfillResult(r.data);
+    } catch (err) {
+      alert(`Error: ${err.response?.data?.error || err.message}`);
+    } finally {
+      setBackfilling(false);
+    }
+  }
 
   if (loading && !data) return <Section title="Shadow Mode" subtitle="cargando...">cargando</Section>;
   if (error) return <Section title="Shadow Mode" subtitle="error">{error}</Section>;
@@ -786,7 +801,7 @@ function ShadowComparisonView() {
           y registra "qué hubiera hecho con cash awareness". <strong>NO cambia decisiones reales</strong> —
           solo loguea para que decidas si activar cash-aware decisions en el futuro.
         </div>
-        <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+        <div style={{ marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {[7, 14, 30, 60].map(d => (
             <button
               key={d}
@@ -805,7 +820,39 @@ function ShadowComparisonView() {
               {d}d
             </button>
           ))}
+          <div style={{ flex: 1 }} />
+          <button
+            onClick={handleBackfill}
+            disabled={backfilling}
+            style={{
+              padding: '6px 14px',
+              borderRadius: 6,
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              cursor: backfilling ? 'wait' : 'pointer',
+              border: '1px solid rgba(167, 139, 250, 0.4)',
+              background: 'rgba(167, 139, 250, 0.15)',
+              color: '#a78bfa',
+              opacity: backfilling ? 0.6 : 1
+            }}
+            title="Re-evalúa acciones históricas del brain con cash awareness usando Opus retrospective. Útil para inicializar el panel con data sin esperar nuevos ciclos."
+          >
+            {backfilling ? '⟳ procesando con Opus...' : '🔄 Backfill retrospectivo'}
+          </button>
         </div>
+        {backfillResult && (
+          <div style={{
+            marginTop: 10, padding: '10px 14px',
+            background: 'rgba(20, 184, 166, 0.08)',
+            border: '1px solid rgba(20, 184, 166, 0.25)',
+            borderRadius: 8,
+            fontSize: '0.74rem', color: 'var(--bos-text)', lineHeight: 1.6
+          }}>
+            <strong style={{ color: COLOR_CASH }}>✓ Backfill completado:</strong>{' '}
+            {backfillResult.processed} de {backfillResult.total_candidates} acciones procesadas con Opus.
+            {backfillResult.processed > 0 && ' La data abajo se actualizó.'}
+          </div>
+        )}
       </div>
 
       {/* AGREGADOS */}

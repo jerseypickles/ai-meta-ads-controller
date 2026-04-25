@@ -379,6 +379,179 @@ router.get('/shadow-comparison', async (req, res) => {
   }
 });
 
+// POST /shadow-backfill?days=7
+//
+// Re-evalúa retrospectivamente acciones de ares_brain SIN shadow data.
+// Para cada acción:
+//   1. Calcula el cash_signal que existía el día de la acción (o más reciente)
+//   2. Pide a Opus que considere: "tuviste esta acción real, cash signal era X.
+//      ¿Hubieras cambiado tu decisión?"
+//   3. Persiste shadow_cash_consideration en ActionLog.metadata
+//
+// Útil para inicializar el tab Shadow con data sin esperar ciclos nuevos.
+// Costo: ~$0.10 por acción (Opus tokens). Limit max 20 acciones por call.
+router.post('/shadow-backfill', async (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.body?.days || req.query?.days || '14', 10), 30);
+    const ActionLog = require('../../db/models/ActionLog');
+    const since = new Date(Date.now() - days * 86400000);
+
+    // Acciones del brain SIN shadow_cash_consideration (no re-procesar)
+    const actions = await ActionLog.find({
+      agent_type: 'ares_brain',
+      success: true,
+      executed_at: { $gte: since },
+      'metadata.shadow_cash_consideration': { $exists: false }
+    }).sort({ executed_at: -1 }).limit(20).lean();
+
+    if (actions.length === 0) {
+      return res.json({ ok: true, processed: 0, message: 'no hay acciones sin shadow para backfill' });
+    }
+
+    const Anthropic = require('@anthropic-ai/sdk');
+    const config = require('../../../config');
+    const claude = new Anthropic({ apiKey: config.claude.apiKey });
+
+    const results = [];
+
+    for (const action of actions) {
+      try {
+        // Cash signal del día de la acción (o más reciente disponible)
+        const actionDate = new Date(action.executed_at);
+        actionDate.setUTCHours(0, 0, 0, 0);
+        const dateEt = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'America/New_York'
+        }).format(actionDate);
+
+        // 7d previos al día de la acción para cash_roas_7d retrospectivo
+        const since14 = new Date(actionDate.getTime() - 14 * 86400000);
+        const sinceStr = since14.toISOString().slice(0, 10);
+        const snaps = await DemeterSnapshot.find({
+          date_et: { $gte: sinceStr, $lte: dateEt }
+        }).sort({ date_et: -1 }).lean();
+
+        if (snaps.length < 4) {
+          results.push({ action_id: action._id, skipped: 'datos demeter insuficientes' });
+          continue;
+        }
+
+        const sum = (arr, k) => arr.reduce((a, s) => a + (s[k] || 0), 0);
+        const last7 = snaps.slice(0, 7);
+        const prev7 = snaps.slice(7, 14);
+        const cashRoas7d = sum(last7, 'meta_spend') > 0
+          ? sum(last7, 'net_for_merchant') / sum(last7, 'meta_spend') : 0;
+        const metaRoas7d = sum(last7, 'meta_spend') > 0
+          ? sum(last7, 'meta_purchase_value') / sum(last7, 'meta_spend') : 0;
+        const cashPrev = prev7.length >= 4 && sum(prev7, 'meta_spend') > 0
+          ? sum(prev7, 'net_for_merchant') / sum(prev7, 'meta_spend') : null;
+        const trend = cashPrev != null
+          ? (cashRoas7d - cashPrev > 0.15 ? 'mejorando'
+            : cashRoas7d - cashPrev < -0.15 ? 'empeorando' : 'estable')
+          : 'estable';
+        let zone, zoneHint;
+        if (cashRoas7d >= 3.0) { zone = 'green'; zoneHint = 'cash sano'; }
+        else if (cashRoas7d >= 2.0) { zone = 'yellow'; zoneHint = 'cash aceptable'; }
+        else if (cashRoas7d >= 1.5) { zone = 'orange'; zoneHint = 'cash bajo'; }
+        else { zone = 'red'; zoneHint = 'cash crítico'; }
+
+        // Pedir a Opus que razone retrospective
+        const prompt = `Sos Ares Brain — agente Portfolio Manager. Hiciste esta acción REAL en el pasado:
+
+ACCIÓN EJECUTADA:
+- Tipo: ${action.action}
+- Entity: ${action.entity_name}
+- Cambio: ${action.before_value} → ${action.after_value}
+- Reasoning original: "${(action.reasoning || '').substring(0, 500)}"
+- Fecha: ${action.executed_at}
+
+EN ESE MOMENTO el cash ROAS account-level (Demeter) reportaba:
+- cash_roas_7d: ${cashRoas7d.toFixed(2)}x
+- meta_roas_7d: ${metaRoas7d.toFixed(2)}x
+- gap pct: ${metaRoas7d > 0 ? (((metaRoas7d - cashRoas7d) / metaRoas7d) * 100).toFixed(1) : 0}%
+- zona: ${zone} (${zoneHint})
+- trend vs 7d previos: ${trend}${cashPrev != null ? ` (era ${cashPrev.toFixed(2)}x)` : ''}
+
+PREGUNTA: si hubieras tenido esta info del cash ROAS al momento de decidir, ¿habrías hecho la misma acción? Considerá que vos decidiste con Meta ROAS por CBO (que típicamente es más alto que cash ROAS por atribución).
+
+Responde SOLO con JSON válido:
+{
+  "alt_decision": "same" | "hold" | "less_aggressive" | "more_aggressive",
+  "reasoning_diff": "1-2 oraciones explicando POR QUÉ cambiarías o no"
+}
+
+No agregues nada antes ni después del JSON.`;
+
+        const response = await claude.messages.create({
+          model: 'claude-opus-4-7',
+          max_tokens: 500,
+          system: 'Sos Ares Brain re-evaluando una decisión histórica con cash ROAS awareness. Responde SOLO con JSON válido.',
+          messages: [{ role: 'user', content: prompt }]
+        });
+
+        const txt = response.content?.[0]?.text || '';
+        const jsonMatch = txt.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          results.push({ action_id: action._id, skipped: 'opus no devolvió JSON' });
+          continue;
+        }
+
+        let parsed;
+        try {
+          parsed = JSON.parse(jsonMatch[0]);
+        } catch {
+          results.push({ action_id: action._id, skipped: 'JSON parse error' });
+          continue;
+        }
+
+        const validAlts = ['same', 'hold', 'less_aggressive', 'more_aggressive'];
+        if (!validAlts.includes(parsed.alt_decision)) {
+          results.push({ action_id: action._id, skipped: `alt_decision inválido: ${parsed.alt_decision}` });
+          continue;
+        }
+
+        // Persistir
+        const shadowConsideration = {
+          cash_roas_at_decision: +cashRoas7d.toFixed(3),
+          zone_at_decision: zone,
+          trend_at_decision: trend,
+          alt_decision: parsed.alt_decision,
+          reasoning_diff: (parsed.reasoning_diff || '').substring(0, 500),
+          recorded_at: new Date(),
+          backfilled: true  // marca para distinguir de shadow real-time
+        };
+
+        await ActionLog.updateOne(
+          { _id: action._id },
+          { $set: { 'metadata.shadow_cash_consideration': shadowConsideration } }
+        );
+
+        results.push({
+          action_id: action._id,
+          action: action.action,
+          entity: action.entity_name,
+          alt_decision: parsed.alt_decision,
+          cash_roas: +cashRoas7d.toFixed(2),
+          zone
+        });
+      } catch (err) {
+        logger.error(`[demeter shadow-backfill] ${action._id}: ${err.message}`);
+        results.push({ action_id: action._id, skipped: err.message });
+      }
+    }
+
+    const processed = results.filter(r => r.alt_decision).length;
+    res.json({
+      ok: true,
+      total_candidates: actions.length,
+      processed,
+      results
+    });
+  } catch (err) {
+    logger.error(`[demeter route] shadow-backfill: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /run-now — manual trigger (corre días=opcional, default 7)
 router.post('/run-now', async (req, res) => {
   try {
