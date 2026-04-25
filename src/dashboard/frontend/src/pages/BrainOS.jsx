@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import '../brain-os.css';
 import ZeusSpeaks from '../components/ZeusSpeaks';
 import NeuralCommandCenter from '../components/NeuralCommandCenter';
+import DemeterWidget from '../components/DemeterWidget';
 import TemporalSpine from '../components/TemporalSpine';
 import DNAGenomeSpace from '../components/DNAGenomeSpace';
 import ZeusPanel from '../components/agents/ZeusPanel';
@@ -61,6 +62,9 @@ export default function BrainOS() {
 
         {/* Neural Command Center */}
         <NeuralCommandCenter onAgentClick={setSelectedAgent} />
+
+        {/* Demeter — Cash Reconciliation Widget */}
+        <DemeterWidget />
 
         {/* Toggle DNA Genome */}
         <motion.div
