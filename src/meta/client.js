@@ -1176,28 +1176,87 @@ class MetaClient {
     logger.info(`Duplicando ad set ${adSetId} con opciones: ${JSON.stringify(options)}`);
 
     let result;
+    let usedFallback = false;
     try {
       result = await this.post(`/${adSetId}/copies`, params);
     } catch (err) {
-      // Capturar error detallado de Meta y enriquecer el message para que
-      // se persista en ActionLog (no solo logs de Render).
       const metaErr = err.response?.data?.error || {};
-      const detail = [
-        metaErr.error_user_title || metaErr.message,
-        metaErr.code ? `(code ${metaErr.code}` + (metaErr.error_subcode ? `/${metaErr.error_subcode})` : ')') : null,
-        metaErr.error_user_msg ? `— ${metaErr.error_user_msg}` : null
-      ].filter(Boolean).join(' ');
+      const subcode = metaErr.error_subcode;
 
-      logger.error(`[duplicateAdSet] ${adSetId} → ${options.campaign_id || 'same campaign'} falló: ${detail || err.message}`);
+      // Fallback automático para Meta deprecation 3858504:
+      // Si deep_copy falla porque los creatives originales tienen el campo
+      // standard_enhancements (deprecated), reintentamos con deep_copy=false
+      // y después linkeamos los ads originales por creative_id (Meta acepta
+      // creatives existentes referenciados por ID, no los re-valida).
+      if (subcode === 3858504 && params.deep_copy && !options._noFallback) {
+        logger.warn(`[duplicateAdSet] ${adSetId}: deep_copy rechazado por standard_enhancements deprecated. Reintentando con deep_copy=false + ad re-linking.`);
 
-      // Mutar el err.message para que ActionLog tenga detalle real
-      if (detail) {
-        const enriched = new Error(`Meta API: ${detail}`);
-        enriched.response = err.response;
-        enriched.original = err;
-        throw enriched;
+        try {
+          // Paso 1: leer ads del adset original ANTES de duplicar
+          const originalAds = await this.getAds(adSetId, 'id,name,status,creative{id}');
+
+          // Paso 2: duplicar adset sin ads
+          const shallowResult = await this.post(`/${adSetId}/copies`, {
+            ...params,
+            deep_copy: false
+          });
+          const newAdsetId = shallowResult.copied_adset_id || shallowResult.id;
+
+          // Paso 3: para cada ad original, crear ad nuevo referenciando creative_id
+          let adsRelinked = 0;
+          let adsFailed = 0;
+          for (const ad of (originalAds || [])) {
+            const creativeId = ad.creative?.id;
+            if (!creativeId) { adsFailed++; continue; }
+            try {
+              await this.createAd(
+                newAdsetId,
+                creativeId,
+                ad.name || `Ad clonado ${Date.now()}`,
+                'PAUSED'
+              );
+              adsRelinked++;
+            } catch (linkErr) {
+              logger.warn(`[duplicateAdSet] re-link ad ${ad.id} → ${newAdsetId} falló: ${linkErr.message}`);
+              adsFailed++;
+            }
+          }
+
+          logger.info(`[duplicateAdSet] ✓ fallback exitoso: adset clonado + ${adsRelinked}/${originalAds?.length || 0} ads re-linkeados${adsFailed > 0 ? ` (${adsFailed} failed)` : ''}`);
+          result = { copied_adset_id: newAdsetId, _ads_relinked: adsRelinked, _ads_failed: adsFailed };
+          usedFallback = true;
+        } catch (fallbackErr) {
+          logger.error(`[duplicateAdSet] fallback falló: ${fallbackErr.message}`);
+          // Si fallback falló, seguir al error handling original
+          const detail = [
+            metaErr.error_user_title || metaErr.message,
+            metaErr.code ? `(code ${metaErr.code}/${subcode})` : null,
+            metaErr.error_user_msg ? `— ${metaErr.error_user_msg}` : null,
+            ` · fallback también falló: ${fallbackErr.message}`
+          ].filter(Boolean).join(' ');
+          const enriched = new Error(`Meta API: ${detail}`);
+          enriched.response = err.response;
+          enriched.original = err;
+          throw enriched;
+        }
+      } else {
+        // Error sin fallback aplicable — propagar con detalle enriquecido
+        const detail = [
+          metaErr.error_user_title || metaErr.message,
+          metaErr.code ? `(code ${metaErr.code}` + (subcode ? `/${subcode})` : ')') : null,
+          metaErr.error_user_msg ? `— ${metaErr.error_user_msg}` : null
+        ].filter(Boolean).join(' ');
+
+        logger.error(`[duplicateAdSet] ${adSetId} → ${options.campaign_id || 'same campaign'} falló: ${detail || err.message}`);
+
+        if (detail) {
+          const enriched = new Error(`Meta API: ${detail}`);
+          enriched.response = err.response;
+          enriched.original = err;
+          throw enriched;
+        }
+        throw err;
       }
-      throw err;
     }
 
     // Si se especificó nombre, renombrar el nuevo ad set
@@ -1209,7 +1268,10 @@ class MetaClient {
     return {
       success: true,
       new_adset_id: newId,
-      original_adset_id: adSetId
+      original_adset_id: adSetId,
+      used_fallback_relink: usedFallback,
+      ads_relinked: result._ads_relinked,
+      ads_failed: result._ads_failed
     };
   }
 
