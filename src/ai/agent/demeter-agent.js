@@ -241,23 +241,146 @@ async function runDailySnapshot(dateEt) {
 }
 
 /**
- * Backfill — corre snapshots para los últimos N días. Útil para inicializar
- * históricos al estrenar el panel y también lo invoca el cron diario para
- * re-computar últimos 7 días (refunds retroactivos).
+ * Backfill — corre snapshots para los últimos N días.
+ *
+ * OPTIMIZADO 2026-04-25: en vez de N llamadas a Shopify (una por día),
+ * hace 1 sola fetch del rango master (N + 60d lookback de refunds) y
+ * filtra in-memory por día. Reduce calls de O(N²) a O(N).
+ *
+ * Backfill 60d antes: 60 × 60d lookback = 3,600 días de orders pulled
+ *                     ~430 API calls × 0.5s = 3.5 min solo Shopify
+ * Backfill 60d ahora: 1 master pull (120d) + 60 calls Meta API daily
+ *                     ~24 API calls Shopify + 60 Meta = ~70s total
  */
 async function backfillSnapshots(days = 7) {
+  const t0 = Date.now();
+  logger.info(`[demeter] backfill start: ${days} días`);
+
+  // Paso 1: 1 sola pull master de Shopify orders cubriendo TODO el rango
+  // del backfill + 60d de lookback para refunds retroactivos.
+  const oldestDate = daysAgoEt(days - 1);
+  const newestDate = daysAgoEt(0);
+  const { startUtc: backfillStart } = dateRangeET(oldestDate);
+  const { endUtc: backfillEnd } = dateRangeET(newestDate);
+  const masterStart = new Date(backfillStart.getTime() - 60 * 86400000);
+
+  let masterOrders = [];
+  try {
+    logger.info(`[demeter] master pull Shopify: ${masterStart.toISOString()} → ${backfillEnd.toISOString()}`);
+    masterOrders = await shopify.getOrdersForDateRange(masterStart, backfillEnd);
+    logger.info(`[demeter] master pull OK: ${masterOrders.length} orders fetched`);
+  } catch (err) {
+    logger.error(`[demeter] master pull falló: ${err.message}`);
+    return [{ date_et: 'master', ok: false, error: err.message }];
+  }
+
+  // Paso 2: para cada día, filtrar in-memory + 1 call Meta API
   const results = [];
   for (let i = 0; i < days; i++) {
     const dateEt = daysAgoEt(i);
     try {
-      const snap = await runDailySnapshot(dateEt);
+      const snap = await runDailySnapshotFromMaster(dateEt, masterOrders);
       results.push({ date_et: dateEt, ok: true, cash_roas: snap.cash_roas });
     } catch (err) {
-      logger.error(`[demeter] Backfill ${dateEt} falló: ${err.message}`);
+      logger.error(`[demeter] backfill ${dateEt} falló: ${err.message}`);
       results.push({ date_et: dateEt, ok: false, error: err.message });
     }
   }
+
+  const elapsed = Math.round((Date.now() - t0) / 1000);
+  const ok = results.filter(r => r.ok).length;
+  logger.info(`[demeter] backfill done: ${ok}/${days} days · ${elapsed}s`);
   return results;
+}
+
+/**
+ * Variante de runDailySnapshot que recibe orders pre-fetched (filter in-memory).
+ * Solo llama Meta API per-day. Usado por backfillSnapshots optimizado.
+ */
+async function runDailySnapshotFromMaster(dateEt, masterOrders) {
+  const t0 = Date.now();
+  const { startUtc, endUtc } = dateRangeET(dateEt);
+
+  // Filtrar orders del día (created_at en rango ET)
+  const dayOrders = masterOrders.filter(o => {
+    const t = new Date(o.created_at).getTime();
+    return t >= startUtc.getTime() && t < endUtc.getTime();
+  });
+
+  // Filtrar refunds del día (processed_at en rango ET, viene de cualquier order
+  // de los últimos 60d por eso necesitamos masterOrders con lookback)
+  const dayRefunds = [];
+  for (const o of masterOrders) {
+    for (const r of (o.refunds || [])) {
+      const processedAt = new Date(r.processed_at);
+      if (processedAt >= startUtc && processedAt < endUtc) {
+        const amount = (r.transactions || [])
+          .filter(tx => tx.kind === 'refund' && tx.status === 'success')
+          .reduce((sum, tx) => sum + parseFloat(tx.amount || 0), 0);
+        dayRefunds.push({ order_id: o.id, processed_at: processedAt, amount });
+      }
+    }
+  }
+
+  // Meta totals (1 call per día — único API call que queda)
+  let metaTotals;
+  let computationError = null;
+  try {
+    metaTotals = await fetchMetaTotals(startUtc, endUtc);
+  } catch (err) {
+    metaTotals = { spend: 0, purchase_value: 0 };
+    computationError = err.message;
+  }
+
+  // Aggregate + roas + upsert (igual que runDailySnapshot)
+  const sh = aggregateShopify(dayOrders, dayRefunds);
+  const shopifyFees = estimateShopifyFees(sh.gross_sales, sh.orders_count);
+  const netAfterFees = +(sh.net_sales - shopifyFees).toFixed(2);
+
+  const metaRoas = metaTotals.spend > 0
+    ? +(metaTotals.purchase_value / metaTotals.spend).toFixed(3) : 0;
+  const cashRoas = metaTotals.spend > 0
+    ? +(netAfterFees / metaTotals.spend).toFixed(3) : 0;
+  const gapPct = metaRoas > 0
+    ? +(((metaRoas - cashRoas) / metaRoas) * 100).toFixed(1) : 0;
+
+  const elapsed = Date.now() - t0;
+  const doc = {
+    date_et: dateEt,
+    range_start_utc: startUtc,
+    range_end_utc: endUtc,
+    meta_spend: +metaTotals.spend.toFixed(2),
+    meta_purchase_value: +metaTotals.purchase_value.toFixed(2),
+    meta_roas: metaRoas,
+    gross_sales: sh.gross_sales,
+    discounts: sh.discounts,
+    refunds: sh.refunds,
+    net_sales: sh.net_sales,
+    shopify_fees_est: shopifyFees,
+    net_after_fees: netAfterFees,
+    orders_count: sh.orders_count,
+    cash_roas: cashRoas,
+    gap_pct: gapPct,
+    computed_at: new Date(),
+    computation_ms: elapsed,
+    shopify_orders_fetched: sh.orders_count,
+    shopify_refunds_fetched: sh.refunds_count,
+    computation_error: computationError
+  };
+
+  await DemeterSnapshot.findOneAndUpdate(
+    { date_et: dateEt },
+    { $set: doc },
+    { upsert: true, new: true }
+  );
+
+  logger.info(
+    `[demeter] ${dateEt} ✓ Meta=$${doc.meta_spend} (ROAS ${metaRoas}x) | ` +
+    `Shopify net=$${netAfterFees} (${sh.orders_count} orders, $${sh.refunds} refunds) | ` +
+    `cash ROAS ${cashRoas}x | gap ${gapPct}% | ${elapsed}ms`
+  );
+
+  return doc;
 }
 
 module.exports = {
