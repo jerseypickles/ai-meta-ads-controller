@@ -18,7 +18,9 @@ const mongoose = require('mongoose');
   const SOURCE_ADSET = '120240863584860259';        // [Ares] 11 — Clone 1
   const TARGET_CAMPAIGN = '120241047548570259';     // [ARES] CBO 2 — Nuevos Ganadores
 
-  const required = ['MONGODB_URI', 'META_ACCESS_TOKEN', 'META_AD_ACCOUNT_ID', 'APP_ID', 'APP_SECRET'];
+  // Solo necesitamos token + account para hacer la call. App_id/secret
+  // son para token refresh, irrelevantes acá.
+  const required = ['MONGODB_URI', 'META_ACCESS_TOKEN', 'META_AD_ACCOUNT_ID'];
   const missing = required.filter(k => !process.env[k]);
   if (missing.length) {
     console.error('Env vars faltantes:', missing.join(', '));
