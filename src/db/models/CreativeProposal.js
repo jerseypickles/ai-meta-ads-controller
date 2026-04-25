@@ -17,6 +17,11 @@ const creativeProposalSchema = new mongoose.Schema({
   image_path: { type: String, default: '' },
   image_filename: { type: String, default: '' },
   image_base64: { type: String, default: '' }, // fallback: store image in DB if filesystem is ephemeral
+  // URL de la imagen en Meta CDN — cached cuando recuperamos via Meta API.
+  // Para proposals viejas sin image_base64, fetcheamos via meta_creative_id
+  // y cacheamos aquí. Las URLs de Meta expiran eventualmente, pero se refrescan
+  // en el próximo fetch si falla.
+  image_url: { type: String, default: '' },
   scene: { type: String, default: '' },
   scene_short: { type: String, default: '' },
   headline: { type: String, default: '' },

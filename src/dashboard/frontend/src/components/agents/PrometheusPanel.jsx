@@ -452,9 +452,36 @@ function TestCard({ test, index, mode, onKill, setLightbox, setDetail }) {
           src={getTestImageUrl(test._id)}
           alt={p.headline}
           loading="lazy"
-          onError={(e) => { e.target.style.display = 'none'; }}
+          onError={(e) => {
+            e.target.style.display = 'none';
+            e.target.nextSibling?.style.setProperty('display', 'flex');
+          }}
           style={{ width: '100%', height: '100%', objectFit: 'cover' }}
         />
+        {/* Placeholder visible solo si <img> falla (imagen no recuperable) */}
+        <div style={{
+          display: 'none',
+          position: 'absolute', inset: 0,
+          flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          padding: 16, gap: 8, textAlign: 'center',
+          background: `linear-gradient(135deg, ${badgeConfig.bg}18 0%, rgba(15, 23, 42, 0.85) 100%)`,
+          color: 'var(--bos-text-muted)'
+        }}>
+          <div style={{ fontSize: '1.6rem', opacity: 0.5 }}>🖼</div>
+          <div style={{ fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--bos-text-dim)' }}>
+            preview no disponible
+          </div>
+          {p.scene_short && (
+            <div style={{ fontSize: '0.66rem', color: 'var(--bos-text)', lineHeight: 1.4, opacity: 0.7, fontStyle: 'italic' }}>
+              "{p.scene_short.substring(0, 80)}{p.scene_short.length > 80 ? '...' : ''}"
+            </div>
+          )}
+          {p.product_name && (
+            <div style={{ fontSize: '0.6rem', color: badgeConfig.bg, fontWeight: 600 }}>
+              {p.product_name}
+            </div>
+          )}
+        </div>
         <div style={{
           position: 'absolute',
           top: 6, left: 6,
@@ -465,7 +492,8 @@ function TestCard({ test, index, mode, onKill, setLightbox, setDetail }) {
           fontSize: '0.56rem',
           fontWeight: 700,
           textTransform: 'uppercase',
-          letterSpacing: '0.08em'
+          letterSpacing: '0.08em',
+          zIndex: 1
         }}>
           {badgeConfig.text}
         </div>

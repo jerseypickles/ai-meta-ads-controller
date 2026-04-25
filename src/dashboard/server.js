@@ -74,8 +74,21 @@ const SSE_PATHS = [
   '/brain/stream'  // defensivo por si hay más en el futuro
 ];
 
+// Rutas que sirven assets via <img src> / <video src> / etc — el browser NO
+// puede setear Authorization header en esos tags, así que necesitan query
+// token. Mismo tradeoff que SSE (token en logs de access).
+const QUERY_TOKEN_ASSET_PATHS = [
+  '/testing-agent/tests/',  // /testing-agent/tests/:id/image
+  '/creatives/',            // futuros endpoints de preview
+  '/ai-creations/'
+];
+
 function isSSEPath(pathname) {
   return SSE_PATHS.some(p => pathname === p || pathname.startsWith(p));
+}
+
+function isAssetPath(pathname) {
+  return QUERY_TOKEN_ASSET_PATHS.some(p => pathname.startsWith(p)) && /\/(image|preview|thumbnail|video)\b/.test(pathname);
 }
 
 function authMiddleware(req, res, next) {
@@ -84,9 +97,10 @@ function authMiddleware(req, res, next) {
   if (req.path.startsWith('/auth/meta/callback')) return next();
 
   // Token: siempre preferir header. Solo caer a query para paths SSE
-  // (EventSource no puede setear headers).
+  // (EventSource no puede setear headers) y para assets que se consumen
+  // desde <img src> / <video src> (tags HTML no permiten Auth header).
   let token = req.headers.authorization?.replace('Bearer ', '');
-  if (!token && isSSEPath(req.path)) {
+  if (!token && (isSSEPath(req.path) || isAssetPath(req.path))) {
     token = req.query.token;
   }
   if (!token) {

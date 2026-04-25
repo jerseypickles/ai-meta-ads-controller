@@ -164,18 +164,78 @@ router.get('/stats', async (req, res) => {
 });
 
 // ═══ GET /tests/:id/image — Servir imagen de la propuesta ═══
+// Chain de fallback (2026-04-24):
+//   1. Si proposal.image_base64 existe → servir directamente
+//   2. Si proposal.image_url cacheada → proxy-fetch + servir
+//   3. Si proposal.meta_creative_id → Meta API fetch image_url, cache, proxy
+//   4. Else → 404
 router.get('/tests/:id/image', async (req, res) => {
   try {
     const test = await TestRun.findById(req.params.id).lean();
     if (!test) return res.status(404).json({ error: 'Test not found' });
 
-    const proposal = await CreativeProposal.findById(test.proposal_id).select('image_base64').lean();
-    if (!proposal?.image_base64) return res.status(404).json({ error: 'No image' });
+    const proposal = await CreativeProposal.findById(test.proposal_id)
+      .select('image_base64 image_url meta_creative_id')
+      .lean();
+    if (!proposal) return res.status(404).json({ error: 'No proposal' });
 
-    const buffer = Buffer.from(proposal.image_base64, 'base64');
-    res.set('Content-Type', 'image/png');
-    res.set('Content-Length', buffer.length);
-    res.send(buffer);
+    // ─── Path 1: imagen directo en DB (flujo nuevo) ──────────────────────
+    if (proposal.image_base64) {
+      const buffer = Buffer.from(proposal.image_base64, 'base64');
+      res.set('Content-Type', 'image/png');
+      res.set('Content-Length', buffer.length);
+      res.set('Cache-Control', 'public, max-age=86400');
+      return res.send(buffer);
+    }
+
+    // ─── Path 2: URL cacheada (de un fetch previo a Meta) ────────────────
+    let imageUrl = proposal.image_url || null;
+
+    // ─── Path 3: fetch a Meta API + cache ────────────────────────────────
+    if (!imageUrl && proposal.meta_creative_id) {
+      try {
+        const { getMetaClient } = require('../../meta/client');
+        const meta = getMetaClient();
+        const creative = await meta.get(proposal.meta_creative_id, {
+          fields: 'image_url,thumbnail_url,image_hash'
+        });
+        imageUrl = creative?.image_url || creative?.thumbnail_url || null;
+
+        // Cache en la DB para próximas visitas (no re-fetch Meta)
+        if (imageUrl) {
+          await CreativeProposal.updateOne(
+            { _id: test.proposal_id },
+            { $set: { image_url: imageUrl } }
+          ).catch(() => {});
+        }
+      } catch (err) {
+        logger.warn(`[testing-agent] Meta creative fetch falló para ${proposal.meta_creative_id}: ${err.message}`);
+      }
+    }
+
+    if (!imageUrl) return res.status(404).json({ error: 'No image available' });
+
+    // Proxy del URL remoto — pipe al response
+    try {
+      const axios = require('axios');
+      const upstream = await axios.get(imageUrl, {
+        responseType: 'arraybuffer',
+        timeout: 10000
+      });
+      res.set('Content-Type', upstream.headers['content-type'] || 'image/jpeg');
+      res.set('Content-Length', upstream.data.length);
+      res.set('Cache-Control', 'public, max-age=86400');
+      return res.send(Buffer.from(upstream.data));
+    } catch (err) {
+      // URL de Meta puede haber expirado — limpiamos cache para retry en próxima visita
+      if (proposal.image_url === imageUrl) {
+        await CreativeProposal.updateOne(
+          { _id: test.proposal_id },
+          { $set: { image_url: '' } }
+        ).catch(() => {});
+      }
+      return res.status(502).json({ error: `upstream fetch failed: ${err.message}` });
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
