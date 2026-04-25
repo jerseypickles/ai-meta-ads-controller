@@ -53,28 +53,88 @@ function ChartTooltip({ active, payload, label }) {
   );
 }
 
+// ─── Helpers de rango por tab ────────────────────────────────────────────
+
+const MONTH_NAMES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+
+function todayInET() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date());
+}
+
+/** Retorna { from, to, label } según el tab. from/to en YYYY-MM-DD ET. */
+function rangeForTab(tabId) {
+  const today = todayInET(); // 'YYYY-MM-DD'
+  const [y, m] = today.split('-').map(Number);
+
+  if (tabId === 'this_month') {
+    return {
+      from: `${y}-${String(m).padStart(2, '0')}-01`,
+      to: today,
+      label: `${MONTH_NAMES[m - 1]} ${y}`,
+      isCurrent: true
+    };
+  }
+  if (tabId === 'last_month') {
+    const prev = m === 1 ? { y: y - 1, m: 12 } : { y, m: m - 1 };
+    const lastDay = new Date(prev.y, prev.m, 0).getDate(); // último día del mes prev
+    return {
+      from: `${prev.y}-${String(prev.m).padStart(2, '0')}-01`,
+      to: `${prev.y}-${String(prev.m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`,
+      label: `${MONTH_NAMES[prev.m - 1]} ${prev.y}`
+    };
+  }
+  if (tabId === 'rolling_30') {
+    const d = new Date(today + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - 29);
+    return {
+      from: d.toISOString().slice(0, 10),
+      to: today,
+      label: 'Últimos 30 días'
+    };
+  }
+  if (tabId === 'rolling_90') {
+    const d = new Date(today + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() - 89);
+    return {
+      from: d.toISOString().slice(0, 10),
+      to: today,
+      label: 'Últimos 90 días'
+    };
+  }
+  // 'all'
+  return { from: '0000-01-01', to: '9999-12-31', label: 'Todo el histórico' };
+}
+
+const TABS = [
+  { id: 'this_month', label: 'Este Mes' },
+  { id: 'last_month', label: 'Mes Pasado' },
+  { id: 'rolling_30', label: 'Últimos 30d' },
+  { id: 'rolling_90', label: 'Últimos 90d' },
+  { id: 'all', label: 'Todo' }
+];
+
 export default function DemeterPanel() {
-  const [snapshots, setSnapshots] = useState([]);
-  const [summary, setSummary] = useState(null);
+  const [allSnapshots, setAllSnapshots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [windowDays, setWindowDays] = useState(30);
+  const [activeTab, setActiveTab] = useState('this_month');
   const [running, setRunning] = useState(false);
 
   useEffect(() => {
-    loadAll(windowDays);
-    const t = setInterval(() => loadAll(windowDays), 5 * 60 * 1000);
+    loadAll();
+    const t = setInterval(loadAll, 5 * 60 * 1000);
     return () => clearInterval(t);
-  }, [windowDays]);
+  }, []);
 
-  async function loadAll(days) {
+  async function loadAll() {
     try {
-      const [snapsR, sumR] = await Promise.all([
-        api.get(`/api/demeter/snapshots?days=${days}`),
-        api.get(`/api/demeter/summary?days=${days}`)
-      ]);
-      setSnapshots(snapsR.data?.snapshots || []);
-      setSummary(sumR.data?.summary || null);
+      // Pedimos histórico amplio (365d) y filtramos por tab client-side.
+      // Si hay menos snapshots, retorna lo que haya.
+      const r = await api.get('/api/demeter/snapshots?days=365');
+      setAllSnapshots(r.data?.snapshots || []);
       setError(null);
     } catch (err) {
       setError(err.response?.data?.error || err.message);
@@ -84,17 +144,59 @@ export default function DemeterPanel() {
   }
 
   async function handleRunNow() {
-    if (!confirm(`¿Re-computar últimos ${windowDays} días? Toma ~${windowDays}s−${windowDays * 2}s.`)) return;
+    if (!confirm(`¿Re-computar últimos 30 días? Toma ~30-60s.`)) return;
     setRunning(true);
     try {
-      await api.post('/api/demeter/run-now', { days: Math.min(windowDays, 30) });
-      await loadAll(windowDays);
+      await api.post('/api/demeter/run-now', { days: 30 });
+      await loadAll();
     } catch (err) {
       alert(`Error: ${err.response?.data?.error || err.message}`);
     } finally {
       setRunning(false);
     }
   }
+
+  // ─── Filter por tab + summary client-side ─────────────────────────────
+  const range = rangeForTab(activeTab);
+  const snapshots = useMemo(() => {
+    return allSnapshots.filter(s =>
+      s.date_et >= range.from && s.date_et <= range.to
+    );
+  }, [allSnapshots, range.from, range.to]);
+
+  const summary = useMemo(() => {
+    if (snapshots.length === 0) return null;
+    const sum = (k) => snapshots.reduce((a, s) => a + (s[k] || 0), 0);
+    const totalSpend = sum('meta_spend');
+    const totalNet = sum('net_after_fees');
+    const totalGross = sum('gross_sales');
+    const totalRefunds = sum('refunds');
+    const totalDiscounts = sum('discounts');
+    const totalFees = sum('shopify_fees_est');
+    const totalOrders = sum('orders_count');
+    const totalMetaValue = sum('meta_purchase_value');
+
+    const cashRoas = totalSpend > 0 ? totalNet / totalSpend : 0;
+    const metaRoas = totalSpend > 0 ? totalMetaValue / totalSpend : 0;
+    const gapPct = metaRoas > 0 ? ((metaRoas - cashRoas) / metaRoas) * 100 : 0;
+
+    return {
+      total_meta_spend: +totalSpend.toFixed(2),
+      total_meta_value: +totalMetaValue.toFixed(2),
+      total_gross_sales: +totalGross.toFixed(2),
+      total_discounts: +totalDiscounts.toFixed(2),
+      total_refunds: +totalRefunds.toFixed(2),
+      total_fees: +totalFees.toFixed(2),
+      total_net_after_fees: +totalNet.toFixed(2),
+      total_orders: totalOrders,
+      avg_cash_roas: +cashRoas.toFixed(3),
+      avg_meta_roas: +metaRoas.toFixed(3),
+      avg_gap_pct: +gapPct.toFixed(1),
+      avg_order_value: totalOrders > 0 ? +(totalGross / totalOrders).toFixed(2) : 0,
+      net_profit: +(totalNet - totalSpend).toFixed(2),
+      days_count: snapshots.length
+    };
+  }, [snapshots]);
 
   const chartData = useMemo(() => {
     return [...snapshots].reverse().map(s => ({
@@ -154,7 +256,7 @@ export default function DemeterPanel() {
         marginBottom: 20,
         border: '1px solid rgba(20, 184, 166, 0.22)'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
           <motion.div
             initial={{ scale: 0.5, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
@@ -175,60 +277,107 @@ export default function DemeterPanel() {
               DEMETER
             </div>
             <div style={{ fontSize: '0.78rem', color: 'var(--bos-text-muted)' }}>
-              Cash Reconciliation · Meta vs Shopify net
+              Reconciliación de caja — Meta spend vs Shopify net
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <select
-              value={windowDays}
-              onChange={(e) => setWindowDays(parseInt(e.target.value))}
-              style={selectStyle}
-            >
-              <option value={7}>7d</option>
-              <option value={14}>14d</option>
-              <option value={30}>30d</option>
-              <option value={60}>60d</option>
-              <option value={90}>90d</option>
-            </select>
-            <button onClick={handleRunNow} disabled={running} style={runBtnStyle}>
-              {running ? '⟳' : 'Refresh'}
-            </button>
-          </div>
+          <button onClick={handleRunNow} disabled={running} style={runBtnStyle}>
+            {running ? '⟳ computando...' : '↻ Refresh data'}
+          </button>
         </div>
 
-        {/* KPI cards */}
-        {summary && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+        {/* TABS */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
+          {TABS.map(t => (
+            <button
+              key={t.id}
+              onClick={() => setActiveTab(t.id)}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 8,
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                border: activeTab === t.id ? `1px solid ${DEMETER_COLOR}` : '1px solid rgba(255,255,255,0.08)',
+                background: activeTab === t.id ? `${DEMETER_COLOR}22` : 'rgba(17, 21, 51, 0.5)',
+                color: activeTab === t.id ? DEMETER_COLOR : 'var(--bos-text-muted)',
+                transition: 'all 0.15s'
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Range label */}
+        <div style={{
+          display: 'flex', alignItems: 'baseline', gap: 12,
+          fontSize: '0.78rem', color: 'var(--bos-text-muted)', marginBottom: 14
+        }}>
+          <span style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--bos-text)' }}>
+            {range.label}
+          </span>
+          <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.7rem' }}>
+            {summary?.days_count || 0} días con data
+            {range.isCurrent && <span style={{ color: DEMETER_COLOR, marginLeft: 6 }}>· en curso</span>}
+          </span>
+        </div>
+
+        {/* KPI cards principales — 4 grandes */}
+        {summary ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 14 }}>
             <KpiCard
-              label="Meta spend"
-              value={fmtMoney(summary.total_meta_spend)}
-              sub={`${summary.total_orders || 0} orders`}
+              label="Gasto Meta Ads"
+              value={fmtMoney(summary.total_meta_spend, true)}
+              sub={`${summary.days_count} días`}
               color="#94a3b8"
             />
             <KpiCard
-              label="Cash net"
-              value={fmtMoney(summary.total_net_after_fees)}
-              sub={`gross ${fmtMoney(summary.total_gross_sales)}`}
+              label="Cash neto (post-fees)"
+              value={fmtMoney(summary.total_net_after_fees, true)}
+              sub={`${summary.total_orders.toLocaleString()} órdenes`}
               color={COLOR_CASH}
             />
             <KpiCard
-              label="Cash ROAS"
+              label="Cash ROAS real"
               value={fmtRoas(summary.avg_cash_roas)}
-              sub={`Meta ${fmtRoas(summary.avg_meta_roas)}`}
+              sub={`Meta dice ${fmtRoas(summary.avg_meta_roas)}`}
               color={COLOR_CASH}
+              big
             />
             <KpiCard
-              label="Net profit"
-              value={fmtMoney(summary.net_profit)}
+              label="Profit (cash − ad spend)"
+              value={fmtMoney(summary.net_profit, true)}
               sub={`AOV ${fmtMoney(summary.avg_order_value)}`}
               color={summary.net_profit >= 0 ? COLOR_CASH : COLOR_GAP_BAD}
+              big
             />
+          </div>
+        ) : (
+          <div style={{ padding: 20, textAlign: 'center', color: 'var(--bos-text-muted)', fontSize: '0.85rem' }}>
+            No hay snapshots para este período.
+          </div>
+        )}
+
+        {/* Mini stats row — desglose Shopify */}
+        {summary && summary.days_count > 0 && (
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10,
+            padding: '12px 14px',
+            background: 'rgba(17, 21, 51, 0.4)',
+            borderRadius: 10,
+            fontSize: '0.74rem'
+          }}>
+            <MiniStat label="Gross sales" value={fmtMoney(summary.total_gross_sales, true)} />
+            <MiniStat label="Discounts" value={`-${fmtMoney(summary.total_discounts)}`} color="#94a3b8" />
+            <MiniStat label="Refunds" value={`-${fmtMoney(summary.total_refunds)}`} color={summary.total_refunds > 0 ? COLOR_GAP_BAD : 'var(--bos-text-muted)'} />
+            <MiniStat label="Shopify fees" value={`-${fmtMoney(summary.total_fees)}`} color="#94a3b8" />
+            <MiniStat label="Gap atribución" value={`${summary.avg_gap_pct.toFixed(1)}%`} color={gapColor(summary.avg_gap_pct)} />
           </div>
         )}
       </div>
 
       {/* CHART 1 — ROAS comparison */}
-      <Section title="ROAS · Meta atribuído vs Cash real" subtitle={`${windowDays} días · target $3 ━ ━`}>
+      <Section title="ROAS · Meta atribuído vs Cash real" subtitle={`${range.label} · línea punteada = target ROAS 3x`}>
         <div style={{ height: 240 }}>
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
@@ -261,7 +410,7 @@ export default function DemeterPanel() {
       </Section>
 
       {/* TABLA full */}
-      <Section title={`Snapshots últimos ${snapshots.length} días`} subtitle="re-computado idempotente cada 00:05 ET (refunds retroactivos)">
+      <Section title={`Detalle día por día · ${snapshots.length} ${snapshots.length === 1 ? 'día' : 'días'}`} subtitle="re-computado idempotente cada 00:05 ET (captura refunds retroactivos)">
         <div style={{ overflowX: 'auto', maxHeight: 480, overflowY: 'auto' }}>
           <table style={{ width: '100%', fontSize: '0.74rem', fontFamily: 'JetBrains Mono, monospace', borderCollapse: 'collapse' }}>
             <thead style={{ position: 'sticky', top: 0, background: 'rgba(10, 14, 39, 0.95)', backdropFilter: 'blur(4px)' }}>
@@ -322,25 +471,38 @@ export default function DemeterPanel() {
   );
 }
 
-function KpiCard({ label, value, sub, color }) {
+function KpiCard({ label, value, sub, color, big }) {
   return (
     <div style={{
       background: 'rgba(17, 21, 51, 0.55)',
-      border: '1px solid rgba(255,255,255,0.06)',
+      border: `1px solid ${big ? color + '33' : 'rgba(255,255,255,0.06)'}`,
       borderRadius: 10,
-      padding: '12px 14px'
+      padding: big ? '16px 18px' : '14px 16px'
     }}>
-      <div style={{ fontSize: '1.4rem', fontWeight: 700, color, fontFamily: 'JetBrains Mono, monospace', lineHeight: 1.2 }}>
-        {value}
-      </div>
-      <div style={{ fontSize: '0.6rem', color: 'var(--bos-text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 4 }}>
+      <div style={{ fontSize: '0.62rem', color: 'var(--bos-text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
         {label}
       </div>
+      <div style={{ fontSize: big ? '1.9rem' : '1.5rem', fontWeight: 700, color, fontFamily: 'JetBrains Mono, monospace', lineHeight: 1.1 }}>
+        {value}
+      </div>
       {sub && (
-        <div style={{ fontSize: '0.65rem', color: 'var(--bos-text-muted)', marginTop: 2, fontFamily: 'JetBrains Mono, monospace' }}>
+        <div style={{ fontSize: '0.68rem', color: 'var(--bos-text-muted)', marginTop: 6, fontFamily: 'JetBrains Mono, monospace' }}>
           {sub}
         </div>
       )}
+    </div>
+  );
+}
+
+function MiniStat({ label, value, color = 'var(--bos-text)' }) {
+  return (
+    <div>
+      <div style={{ fontSize: '0.58rem', color: 'var(--bos-text-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: '0.86rem', fontWeight: 600, color, fontFamily: 'JetBrains Mono, monospace' }}>
+        {value}
+      </div>
     </div>
   );
 }
