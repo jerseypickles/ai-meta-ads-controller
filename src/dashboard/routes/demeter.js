@@ -520,10 +520,17 @@ No agregues nada antes ni después del JSON.`;
           backfilled: true  // marca para distinguir de shadow real-time
         };
 
-        await ActionLog.updateOne(
-          { _id: action._id },
-          { $set: { 'metadata.shadow_cash_consideration': shadowConsideration } }
-        );
+        // Bug Mongoose: $set sobre dot path en Mixed field a veces no persiste.
+        // Workaround: load doc, mutate, markModified, save.
+        const doc = await ActionLog.findById(action._id);
+        if (!doc) {
+          results.push({ action_id: action._id, skipped: 'doc no encontrado' });
+          continue;
+        }
+        if (!doc.metadata) doc.metadata = {};
+        doc.metadata.shadow_cash_consideration = shadowConsideration;
+        doc.markModified('metadata');
+        await doc.save();
 
         results.push({
           action_id: action._id,
