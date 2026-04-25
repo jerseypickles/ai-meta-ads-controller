@@ -40,6 +40,7 @@ export default function NeuralGraphView({ onAgentClick }) {
   const fgRef = useRef(null);
   const containerRef = useRef(null);
   const [status, setStatus] = useState(null);
+  const [demeter, setDemeter] = useState(null);
   const [hoverNode, setHoverNode] = useState(null);
   const [hoverLinks, setHoverLinks] = useState(new Set());
   const [hoverNeighbors, setHoverNeighbors] = useState(new Set());
@@ -48,9 +49,19 @@ export default function NeuralGraphView({ onAgentClick }) {
 
   useEffect(() => {
     loadStatus();
-    const t = setInterval(loadStatus, 30000);
+    loadDemeter();
+    const t = setInterval(() => { loadStatus(); loadDemeter(); }, 30000);
     return () => clearInterval(t);
   }, []);
+
+  async function loadDemeter() {
+    try {
+      const res = await api.get('/api/demeter/summary?days=7');
+      setDemeter(res.data?.summary || { count: 0 });
+    } catch {
+      setDemeter({ count: 0, error: true });
+    }
+  }
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -176,12 +187,30 @@ export default function NeuralGraphView({ onAgentClick }) {
       });
     });
 
+    // ─── DEMETER — agente activo (cash reconciliation) ────────────────────
+    // Status según data real: si hay snapshots últimos 7d → running, else idle
+    const demeterCount = demeter?.count || (demeter && Object.keys(demeter).length > 1 ? 7 : 0);
+    const demeterRoas = demeter?.avg_cash_roas;
+    const demeterStatus = demeterCount > 0 ? 'running' : 'idle';
+    const demeterMetric = demeterRoas != null && demeterRoas > 0
+      ? `${demeterRoas.toFixed(2)}x`
+      : `${demeterCount}`;
+    const demeterMetricLabel = demeterRoas != null && demeterRoas > 0
+      ? 'cash roas'
+      : 'snapshots';
+    nodes.push({
+      id: 'demeter', group: 'demeter', tier: 1, size: 13,
+      label: 'DEMETER', sub: 'Cash Recon',
+      metric: demeterMetric, metricLabel: demeterMetricLabel,
+      status: demeterStatus,
+      color: AGENT_COLORS.demeter, icon: AGENT_ICONS.demeter
+    });
+
     // ─── PLANNED AGENTS (coming soon — ghosted) ───────────────────────────
     const plannedAgents = [
       { id: 'hermes', label: 'HERMES', sub: 'Comms · Slack', color: AGENT_COLORS.hermes, icon: AGENT_ICONS.hermes },
       { id: 'artemis', label: 'ARTEMIS', sub: 'Audiences · LAL', color: AGENT_COLORS.artemis, icon: AGENT_ICONS.artemis },
-      { id: 'hefesto', label: 'HEFESTO', sub: 'Infra · Deploys', color: AGENT_COLORS.hefesto, icon: AGENT_ICONS.hefesto },
-      { id: 'demeter', label: 'DEMETER', sub: 'Analytics · LTV', color: AGENT_COLORS.demeter, icon: AGENT_ICONS.demeter }
+      { id: 'hefesto', label: 'HEFESTO', sub: 'Infra · Deploys', color: AGENT_COLORS.hefesto, icon: AGENT_ICONS.hefesto }
     ];
     plannedAgents.forEach(a => {
       nodes.push({
@@ -215,16 +244,19 @@ export default function NeuralGraphView({ onAgentClick }) {
 
       // Cross-agent (workflows: apollo feeds prometheus, prometheus feeds ares)
       { source: 'apollo', target: 'prometheus', kind: 'workflow', active: apolloPool > 0 },
-      { source: 'prometheus', target: 'ares', kind: 'workflow', active: prometheusTests > 0 }
+      { source: 'prometheus', target: 'ares', kind: 'workflow', active: prometheusTests > 0 },
+
+      // Demeter — agente activo (cash reconciliation)
+      { source: 'zeus', target: 'demeter', kind: 'primary', active: demeterCount > 0 },
+      { source: 'athena', target: 'demeter', kind: 'workflow', active: demeterCount > 0 },
+      { source: 'ares', target: 'demeter', kind: 'workflow', active: demeterCount > 0 }
     ];
 
     // Planned agent links — Zeus como hub también de los futuros
     plannedAgents.forEach(a => {
       links.push({ source: 'zeus', target: a.id, kind: 'primary', planned: true });
     });
-    // Cross-agent planned workflows (Hermes recibe signals de todos, Demeter agrega data)
-    links.push({ source: 'athena', target: 'demeter', kind: 'workflow', planned: true });
-    links.push({ source: 'ares', target: 'demeter', kind: 'workflow', planned: true });
+    // Cross-agent planned workflows (Hermes recibe signals de todos, Artemis informa Apollo)
     links.push({ source: 'artemis', target: 'apollo', kind: 'workflow', planned: true });
 
     // Satellite links
@@ -261,7 +293,7 @@ export default function NeuralGraphView({ onAgentClick }) {
     });
 
     return { nodes, links };
-  }, [status]);
+  }, [status, demeter]);
 
   // Configurar physics forces vía ref (API de react-force-graph)
   // NO es una prop del componente — debe llamarse post-mount
