@@ -113,19 +113,24 @@ function estimateShopifyFees(grossSales, ordersCount) {
 }
 
 /**
- * Pull Meta spend + purchase_value para un date range específico.
- * Usamos getAccountInsights con level='account' para totales del account.
+ * Pull Meta spend + purchase_value para UN día específico.
+ *
+ * IMPORTANTE: Meta API trata since/until como inclusivos en ambos extremos.
+ * Si pasás since='2026-04-01', until='2026-04-02', Meta devuelve 2 DÍAS.
+ *
+ * Bug fix 2026-04-25: antes calculábamos untilDate como (endUtc - 1ms) que
+ * tras toISOString().slice(0,10) caía en el día CALENDARIO siguiente, lo que
+ * duplicaba el spend de cada snapshot ~2x. Ahora pasamos dateEt explícito:
+ * since=until=dateEt → Meta retorna el día calendario del account TZ.
  */
-async function fetchMetaTotals(startUtc, endUtc) {
+async function fetchMetaTotals(startUtc, endUtc, dateEt) {
   try {
     const { getMetaClient } = require('../../meta/client');
     const meta = getMetaClient();
 
-    // Meta espera since/until en YYYY-MM-DD. Convertimos rango UTC a fechas
-    // calendario UTC (no ET — Meta interpreta el time_range en account TZ pero
-    // pasamos el rango ET como bounds). Más limpio: dejar a Meta interpretar.
-    const sinceDate = startUtc.toISOString().slice(0, 10);
-    const untilDate = new Date(endUtc.getTime() - 1).toISOString().slice(0, 10);
+    // Para single-day: since == until == dateEt. Meta interpreta en account TZ.
+    const sinceDate = dateEt;
+    const untilDate = dateEt;
 
     const insights = await meta.getAccountInsights('account', {
       since: sinceDate,
@@ -172,7 +177,7 @@ async function runDailySnapshot(dateEt) {
 
   try {
     [metaTotals, orders, refunds] = await Promise.all([
-      fetchMetaTotals(startUtc, endUtc),
+      fetchMetaTotals(startUtc, endUtc, dateEt),
       shopify.getOrdersForDateRange(startUtc, endUtc),
       shopify.getRefundsForDateRange(startUtc, endUtc, 60)
     ]);
@@ -326,7 +331,7 @@ async function runDailySnapshotFromMaster(dateEt, masterOrders) {
   let metaTotals;
   let computationError = null;
   try {
-    metaTotals = await fetchMetaTotals(startUtc, endUtc);
+    metaTotals = await fetchMetaTotals(startUtc, endUtc, dateEt);
   } catch (err) {
     metaTotals = { spend: 0, purchase_value: 0 };
     computationError = err.message;
