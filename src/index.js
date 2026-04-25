@@ -17,7 +17,7 @@ const LifecycleManager = require('./ai/lifecycle-manager');
 const { runManager } = require('./ai/adset-creator/manager');
 const { runAccountAgent } = require('./ai/agent/account-agent');
 const { runCreativeAgent, syncProposalPerformance } = require('./ai/agent/creative-agent');
-const { runTestingAgent } = require('./ai/agent/testing-agent');
+const { runTestingAgent, updateGraduatedMetrics } = require('./ai/agent/testing-agent');
 const { runAresAgent } = require('./ai/agent/ares-agent');
 const { runZeusLearner } = require('./ai/brain/zeus-learner');
 const { runHypothesisValidator } = require('./ai/brain/hypothesis-validator');
@@ -633,6 +633,24 @@ async function jobTestingAgent() {
     }
   } catch (error) {
     logger.error('[CRON] Error en Testing Agent:', error);
+  }
+}
+
+/**
+ * Job: Update graduated metrics — pulla métricas frescas de tests YA
+ * graduados para que el panel pueda mostrar "ROAS al graduar vs hoy".
+ * Cada 30 min (rápido, solo lee Meta API + escribe metrics field).
+ */
+async function jobUpdateGraduatedMetrics() {
+  const aiEnabled = await isAIEnabled();
+  if (!aiEnabled) return;
+  try {
+    const result = await updateGraduatedMetrics();
+    if (result.updated > 0) {
+      logger.info(`[CRON] Graduated metrics: ${result.updated}/${result.total} actualizados`);
+    }
+  } catch (error) {
+    logger.error('[CRON] Error en updateGraduatedMetrics:', error);
   }
 }
 
@@ -1278,6 +1296,14 @@ function initCronJobs() {
     name: 'testing-agent'
   });
   logger.info('  [*] Testing Agent — 5x/día: 6:30am, 10:30am, 2:30pm, 6:30pm, 10:30pm ET');
+
+  // Graduated metrics tracking — cada 30 min, sigue pulleando metrics de
+  // tests graduados últimos 30d para mostrar "ROAS al graduar vs ROAS hoy"
+  cron.schedule('15,45 * * * *', jobUpdateGraduatedMetrics, {
+    timezone: TIMEZONE,
+    name: 'graduated-metrics-tracking'
+  });
+  logger.info('  [*] Graduated Metrics Tracking — cada 30 min (post-grad performance)');
 
   // Ares Agent — 2x/dia (8am, 4pm ET)
   cron.schedule('0 8,16 * * *', jobAresAgent, {

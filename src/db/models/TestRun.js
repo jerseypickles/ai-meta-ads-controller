@@ -42,7 +42,8 @@ const testRunSchema = new mongoose.Schema({
   // Al graduar: ad creado en el ad set original
   graduation_target_ad_id: { type: String, default: null },
 
-  // Metricas actuales (ultima lectura)
+  // Metricas actuales (ultima lectura). Se actualiza incluso post-graduation
+  // para que se vea cómo sigue performando el ad set graduado.
   metrics: {
     spend: { type: Number, default: 0 },
     purchases: { type: Number, default: 0 },
@@ -52,6 +53,21 @@ const testRunSchema = new mongoose.Schema({
     impressions: { type: Number, default: 0 },
     frequency: { type: Number, default: 0 },
     updated_at: { type: Date, default: null }
+  },
+
+  // Snapshot frozen al momento de graduación (las métricas con las que
+  // se graduó el test). Permite comparar "ROAS al graduar" vs "ROAS hoy"
+  // y detectar graduates que se desinflaron post-promoción.
+  // Solo se setea cuando phase pasa a 'graduated'.
+  metrics_at_graduation: {
+    spend: { type: Number, default: 0 },
+    purchases: { type: Number, default: 0 },
+    roas: { type: Number, default: 0 },
+    cpa: { type: Number, default: 0 },
+    ctr: { type: Number, default: 0 },
+    impressions: { type: Number, default: 0 },
+    frequency: { type: Number, default: 0 },
+    snapshot_at: { type: Date, default: null }
   },
 
   // Timeline de evaluaciones

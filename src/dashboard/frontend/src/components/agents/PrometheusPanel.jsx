@@ -528,6 +528,62 @@ function TestCard({ test, index, mode, onKill, setLightbox, setDetail }) {
             </div>
           ))}
         </div>
+
+        {/* Comparativo "graduado con X / hoy Y" — solo para mode=graduated */}
+        {mode === 'graduated' && test.metrics_at_graduation && test.metrics_at_graduation.snapshot_at && (() => {
+          const grad = test.metrics_at_graduation;
+          const gradRoas = grad.roas || 0;
+          const gradSpend = grad.spend || 0;
+          const gradPurch = grad.purchases || 0;
+          const currRoas = m.roas || 0;
+          const currSpend = m.spend || 0;
+          const currPurch = m.purchases || 0;
+          // Delta porcentual ROAS
+          const roasDelta = gradRoas > 0 ? ((currRoas - gradRoas) / gradRoas) * 100 : null;
+          // Spend post-grad = spend actual - spend al graduar (cuánto facturó después de promover)
+          const postGradSpend = Math.max(0, currSpend - gradSpend);
+          const postGradPurch = Math.max(0, currPurch - gradPurch);
+          // Color del delta
+          const deltaColor = roasDelta == null ? 'var(--bos-text-dim)'
+            : roasDelta >= 5 ? '#10b981'
+            : roasDelta >= -5 ? '#f59e0b'
+            : '#ef4444';
+          return (
+            <div style={{
+              padding: '5px 7px',
+              background: 'rgba(16, 185, 129, 0.06)',
+              border: '1px solid rgba(16, 185, 129, 0.15)',
+              borderRadius: 4,
+              marginBottom: 6,
+              fontSize: '0.6rem',
+              fontFamily: 'JetBrains Mono, monospace',
+              lineHeight: 1.5
+            }}>
+              <div style={{ color: 'var(--bos-text-muted)', fontSize: '0.55rem', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>
+                post-graduación
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <span style={{ color: 'var(--bos-text-muted)' }}>
+                  graduó {gradRoas.toFixed(2)}x
+                </span>
+                <span style={{ color: 'var(--bos-text-dim)' }}>→</span>
+                <span style={{ color: deltaColor, fontWeight: 700 }}>
+                  hoy {currRoas.toFixed(2)}x
+                </span>
+                {roasDelta != null && (
+                  <span style={{ color: deltaColor, fontSize: '0.58rem' }}>
+                    {roasDelta >= 0 ? '+' : ''}{roasDelta.toFixed(0)}%
+                  </span>
+                )}
+              </div>
+              {(postGradSpend > 0 || postGradPurch > 0) && (
+                <div style={{ color: 'var(--bos-text-dim)', fontSize: '0.56rem', marginTop: 2 }}>
+                  desde grad: +${Math.round(postGradSpend)} spend, +{postGradPurch} compras
+                </div>
+              )}
+            </div>
+          );
+        })()}
         {lastAssessment && (
           <div style={{
             fontSize: '0.62rem',

@@ -470,12 +470,25 @@ async function graduateTest(test, metrics) {
   });
 
   // 3. Actualizar TestRun
+  // metrics_at_graduation = snapshot frozen para tracking post-grad
+  // metrics = sigue actualizándose con data live (ad set sigue corriendo)
+  const graduationSnapshot = {
+    spend: metrics.spend || 0,
+    purchases: metrics.purchases || 0,
+    roas: metrics.roas || 0,
+    cpa: metrics.cpa || 0,
+    ctr: metrics.ctr || 0,
+    impressions: metrics.impressions || 0,
+    frequency: metrics.frequency || 0,
+    snapshot_at: new Date()
+  };
   await TestRun.findByIdAndUpdate(test._id, {
     $set: {
       phase: 'graduated',
       graduated_at: new Date(),
       test_adset_name: promotedName,
-      metrics: { ...metrics, updated_at: new Date() }
+      metrics: { ...metrics, updated_at: new Date() },
+      metrics_at_graduation: graduationSnapshot
     },
     $push: {
       assessments: {
@@ -968,4 +981,53 @@ async function runTestingAgent() {
   };
 }
 
-module.exports = { runTestingAgent };
+/**
+ * Actualiza metrics de tests YA graduados (post-promotion tracking).
+ *
+ * Cuando un test gradúa, su metrics_at_graduation queda frozen como referencia.
+ * Pero el adset original sigue corriendo en producción (renamed con sufijo
+ * [Prometheus]). Esta función lo sigue pulleando para que el panel pueda mostrar
+ * "ROAS al graduar 6.5x → ROAS hoy 4.2x" y detectar graduates desinflados.
+ *
+ * Se llama desde el cron principal (cada 30 min). Solo actualiza tests
+ * graduados en últimos 30 días (después no vale la pena, lifecycle expira).
+ */
+async function updateGraduatedMetrics() {
+  const since = new Date(Date.now() - 30 * 86400000);
+  const graduatedTests = await TestRun.find({
+    phase: 'graduated',
+    graduated_at: { $gte: since }
+  }).lean();
+
+  if (graduatedTests.length === 0) return { updated: 0, skipped: 0 };
+
+  let updated = 0, skipped = 0;
+  for (const test of graduatedTests) {
+    try {
+      const metrics = await getTestMetrics(test.test_adset_id);
+      if (!metrics) {
+        skipped++;
+        continue;
+      }
+      // Misma protección anti-zero que monitorTests
+      const oldMetrics = test.metrics || {};
+      const newIsZero = (metrics.spend || 0) === 0 && (metrics.impressions || 0) === 0;
+      const oldHadData = (oldMetrics.spend || 0) > 0;
+      if (newIsZero && oldHadData) {
+        skipped++;
+        continue;
+      }
+      await TestRun.findByIdAndUpdate(test._id, {
+        $set: { metrics: { ...metrics, updated_at: new Date() } }
+      });
+      updated++;
+    } catch (err) {
+      logger.warn(`[TESTING-AGENT] update graduated ${test.test_adset_id} falló: ${err.message}`);
+      skipped++;
+    }
+  }
+  logger.info(`[TESTING-AGENT] graduated metrics refresh: ${updated} actualizados, ${skipped} skipped (de ${graduatedTests.length})`);
+  return { updated, skipped, total: graduatedTests.length };
+}
+
+module.exports = { runTestingAgent, updateGraduatedMetrics };
