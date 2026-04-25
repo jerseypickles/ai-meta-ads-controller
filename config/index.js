@@ -34,6 +34,17 @@ module.exports = {
     apiKey: process.env.GOOGLE_AI_API_KEY || ''
   },
 
+  // Shopify Admin API — usado por Demeter para reconciliación cash vs Meta ROAS.
+  // Domain debe ser el .myshopify.com (no el dominio público).
+  shopify: {
+    shopDomain: process.env.SHOPIFY_SHOP_DOMAIN || '',
+    adminToken: process.env.SHOPIFY_ADMIN_TOKEN || '',
+    apiVersion: process.env.SHOPIFY_API_VERSION || '2025-01',
+    // Shopify Payments standard fees (US). Si tu plan es distinto, override.
+    feePercent: parseFloat(process.env.SHOPIFY_FEE_PERCENT) || 0.029,
+    feeFlat: parseFloat(process.env.SHOPIFY_FEE_FLAT) || 0.30
+  },
+
   mongodb: {
     uri: process.env.MONGODB_URI || 'mongodb://localhost:27017/ai-meta-ads'
   },
