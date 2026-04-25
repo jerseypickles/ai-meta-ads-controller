@@ -66,13 +66,20 @@ router.get('/summary', async (req, res) => {
     const avg = (key) => sum(key) / snaps.length;
 
     const totalSpend = sum('meta_spend');
-    const totalNetAfterFees = sum('net_after_fees');
-    const totalGross = sum('gross_sales');
+    const totalGross = sum('gross_sales');                // productos
+    const totalShipping = sum('shipping');                // cobrado
+    const totalTaxes = sum('taxes');                      // recolectado para gob.
+    const totalSales = sum('total_sales');                // matchea Shopify UI
+    const totalDiscounts = sum('discounts');
     const totalRefunds = sum('refunds');
+    const totalFees = sum('shopify_fees_est');
+    const totalCashToBank = sum('cash_to_bank');
+    const totalNetForMerchant = sum('net_for_merchant');
+    const totalNetAfterFees = sum('net_after_fees');      // legacy
     const totalOrders = sum('orders_count');
 
-    // Cash ROAS aggregate (no es promedio simple — es weighted)
-    const aggCashRoas = totalSpend > 0 ? totalNetAfterFees / totalSpend : 0;
+    // Cash ROAS aggregate (weighted) — usa net_for_merchant ahora
+    const aggCashRoas = totalSpend > 0 ? totalNetForMerchant / totalSpend : 0;
     const aggMetaRoas = totalSpend > 0 ? sum('meta_purchase_value') / totalSpend : 0;
     const aggGapPct = aggMetaRoas > 0 ? ((aggMetaRoas - aggCashRoas) / aggMetaRoas) * 100 : 0;
 
@@ -85,15 +92,24 @@ router.get('/summary', async (req, res) => {
       },
       summary: {
         total_meta_spend: +totalSpend.toFixed(2),
-        total_gross_sales: +totalGross.toFixed(2),
-        total_net_after_fees: +totalNetAfterFees.toFixed(2),
+        // Shopify breakdown (claro):
+        total_gross_sales: +totalGross.toFixed(2),         // productos
+        total_shipping: +totalShipping.toFixed(2),
+        total_taxes: +totalTaxes.toFixed(2),
+        total_discounts: +totalDiscounts.toFixed(2),
         total_refunds: +totalRefunds.toFixed(2),
+        total_fees: +totalFees.toFixed(2),
+        total_sales: +totalSales.toFixed(2),               // matchea Shopify UI
+        // Cash flow:
+        total_cash_to_bank: +totalCashToBank.toFixed(2),   // entró al banco
+        total_net_for_merchant: +totalNetForMerchant.toFixed(2),  // tuyo de verdad
+        total_net_after_fees: +totalNetAfterFees.toFixed(2), // legacy compat
         total_orders: totalOrders,
         avg_cash_roas: +aggCashRoas.toFixed(3),
         avg_meta_roas: +aggMetaRoas.toFixed(3),
         avg_gap_pct: +aggGapPct.toFixed(1),
-        avg_order_value: totalOrders > 0 ? +(totalGross / totalOrders).toFixed(2) : 0,
-        net_profit: +(totalNetAfterFees - totalSpend).toFixed(2)
+        avg_order_value: totalOrders > 0 ? +(totalSales / totalOrders).toFixed(2) : 0,
+        net_profit: +(totalNetForMerchant - totalSpend).toFixed(2)
       }
     });
   } catch (err) {
@@ -162,19 +178,22 @@ router.get('/forecast', async (req, res) => {
       }).sort({ date_et: 1 }).lean();
     }
 
-    // Aggregar MTD
+    // Aggregar MTD — usamos net_for_merchant (post-tax) como métrica primaria
     const sum = (arr, k) => arr.reduce((a, s) => a + (s[k] || 0), 0);
     const mtd = {
       days_with_data: mtdSnaps.length,
       meta_spend: +sum(mtdSnaps, 'meta_spend').toFixed(2),
       meta_purchase_value: +sum(mtdSnaps, 'meta_purchase_value').toFixed(2),
       gross_sales: +sum(mtdSnaps, 'gross_sales').toFixed(2),
-      net_after_fees: +sum(mtdSnaps, 'net_after_fees').toFixed(2),
+      total_sales: +sum(mtdSnaps, 'total_sales').toFixed(2),
+      cash_to_bank: +sum(mtdSnaps, 'cash_to_bank').toFixed(2),
+      net_for_merchant: +sum(mtdSnaps, 'net_for_merchant').toFixed(2),
+      net_after_fees: +sum(mtdSnaps, 'net_after_fees').toFixed(2), // legacy
       orders: sum(mtdSnaps, 'orders_count'),
       refunds: +sum(mtdSnaps, 'refunds').toFixed(2)
     };
-    mtd.cash_roas = mtd.meta_spend > 0 ? +(mtd.net_after_fees / mtd.meta_spend).toFixed(3) : 0;
-    mtd.profit = +(mtd.net_after_fees - mtd.meta_spend).toFixed(2);
+    mtd.cash_roas = mtd.meta_spend > 0 ? +(mtd.net_for_merchant / mtd.meta_spend).toFixed(3) : 0;
+    mtd.profit = +(mtd.net_for_merchant - mtd.meta_spend).toFixed(2);
 
     // Run-rate: últimos 7 días con data (ventana móvil)
     const last7 = mtdSnaps.slice(-7);
@@ -185,15 +204,18 @@ router.get('/forecast', async (req, res) => {
     if (last7.length > 0 && monthStatus === 'in_progress') {
       const rr = {
         days: last7.length,
-        avg_meta_spend: +sum(last7, 'meta_spend').toFixed(2) / last7.length,
-        avg_meta_purchase_value: +sum(last7, 'meta_purchase_value').toFixed(2) / last7.length,
-        avg_gross_sales: +sum(last7, 'gross_sales').toFixed(2) / last7.length,
-        avg_net_after_fees: +sum(last7, 'net_after_fees').toFixed(2) / last7.length,
+        avg_meta_spend: sum(last7, 'meta_spend') / last7.length,
+        avg_meta_purchase_value: sum(last7, 'meta_purchase_value') / last7.length,
+        avg_gross_sales: sum(last7, 'gross_sales') / last7.length,
+        avg_total_sales: sum(last7, 'total_sales') / last7.length,
+        avg_net_for_merchant: sum(last7, 'net_for_merchant') / last7.length,
+        avg_cash_to_bank: sum(last7, 'cash_to_bank') / last7.length,
+        avg_net_after_fees: sum(last7, 'net_after_fees') / last7.length, // legacy
         avg_orders: sum(last7, 'orders_count') / last7.length,
         avg_cash_roas: 0
       };
       rr.avg_cash_roas = rr.avg_meta_spend > 0
-        ? +(rr.avg_net_after_fees / rr.avg_meta_spend).toFixed(3) : 0;
+        ? +(rr.avg_net_for_merchant / rr.avg_meta_spend).toFixed(3) : 0;
       runRate = rr;
 
       // Confidence basado en variabilidad del cash_roas
@@ -202,16 +224,18 @@ router.get('/forecast', async (req, res) => {
         const mean = roasValues.reduce((a, v) => a + v, 0) / roasValues.length;
         const variance = roasValues.reduce((a, v) => a + (v - mean) ** 2, 0) / roasValues.length;
         const stdDev = Math.sqrt(variance);
-        const cv = mean > 0 ? stdDev / mean : 1; // coefficient of variation
+        const cv = mean > 0 ? stdDev / mean : 1;
         if (last7.length >= 7 && cv < 0.30) confidence = 'high';
         else if (last7.length >= 4 && cv < 0.50) confidence = 'medium';
         else confidence = 'low';
       }
 
-      // Projection días restantes
+      // Projection días restantes (usa net_for_merchant)
       const daysRemaining = lastDayOfMonth - mtd.days_with_data;
       const projSpend = +(mtd.meta_spend + rr.avg_meta_spend * daysRemaining).toFixed(2);
-      const projNet = +(mtd.net_after_fees + rr.avg_net_after_fees * daysRemaining).toFixed(2);
+      const projNetForMerchant = +(mtd.net_for_merchant + rr.avg_net_for_merchant * daysRemaining).toFixed(2);
+      const projCashToBank = +(mtd.cash_to_bank + rr.avg_cash_to_bank * daysRemaining).toFixed(2);
+      const projTotalSales = +(mtd.total_sales + rr.avg_total_sales * daysRemaining).toFixed(2);
       const projOrders = Math.round(mtd.orders + rr.avg_orders * daysRemaining);
       const projGross = +(mtd.gross_sales + rr.avg_gross_sales * daysRemaining).toFixed(2);
 
@@ -219,10 +243,13 @@ router.get('/forecast', async (req, res) => {
         days_remaining: daysRemaining,
         projected_meta_spend: projSpend,
         projected_gross_sales: projGross,
-        projected_net_after_fees: projNet,
+        projected_total_sales: projTotalSales,
+        projected_cash_to_bank: projCashToBank,
+        projected_net_for_merchant: projNetForMerchant,
+        projected_net_after_fees: projNetForMerchant, // alias para compat con UI vieja
         projected_orders: projOrders,
-        projected_cash_roas: projSpend > 0 ? +(projNet / projSpend).toFixed(3) : 0,
-        projected_profit: +(projNet - projSpend).toFixed(2)
+        projected_cash_roas: projSpend > 0 ? +(projNetForMerchant / projSpend).toFixed(3) : 0,
+        projected_profit: +(projNetForMerchant - projSpend).toFixed(2)
       };
     }
 

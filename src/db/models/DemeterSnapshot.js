@@ -43,16 +43,29 @@ const demeterSnapshotSchema = new mongoose.Schema({
   meta_roas: { type: Number, default: 0, min: 0 },
 
   // ═══ Shopify side ═══
+  // gross_sales = subtotal_price (productos sin tax ni shipping). Match con
+  // "AOV × orders" de Shopify Analytics. NO match con "Total sales".
   gross_sales: { type: Number, default: 0, min: 0 },
   discounts: { type: Number, default: 0, min: 0 },
   refunds: { type: Number, default: 0, min: 0 },
-  net_sales: { type: Number, default: 0 },             // puede ser negativo si refunds > gross
+  net_sales: { type: Number, default: 0 },              // gross - discounts - refunds (productos)
+  // ─── Refactor 2026-04-25: campos nuevos para reconciliación cash real ───
+  // total_sales = subtotal + shipping + tax - discounts (matchea Shopify "Total sales")
+  total_sales: { type: Number, default: 0, min: 0 },
+  taxes: { type: Number, default: 0, min: 0 },          // tax recolectado (vas a pagar al gobierno)
+  shipping: { type: Number, default: 0, min: 0 },       // shipping cobrado al cliente
   shopify_fees_est: { type: Number, default: 0, min: 0 },
-  net_after_fees: { type: Number, default: 0 },
+  net_after_fees: { type: Number, default: 0 },         // legacy: net_sales - fees
+  // Cash que entra realmente al banco (lo que importa contablemente)
+  cash_to_bank: { type: Number, default: 0 },           // total_sales - refunds - shopify_fees
+  // Tuyo de verdad: cash_to_bank - tax que pasás al gobierno
+  net_for_merchant: { type: Number, default: 0 },       // cash_to_bank - taxes
   orders_count: { type: Number, default: 0, min: 0 },
 
   // ═══ Reconciliación ═══
-  cash_roas: { type: Number, default: 0 },             // net_after_fees / meta_spend
+  // cash_roas ahora lee net_for_merchant (lo que es REALMENTE tuyo, post-tax).
+  // Antes era net_after_fees (que ignoraba tax) — número inflado.
+  cash_roas: { type: Number, default: 0 },             // net_for_merchant / meta_spend
   gap_pct: { type: Number, default: 0 },               // (meta_roas - cash_roas) / meta_roas * 100
 
   // ═══ Meta operacional del snapshot ═══

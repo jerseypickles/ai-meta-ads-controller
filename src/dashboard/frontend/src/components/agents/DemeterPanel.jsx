@@ -171,15 +171,19 @@ export default function DemeterPanel() {
     if (snapshots.length === 0) return null;
     const sum = (k) => snapshots.reduce((a, s) => a + (s[k] || 0), 0);
     const totalSpend = sum('meta_spend');
-    const totalNet = sum('net_after_fees');
-    const totalGross = sum('gross_sales');
+    const totalGross = sum('gross_sales');           // productos
+    const totalShipping = sum('shipping');           // cobrado al cliente
+    const totalTaxes = sum('taxes');                 // recolectado para gob.
+    const totalSales = sum('total_sales');           // matchea Shopify UI
     const totalRefunds = sum('refunds');
     const totalDiscounts = sum('discounts');
     const totalFees = sum('shopify_fees_est');
+    const totalCashToBank = sum('cash_to_bank');
+    const totalNetForMerchant = sum('net_for_merchant');
     const totalOrders = sum('orders_count');
     const totalMetaValue = sum('meta_purchase_value');
 
-    const cashRoas = totalSpend > 0 ? totalNet / totalSpend : 0;
+    const cashRoas = totalSpend > 0 ? totalNetForMerchant / totalSpend : 0;
     const metaRoas = totalSpend > 0 ? totalMetaValue / totalSpend : 0;
     const gapPct = metaRoas > 0 ? ((metaRoas - cashRoas) / metaRoas) * 100 : 0;
 
@@ -187,16 +191,20 @@ export default function DemeterPanel() {
       total_meta_spend: +totalSpend.toFixed(2),
       total_meta_value: +totalMetaValue.toFixed(2),
       total_gross_sales: +totalGross.toFixed(2),
+      total_shipping: +totalShipping.toFixed(2),
+      total_taxes: +totalTaxes.toFixed(2),
+      total_sales: +totalSales.toFixed(2),
       total_discounts: +totalDiscounts.toFixed(2),
       total_refunds: +totalRefunds.toFixed(2),
       total_fees: +totalFees.toFixed(2),
-      total_net_after_fees: +totalNet.toFixed(2),
+      total_cash_to_bank: +totalCashToBank.toFixed(2),
+      total_net_for_merchant: +totalNetForMerchant.toFixed(2),
       total_orders: totalOrders,
       avg_cash_roas: +cashRoas.toFixed(3),
       avg_meta_roas: +metaRoas.toFixed(3),
       avg_gap_pct: +gapPct.toFixed(1),
-      avg_order_value: totalOrders > 0 ? +(totalGross / totalOrders).toFixed(2) : 0,
-      net_profit: +(totalNet - totalSpend).toFixed(2),
+      avg_order_value: totalOrders > 0 ? +(totalSales / totalOrders).toFixed(2) : 0,
+      net_profit: +(totalNetForMerchant - totalSpend).toFixed(2),
       days_count: snapshots.length
     };
   }, [snapshots]);
@@ -328,7 +336,7 @@ export default function DemeterPanel() {
           </span>
         </div>
 
-        {/* KPI cards principales — responsive auto-fit, mín 160px por card */}
+        {/* KPI cards principales — 4 grandes con labels en español llano */}
         {summary ? (
           <div style={{
             display: 'grid',
@@ -337,30 +345,34 @@ export default function DemeterPanel() {
             marginBottom: 14
           }}>
             <KpiCard
-              label="Gasto Meta"
+              label="Gasto Meta Ads"
               value={fmtMoney(summary.total_meta_spend)}
-              sub={`${summary.days_count}d`}
+              sub={`${summary.days_count} días`}
               color="#94a3b8"
+              tooltip="Lo que pagaste a Meta por anuncios."
             />
             <KpiCard
-              label="Cash neto"
-              value={fmtMoney(summary.total_net_after_fees)}
-              sub={`${summary.total_orders.toLocaleString()} ord.`}
+              label="Entró al banco"
+              value={fmtMoney(summary.total_cash_to_bank)}
+              sub={`${summary.total_orders.toLocaleString()} órdenes`}
               color={COLOR_CASH}
+              tooltip="Total ventas Shopify menos refunds menos fees de Shopify. Es lo que efectivamente recibiste en tu cuenta bancaria. Incluye tax que vas a pagar al gobierno."
             />
             <KpiCard
-              label="Cash ROAS"
+              label="Tuyo real"
+              value={fmtMoney(summary.total_net_for_merchant)}
+              sub={`menos tax al gob.`}
+              color={COLOR_CASH}
+              big
+              tooltip="Cash al banco menos tax que recolectaste para el gobierno. Es lo que es realmente tuyo, antes de descontar COGS y otros costos del negocio."
+            />
+            <KpiCard
+              label="ROAS real"
               value={fmtRoas(summary.avg_cash_roas)}
-              sub={`Meta ${fmtRoas(summary.avg_meta_roas)}`}
+              sub={`Meta dice ${fmtRoas(summary.avg_meta_roas)}`}
               color={COLOR_CASH}
               big
-            />
-            <KpiCard
-              label="Profit"
-              value={fmtMoney(summary.net_profit)}
-              sub={`AOV ${fmtMoney(summary.avg_order_value)}`}
-              color={summary.net_profit >= 0 ? COLOR_CASH : COLOR_GAP_BAD}
-              big
+              tooltip="Por cada $1 que gastaste en Meta Ads, $X.XX entró a tu bolsillo (post-tax). Esta es la métrica real, no la que reporta Meta."
             />
           </div>
         ) : (
@@ -369,23 +381,9 @@ export default function DemeterPanel() {
           </div>
         )}
 
-        {/* Mini stats row — desglose Shopify, responsive */}
+        {/* Acordeón "Cómo se calcula" — colapsado por default */}
         {summary && summary.days_count > 0 && (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
-            gap: 10,
-            padding: '12px 14px',
-            background: 'rgba(17, 21, 51, 0.4)',
-            borderRadius: 10,
-            fontSize: '0.74rem'
-          }}>
-            <MiniStat label="Gross sales" value={fmtMoney(summary.total_gross_sales)} />
-            <MiniStat label="Discounts" value={`-${fmtMoney(summary.total_discounts)}`} color="#94a3b8" />
-            <MiniStat label="Refunds" value={`-${fmtMoney(summary.total_refunds)}`} color={summary.total_refunds > 0 ? COLOR_GAP_BAD : 'var(--bos-text-muted)'} />
-            <MiniStat label="Shopify fees" value={`-${fmtMoney(summary.total_fees)}`} color="#94a3b8" />
-            <MiniStat label="Gap atribución" value={`${summary.avg_gap_pct.toFixed(1)}%`} color={gapColor(summary.avg_gap_pct)} />
-          </div>
+          <CalculationBreakdown summary={summary} />
         )}
       </div>
 
@@ -489,15 +487,18 @@ export default function DemeterPanel() {
   );
 }
 
-function KpiCard({ label, value, sub, color, big }) {
+function KpiCard({ label, value, sub, color, big, tooltip }) {
   return (
-    <div style={{
+    <div
+      title={tooltip || ''}
+      style={{
       background: 'rgba(17, 21, 51, 0.55)',
       border: `1px solid ${big ? color + '33' : 'rgba(255,255,255,0.06)'}`,
       borderRadius: 10,
       padding: big ? '14px 16px' : '12px 14px',
       minWidth: 0,
-      overflow: 'hidden'
+      overflow: 'hidden',
+      cursor: tooltip ? 'help' : 'default'
     }}>
       <div style={{
         fontSize: '0.6rem',
@@ -507,9 +508,13 @@ function KpiCard({ label, value, sub, color, big }) {
         marginBottom: 6,
         whiteSpace: 'nowrap',
         overflow: 'hidden',
-        textOverflow: 'ellipsis'
+        textOverflow: 'ellipsis',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 4
       }}>
         {label}
+        {tooltip && <span style={{ fontSize: '0.6rem', opacity: 0.5 }}>ⓘ</span>}
       </div>
       <div style={{
         fontSize: big ? '1.5rem' : '1.25rem',
@@ -565,6 +570,172 @@ function MiniStat({ label, value, color = 'var(--bos-text)' }) {
         textOverflow: 'ellipsis'
       }}>
         {value}
+      </div>
+    </div>
+  );
+}
+
+// ─── CALCULATION BREAKDOWN — acordeón "Cómo se calcula" ─────────────────
+
+function CalculationBreakdown({ summary }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div style={{
+      background: 'rgba(17, 21, 51, 0.4)',
+      borderRadius: 10,
+      border: '1px solid rgba(255,255,255,0.05)',
+      overflow: 'hidden'
+    }}>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          width: '100%',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '10px 14px',
+          background: 'transparent',
+          border: 'none',
+          color: 'var(--bos-text-muted)',
+          fontSize: '0.74rem',
+          fontWeight: 600,
+          letterSpacing: '0.04em',
+          cursor: 'pointer',
+          textAlign: 'left'
+        }}
+      >
+        <span>{expanded ? '▾' : '▸'} Cómo llegamos a estos números</span>
+        <span style={{ fontSize: '0.66rem', color: 'var(--bos-text-dim)', fontFamily: 'JetBrains Mono, monospace' }}>
+          {expanded ? 'click para ocultar' : 'click para ver desglose'}
+        </span>
+      </button>
+
+      {expanded && (
+        <div style={{
+          padding: '14px 18px 18px',
+          borderTop: '1px solid rgba(255,255,255,0.05)',
+          fontSize: '0.78rem',
+          fontFamily: 'JetBrains Mono, monospace',
+          lineHeight: 1.7
+        }}>
+          {/* Bloque 1: Total ventas Shopify */}
+          <BreakdownLine label="Total ventas Shopify" value={summary.total_sales} bold note="lo que ves en Shopify Analytics" />
+          <BreakdownSubline label="Productos (subtotal)" value={summary.total_gross_sales} />
+          <BreakdownSubline label="Shipping cobrado" value={summary.total_shipping} note="paga el cliente" />
+          <BreakdownSubline label="Tax cobrado" value={summary.total_taxes} note="recolectado para el gobierno" color={COLOR_GAP_WARN} />
+
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed rgba(255,255,255,0.08)' }}>
+            <BreakdownLine label="Discounts" value={-summary.total_discounts} dim />
+            <BreakdownLine label="Refunds" value={-summary.total_refunds} color={summary.total_refunds > 0 ? COLOR_GAP_BAD : 'var(--bos-text-dim)'} />
+            <BreakdownLine label="Shopify fees (2.9% + $0.30/order)" value={-summary.total_fees} dim />
+          </div>
+
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(20, 184, 166, 0.3)' }}>
+            <BreakdownLine label="Cash que entró al banco" value={summary.total_cash_to_bank} bold color={COLOR_CASH} note="lo que efectivamente recibiste" />
+          </div>
+
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed rgba(255,255,255,0.08)' }}>
+            <BreakdownLine label="Tax a pagar al gobierno" value={-summary.total_taxes} color={COLOR_GAP_WARN} note="lo recolectaste, no es tuyo" />
+          </div>
+
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(20, 184, 166, 0.5)' }}>
+            <BreakdownLine label="TUYO REAL (post-tax)" value={summary.total_net_for_merchant} bold big color={COLOR_CASH} note="antes de descontar COGS y costos operativos" />
+          </div>
+
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed rgba(255,255,255,0.08)' }}>
+            <BreakdownLine label="Gasto Meta Ads" value={-summary.total_meta_spend} dim />
+          </div>
+
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(20, 184, 166, 0.7)' }}>
+            <BreakdownLine label="PROFIT pre-COGS" value={summary.net_profit} bold big color={summary.net_profit >= 0 ? COLOR_CASH : COLOR_GAP_BAD} note="esto va a margen antes de costos del producto" />
+          </div>
+
+          <div style={{
+            marginTop: 16, padding: '10px 12px',
+            background: 'rgba(20, 184, 166, 0.06)',
+            borderRadius: 6,
+            fontSize: '0.7rem',
+            color: 'var(--bos-text-muted)',
+            lineHeight: 1.6,
+            fontFamily: '-apple-system, system-ui, sans-serif'
+          }}>
+            <strong style={{ color: DEMETER_COLOR }}>No tracked aquí:</strong>
+            {' '}COGS (costo de producir/comprar el pickle), shipping al carrier (lo que pagás a USPS/UPS),
+            costos operativos (rent, salarios, software). Para el profit real del negocio,
+            descontá esos del PROFIT pre-COGS arriba.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BreakdownLine({ label, value, bold, big, dim, color, note }) {
+  const negative = value < 0;
+  const displayValue = `${negative ? '-' : ''}${fmtMoney(Math.abs(value))}`;
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'baseline',
+      justifyContent: 'space-between',
+      gap: 14,
+      marginBottom: 4,
+      opacity: dim ? 0.7 : 1
+    }}>
+      <div style={{
+        fontSize: big ? '0.86rem' : '0.78rem',
+        fontWeight: bold ? 700 : 400,
+        color: bold ? (color || 'var(--bos-text)') : 'var(--bos-text-muted)',
+        fontFamily: '-apple-system, system-ui, sans-serif',
+        flex: '1 1 auto'
+      }}>
+        {label}
+        {note && (
+          <span style={{ fontSize: '0.66rem', color: 'var(--bos-text-dim)', marginLeft: 8, fontStyle: 'italic' }}>
+            ← {note}
+          </span>
+        )}
+      </div>
+      <div style={{
+        fontSize: big ? '1rem' : '0.82rem',
+        fontWeight: bold ? 700 : 600,
+        color: color || (negative ? '#94a3b8' : 'var(--bos-text)'),
+        fontFamily: 'JetBrains Mono, monospace',
+        flexShrink: 0
+      }}>
+        {displayValue}
+      </div>
+    </div>
+  );
+}
+
+function BreakdownSubline({ label, value, note, color }) {
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'baseline',
+      justifyContent: 'space-between',
+      gap: 14,
+      marginLeft: 18,
+      marginBottom: 2
+    }}>
+      <div style={{
+        fontSize: '0.72rem',
+        color: 'var(--bos-text-muted)',
+        fontFamily: '-apple-system, system-ui, sans-serif'
+      }}>
+        ├─ {label}
+        {note && (
+          <span style={{ fontSize: '0.64rem', color: 'var(--bos-text-dim)', marginLeft: 6, fontStyle: 'italic' }}>
+            ({note})
+          </span>
+        )}
+      </div>
+      <div style={{
+        fontSize: '0.76rem',
+        color: color || 'var(--bos-text-muted)',
+        fontFamily: 'JetBrains Mono, monospace'
+      }}>
+        {fmtMoney(value)}
       </div>
     </div>
   );

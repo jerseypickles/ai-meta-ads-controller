@@ -76,29 +76,50 @@ function daysAgoEt(n) {
 
 /**
  * Sumariza orders + refunds en agregados para el snapshot.
+ *
+ * Refactor 2026-04-25 — separa explícitamente:
+ *   gross_sales = subtotal_price          (productos sin tax/shipping)
+ *   shipping    = total_shipping_price    (cobrado al cliente)
+ *   taxes       = total_tax               (recolectado para gobierno)
+ *   discounts   = total_discounts
+ *   total_sales = subtotal + shipping + tax - discounts  ← Shopify "Total sales"
+ *
+ * Verificación: total_sales debe ser ≈ Σ(total_price) de las orders.
+ * Si hay diferencia mínima, viene de tip, gift_cards, otros adjustments.
  */
 function aggregateShopify(orders, refunds) {
-  let gross = 0, discounts = 0, refundTotal = 0, netSales = 0;
+  let subtotal = 0, discounts = 0, shipping = 0, taxes = 0, totalPrice = 0;
+  let refundTotal = 0;
 
   for (const o of orders) {
-    // total_price: gross después de descuentos pero antes de refunds
-    // subtotal_price: gross antes de descuentos, antes de tax y shipping
-    // current_total_price: total_price - refunds aplicados a esta order
-    gross += parseFloat(o.subtotal_price || 0);
+    subtotal += parseFloat(o.subtotal_price || 0);
     discounts += parseFloat(o.total_discounts || 0);
+    taxes += parseFloat(o.total_tax || 0);
+    // total_shipping_price_set viene como objeto: { shop_money: { amount, currency } }
+    const shipMoney = o.total_shipping_price_set?.shop_money?.amount;
+    shipping += parseFloat(shipMoney || 0);
+    // total_price: lo que cobró Shopify al cliente (= subtotal + shipping + tax − discounts)
+    totalPrice += parseFloat(o.total_price || 0);
   }
 
   for (const r of refunds) {
     refundTotal += parseFloat(r.amount || 0);
   }
 
-  netSales = gross - discounts - refundTotal;
+  // Total sales = matchea "Total sales" del dashboard de Shopify Analytics.
+  // Lo computamos sumando total_price (más confiable) en vez de la fórmula
+  // subtotal+shipping+tax-discounts (puede tener drift por tips/gift cards).
+  const totalSales = totalPrice;
+  const netSales = subtotal - discounts - refundTotal;  // legacy, productos puros
 
   return {
-    gross_sales: +gross.toFixed(2),
+    gross_sales: +subtotal.toFixed(2),       // productos
     discounts: +discounts.toFixed(2),
+    shipping: +shipping.toFixed(2),          // cobrado al cliente
+    taxes: +taxes.toFixed(2),                // recolectado, va al gobierno
+    total_sales: +totalSales.toFixed(2),     // matchea Shopify UI
     refunds: +refundTotal.toFixed(2),
-    net_sales: +netSales.toFixed(2),
+    net_sales: +netSales.toFixed(2),         // legacy para compat
     orders_count: orders.length,
     refunds_count: refunds.length
   };
@@ -107,9 +128,77 @@ function aggregateShopify(orders, refunds) {
 /**
  * Computa Shopify fees estimados (Shopify Payments US standard).
  * Fórmula: gross_sales * feePercent + orders_count * feeFlat
+ *
+ * Nota 2026-04-25: aplicado sobre total_sales (no subtotal) porque Shopify
+ * cobra fees sobre el total de la transacción, incluyendo shipping y tax.
  */
-function estimateShopifyFees(grossSales, ordersCount) {
-  return +(grossSales * config.shopify.feePercent + ordersCount * config.shopify.feeFlat).toFixed(2);
+function estimateShopifyFees(totalSales, ordersCount) {
+  return +(totalSales * config.shopify.feePercent + ordersCount * config.shopify.feeFlat).toFixed(2);
+}
+
+/**
+ * Construye el doc DemeterSnapshot a partir de los aggregates.
+ * Helper único para no duplicar lógica entre runDailySnapshot y
+ * runDailySnapshotFromMaster.
+ *
+ * Nuevo flujo de cash (2026-04-25):
+ *   total_sales       = matchea Shopify "Total sales" (total_price)
+ *   cash_to_bank      = total_sales − refunds − shopify_fees_est
+ *   net_for_merchant  = cash_to_bank − taxes (tuyo de verdad post-tax)
+ *   cash_roas         = net_for_merchant / meta_spend (la métrica real)
+ */
+function buildSnapshotDoc({ dateEt, startUtc, endUtc, metaTotals, sh, computationError, elapsed }) {
+  // Fees aplicados sobre total_sales (no subtotal — fix más correcto)
+  const shopifyFees = estimateShopifyFees(sh.total_sales, sh.orders_count);
+
+  // Cash que entra al banco: total ventas − refunds − fees Shopify
+  const cashToBank = +(sh.total_sales - sh.refunds - shopifyFees).toFixed(2);
+
+  // Tuyo de verdad: cash_to_bank − tax que vas a pagar al gobierno
+  const netForMerchant = +(cashToBank - sh.taxes).toFixed(2);
+
+  // Legacy field (productos puros - fees) — mantenido para compat
+  const netAfterFees = +(sh.net_sales - shopifyFees).toFixed(2);
+
+  // ROAS
+  const metaRoas = metaTotals.spend > 0
+    ? +(metaTotals.purchase_value / metaTotals.spend).toFixed(3)
+    : 0;
+  // cash_roas = net_for_merchant / spend (lo que es REALMENTE tuyo)
+  const cashRoas = metaTotals.spend > 0
+    ? +(netForMerchant / metaTotals.spend).toFixed(3)
+    : 0;
+  const gapPct = metaRoas > 0
+    ? +(((metaRoas - cashRoas) / metaRoas) * 100).toFixed(1)
+    : 0;
+
+  return {
+    date_et: dateEt,
+    range_start_utc: startUtc,
+    range_end_utc: endUtc,
+    meta_spend: +metaTotals.spend.toFixed(2),
+    meta_purchase_value: +metaTotals.purchase_value.toFixed(2),
+    meta_roas: metaRoas,
+    gross_sales: sh.gross_sales,
+    discounts: sh.discounts,
+    shipping: sh.shipping,
+    taxes: sh.taxes,
+    total_sales: sh.total_sales,
+    refunds: sh.refunds,
+    net_sales: sh.net_sales,
+    shopify_fees_est: shopifyFees,
+    net_after_fees: netAfterFees,
+    cash_to_bank: cashToBank,
+    net_for_merchant: netForMerchant,
+    orders_count: sh.orders_count,
+    cash_roas: cashRoas,
+    gap_pct: gapPct,
+    computed_at: new Date(),
+    computation_ms: elapsed,
+    shopify_orders_fetched: sh.orders_count,
+    shopify_refunds_fetched: sh.refunds_count,
+    computation_error: computationError
+  };
 }
 
 /**
@@ -189,46 +278,10 @@ async function runDailySnapshot(dateEt) {
     refunds = [];
   }
 
-  // ─── Aggregate ───────────────────────────────────────────────────────
+  // ─── Aggregate + build doc ───────────────────────────────────────────
   const sh = aggregateShopify(orders, refunds);
-  const shopifyFees = estimateShopifyFees(sh.gross_sales, sh.orders_count);
-  const netAfterFees = +(sh.net_sales - shopifyFees).toFixed(2);
-
-  // ROAS — protegidos contra division by zero
-  const metaRoas = metaTotals.spend > 0
-    ? +(metaTotals.purchase_value / metaTotals.spend).toFixed(3)
-    : 0;
-  const cashRoas = metaTotals.spend > 0
-    ? +(netAfterFees / metaTotals.spend).toFixed(3)
-    : 0;
-  const gapPct = metaRoas > 0
-    ? +(((metaRoas - cashRoas) / metaRoas) * 100).toFixed(1)
-    : 0;
-
-  // ─── Upsert (idempotente) ────────────────────────────────────────────
   const elapsed = Date.now() - t0;
-  const doc = {
-    date_et: dateEt,
-    range_start_utc: startUtc,
-    range_end_utc: endUtc,
-    meta_spend: +metaTotals.spend.toFixed(2),
-    meta_purchase_value: +metaTotals.purchase_value.toFixed(2),
-    meta_roas: metaRoas,
-    gross_sales: sh.gross_sales,
-    discounts: sh.discounts,
-    refunds: sh.refunds,
-    net_sales: sh.net_sales,
-    shopify_fees_est: shopifyFees,
-    net_after_fees: netAfterFees,
-    orders_count: sh.orders_count,
-    cash_roas: cashRoas,
-    gap_pct: gapPct,
-    computed_at: new Date(),
-    computation_ms: elapsed,
-    shopify_orders_fetched: sh.orders_count,
-    shopify_refunds_fetched: sh.refunds_count,
-    computation_error: computationError
-  };
+  const doc = buildSnapshotDoc({ dateEt, startUtc, endUtc, metaTotals, sh, computationError, elapsed });
 
   await DemeterSnapshot.findOneAndUpdate(
     { date_et: dateEt },
@@ -237,9 +290,9 @@ async function runDailySnapshot(dateEt) {
   );
 
   logger.info(
-    `[demeter] ${dateEt} ✓ Meta=$${doc.meta_spend} (ROAS ${metaRoas}x) | ` +
-    `Shopify net=$${netAfterFees} (${sh.orders_count} orders, $${sh.refunds} refunds) | ` +
-    `cash ROAS ${cashRoas}x | gap ${gapPct}% | ${elapsed}ms`
+    `[demeter] ${dateEt} ✓ Meta=$${doc.meta_spend} (ROAS ${doc.meta_roas}x) | ` +
+    `Total sales $${doc.total_sales} → bank $${doc.cash_to_bank} → tuyo $${doc.net_for_merchant} | ` +
+    `cash ROAS ${doc.cash_roas}x | gap ${doc.gap_pct}% | ${elapsed}ms`
   );
 
   return doc;
@@ -337,41 +390,10 @@ async function runDailySnapshotFromMaster(dateEt, masterOrders) {
     computationError = err.message;
   }
 
-  // Aggregate + roas + upsert (igual que runDailySnapshot)
+  // Aggregate + build doc + upsert
   const sh = aggregateShopify(dayOrders, dayRefunds);
-  const shopifyFees = estimateShopifyFees(sh.gross_sales, sh.orders_count);
-  const netAfterFees = +(sh.net_sales - shopifyFees).toFixed(2);
-
-  const metaRoas = metaTotals.spend > 0
-    ? +(metaTotals.purchase_value / metaTotals.spend).toFixed(3) : 0;
-  const cashRoas = metaTotals.spend > 0
-    ? +(netAfterFees / metaTotals.spend).toFixed(3) : 0;
-  const gapPct = metaRoas > 0
-    ? +(((metaRoas - cashRoas) / metaRoas) * 100).toFixed(1) : 0;
-
   const elapsed = Date.now() - t0;
-  const doc = {
-    date_et: dateEt,
-    range_start_utc: startUtc,
-    range_end_utc: endUtc,
-    meta_spend: +metaTotals.spend.toFixed(2),
-    meta_purchase_value: +metaTotals.purchase_value.toFixed(2),
-    meta_roas: metaRoas,
-    gross_sales: sh.gross_sales,
-    discounts: sh.discounts,
-    refunds: sh.refunds,
-    net_sales: sh.net_sales,
-    shopify_fees_est: shopifyFees,
-    net_after_fees: netAfterFees,
-    orders_count: sh.orders_count,
-    cash_roas: cashRoas,
-    gap_pct: gapPct,
-    computed_at: new Date(),
-    computation_ms: elapsed,
-    shopify_orders_fetched: sh.orders_count,
-    shopify_refunds_fetched: sh.refunds_count,
-    computation_error: computationError
-  };
+  const doc = buildSnapshotDoc({ dateEt, startUtc, endUtc, metaTotals, sh, computationError, elapsed });
 
   await DemeterSnapshot.findOneAndUpdate(
     { date_et: dateEt },
@@ -380,9 +402,9 @@ async function runDailySnapshotFromMaster(dateEt, masterOrders) {
   );
 
   logger.info(
-    `[demeter] ${dateEt} ✓ Meta=$${doc.meta_spend} (ROAS ${metaRoas}x) | ` +
-    `Shopify net=$${netAfterFees} (${sh.orders_count} orders, $${sh.refunds} refunds) | ` +
-    `cash ROAS ${cashRoas}x | gap ${gapPct}% | ${elapsed}ms`
+    `[demeter] ${dateEt} ✓ spend $${doc.meta_spend} | total sales $${doc.total_sales} → ` +
+    `bank $${doc.cash_to_bank} → tuyo $${doc.net_for_merchant} | ` +
+    `cash ROAS ${doc.cash_roas}x · ${elapsed}ms`
   );
 
   return doc;

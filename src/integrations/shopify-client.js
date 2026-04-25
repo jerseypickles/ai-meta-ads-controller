@@ -112,12 +112,15 @@ async function getOrdersForDateRange(startUtc, endUtc) {
   }
 
   // Initial query con date range
+  // Fields actualizados 2026-04-25: incluimos total_shipping_price_set para
+  // separar shipping cobrado al cliente (parte de total_price pero no de
+  // subtotal_price). total_tax ya estaba pero ahora lo aprovechamos.
   const initialParams = {
     status: 'any',
     created_at_min: startUtc.toISOString(),
     created_at_max: endUtc.toISOString(),
     limit,
-    fields: 'id,name,created_at,cancelled_at,financial_status,total_price,subtotal_price,total_discounts,total_tax,current_total_price,refunds'
+    fields: 'id,name,created_at,cancelled_at,financial_status,total_price,subtotal_price,total_discounts,total_tax,total_shipping_price_set,current_total_price,refunds'
   };
 
   let { data, headers } = await get('/orders.json', initialParams);
