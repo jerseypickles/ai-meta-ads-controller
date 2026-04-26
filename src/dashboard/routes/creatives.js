@@ -13,6 +13,46 @@ const logger = require('../../utils/logger');
 const anthropic = new Anthropic({ apiKey: config.claude.apiKey });
 const { generatePrompt } = require('../../ai/creative/prompt-generator');
 const { generateImage, generateBatch, generateDualFormatBatch } = require('../../ai/creative/image-generator');
+
+/**
+ * Path-traversal hardening (2026-04-26).
+ * Resuelve filename a una ruta dentro de baseDir y rechaza:
+ *   - null bytes, segmentos de path, archivos hidden
+ *   - symlinks que escapan baseDir (vía fs.realpath)
+ *   - paths que post-resolución no caen bajo baseDir
+ *
+ * Usar en cada endpoint que reciba filename desde input externo.
+ * Tira Error con mensaje seguro (no leakea path interno).
+ */
+function safeResolveInDir(filename, baseDir) {
+  if (typeof filename !== 'string' || !filename || filename.includes('\x00')) {
+    throw new Error('Invalid filename');
+  }
+  // Solo basename — strip explicit segments
+  const safeName = path.basename(filename);
+  if (safeName !== filename || safeName.startsWith('.') || safeName === '..') {
+    throw new Error('Invalid filename');
+  }
+  // Resolver symlinks en AMBOS lados (base y target) para comparar fairly
+  const baseAbsRaw = path.resolve(baseDir);
+  let baseReal;
+  try { baseReal = fs.realpathSync(baseAbsRaw); }
+  catch (err) {
+    if (err.code === 'ENOENT') baseReal = baseAbsRaw;
+    else throw err;
+  }
+  const target = path.join(baseReal, safeName);
+  let real;
+  try { real = fs.realpathSync(target); }
+  catch (err) {
+    if (err.code === 'ENOENT') real = target;
+    else throw err;
+  }
+  if (real !== baseReal && !real.startsWith(baseReal + path.sep)) {
+    throw new Error('Invalid filename');
+  }
+  return real;
+}
 const { judgeImages } = require('../../ai/creative/image-judge');
 
 // Configuración de multer para file upload
@@ -773,18 +813,16 @@ router.post('/generate/images', async (req, res) => {
  * Servir imagen generada para preview en frontend.
  */
 router.get('/generate/preview/:filename', (req, res) => {
-  // Guard contra path traversal — CVE-class bug: sin esto ../.env leaks secrets
-  const requested = req.params.filename;
-  if (!requested || requested.includes('..') || requested.includes('/') || requested.includes('\\') || requested.includes('\x00')) {
+  const GENERATED_DIR = path.join(config.system.uploadsDir, 'generated');
+  let filePath;
+  try {
+    filePath = safeResolveInDir(req.params.filename, GENERATED_DIR);
+  } catch (_) {
     return res.status(400).json({ error: 'Invalid filename' });
   }
-  const GENERATED_DIR = path.join(config.system.uploadsDir, 'generated');
-  const filePath = path.join(GENERATED_DIR, path.basename(requested));
-
   if (!fs.existsSync(filePath)) {
     return res.status(404).json({ error: 'Imagen no encontrada' });
   }
-
   res.sendFile(filePath);
 });
 
@@ -806,7 +844,12 @@ router.post('/generate/accept', async (req, res) => {
     }
 
     const GENERATED_DIR = path.join(config.system.uploadsDir, 'generated');
-    const sourcePath = path.join(GENERATED_DIR, filename);
+    let sourcePath;
+    try {
+      sourcePath = safeResolveInDir(filename, GENERATED_DIR);
+    } catch (_) {
+      return res.status(400).json({ error: 'Invalid filename' });
+    }
     if (!fs.existsSync(sourcePath)) {
       return res.status(404).json({ error: 'Imagen generada no encontrada' });
     }
