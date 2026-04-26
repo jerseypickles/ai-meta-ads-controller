@@ -273,11 +273,16 @@ async function executeStarvedRescue(cboSnapshot, adsets, rescueCboId) {
     try {
       const { getMetaClient } = require('../../meta/client');
       const meta = getMetaClient();
+      // 2026-04-26: cambiamos de PAUSED → ACTIVE. El sistema ya pasó por
+      // safety gates, cooldowns, directives y capacity antes de llegar acá.
+      // Forzar review manual era fricción excesiva con muchos rescues por
+      // ciclo. Compensación: ping a Zeus al panel notificaciones para
+      // traceability instantánea.
       const result = await meta.duplicateAdSet(a.id, {
         campaign_id: rescueCboId,
         deep_copy: true,
         name: cloneName,
-        status: 'PAUSED'  // creator activa manualmente tras review; safety
+        status: 'ACTIVE'
       });
 
       if (result.success && result.new_adset_id) {
@@ -296,11 +301,26 @@ async function executeStarvedRescue(cboSnapshot, adsets, rescueCboId) {
             spend_share_7d: +(a.spend_share_7d * 100).toFixed(1),
             new_adset_id: result.new_adset_id,
             rescue_cbo_id: rescueCboId,
-            new_adset_status: 'PAUSED',  // safety: creador activa
+            new_adset_status: 'ACTIVE',
+            used_fallback_relink: !!result.used_fallback_relink,
             source_cbo: cboSnapshot.campaign_name
           },
           success: true
         });
+        // Ping a Zeus panel notificaciones — traceability instantánea
+        try {
+          const ZeusChatMessage = require('../../db/models/ZeusChatMessage');
+          const lastMsg = await ZeusChatMessage.findOne({}).sort({ created_at: -1 }).lean();
+          if (lastMsg?.conversation_id) {
+            await ZeusChatMessage.create({
+              conversation_id: lastMsg.conversation_id,
+              role: 'assistant',
+              content: `🟢 **Ares Rescue ACTIVE**: "${a.name}" → CBO rescate (\`${result.new_adset_id}\`)\n\nROAS source ${a.roas_7d.toFixed(2)}x, ${a.purchases_7d} compras, solo ${(a.spend_share_7d*100).toFixed(1)}% spend share. Adset duplicado y activado. Si querés frenar, pausar manual en Meta UI.`,
+              proactive: true,
+              context_snapshot: { source: 'ares_rescue', new_adset_id: result.new_adset_id }
+            });
+          }
+        } catch (_) { /* non-critical */ }
         executed.push({ kind: 'starved_winner_rescue', adset: a.name, new_id: result.new_adset_id });
         logger.info(`[ARES-PORTFOLIO] ✓ rescued "${a.name}" (ROAS ${a.roas_7d.toFixed(2)}x) → CBO rescate (PAUSED)`);
       }

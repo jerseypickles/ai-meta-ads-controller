@@ -242,7 +242,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'duplicate_adset_to_cbo',
-    description: 'PATRÓN "MOVE" = duplica adset a CBO destino + pausa el original. Meta API NO permite mover adsets entre campañas, este es el workaround canónico. El duplicado se crea en PAUSED para que revises/actives manualmente. Si `pause_original: true` (default), el adset fuente se pausa como parte del mismo flujo. Usá para: rebalancear winners starved, mover graduates a CBO estable, redistribuir de CBO saturada a CBO con headroom. Cooldown 72h por entity.',
+    description: 'PATRÓN "MOVE" = duplica adset a CBO destino + pausa el original. Meta API NO permite mover adsets entre campañas, este es el workaround canónico. El duplicado se crea ACTIVE automáticamente (desde 2026-04-26) — el sistema ya pasó por safety gates, cooldowns, directives y capacity, no necesita review manual extra. Ping a Zeus panel notificaciones inmediato para visibilidad. Si `pause_original: true` (default), el adset fuente se pausa como parte del mismo flujo. Usá para: rebalancear winners starved, mover graduates a CBO estable, redistribuir de CBO saturada a CBO con headroom. Cooldown 72h por entity.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1105,12 +1105,14 @@ async function handleDuplicateAdsetToCBO({ source_adset_id, target_campaign_id, 
     const { getMetaClient } = require('../../meta/client');
     const meta = getMetaClient();
 
-    // 1. Duplicar
+    // 1. Duplicar — desde 2026-04-26 ACTIVE por default (sistema autónomo
+    // confiable después de safety gates). Manual review se compensa con
+    // ping a Zeus inmediato.
     const dupResult = await meta.duplicateAdSet(source_adset_id, {
       campaign_id: target_campaign_id,
       deep_copy: true,
       name: cloneName,
-      status: 'PAUSED'  // duplicado siempre PAUSED — brain no activa, review manual
+      status: 'ACTIVE'
     });
 
     if (!dupResult?.success || !dupResult?.new_adset_id) {
@@ -1131,13 +1133,28 @@ async function handleDuplicateAdsetToCBO({ source_adset_id, target_campaign_id, 
         new_adset_id: dupResult.new_adset_id,
         target_campaign_id,
         target_campaign_name: targetSnap.entity_name,
-        clone_status: 'PAUSED',
+        clone_status: 'ACTIVE',
         clone_budget: budget,
+        used_fallback_relink: !!dupResult.used_fallback_relink,
         pause_original_planned: shouldPauseOriginal
       }, shadow_cash_consideration),
       success: true
     });
-    logger.info(`[ARES-BRAIN] ✓ duplicated "${srcSnap.entity_name}" → "${targetSnap.entity_name}" (new_id=${dupResult.new_adset_id}, PAUSED)`);
+    logger.info(`[ARES-BRAIN] ✓ duplicated "${srcSnap.entity_name}" → "${targetSnap.entity_name}" (new_id=${dupResult.new_adset_id}, ACTIVE)`);
+
+    // Ping a Zeus panel notificaciones — visibilidad inmediata
+    try {
+      const fbValue = (v) => (v == null ? '?' : v);
+      await pingZeusProactive({
+        content: `🟢 **Ares Brain duplicó ACTIVE**: "${srcSnap.entity_name}" → CBO "${targetSnap.entity_name}" (\`${dupResult.new_adset_id}\`)\n\n${reasoning}\n\nAdset duplicado y activado. Si querés frenar, pausar manual en Meta UI.`,
+        context_snapshot: {
+          source: 'ares_brain_duplicate',
+          new_adset_id: dupResult.new_adset_id,
+          source_adset_id,
+          target_cbo: targetSnap.entity_name
+        }
+      });
+    } catch (_) { /* non-critical */ }
 
     // 2. Pausar original (opcional — el "move" pattern)
     let pausedOriginal = false;
@@ -1168,11 +1185,11 @@ async function handleDuplicateAdsetToCBO({ source_adset_id, target_campaign_id, 
     return {
       executed: true,
       new_adset_id: dupResult.new_adset_id,
-      new_adset_status: 'PAUSED',
+      new_adset_status: 'ACTIVE',
       source_paused: pausedOriginal,
       source_pause_error: pauseError,
       target_cbo_name: targetSnap.entity_name,
-      requires_manual_activation: true
+      auto_activated: true
     };
   } catch (err) {
     await logBrainAction({
