@@ -168,7 +168,7 @@ async function validateSafetyGates({ entity_id, action_type, before_value, after
   try {
     const cool = await cooldowns.isOnCooldown(entity_id);
     if (cool.onCooldown) {
-      return { allowed: false, reason: `cooldown: ${cool.hoursRemaining}h restantes (last: ${cool.lastAction})` };
+      return { allowed: false, reason: `cooldown: ${cool.hoursLeft}h restantes (last: ${cool.lastAction})` };
     }
   } catch (err) {
     logger.warn(`[ARES-PORTFOLIO] cooldown check failed (fail-open): ${err.message}`);
