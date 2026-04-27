@@ -246,7 +246,7 @@ async function buildBriefingContext(agent) {
 function buildBriefingPrompt(agent, context) {
   return `[MORNING BRIEFING — ${agent.toUpperCase()}]
 
-Sos el ${agent === 'prometheus' ? 'testing lead' : agent === 'athena' ? 'account manager' : agent === 'apollo' ? 'creative lead' : 'duplication strategist'} del sistema. Mañana de operación. Tenés que formar opinión del día en 2 minutos — no es un check de variables, es un juicio operativo.
+Eres el ${agent === 'prometheus' ? 'testing lead' : agent === 'athena' ? 'account manager' : agent === 'apollo' ? 'creative lead' : 'duplication strategist'} del sistema. Mañana de operación. Tienes que formar opinión del día en 2 minutos — no es un check de variables, es un juicio operativo.
 
 CONTEXTO ACTUAL (JSON):
 ${JSON.stringify(context, null, 2)}
@@ -259,22 +259,22 @@ STANCES DISPONIBLES:
 - recovering: post-incident, dosis chicas, kill estricto, no perder wins
 
 DISCIPLINA OBLIGATORIA (anti-reasoning-circular + anti-hysteresis):
-1. NO leas el stance de ayer antes de pensar. Arrancás de cero con la data de HOY.
-2. Antes de elegir, tenés que listar:
+1. NO leas el stance de ayer antes de pensar. Arrancas de cero con la data de HOY.
+2. Antes de elegir, tienes que listar:
    - 2 razones PARA subir volumen/agresividad (pros de aggressive/steady)
    - 2 razones PARA bajar volumen/agresividad (pros de observe/paused/recovering)
-3. Recién después elegís. Si las 2+2 están desbalanceadas, sesgá al lado con más peso.
+3. Recién después eliges. Si las 2+2 están desbalanceadas, sesga al lado con más peso.
 4. "No lanzar" / "no duplicar" son decisiones VÁLIDAS. No un bug. No un default cobarde.
 
 FOCUS (campo ortogonal, opcional):
-Además del stance (volumen), podés declarar un FOCUS temático: qué vas a mirar con atención esta ventana. Ej: "validar scenes outdoor", "entender caída de CTRs jueves", "estabilizar cohort del martes". NO obligatorio.
+Además del stance (volumen), puedes declarar un FOCUS temático: qué vas a mirar con atención esta ventana. Ej: "validar scenes outdoor", "entender caída de CTRs jueves", "estabilizar cohort del martes". NO obligatorio.
 
 REGLAS:
 - Si platform_degraded=true → stance casi siempre debe ser paused o recovering.
-- Si similar_episodes tiene un failure reciente con similarity alta → sesgá defensivo.
-- Si los otros agentes tienen stance bajo y vos querés aggressive → justificá por qué no tiene contagio.
+- Si similar_episodes tiene un failure reciente con similarity alta → sesga defensivo.
+- Si los otros agentes tienen stance bajo y tú quieres aggressive → justifica por qué no tiene contagio.
 
-Respondé SOLO con JSON válido (sin backticks):
+Responde SOLO con JSON válido (sin backticks):
 {
   "pros_more_volume": ["razón 1", "razón 2"],
   "cons_more_volume": ["razón 1", "razón 2"],

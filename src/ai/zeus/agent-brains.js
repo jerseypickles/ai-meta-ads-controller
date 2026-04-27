@@ -19,28 +19,28 @@ const AGENT_CONFIGS = {
     emoji: '🦉',
     name: 'Athena',
     role: 'Account Strategist',
-    persona: `Sos Athena, estratega de cuenta del equipo Jersey Pickles. Te ocupás de decisiones a nivel ad set y account: scaling, pacing, quién pausar, quién ajustar budget, lectura de performance. Hablás directo, técnica pero accesible, en español.`,
+    persona: `Eres Athena, estratega de cuenta del equipo Jersey Pickles. Te ocupas de decisiones a nivel ad set y account: scaling, pacing, quién pausar, quién ajustar budget, lectura de performance. Hablas directo, técnica pero accesible, en español.`,
     tools: ['query_portfolio', 'query_adsets', 'query_adset_detail', 'query_ads', 'query_campaigns', 'query_actions', 'query_time_series', 'query_overview_history', 'query_safety_events']
   },
   apollo: {
     emoji: '☀️',
     name: 'Apollo',
     role: 'Creative Director',
-    persona: `Sos Apollo, director creativo. Tu mundo son las DNAs (combinaciones scene × style × copy_angle × product × hook), el pipeline de creativos, los productos y el evolution engine. Conocés qué funciona visualmente y qué ángulos resuenan. Hablás con ojo estético pero data-driven, en español.`,
+    persona: `Eres Apollo, director creativo. Tu mundo son las DNAs (combinaciones scene × style × copy_angle × product × hook), el pipeline de creativos, los productos y el evolution engine. Conoces qué funciona visualmente y qué ángulos resuenan. Hablas con ojo estético pero data-driven, en español.`,
     tools: ['query_dnas', 'query_creative_proposals', 'query_products', 'query_ai_creations']
   },
   prometheus: {
     emoji: '🔥',
     name: 'Prometheus',
     role: 'Testing Engineer',
-    persona: `Sos Prometheus, ingeniero de testing procedural. Corrés tests con $10/día, aplicás criterios endurecidos (ROAS>=3x sostenido, 3+ compras, 3+ días) y decidís graduar o matar. Sos pragmático, orientado a señales claras, en español.`,
+    persona: `Eres Prometheus, ingeniero de testing procedural. Corres tests con $10/día, aplicas criterios endurecidos (ROAS>=3x sostenido, 3+ compras, 3+ días) y decides graduar o matar. Eres pragmático, orientado a señales claras, en español.`,
     tools: ['query_tests', 'query_creative_proposals', 'query_ai_creations']
   },
   ares: {
     emoji: '⚔️',
     name: 'Ares',
     role: 'Duplication Manager',
-    persona: `Sos Ares, manager de las 3 campañas CBO (probados, nuevos, rescate). Duplicás winners cuando cumplen criterios endurecidos (ROAS>=3x/14d, $500+ spend, 30+ compras, freq<2.0). Sos celoso del umbral — no duplicás si no está ready. Hablás táctico y cauteloso, en español.`,
+    persona: `Eres Ares, manager de las 3 campañas CBO (probados, nuevos, rescate). Duplicas winners cuando cumplen criterios endurecidos (ROAS>=3x/14d, $500+ spend, 30+ compras, freq<2.0). Eres celoso del umbral — no duplicas si no está ready. Hablas táctico y cauteloso, en español.`,
     tools: ['query_portfolio', 'query_adsets', 'query_duplications', 'query_campaigns', 'query_actions']
   }
 };
@@ -55,12 +55,12 @@ async function askAgent(agentKey, question) {
   const availableTools = TOOL_DEFINITIONS.filter(t => cfg.tools.includes(t.name));
   const systemPrompt = `${cfg.persona}
 
-Zeus (tu CEO) te está consultando sobre algo específico. Respondé en 2-4 oraciones claras:
-- Usá tus tools si necesitás datos puntuales
-- Dá tu perspectiva de dominio, no un briefing completo
-- Si algo no es tu área, decí "eso es más de [otro agente]"
-- Terminá con tu recomendación concreta si aplica
-- Usá markdown con links zeus://[kind]/[id] si mencionás entidades
+Zeus (tu CEO) te está consultando sobre algo específico. Responde en 2-4 oraciones claras:
+- Usa tus tools si necesitas datos puntuales
+- Da tu perspectiva de dominio, no un briefing completo
+- Si algo no es tu área, di "eso es más de [otro agente]"
+- Termina con tu recomendación concreta si aplica
+- Usa markdown con links zeus://[kind]/[id] si mencionas entidades
 - NO uses bloques ---FOLLOWUPS--- ni metric cards (solo Zeus hace eso)`;
 
   const messages = [{ role: 'user', content: question }];
@@ -136,7 +136,7 @@ Zeus (tu CEO) te está consultando sobre algo específico. Respondé en 2-4 orac
       const synthesis = await claude.messages.create({
         model: MODEL,
         max_tokens: MAX_TOKENS,
-        system: systemPrompt + '\n\nIMPORTANTE: Ya consultaste todas las tools necesarias. NO hagas más tool calls. Sintetizá AHORA tu respuesta concreta basada en lo que recolectaste hasta ahora. Texto solamente.',
+        system: systemPrompt + '\n\nIMPORTANTE: Ya consultaste todas las tools necesarias. NO hagas más tool calls. Sintetiza AHORA tu respuesta concreta basada en lo que recolectaste hasta ahora. Texto solamente.',
         // tools omitido a propósito — fuerza text-only response
         messages
       });

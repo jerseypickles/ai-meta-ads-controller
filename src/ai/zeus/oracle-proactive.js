@@ -287,7 +287,7 @@ async function detectSignals(sinceDate) {
         reason: s.override_reason,
         hours_old: hrs_old,
         hours_left: hrs_left,
-        detail: `${s.agent} en override ${s.stance} hace ${hrs_old}h por ${s.override_by}. Expira en ${hrs_left}h — renová o dejá expirar.`
+        detail: `${s.agent} en override ${s.stance} hace ${hrs_old}h por ${s.override_by}. Expira en ${hrs_left}h — renueva o deja expirar.`
       });
     }
   } catch (_) {}
@@ -482,27 +482,27 @@ async function detectSignals(sinceDate) {
  * Usa Opus para generar un mensaje proactivo a partir de las señales detectadas.
  */
 async function generateProactiveMessage(signals) {
-  const prompt = `Sos Zeus, CEO de AI Meta Ads. Detectaste señales relevantes y querés avisar al creador.
+  const prompt = `Eres Zeus, CEO de AI Meta Ads. Detectaste señales relevantes y quieres avisar al creador.
 
 SEÑALES (JSON):
 ${JSON.stringify(signals, null, 2)}
 
-Generá un mensaje BREVE (máx 3 oraciones, 1 párrafo) avisando lo más importante. Tono conversacional, directo. Estás interrumpiendo al creador — valé la pena.
+Genera un mensaje BREVE (máx 3 oraciones, 1 párrafo) avisando lo más importante. Tono conversacional, directo. Estás interrumpiendo al creador — vale la pena.
 
 Reglas:
-- Arrancá con un emoji sutil según severidad: ⚠️ crítico, 💡 insight, 🎉 win, 🔥 trend caliente
-- Mencioná números concretos
-- Si hay más de una señal, integrá 2-3 en el mismo mensaje
-- Si corresponde, terminá con una línea "¿querés que...?" sugiriendo siguiente paso
+- Arranca con un emoji sutil según severidad: ⚠️ crítico, 💡 insight, 🎉 win, 🔥 trend caliente
+- Menciona números concretos
+- Si hay más de una señal, integra 2-3 en el mismo mensaje
+- Si corresponde, termina con una línea "¿quieres que...?" sugiriendo siguiente paso
 - NO uses el bloque ---FOLLOWUPS--- en mensajes proactivos
 - NO empieces con "Buen día" o saludos — es un ping rápido
-- Podés usar markdown básico y los viz inline (zeus:metric, zeus:sparkline si tenés data)
-- Si hay una entidad con ID, usá markdown link [name](zeus://kind/id)
+- Puedes usar markdown básico y los viz inline (zeus:metric, zeus:sparkline si tienes data)
+- Si hay una entidad con ID, usa markdown link [name](zeus://kind/id)
 
 Ejemplo bueno:
-"🎉 \`Jalapeño Honey\` acaba de graduar con ROAS 4.1x en 12 compras. Se está copiando al ad set original ahora. ¿Querés que te muestre las DNAs ganadoras de este producto?"
+"🎉 \`Jalapeño Honey\` acaba de graduar con ROAS 4.1x en 12 compras. Se está copiando al ad set original ahora. ¿Quieres que te muestre las DNAs ganadoras de este producto?"
 
-Respondé SOLO con el mensaje, nada más.`;
+Responde SOLO con el mensaje, nada más.`;
 
   const response = await claude.messages.create({
     model: MODEL,
