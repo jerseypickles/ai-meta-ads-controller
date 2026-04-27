@@ -38,18 +38,26 @@ async function isAgentBlocked(agentName) {
     ]
   }).sort({ confidence: -1 }).lean();
 
-  if (directives.length === 0) {
+  // 2026-04-27: ignorar directivas que tienen action_scope (esas son
+  // granulares, las maneja isActionBlockedForAgent con scope específico).
+  // isAgentBlocked solo bloquea ciclo completo si hay directiva GENÉRICA
+  // (sin action_scope) — equivalente a "blocked all actions".
+  const blockingDirectives = directives.filter(d =>
+    !Array.isArray(d.action_scope) || d.action_scope.length === 0
+  );
+
+  if (blockingDirectives.length === 0) {
     return { blocked: false };
   }
 
-  const top = directives[0];
+  const top = blockingDirectives[0];
   return {
     blocked: true,
     reason: top.directive,
     directive_id: top._id,
     confidence: top.confidence,
     expires_at: top.expires_at,
-    total_active: directives.length
+    total_active: blockingDirectives.length
   };
 }
 

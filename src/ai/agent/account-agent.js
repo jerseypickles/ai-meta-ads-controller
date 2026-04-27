@@ -691,6 +691,17 @@ async function handleScaleBudget(input, ctx) {
   const prevBudget = snap.daily_budget || 0;
   const isScaleUp = new_budget > prevBudget;
 
+  // ── GATE: Warehouse throttle — bloquea scale_up cuando logística no da.
+  // 2026-04-27: si throttle activo y queremos subir budget, blocked.
+  if (isScaleUp) {
+    try {
+      const { isScaleUpBlocked } = require('../../safety/warehouse-throttle');
+      if (await isScaleUpBlocked()) {
+        return { blocked: true, reason: 'Warehouse throttle activo: scale_up bloqueado mientras logística alcanza capacidad.' };
+      }
+    } catch (_) { /* fail-open si throttle module falla */ }
+  }
+
   // ── GATE: Learning phase (ad set < 5 days old)
   if (snap.meta_created_time) {
     const daysOld = (Date.now() - new Date(snap.meta_created_time).getTime()) / 86400000;

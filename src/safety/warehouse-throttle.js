@@ -59,7 +59,68 @@ async function setConfig(updates) {
   const current = await getConfig();
   const merged = { ...current, ...updates };
   await SystemConfig.set(CONFIG_KEY, merged);
+
+  // Sincronizar ZeusDirective: cuando se activa/desactiva throttle,
+  // creamos/archivamos directiva para que TODOS los agentes (que ya
+  // consultan directive-guard) sepan del bloqueo de scale_up.
+  // Esto cubre: Athena, Brain Unified, Zeus en chat context, agentes
+  // legacy. Granular gracias a action_scope.
+  try {
+    const justEnabled = !current.enabled && merged.enabled;
+    const justDisabled = current.enabled && !merged.enabled;
+    const recoveryChanged = current.recovery_mode !== merged.recovery_mode;
+
+    if (justEnabled || (recoveryChanged && merged.enabled)) {
+      // Recoger directiva pendiente (si existe) y archivar antes de crear nueva
+      await archiveExistingThrottleDirective();
+      // No crear directiva si está en recovery_mode (recovery permite scale_up)
+      if (!merged.recovery_mode) {
+        await createThrottleDirective(merged);
+      }
+    } else if (justDisabled) {
+      await archiveExistingThrottleDirective();
+    }
+  } catch (err) {
+    const logger = require('../utils/logger');
+    logger.error(`[WAREHOUSE-THROTTLE] sync directive failed: ${err.message}`);
+  }
+
   return merged;
+}
+
+async function createThrottleDirective(cfg) {
+  const ZeusDirective = require('../db/models/ZeusDirective');
+  const expiresAt = new Date(Date.now() + (cfg.auto_disable_after_days || 21) * 86400000);
+  await ZeusDirective.create({
+    target_agent: 'all',
+    directive_type: 'avoid',
+    directive: `Warehouse throttle activo (target $${cfg.target_daily_spend}/d). NO scale_up ni scale_budget mientras logística alcanza capacidad. ${cfg.reason}`,
+    data: {
+      throttle_target: cfg.target_daily_spend,
+      reason: cfg.reason
+    },
+    confidence: 1.0,
+    based_on_samples: 0,
+    category: 'general',
+    source: 'system',
+    active: true,
+    persistent: true,  // no auto-cleanup por cron de directivas
+    action_scope: ['scale_up', 'scale_budget'],
+    llm_can_override: false,  // ningún LLM agent puede argumentar override
+    expires_at: expiresAt
+  });
+}
+
+async function archiveExistingThrottleDirective() {
+  const ZeusDirective = require('../db/models/ZeusDirective');
+  await ZeusDirective.updateMany(
+    {
+      active: true,
+      source: 'system',
+      'data.throttle_target': { $exists: true }
+    },
+    { $set: { active: false } }
+  );
 }
 
 /**
