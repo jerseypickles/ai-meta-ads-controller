@@ -119,11 +119,14 @@ async function isScaleUpBlocked() {
 }
 
 /**
- * Spend ayer del account (suma de adsets activos, snapshot del día previo).
- * Usa MetricSnapshot porque ya está agregado y es más rápido que llamar Meta.
+ * Spend diario reciente del account (proxy para "ayer").
+ *
+ * IMPORTANTE: metrics.last_1d.spend es bug histórico — siempre retorna $0
+ * (documentado en CLAUDE.md, oracle-context tuvo mismo issue). Usamos
+ * last_3d.spend / 3 como average reciente confiable. Refleja mejor el
+ * spend "típico" actual y es estable contra outliers de un día.
  */
 async function getYesterdaySpend() {
-  // Usamos last_1d del último snapshot — es spend del día anterior 24h
   const snaps = await MetricSnapshot.aggregate([
     { $match: { entity_type: 'adset' } },
     { $sort: { entity_id: 1, snapshot_at: -1 } },
@@ -131,7 +134,9 @@ async function getYesterdaySpend() {
     { $replaceRoot: { newRoot: '$doc' } },
     { $match: { status: 'ACTIVE' } }
   ]);
-  return Math.round(snaps.reduce((s, a) => s + (a.metrics?.last_1d?.spend || 0), 0));
+  // Sum last_3d.spend across adsets, divide by 3 = avg daily spend
+  const sum3d = snaps.reduce((s, a) => s + (a.metrics?.last_3d?.spend || 0), 0);
+  return Math.round(sum3d / 3);
 }
 
 /**

@@ -164,7 +164,7 @@ export default function WarehouseThrottleControl() {
         display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
         gap: 10, padding: '12px 16px'
       }}>
-        <Stat label="Spend ayer" value={fmtMoney(spend)} color="var(--bos-text)" />
+        <Stat label="Spend diario reciente" value={fmtMoney(spend)} color="var(--bos-text)" />
         <Stat label={status.recovery_mode ? 'Target recovery' : 'Target throttle'} value={fmtMoney(target)} color={accent} />
         <Stat
           label={status.recovery_mode ? 'Falta para recovery' : 'Exceso a reducir'}
