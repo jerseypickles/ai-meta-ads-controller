@@ -97,13 +97,15 @@ export default function NeuralGraphView({ onAgentClick }) {
 
   // ─── Build graph data from status ───────────────────────────────────────
   const graphData = useMemo(() => {
-    // Fallback mock mientras loadea — el graph nunca debe estar vacío (UX)
+    // Fallback mientras loadea — todos los counts en 0 para que sea obvio
+    // que está cargando. Hardcoded "real-looking" values eran engañosos
+    // (ej. 145 en apollo confundía con valor real cuando el endpoint fallaba).
     const fallback = {
-      zeus: { directives_24h: 23 },
-      agents: { unified_agent: { actions: 41 }, ares_agent: { actions: 0 } },
-      apollo: { ready_pool: 145 },
-      prometheus: { active_tests: 18 },
-      ares: { active_cbos: 3 }
+      zeus: { directives_24h: 0 },
+      agents: { unified_agent: { actions: 0 }, ares_agent: { actions: 0 } },
+      apollo: { ready_pool: 0 },
+      prometheus: { active_tests: 0 },
+      ares: { active_cbos: 0 }
     };
     const s = status || fallback;
 

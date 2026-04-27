@@ -229,6 +229,17 @@ async function runCreativeAgent() {
   const cycleId = `creative_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   logger.info(`═══ Iniciando Creative Agent [${cycleId}] ═══`);
 
+  // Fase 0: Housekeeping SIEMPRE corre, incluso si Apollo está bloqueado por directiva.
+  // Expirar propuestas "ready" con mas de 48h sin ser tomadas por Testing Agent.
+  // Sin esto, una directiva "no generes" deja el pool acumulándose indefinidamente.
+  const staleReady = await CreativeProposal.updateMany(
+    { status: 'ready', created_at: { $lt: new Date(Date.now() - 48 * 3600000) } },
+    { $set: { status: 'expired', rejection_reason: 'auto: no tomada por Testing Agent en 48h', decided_at: new Date() } }
+  );
+  if (staleReady.modifiedCount > 0) {
+    logger.info(`[CREATIVE-AGENT] Expiradas ${staleReady.modifiedCount} propuestas "ready" con +48h`);
+  }
+
   // Fase -1: Chequear directivas avoid activas de Zeus
   try {
     const { isAgentBlocked } = require('../zeus/directive-guard');
@@ -239,21 +250,13 @@ async function runCreativeAgent() {
         skipped: true,
         reason: block.reason,
         directive_id: block.directive_id,
+        expired_proposals: staleReady.modifiedCount,
         elapsed: '0s',
         cycle_id: cycleId
       };
     }
   } catch (err) {
     logger.warn(`[APOLLO] directive-guard check falló: ${err.message}`);
-  }
-
-  // 1. Expirar propuestas "ready" con mas de 48h sin ser tomadas por Testing Agent
-  const staleReady = await CreativeProposal.updateMany(
-    { status: 'ready', created_at: { $lt: new Date(Date.now() - 48 * 3600000) } },
-    { $set: { status: 'expired', rejection_reason: 'auto: no tomada por Testing Agent en 48h', decided_at: new Date() } }
-  );
-  if (staleReady.modifiedCount > 0) {
-    logger.info(`[CREATIVE-AGENT] Expiradas ${staleReady.modifiedCount} propuestas "ready" con +48h`);
   }
 
   // 2. Pre-scan: detectar ad sets con 0-1 ads activos y forzar flag (no depender del LLM)
