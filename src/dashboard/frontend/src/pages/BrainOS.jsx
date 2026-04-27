@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import '../brain-os.css';
 import ZeusSpeaks from '../components/ZeusSpeaks';
 import NeuralCommandCenter from '../components/NeuralCommandCenter';
+import WarehouseThrottleControl from '../components/WarehouseThrottleControl';
 import TemporalSpine from '../components/TemporalSpine';
 import DNAGenomeSpace from '../components/DNAGenomeSpace';
 import ZeusPanel from '../components/agents/ZeusPanel';
@@ -59,6 +60,9 @@ export default function BrainOS() {
       <div className="brain-os-content">
         {/* Zeus — voice of the system */}
         <ZeusSpeaks />
+
+        {/* Warehouse Throttle Control — visible siempre, banner ámbar si activo */}
+        <WarehouseThrottleControl />
 
         {/* Neural Command Center */}
         <NeuralCommandCenter onAgentClick={setSelectedAgent} />
