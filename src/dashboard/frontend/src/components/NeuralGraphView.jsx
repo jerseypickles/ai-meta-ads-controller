@@ -56,8 +56,17 @@ export default function NeuralGraphView({ onAgentClick }) {
 
   async function loadDemeter() {
     try {
-      const res = await api.get('/api/demeter/summary?days=7');
-      setDemeter(res.data?.summary || { count: 0 });
+      const [mtdRes, rollingRes] = await Promise.all([
+        api.get('/api/demeter/summary?range=mtd'),
+        api.get('/api/demeter/summary?days=7')
+      ]);
+      const mtd = mtdRes.data?.summary || null;
+      const rolling7d = rollingRes.data?.summary || null;
+      setDemeter({
+        ...(mtd || {}),
+        count: mtdRes.data?.count || rollingRes.data?.count || 0,
+        roas_7d: rolling7d?.avg_cash_roas
+      });
     } catch {
       setDemeter({ count: 0, error: true });
     }
@@ -188,16 +197,30 @@ export default function NeuralGraphView({ onAgentClick }) {
     });
 
     // ─── DEMETER — agente activo (cash reconciliation) ────────────────────
-    // Status según data real: si hay snapshots últimos 7d → running, else idle
-    const demeterCount = demeter?.count || (demeter && Object.keys(demeter).length > 1 ? 7 : 0);
-    const demeterRoas = demeter?.avg_cash_roas;
+    // Métrica primaria = cash ROAS month-to-date (matchea panel Demeter en tab "Este Mes").
+    // Métrica secundaria = cash ROAS últimos 7d (indicador de tendencia reciente).
+    const demeterCount = demeter?.count || 0;
+    const demeterRoasMtd = demeter?.avg_cash_roas;
+    const demeterRoas7d = demeter?.roas_7d;
     const demeterStatus = demeterCount > 0 ? 'running' : 'idle';
-    const demeterMetric = demeterRoas != null && demeterRoas > 0
-      ? `${demeterRoas.toFixed(2)}x`
-      : `${demeterCount}`;
-    const demeterMetricLabel = demeterRoas != null && demeterRoas > 0
-      ? 'cash roas'
-      : 'snapshots';
+
+    let demeterMetric, demeterMetricLabel;
+    if (demeterRoasMtd != null && demeterRoasMtd > 0) {
+      demeterMetric = `${demeterRoasMtd.toFixed(2)}x`;
+      // Sub muestra mes en curso + tendencia 7d con arrow si difiere ≥0.1x
+      const monthAbbr = new Date().toLocaleString('es', { month: 'short' }).replace('.', '');
+      if (demeterRoas7d != null && demeterRoas7d > 0) {
+        const delta = demeterRoas7d - demeterRoasMtd;
+        const arrow = Math.abs(delta) < 0.1 ? '·' : (delta > 0 ? '↑' : '↓');
+        demeterMetricLabel = `${monthAbbr} mtd · ${arrow} ${demeterRoas7d.toFixed(2)}x 7d`;
+      } else {
+        demeterMetricLabel = `${monthAbbr} mtd · cash roas`;
+      }
+    } else {
+      demeterMetric = `${demeterCount}`;
+      demeterMetricLabel = 'snapshots';
+    }
+
     nodes.push({
       id: 'demeter', group: 'demeter', tier: 1, size: 13,
       label: 'DEMETER', sub: 'Cash Recon',

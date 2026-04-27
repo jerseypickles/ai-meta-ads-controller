@@ -49,17 +49,32 @@ router.get('/today', async (req, res) => {
   }
 });
 
-// GET /summary?days=7
+// GET /summary?days=7  o  /summary?range=mtd (month-to-date en ET)
 router.get('/summary', async (req, res) => {
   try {
-    const days = Math.min(parseInt(req.query.days || '7', 10), 90);
-    const snaps = await DemeterSnapshot.find({})
-      .sort({ date_et: -1 })
-      .limit(days)
-      .lean();
+    const range = req.query.range;
+    let snaps;
+    let daysRequested;
+
+    if (range === 'mtd') {
+      const { _helpers } = require('../../ai/agent/demeter-agent');
+      const todayEt = _helpers.todayInET();           // YYYY-MM-DD
+      const monthPrefix = todayEt.substring(0, 7);    // YYYY-MM
+      snaps = await DemeterSnapshot.find({ date_et: { $regex: `^${monthPrefix}` } })
+        .sort({ date_et: -1 })
+        .lean();
+      daysRequested = snaps.length;
+    } else {
+      const days = Math.min(parseInt(req.query.days || '7', 10), 90);
+      snaps = await DemeterSnapshot.find({})
+        .sort({ date_et: -1 })
+        .limit(days)
+        .lean();
+      daysRequested = days;
+    }
 
     if (snaps.length === 0) {
-      return res.json({ count: 0, days_requested: days, summary: null });
+      return res.json({ count: 0, days_requested: daysRequested, summary: null });
     }
 
     const sum = (key) => snaps.reduce((a, s) => a + (s[key] || 0), 0);
@@ -85,7 +100,8 @@ router.get('/summary', async (req, res) => {
 
     res.json({
       count: snaps.length,
-      days_requested: days,
+      days_requested: daysRequested,
+      mode: range === 'mtd' ? 'mtd' : 'rolling',
       date_range: {
         from: snaps[snaps.length - 1].date_et,
         to: snaps[0].date_et
