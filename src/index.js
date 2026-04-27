@@ -599,6 +599,15 @@ async function jobCreativeAgent() {
   const agentMode = await SystemConfig.get('agent_mode', 'unified');
   if (agentMode !== 'unified') return;
 
+  // Warehouse throttle — pausar Apollo si está activo (no acumular inventario)
+  try {
+    const { isApolloPaused } = require('./safety/warehouse-throttle');
+    if (await isApolloPaused()) {
+      logger.info('[CRON] Apollo SKIP — warehouse throttle activo');
+      return;
+    }
+  } catch (_) { /* fail-open si throttle module falla */ }
+
   try {
     logger.info('[CRON] Ejecutando Creative Agent...');
     const result = await runCreativeAgent();
@@ -623,6 +632,15 @@ async function jobTestingAgent() {
   const agentMode = await SystemConfig.get('agent_mode', 'unified');
   if (agentMode !== 'unified') return;
 
+  // Warehouse throttle — pausar Prometheus si está activo (no lanzar tests nuevos)
+  try {
+    const { isPrometheusPaused } = require('./safety/warehouse-throttle');
+    if (await isPrometheusPaused()) {
+      logger.info('[CRON] Prometheus SKIP — warehouse throttle activo');
+      return;
+    }
+  } catch (_) { /* fail-open */ }
+
   try {
     logger.info('[CRON] Ejecutando Testing Agent...');
     const result = await runTestingAgent();
@@ -633,6 +651,26 @@ async function jobTestingAgent() {
     }
   } catch (error) {
     logger.error('[CRON] Error en Testing Agent:', error);
+  }
+}
+
+/**
+ * Job: Warehouse Throttle — diario 6am ET. Si enabled, aplica scale_down/up
+ * tiered según ROAS para llegar al target_daily_spend.
+ */
+async function jobWarehouseThrottle() {
+  try {
+    const { runThrottleCycle } = require('./safety/warehouse-throttle');
+    const result = await runThrottleCycle();
+    if (result.applied) {
+      logger.info(`[CRON] Warehouse Throttle: ${result.applied} ajustes (${result.direction}), ${result.errors || 0} errors`);
+    } else if (result.in_target) {
+      logger.info(`[CRON] Warehouse Throttle: ya en target ($${result.yesterday_spend} <= $${result.target})`);
+    } else if (result.recovery_complete || result.auto_disabled) {
+      logger.info(`[CRON] Warehouse Throttle: ${result.recovery_complete ? 'recovery completo' : 'auto-disabled'}`);
+    }
+  } catch (err) {
+    logger.error('[CRON] Error en Warehouse Throttle:', err);
   }
 }
 
@@ -1304,6 +1342,13 @@ function initCronJobs() {
     name: 'graduated-metrics-tracking'
   });
   logger.info('  [*] Graduated Metrics Tracking — cada 30 min (post-grad performance)');
+
+  // Warehouse Throttle — diario 6am ET. Solo aplica si está enabled (default off).
+  cron.schedule('0 6 * * *', jobWarehouseThrottle, {
+    timezone: TIMEZONE,
+    name: 'warehouse-throttle'
+  });
+  logger.info('  [*] Warehouse Throttle — diario 6am ET (off por default, mutable via /api/system/warehouse-throttle)');
 
   // Ares Agent — 2x/dia (8am, 4pm ET)
   cron.schedule('0 8,16 * * *', jobAresAgent, {

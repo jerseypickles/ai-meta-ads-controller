@@ -144,6 +144,7 @@ app.use('/api/zeus', zeusRoutes);
 app.use('/api/zeus', zeusChatRoutes);
 app.use('/api/ares', aresRoutes);
 app.use('/api/demeter', require('./routes/demeter'));
+app.use('/api/system/warehouse-throttle', require('./routes/warehouse-throttle'));
 
 // SPA fallback — todas las rutas no-API sirven el frontend
 app.get('*', (req, res) => {

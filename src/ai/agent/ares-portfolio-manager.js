@@ -150,6 +150,16 @@ async function logAction({ entity_id, entity_name, entity_type, action, before_v
  * Retorna { allowed: true } o { allowed: false, reason: '...' }.
  */
 async function validateSafetyGates({ entity_id, action_type, before_value, after_value }) {
+  // -1. Warehouse throttle — bloquea scale_up cuando logística no da
+  if (action_type === 'scale_up') {
+    try {
+      const { isScaleUpBlocked } = require('../../safety/warehouse-throttle');
+      if (await isScaleUpBlocked()) {
+        return { allowed: false, reason: 'warehouse throttle activo — scale_up bloqueado' };
+      }
+    } catch (_) { /* fail-open */ }
+  }
+
   // 0. Directiva Zeus granular por action_type — nuevo 2026-04-23
   try {
     const { isActionBlockedForAgent } = require('../zeus/directive-guard');
