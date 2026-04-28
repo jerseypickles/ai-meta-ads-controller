@@ -690,6 +690,18 @@ async function handleScaleBudget(input, ctx) {
 
   const prevBudget = snap.daily_budget || 0;
   const isScaleUp = new_budget > prevBudget;
+  const actionType = isScaleUp ? 'scale_up' : 'scale_down';
+
+  // ── GATE: Directiva granular de Zeus para esta acción específica.
+  // isAgentBlocked al inicio del ciclo solo bloquea directivas genéricas; las
+  // que tienen action_scope se manejan acá por handler individual.
+  try {
+    const { isActionBlockedForAgent } = require('../zeus/directive-guard');
+    const block = await isActionBlockedForAgent('athena', actionType);
+    if (block.blocked) {
+      return { blocked: true, reason: `Directiva activa de Zeus bloquea ${actionType}: "${block.reason}"`, directive_id: block.directive_id };
+    }
+  } catch (_) { /* fail-open si guard falla */ }
 
   // ── GATE: Warehouse throttle — bloquea scale_up cuando logística no da.
   // 2026-04-27: si throttle activo y queremos subir budget, blocked.
@@ -803,6 +815,15 @@ async function handlePauseAd(input, ctx) {
   const { ad_id, adset_id, reason } = input;
   const meta = getMetaClient();
 
+  // ── GATE: Directiva granular de Zeus para 'pause'.
+  try {
+    const { isActionBlockedForAgent } = require('../zeus/directive-guard');
+    const block = await isActionBlockedForAgent('athena', 'pause');
+    if (block.blocked) {
+      return { blocked: true, reason: `Directiva activa de Zeus bloquea pause: "${block.reason}"`, directive_id: block.directive_id };
+    }
+  } catch (_) { /* fail-open si guard falla */ }
+
   // ── GATE: Prevent pausing ad set itself (ad_id must not be an ad set)
   const allAdSetSnaps = await getLatestSnapshots('adset');
   if (allAdSetSnaps.some(s => s.entity_id === ad_id)) {
@@ -896,6 +917,15 @@ async function handleReactivateAd(input, ctx) {
   const { ad_id, adset_id, reason } = input;
   const meta = getMetaClient();
 
+  // ── GATE: Directiva granular de Zeus para 'reactivate'.
+  try {
+    const { isActionBlockedForAgent } = require('../zeus/directive-guard');
+    const block = await isActionBlockedForAgent('athena', 'reactivate');
+    if (block.blocked) {
+      return { blocked: true, reason: `Directiva activa de Zeus bloquea reactivate: "${block.reason}"`, directive_id: block.directive_id };
+    }
+  } catch (_) { /* fail-open si guard falla */ }
+
   // ── GATE: Learning phase (ad set < 5 days old)
   const adsetSnap = (await getLatestSnapshots('adset')).find(s => s.entity_id === adset_id);
   if (adsetSnap?.meta_created_time) {
@@ -952,6 +982,15 @@ async function handleReactivateAd(input, ctx) {
 async function handlePauseAdSet(input, ctx) {
   const { adset_id, reason } = input;
   const meta = getMetaClient();
+
+  // ── GATE: Directiva granular de Zeus para 'pause_adset'.
+  try {
+    const { isActionBlockedForAgent } = require('../zeus/directive-guard');
+    const block = await isActionBlockedForAgent('athena', 'pause_adset');
+    if (block.blocked) {
+      return { blocked: true, reason: `Directiva activa de Zeus bloquea pause_adset: "${block.reason}"`, directive_id: block.directive_id };
+    }
+  } catch (_) { /* fail-open si guard falla */ }
 
   // Get current snapshot
   const allSnapshots = await getLatestSnapshots('adset');
