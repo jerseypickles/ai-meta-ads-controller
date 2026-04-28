@@ -1232,19 +1232,33 @@ async function runAccountAgent() {
     const ZeusConversation = require('../../db/models/ZeusConversation');
     const ZeusDirective = require('../../db/models/ZeusDirective');
     const activeDirectives = await ZeusDirective.find({ target_agent: { $in: ['athena', 'all'] }, active: true }).lean();
-    // Contar por tipo de accion (un ad set puede tener multiples acciones)
-    const scaleUps = results.reduce((n, r) => n + (r.action_types || []).filter(t => t === 'scale_up').length, 0);
-    const scaleDowns = results.reduce((n, r) => n + (r.action_types || []).filter(t => t === 'scale_down').length, 0);
+    // Contar por tipo de accion (un ad set puede tener multiples acciones).
+    // pause_adset cuenta como pause (ambos pausan inventory). reactivate se reporta aparte.
+    const countType = (t) => results.reduce((n, r) => n + (r.action_types || []).filter(at => at === t).length, 0);
+    const scaleUps = countType('scale_up');
+    const scaleDowns = countType('scale_down');
     const scales = { length: scaleUps + scaleDowns };
-    const pauses = { length: results.reduce((n, r) => n + (r.action_types || []).filter(t => t === 'pause').length, 0) };
+    const pauses = { length: countType('pause') + countType('pause_adset') };
+    const reactivates = { length: countType('reactivate') };
     const holds = { length: results.filter(r => !r.action_types || r.action_types.length === 0).length };
+
+    // Truncar texto preservando word-boundary y agregando ellipsis si corta.
+    const truncSmart = (text, max) => {
+      if (!text) return '';
+      if (text.length <= max) return text;
+      const cut = text.substring(0, max);
+      const lastSpace = cut.lastIndexOf(' ');
+      const base = lastSpace > max * 0.6 ? cut.substring(0, lastSpace) : cut;
+      return base + '…';
+    };
 
     const learningCount = results.filter(r => r.skipReason && r.skipReason.startsWith('Learning phase')).length;
     let msg = `Ciclo completado (${mode}): ${activeAdSets.length} ad sets evaluados, ${totalActions} acciones en ${elapsed}.`;
     msg += ` Escalé ${scales.length}, pausé ${pauses.length}, holdé ${holds.length}.`;
+    if (reactivates.length > 0) msg += ` Reactivé ${reactivates.length}.`;
     if (learningCount > 0) msg += ` ${learningCount} ad sets en LEARNING (no tocados).`;
     if (activeDirectives.length > 0) {
-      msg += ` Recibí ${activeDirectives.length} directivas tuyas: ${activeDirectives.map(d => `"${d.directive.substring(0, 50)}"`).join(', ')}.`;
+      msg += ` Recibí ${activeDirectives.length} directivas tuyas: ${activeDirectives.map(d => `"${truncSmart(d.directive, 80)}"`).join(', ')}.`;
     }
     await ZeusConversation.create({
       from: 'athena', to: 'zeus', type: 'report', message: msg, cycle_id: cycleId,
