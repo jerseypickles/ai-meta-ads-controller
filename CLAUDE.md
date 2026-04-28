@@ -2,7 +2,7 @@
 
 ## Project Purpose
 
-AI-powered autonomous Meta Ads optimization system for **Jersey Pickles** (food/ecommerce). A single Node.js process runs 24/7 collecting ad metrics, analyzing performance with multiple LLMs, generating actionable recommendations, and auto-executing optimizations on the Meta Ads account within bounded safety gates. Users interact via a React dashboard + a chat/oracle interface named **Zeus** that acts as CEO of a 4-agent team (Athena, Apollo, Prometheus, Ares).
+AI-powered autonomous Meta Ads optimization system for **Jersey Pickles** (food/ecommerce). A single Node.js process runs 24/7 collecting ad metrics, analyzing performance with multiple LLMs, generating actionable recommendations, and auto-executing optimizations on the Meta Ads account within bounded safety gates. Users interact via a React dashboard + a chat/oracle interface named **Zeus** that acts as CEO of a 5-agent team (Athena, Apollo, Prometheus, Ares, **Demeter**).
 
 ## Tech Stack
 
@@ -224,8 +224,10 @@ scripts/                            # Utility scripts (seed, backfill, dedup, cl
 | `0 9 1 2,5,8,11 *` | Quarterly Plan | trimestral | |
 | `0 9 1 1,4,7,10 *` | Quarterly Eval | trimestral | |
 | `*/2 * * * *` | Auto-Pause Detector (Hilo C) | cada 2 min | Bounded drain detection (SHADOW por default) |
+| `5 0 * * *` | Demeter Snapshot | diario 00:05 ET | Cash reconciliation Shopify ↔ Meta |
+| `*/30 * * * *` | Warehouse Throttle | cada 30min | Tiered ROAS gating + crea/desactiva ZeusDirective |
 
-**Total**: ~38 crones. Timezone: America/New_York (ET).
+**Total**: ~40 crones. Timezone: America/New_York (ET).
 
 ## Code Conventions
 
@@ -305,26 +307,30 @@ Oracle proactive hace dedup por:
 - Entidad mencionada en content/title (últimas 4h)
 - Kind agregado (stale_recs, bulk_kills, kill_switch, watcher_triggered, etc) si se emitió en ventana
 
-## Pantheon de agentes (los 4 reales)
+## Pantheon de agentes (5 reales)
 
 ### Athena (Account Agent) — `account-agent.js`
-Ajustes de budget + bid strategy. Ejecuta scale_up/scale_down autónomo con safety gates. 11x/día.
+Ajustes de budget + bid strategy. Ejecuta scale_up/scale_down autónomo con safety gates. 11x/día. **Granular directive enforcement** (2026-04-28): los 4 handlers mutadores (`handleScaleBudget`, `handlePauseAd`, `handleReactivateAd`, `handlePauseAdSet`) chequean `isActionBlockedForAgent('athena', <action>)` al inicio. Mismo patrón que Ares Portfolio.
 
 ### Apollo (Creative Agent) — `creative-agent.js`
-Detecta fatiga (freq>2.5, CTR<0.5%), genera imágenes con **Gemini 3 Pro Image Preview** + copy con Claude. 3x/día.
+Detecta fatiga (freq>2.5, CTR<0.5%), genera imágenes con **Gemini 3 Pro Image Preview** + copy con Claude. 3x/día. **Housekeeping pre-directive** (2026-04-28): expiry de proposals stale (>48h) corre en Fase 0 antes del directive-guard, así una directiva "no generes" no deja el pool acumulándose.
 
 ### Prometheus (Testing Agent) — `testing-agent.js`
-Lifecycle de A/B tests: learning → evaluating → graduated/killed/expired. Morning stance con teeth (max_launches, kill_threshold). 5x/día + stance 6:30am.
+Lifecycle de A/B tests: learning → evaluating → graduated/killed/expired. Morning stance con teeth (max_launches, kill_threshold). 5x/día + stance 6:30am. Tracking post-graduation (graduó X / hoy Y / Δ%).
 
-### Ares (Ares Agent + Ares Portfolio) — `ares-agent.js` + `ares-portfolio-manager.js`
-- **Ares legacy**: duplica ganadores (ROAS≥3 + spend≥$500 + 30+ conv + freq<2 + 21d).
-- **Ares Portfolio (Fase 3A adelantada desde 2026-04-23)**: 4 detectores autónomos con safety gates:
+### Ares (3 capas: legacy + Portfolio + Brain LLM)
+- **Ares legacy** (`ares-agent.js`): duplica ganadores (ROAS≥3 + spend≥$500 + 30+ conv + freq<2 + 21d). Duplicates ahora ACTIVE automático.
+- **Ares Portfolio Manager** (`ares-portfolio-manager.js`): 4 detectores autónomos procedural con safety gates:
   - `starved_winner_rescue` → duplica a CBO rescate (ROAS>2 + spend_share<3%)
   - `underperformer_kill` → pausa (spend>$50 + 0 conv + >5d edad + no LEARNING)
   - `cbo_saturated_winner` → scale_up +15% budget CBO
   - `cbo_starvation` → scale_up al target pulse (cap primera semana +$100)
+- **Ares Brain LLM** (`ares-brain/`): Claude Sonnet 4.6 + tools propios (scale_cbo, pause_adset, duplicate_to_cbo, create_new_cbo). Learning loop con outcomes T+7d + guidance de Zeus inyectado en próximo ciclo.
 - Respeta `isActionBlockedForAgent` granular (directiva "no duplications" NO bloquea kills/scales).
 - Feature flag `ARES_PORTFOLIO_AUTONOMOUS` (default ON).
+
+### Demeter (Cash Reconciliation Agent) — `demeter-agent.js`
+**Quinto agente, incorporado 2026-04-25**. Reconcilia Meta atribución (`meta_roas`) vs cash real al banco (`cash_roas`) considerando Shopify fees, refunds, descuentos, shipping, taxes. Cron diario 00:05 ET → `DemeterSnapshot` con breakdown completo. Shadow mode con Opus consulta cash awareness ANTES que el brain decida scale_ups (`Meta dice 4x` pero `cash dice 2x` → flag). `DemeterPanel` con tabs por mes + cascada lineal Gross → minus(Discounts/Refunds/Fees/Shipping/Tax) → Net for Merchant + forecast del mes en curso.
 
 ### CBO Health Monitor — `cbo-health-monitor.js`
 Cron propio cada 2h. Analiza CBOs como unidad (no solo adsets). Detecta zombies, colapsos, saturación, starvation. Persiste `CBOHealthSnapshot` (TTL 45d). Filtro stale 6h (ignora campaigns que Meta ya no reporta). Fase 2 (gate compuesto en Ares) pendiente — rec `phase_followup` target 29-abr.
@@ -379,7 +385,8 @@ Meta API → DataCollector → MetricSnapshot → BrainAnalyzer → BrainInsight
 - **Cooldowns tiered**: 24h create_ad → 72h pause/duplicate. Tiered en `cooldown-manager.js`.
 - **Portfolio capacity**: max_active_adsets=200, max_scale_24h=15, max_dup_24h=8, etc.
 - **Platform circuit breaker**: detecta spend_collapsed, mass_with_issues, silent_freeze. Baseline 7d refrescado solo si healthy.
-- **Directive guard granular**: `isActionBlockedForAgent(agent, action_type)` parse del texto de la directiva para scope específico.
+- **Directive guard granular**: `isActionBlockedForAgent(agent, action_type)` con dos prioridades: (1) `action_scope: [string]` estructurado en la directiva, (2) fallback parse del texto. Campo `llm_can_override` boolean para directivas que el LLM puede ignorar con justificación.
+- **Warehouse Throttle** (`src/safety/warehouse-throttle.js`): cron 30min checkea daily revenue vs target. Si revenue ≥ target × 1.05 → activa throttle. Tiered: ROAS≥5x permite scale_up moderado, <5x freeze. Cuando activa, crea `ZeusDirective` con `action_scope: ['scale_up', 'duplicate_adset']` para `target_agent: 'all'` → todos los agentes lo respetan via `isActionBlockedForAgent`. Auto-deactivate al volver a verde.
 - **Anomaly detection**: 50% ROAS drop, 2.5x spend spike (alerts only)
 - **Autonomy modes**: manual | semi_auto | auto
 
@@ -452,6 +459,18 @@ npm run seed         # Seed config a MongoDB
 - **2026-04-22 PM**: Response Calibration (Hilo B) + Auto-Pause Bounded (Hilo C) + Rec Capacity (Hilo D) + fix scope-drift + history loading fix
 - **2026-04-22 noche**: Adset drill-in modal + zeus:entity-list + 3 bugs pipeline mensajes + fix learner (source + granularity) + tiers UI directivas + CBO Health Monitor Fase 1
 - **2026-04-23**: Ares Portfolio Manager autónomo + gemini-image helper unificado + perf briefing (19s→2s con índices + cache) + prompt caching Zeus + panel 🔔 notificaciones + quiet hours
+- **2026-04-24**: Ares Brain LLM (4 commits: tools READ-ONLY → action tools → safety enforcement → learning loop) + Neural Command Center estilo Obsidian con D3 + `action_scope` estructurado en directivas
+- **2026-04-25/26**: **Demeter** — quinto agente operativo (5 commits build + DemeterPanel + cascada cash flow + forecast del mes + shadow mode con Opus + backfill optimizado N²→linear)
+- **2026-04-26**: Warehouse Throttle (backend + UI + bug histórico last_1d→last_3d + cobertura completa via Zeus directive con action_scope) + Ares duplicates ACTIVE auto + path traversal hardening creatives
+- **2026-04-27/28**: Voseo→tuteo neutro en 5 archivos (parcial, 7 archivos pendientes en `src/ai/zeus/`) + Demeter orb alineado a MTD + Apollo pool housekeeping pre-directive + Athena report fixes (truncado smart + action types completos) + Athena chequeo granular de directivas en los 4 handlers + Render MCP server instalado para diagnostics directos
 
 ### Vault Obsidian (documentación viva paralela)
 Notas indexadas 01-23 en `AI Meta Ads Controller/` del vault Obsidian (path: `/Users/thompson/AshVault/`). Actualizadas en sync con commits mayores. Incluye roadmap, pendientes con deadlines, hilos B/C/D detallados, historial de evolución por fases. Ver `00 - Index.md`.
+
+### Render MCP server (para Claude Code)
+Instalado vía `claude mcp add --transport http render-mcp-server https://mcp.render.com/mcp --header "Authorization: Bearer <KEY>"`. Da acceso a: `list_services`, `get_service`, `list_deploys`, `get_deploy`, `list_logs`, `get_metrics`, `query_render_postgres`, etc (14 tools read-only auto-allowed en `.claude/settings.local.json`). Tools mutadoras (`create_*`, `update_environment_variables`) requieren approval manual. Permite que Claude lea logs prod, verifique deploys, ejecute SQL read-only directo sin que el creador haga relay manual del output.
+
+### Convenciones de voz/idioma en prompts
+- **Español neutro latinoamericano** (tuteo, sin voseo argentino ni "po" chileno).
+- Razón: el creador es chileno y prefiere voz neutra para personas/prompts.
+- Cleanup parcial al 2026-04-28: hecho en `oracle-runner.js`, `oracle-proactive.js`, `devils-advocate.js`, `agent-brains.js`, `agent-stance.js`. Pendiente en `weekly-audit.js`, `reflection-engine.js`, `oracle-tools.js` (descriptions), `oracle-context.js`, `strategic-planner.js`, `preference-detector.js`, `sentinel-lenses/*`.
