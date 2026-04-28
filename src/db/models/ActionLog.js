@@ -31,7 +31,7 @@ const actionLogSchema = new mongoose.Schema({
   evidence_points: [{ type: String }],
   research_context: { type: String, default: '' },
   confidence: { type: String, enum: ['high', 'medium', 'low'] },
-  agent_type: { type: String, enum: ['scaling', 'performance', 'creative', 'pacing', 'ai_manager', 'brain', 'manual', 'unified_agent', 'creative_agent', 'ares_agent', 'ares_portfolio', 'ares_brain', 'zeus_agent', 'manual_script'], default: null, index: true },
+  agent_type: { type: String, enum: ['scaling', 'performance', 'creative', 'pacing', 'ai_manager', 'brain', 'manual', 'unified_agent', 'creative_agent', 'ares_agent', 'ares_portfolio', 'ares_brain', 'zeus_agent', 'manual_script', 'warehouse_throttle'], default: null, index: true },
   // Follow-up verdict para Account Agent
   follow_up_verdict: { type: String, enum: ['positive', 'negative', 'neutral', 'pending'], default: 'pending' },
   follow_up_deltas: {
