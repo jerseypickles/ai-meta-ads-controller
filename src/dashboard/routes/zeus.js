@@ -238,6 +238,52 @@ router.get('/thoughts', async (req, res) => {
   }
 });
 
+// ═══ POST /directives — crear directiva manual desde panel/API ═══
+// Para directivas del creador (source='chat' default → llm_can_override=false implícito).
+router.post('/directives', async (req, res) => {
+  try {
+    const {
+      target_agent = 'all',
+      directive_type = 'avoid',
+      directive,
+      action_scope = null,
+      reason = '',
+      llm_can_override = false,
+      persistent = true,
+      expires_in_days = 90,
+      category = 'general',
+      source = 'chat'
+    } = req.body || {};
+
+    if (!directive || typeof directive !== 'string') {
+      return res.status(400).json({ error: 'directive text required' });
+    }
+
+    const expires_at = new Date(Date.now() + expires_in_days * 86400000);
+
+    const dir = await ZeusDirective.create({
+      target_agent,
+      directive_type,
+      directive,
+      action_scope,
+      llm_can_override,
+      persistent,
+      active: true,
+      source,
+      confidence: 1.0,
+      based_on_samples: 0,
+      category,
+      expires_at,
+      data: { reason, created_via: 'manual_endpoint' }
+    });
+
+    logger.info(`[ZEUS] Manual directive created: ${dir._id} → ${target_agent} · scope=${(action_scope || []).join(',') || 'text-parsed'}`);
+    res.json({ ok: true, directive: dir });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ═══ POST /directives/:id/deactivate — desactivar una directiva desde el panel ═══
 router.post('/directives/:id/deactivate', async (req, res) => {
   try {
