@@ -177,22 +177,33 @@ router.post('/set-budgets', async (req, res) => {
 });
 
 // POST /cleanup-archived-snapshots — borrar MetricSnapshot de entities archived
-// para que no aparezcan en queries de overview, rescale, etc.
+// O entity_id específico (cuando una entity ya no existe en Meta).
+// Body: { dryRun?: bool, entity_id?: string, entity_ids?: [string] }
+//   - sin entity_id ni entity_ids → borra status=ARCHIVED
+//   - con entity_id → borra solo snapshots de ese entity
+//   - con entity_ids → borra snapshots de la lista
 router.post('/cleanup-archived-snapshots', async (req, res) => {
   try {
     const MetricSnapshot = require('../../db/models/MetricSnapshot');
-    const { dryRun = true } = req.body || {};
+    const { dryRun = true, entity_id, entity_ids } = req.body || {};
 
-    const filter = { status: 'ARCHIVED' };
+    let filter;
+    if (entity_id) {
+      filter = { entity_id };
+    } else if (Array.isArray(entity_ids) && entity_ids.length > 0) {
+      filter = { entity_id: { $in: entity_ids } };
+    } else {
+      filter = { status: 'ARCHIVED' };
+    }
 
     if (dryRun) {
       const count = await MetricSnapshot.countDocuments(filter);
-      const sample = await MetricSnapshot.find(filter).limit(5).select('entity_id entity_type entity_name daily_budget').lean();
-      return res.json({ dryRun: true, would_delete: count, sample });
+      const sample = await MetricSnapshot.find(filter).limit(5).select('entity_id entity_type entity_name daily_budget status').lean();
+      return res.json({ dryRun: true, filter, would_delete: count, sample });
     }
 
     const result = await MetricSnapshot.deleteMany(filter);
-    res.json({ ok: true, deleted: result.deletedCount });
+    res.json({ ok: true, filter, deleted: result.deletedCount });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
