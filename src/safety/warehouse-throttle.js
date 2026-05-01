@@ -447,6 +447,7 @@ async function rescaleAll(targetTotal, options = {}) {
   const meta = getMetaClient();
 
   let applied = 0, skipped = 0, errors = 0;
+  const failed_details = [];
   for (const p of plan) {
     if (p.before === p.after) { skipped++; continue; }
     try {
@@ -472,6 +473,15 @@ async function rescaleAll(targetTotal, options = {}) {
       applied++;
     } catch (err) {
       errors++;
+      failed_details.push({
+        kind: p.kind,
+        entity_id: p.entity_id,
+        name: p.name,
+        status: p.status,
+        before: p.before,
+        attempted: p.after,
+        error: err.message?.substring(0, 200) || 'unknown'
+      });
       logger.error(`[WAREHOUSE-THROTTLE] rescale ${p.entity_id} (${p.name}) falló: ${err.message}`);
     }
   }
@@ -487,6 +497,7 @@ async function rescaleAll(targetTotal, options = {}) {
     target: targetTotal,
     total_projected: totalProjected,
     factor: +factor.toFixed(4),
+    failed_details,
     plan
   };
 }
