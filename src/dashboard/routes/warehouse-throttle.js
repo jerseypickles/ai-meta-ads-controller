@@ -118,4 +118,20 @@ router.post('/run-now', async (req, res) => {
   }
 });
 
+// POST /rescale-now — bajada/subida inmediata proporcional a targetTotal.
+// Body: { target_total: number, dryRun?: bool (default true), respectFloors?: bool }
+// A diferencia de run-now, opera también sobre adsets paused.
+router.post('/rescale-now', async (req, res) => {
+  try {
+    const { target_total, dryRun = true, respectFloors = true } = req.body || {};
+    if (typeof target_total !== 'number' || target_total <= 0) {
+      return res.status(400).json({ error: 'target_total (positive number) required' });
+    }
+    const result = await wh.rescaleAll(target_total, { dryRun, respectFloors });
+    res.json({ ok: true, result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

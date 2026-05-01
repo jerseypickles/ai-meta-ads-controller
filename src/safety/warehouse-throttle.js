@@ -374,6 +374,123 @@ function buildPingMessage(cfg, direction, spend, target, result) {
   return `${arrow} **Warehouse Throttle ciclo ${direction}**\n\nSpend ayer: $${spend} · Target: $${target}\nAjustes aplicados: ${result.applied} entidades (${pctStr})\nErrores: ${result.errors || 0}\n\nDías activo: ${cfg.enabled_at ? Math.floor((Date.now() - new Date(cfg.enabled_at).getTime()) / 86400000) : 0}/${cfg.auto_disable_after_days}`;
 }
 
+/**
+ * Rescale inmediato de TODOS los adsets/CBOs (active + paused) para que
+ * el budget total sume ≤ targetTotal.
+ *
+ * Diferencia con runThrottleCycle:
+ *  - NO filtra por status (toca paused también)
+ *  - NO tiered por ROAS — proporcional uniforme
+ *  - dryRun por default; pasar { dryRun: false } para aplicar
+ *
+ * Útil cuando hay pausa total y se quiere bajar budgets para reactivación
+ * controlada.
+ */
+async function rescaleAll(targetTotal, options = {}) {
+  const { dryRun = true, respectFloors = true } = options;
+  const cfg = await getConfig();
+
+  const [campaigns, adsets] = await Promise.all([
+    MetricSnapshot.aggregate([
+      { $match: { entity_type: 'campaign' } },
+      { $sort: { entity_id: 1, snapshot_at: -1 } },
+      { $group: { _id: '$entity_id', doc: { $first: '$$ROOT' } } },
+      { $replaceRoot: { newRoot: '$doc' } },
+      { $match: { daily_budget: { $gt: 0 } } }
+    ]),
+    MetricSnapshot.aggregate([
+      { $match: { entity_type: 'adset' } },
+      { $sort: { entity_id: 1, snapshot_at: -1 } },
+      { $group: { _id: '$entity_id', doc: { $first: '$$ROOT' } } },
+      { $replaceRoot: { newRoot: '$doc' } },
+      { $match: { daily_budget: { $gt: 0 } } }
+    ])
+  ]);
+
+  const entities = [
+    ...campaigns.map(c => ({ ...c, _kind: 'campaign', _floor: respectFloors ? cfg.floor_per_cbo : 1 })),
+    ...adsets.map(a => ({ ...a, _kind: 'adset', _floor: respectFloors ? cfg.floor_per_adset : 1 }))
+  ];
+
+  const totalCurrent = entities.reduce((s, e) => s + e.daily_budget, 0);
+  const factor = totalCurrent > 0 ? targetTotal / totalCurrent : 0;
+
+  const plan = entities.map(e => {
+    const proposed = Math.max(e._floor, Math.round(e.daily_budget * factor));
+    return {
+      kind: e._kind,
+      entity_id: e.entity_id,
+      name: e.entity_name,
+      status: e.status,
+      before: e.daily_budget,
+      after: proposed,
+      delta: proposed - e.daily_budget
+    };
+  });
+
+  const totalProjected = plan.reduce((s, p) => s + p.after, 0);
+
+  if (dryRun) {
+    return {
+      dryRun: true,
+      total_current: totalCurrent,
+      target: targetTotal,
+      total_projected: totalProjected,
+      factor: +factor.toFixed(4),
+      entities_count: plan.length,
+      plan
+    };
+  }
+
+  // Aplicar
+  const { getMetaClient } = require('../meta/client');
+  const meta = getMetaClient();
+
+  let applied = 0, skipped = 0, errors = 0;
+  for (const p of plan) {
+    if (p.before === p.after) { skipped++; continue; }
+    try {
+      await meta.updateBudget(p.entity_id, p.after);
+      await ActionLog.create({
+        entity_type: p.kind,
+        entity_id: p.entity_id,
+        entity_name: p.name,
+        action: p.delta < 0 ? 'scale_down' : 'scale_up',
+        before_value: p.before,
+        after_value: p.after,
+        success: true,
+        executed_at: new Date(),
+        agent_type: 'warehouse_throttle',
+        reasoning: `Rescale-all immediate: factor ${factor.toFixed(3)} towards target $${targetTotal}/d total`,
+        metadata: {
+          source: 'warehouse_throttle_rescale_all',
+          factor,
+          target_total: targetTotal,
+          status_at_rescale: p.status
+        }
+      });
+      applied++;
+    } catch (err) {
+      errors++;
+      logger.error(`[WAREHOUSE-THROTTLE] rescale ${p.entity_id} (${p.name}) falló: ${err.message}`);
+    }
+  }
+
+  logger.info(`[WAREHOUSE-THROTTLE] rescale-all: ${applied} aplicados, ${skipped} skipped, ${errors} errors · target $${targetTotal} · projected $${totalProjected}`);
+
+  return {
+    dryRun: false,
+    applied,
+    skipped,
+    errors,
+    total_current: totalCurrent,
+    target: targetTotal,
+    total_projected: totalProjected,
+    factor: +factor.toFixed(4),
+    plan
+  };
+}
+
 module.exports = {
   CONFIG_KEY,
   DEFAULT_CONFIG,
@@ -384,5 +501,6 @@ module.exports = {
   isPrometheusPaused,
   isScaleUpBlocked,
   runThrottleCycle,
+  rescaleAll,
   getYesterdaySpend
 };
