@@ -396,14 +396,14 @@ async function rescaleAll(targetTotal, options = {}) {
       { $sort: { entity_id: 1, snapshot_at: -1 } },
       { $group: { _id: '$entity_id', doc: { $first: '$$ROOT' } } },
       { $replaceRoot: { newRoot: '$doc' } },
-      { $match: { daily_budget: { $gt: 0 } } }
+      { $match: { daily_budget: { $gt: 0 }, status: { $ne: 'ARCHIVED' } } }
     ]),
     MetricSnapshot.aggregate([
       { $match: { entity_type: 'adset' } },
       { $sort: { entity_id: 1, snapshot_at: -1 } },
       { $group: { _id: '$entity_id', doc: { $first: '$$ROOT' } } },
       { $replaceRoot: { newRoot: '$doc' } },
-      { $match: { daily_budget: { $gt: 0 } } }
+      { $match: { daily_budget: { $gt: 0 }, status: { $ne: 'ARCHIVED' } } }
     ])
   ]);
 

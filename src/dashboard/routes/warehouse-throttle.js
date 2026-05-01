@@ -134,4 +134,68 @@ router.post('/rescale-now', async (req, res) => {
   }
 });
 
+// POST /set-budgets — set explícito de daily_budget para entities específicas.
+// Body: { updates: [{entity_id, daily_budget}, ...] }
+router.post('/set-budgets', async (req, res) => {
+  try {
+    const { updates } = req.body || {};
+    if (!Array.isArray(updates) || updates.length === 0) {
+      return res.status(400).json({ error: 'updates array required' });
+    }
+    const { getMetaClient } = require('../../meta/client');
+    const ActionLog = require('../../db/models/ActionLog');
+    const meta = getMetaClient();
+    let applied = 0, errors = 0;
+    const results = [];
+    for (const u of updates) {
+      try {
+        await meta.updateBudget(u.entity_id, u.daily_budget);
+        await ActionLog.create({
+          entity_type: u.kind || 'campaign',
+          entity_id: u.entity_id,
+          entity_name: u.name || '',
+          action: 'scale_up',
+          before_value: u.before || 0,
+          after_value: u.daily_budget,
+          success: true,
+          executed_at: new Date(),
+          agent_type: 'warehouse_throttle',
+          reasoning: u.reason || 'Manual set-budget via API',
+          metadata: { source: 'manual_set_budget' }
+        });
+        applied++;
+        results.push({ entity_id: u.entity_id, ok: true, after: u.daily_budget });
+      } catch (err) {
+        errors++;
+        results.push({ entity_id: u.entity_id, ok: false, error: err.message?.substring(0, 200) });
+      }
+    }
+    res.json({ ok: true, applied, errors, results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /cleanup-archived-snapshots — borrar MetricSnapshot de entities archived
+// para que no aparezcan en queries de overview, rescale, etc.
+router.post('/cleanup-archived-snapshots', async (req, res) => {
+  try {
+    const MetricSnapshot = require('../../db/models/MetricSnapshot');
+    const { dryRun = true } = req.body || {};
+
+    const filter = { status: 'ARCHIVED' };
+
+    if (dryRun) {
+      const count = await MetricSnapshot.countDocuments(filter);
+      const sample = await MetricSnapshot.find(filter).limit(5).select('entity_id entity_type entity_name daily_budget').lean();
+      return res.json({ dryRun: true, would_delete: count, sample });
+    }
+
+    const result = await MetricSnapshot.deleteMany(filter);
+    res.json({ ok: true, deleted: result.deletedCount });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
