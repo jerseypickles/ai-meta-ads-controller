@@ -145,6 +145,7 @@ app.use('/api/zeus', zeusChatRoutes);
 app.use('/api/ares', aresRoutes);
 app.use('/api/demeter', require('./routes/demeter'));
 app.use('/api/system/warehouse-throttle', require('./routes/warehouse-throttle'));
+app.use('/api/system/tribe-validation', require('./routes/tribe-validation'));
 
 // SPA fallback — todas las rutas no-API sirven el frontend
 app.get('*', (req, res) => {
