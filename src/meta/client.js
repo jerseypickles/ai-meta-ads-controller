@@ -651,7 +651,7 @@ class MetaClient {
         const nextData = await this.limiter.schedule(() =>
           withRetry(
             () => axios.get(paging.next, { headers: { 'Authorization': `Bearer ${this.accessToken}` }, ...(options.signal ? { signal: options.signal } : {}) }),
-            { maxRetries: 2, baseDelay: 2000, shouldRetry: shouldRetryMetaError, label: `META PAGINATION daily ${level}` }
+            { maxRetries: 4, baseDelay: 2000, maxDelay: 30000, shouldRetry: shouldRetryMetaError, label: `META PAGINATION daily ${level}` }
           )
         ).then(res => {
           this._checkRateLimitHeaders(res);

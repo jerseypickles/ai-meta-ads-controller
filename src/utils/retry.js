@@ -61,6 +61,11 @@ function shouldRetryMetaError(error) {
   // NO reintentar en rate limit de app (code 17) — empeora la penalización
   if (errorCode === 17 || errorCode === 4) return false;
 
+  // 403 a veces es transient (load balancer puntual / soft rate limit por endpoint).
+  // Retry con backoff es seguro porque los hard-403 (permission permanent) van a
+  // fallar los N intentos de igual modo; los soft-403 transientes se recuperan.
+  if (status === 403) return true;
+
   // Reintentar en rate limit HTTP (429), errores de servidor (5xx)
   return status === 429 || status >= 500;
 }

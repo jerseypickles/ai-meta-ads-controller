@@ -12,8 +12,12 @@ async function connect() {
 
     await mongoose.connect(config.mongodb.uri, {
       maxPoolSize: 10,
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000
+      minPoolSize: 2,                  // mantén 2 conexiones vivas para evitar cold-start
+      maxIdleTimeMS: 60000,            // cierra conexiones idle >60s — previene zombies
+      serverSelectionTimeoutMS: 10000, // 10s para seleccionar servidor (era 5s, muy corto)
+      socketTimeoutMS: 30000,          // 30s socket timeout (era 45s — zombies vivían demasiado)
+      retryReads: true,                // reintenta reads automáticamente en transient failures
+      heartbeatFrequencyMS: 10000      // chequea salud cada 10s
     });
 
     isConnected = true;
