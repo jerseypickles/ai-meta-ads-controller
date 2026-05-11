@@ -599,11 +599,22 @@ async function jobCreativeAgent() {
   const agentMode = await SystemConfig.get('agent_mode', 'unified');
   if (agentMode !== 'unified') return;
 
-  // Warehouse throttle — pausar Apollo si está activo (no acumular inventario)
+  // Housekeeping del pool corre SIEMPRE, antes de cualquier gate de pausa.
+  // Garantiza que las "ready" stale se expiren y el image_base64 se limpie
+  // incluso si después el throttle bloquea la generación.
+  try {
+    const { runCreativeHousekeeping } = require('./ai/agent/creative-agent');
+    await runCreativeHousekeeping();
+  } catch (err) {
+    logger.error(`[CRON] Housekeeping pre-Apollo falló: ${err.message}`);
+  }
+
+  // Warehouse throttle — pausar generación si está activo (no acumular inventario).
+  // Importante: este gate va DESPUÉS del housekeeping para que el pool igual se limpie.
   try {
     const { isApolloPaused } = require('./safety/warehouse-throttle');
     if (await isApolloPaused()) {
-      logger.info('[CRON] Apollo SKIP — warehouse throttle activo');
+      logger.info('[CRON] Apollo SKIP — warehouse throttle activo (housekeeping ya corrió)');
       return;
     }
   } catch (_) { /* fail-open si throttle module falla */ }
@@ -826,6 +837,26 @@ async function jobDirectiveCleanup() {
     }
   } catch (error) {
     logger.error('[CRON] Error en Directive Cleanup:', error);
+  }
+}
+
+/**
+ * Job: Creative Housekeeping — diario 3:15am ET, independiente del job de Apollo.
+ * Expira proposals "ready" con +48h y vacía image_base64 de "expired" +7d.
+ *
+ * Existe como cron propio para garantizar que el pool se limpie aunque Apollo
+ * esté pausado por warehouse-throttle o directiva (caso real: 145 ready
+ * acumuladas en 12 días bajo throttle activo).
+ */
+async function jobCreativeHousekeeping() {
+  try {
+    const { runCreativeHousekeeping } = require('./ai/agent/creative-agent');
+    const result = await runCreativeHousekeeping();
+    if (result.expired > 0 || result.purged > 0) {
+      logger.info(`[CRON] Creative Housekeeping: ${result.expired} expiradas, ${result.purged} base64 vaciados`);
+    }
+  } catch (error) {
+    logger.error('[CRON] Error en Creative Housekeeping:', error);
   }
 }
 
@@ -1377,6 +1408,14 @@ function initCronJobs() {
     name: 'directive-cleanup'
   });
   logger.info('  [*] Directive Cleanup — diario 3am ET');
+
+  // Creative Housekeeping — 1x/dia (3:15am ET), expira ready +48h y vacía base64 expired +7d
+  // Independiente de Apollo: sobrevive throttle/directiva (previene pool acumulado).
+  cron.schedule('15 3 * * *', jobCreativeHousekeeping, {
+    timezone: TIMEZONE,
+    name: 'creative-housekeeping'
+  });
+  logger.info('  [*] Creative Housekeeping — diario 3:15am ET');
 
   // CBO Health Monitor — cada 2h (12x/día), observabilidad de CBOs para Ares
   cron.schedule('0 */2 * * *', jobCBOHealthMonitor, {

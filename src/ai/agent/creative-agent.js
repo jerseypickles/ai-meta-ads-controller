@@ -220,6 +220,42 @@ async function uploadToMeta(adsetId, imagePath, headline, primaryText, linkUrl) 
 const CreativeProposal = require('../../db/models/CreativeProposal');
 
 /**
+ * Housekeeping del pool de proposals — independiente del job de generación.
+ * Diseñado para correr SIEMPRE (cron propio o como Fase 0 de Apollo), incluso si
+ * Apollo está bloqueado por warehouse-throttle o directiva. Sin esto, el pool
+ * crece indefinidamente cuando Apollo no corre (caso real: 145 ready acumuladas
+ * en 12 días bajo warehouse throttle).
+ *
+ * Dos niveles de limpieza:
+ *   - Nivel 1: ready +48h → expired (saca del pool, mantiene doc + imagen)
+ *   - Nivel 2: expired +7d → vacía image_base64/image_path (libera ~1-3MB c/u,
+ *              mantiene metadata para audit + futuro evolution-engine)
+ */
+async function runCreativeHousekeeping() {
+  const staleReady = await CreativeProposal.updateMany(
+    { status: 'ready', created_at: { $lt: new Date(Date.now() - 48 * 3600000) } },
+    { $set: { status: 'expired', rejection_reason: 'auto: no tomada por Testing Agent en 48h', decided_at: new Date() } }
+  );
+  if (staleReady.modifiedCount > 0) {
+    logger.info(`[CREATIVE-HOUSEKEEPING] Expiradas ${staleReady.modifiedCount} propuestas "ready" con +48h`);
+  }
+
+  const purged = await CreativeProposal.updateMany(
+    {
+      status: 'expired',
+      decided_at: { $lt: new Date(Date.now() - 7 * 86400000) },
+      image_base64: { $exists: true, $ne: '' }
+    },
+    { $unset: { image_base64: '', image_path: '' } }
+  );
+  if (purged.modifiedCount > 0) {
+    logger.info(`[CREATIVE-HOUSEKEEPING] Vaciada image_base64 de ${purged.modifiedCount} propuestas "expired" con +7d`);
+  }
+
+  return { expired: staleReady.modifiedCount, purged: purged.modifiedCount };
+}
+
+/**
  * Run the Creative Agent.
  * Generates images + copy and saves as proposals for user approval.
  * Does NOT upload to Meta — user approves first.
@@ -229,16 +265,9 @@ async function runCreativeAgent() {
   const cycleId = `creative_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   logger.info(`═══ Iniciando Creative Agent [${cycleId}] ═══`);
 
-  // Fase 0: Housekeeping SIEMPRE corre, incluso si Apollo está bloqueado por directiva.
-  // Expirar propuestas "ready" con mas de 48h sin ser tomadas por Testing Agent.
-  // Sin esto, una directiva "no generes" deja el pool acumulándose indefinidamente.
-  const staleReady = await CreativeProposal.updateMany(
-    { status: 'ready', created_at: { $lt: new Date(Date.now() - 48 * 3600000) } },
-    { $set: { status: 'expired', rejection_reason: 'auto: no tomada por Testing Agent en 48h', decided_at: new Date() } }
-  );
-  if (staleReady.modifiedCount > 0) {
-    logger.info(`[CREATIVE-AGENT] Expiradas ${staleReady.modifiedCount} propuestas "ready" con +48h`);
-  }
+  // Fase 0: Housekeeping. Corre como safety net dentro del job aunque también
+  // exista cron 3am ET independiente — así un Apollo activo no espera a mañana.
+  await runCreativeHousekeeping();
 
   // Fase -1: Chequear directivas avoid activas de Zeus
   try {
@@ -250,7 +279,6 @@ async function runCreativeAgent() {
         skipped: true,
         reason: block.reason,
         directive_id: block.directive_id,
-        expired_proposals: staleReady.modifiedCount,
         elapsed: '0s',
         cycle_id: cycleId
       };
@@ -1131,4 +1159,4 @@ async function syncProposalPerformance() {
   return { synced, products_updated: productsUpdated };
 }
 
-module.exports = { runCreativeAgent, approveProposal, rejectProposal, syncProposalPerformance, generateImage, generateCopy, uploadToMeta, SCENES };
+module.exports = { runCreativeAgent, runCreativeHousekeeping, approveProposal, rejectProposal, syncProposalPerformance, generateImage, generateCopy, uploadToMeta, SCENES };

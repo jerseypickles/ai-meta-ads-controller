@@ -56,6 +56,27 @@ class DataCollector {
     } catch (error) {
       clearTimeout(this._collectTimeout);
       controller.abort(); // Asegurar que todo se cancela en cualquier error
+
+      // Si el error fue COLLECT_TIMEOUT y el busy es nuestro, drenar el limiter.
+      // Sin esto, jobs encolados (a veces cientos de páginas pendientes) sobreviven
+      // al timeout y bloquean el siguiente ciclo — esto causó el blackout de 18h
+      // del 10-11 may donde cada timeout dejaba la cola peor que el anterior.
+      //
+      // Condición de seguridad: solo drenar si NOSOTROS somos los busy. Si Athena
+      // u otro agente está usando la API, no queremos matarles sus jobs in-flight.
+      if (error.message?.includes('COLLECT_TIMEOUT')) {
+        const busy = this.meta.isBusy();
+        if (!busy || busy.label === 'data-collector') {
+          try {
+            await this.meta.resetLimiter();
+          } catch (drainErr) {
+            logger.warn(`[DATA-COLLECTOR] Limiter reset failed: ${drainErr.message}`);
+          }
+        } else {
+          logger.warn(`[DATA-COLLECTOR] Timeout pero ${busy.label} está activo — no se drena queue (evita matar jobs in-flight)`);
+        }
+      }
+
       this.meta.clearBusy();
       const errMsg = error.response?.data?.error?.message || error.message || 'Error desconocido';
       logger.error(`Error en ciclo de recolección: ${errMsg}`);
@@ -162,18 +183,34 @@ class DataCollector {
 
       const totalAdSets = Object.keys(adSetMap).length;
 
-      // ── 2. Fetch daily insights for all 3 levels IN PARALLEL (3 calls total) ──
-      //    Each call returns 1 row per entity per day.
-      //    aggregateDailyInsights() computes today/3d/7d/14d locally.
-      //    All levels use 14d to reduce pagination and prevent timeouts.
-      //    30d window removed — agent only uses today/3d/7d/14d.
-      logger.info('Recolectando insights diarios (3 calls paralelas: campaign 14d + adset 14d + ad 14d)...');
+      // ── 2. Fetch daily insights for all 3 levels SERIALIZED with pacing ──
+      //    Meta best practice (doc oficial): "Sending several queries at once
+      //    are more likely to trigger our rate limiting. Try to spread your
+      //    /insights queries by pacing them with wait time".
+      //
+      //    Antes: 3 calls paralelas con Promise.allSettled — saturaba a Meta y
+      //    disparaba el throttle persistente que causaba COLLECT_TIMEOUT (visto
+      //    en logs 5-11 may, 60+ timeouts acumulados).
+      //
+      //    Ahora: serial con 1s sleep entre cada call. Costo: +2s por ciclo en
+      //    healthy state. Beneficio: no saturamos el rate limit a nivel cuenta.
+      logger.info('Recolectando insights diarios (3 calls serial con pacing: campaign 14d → adset 14d → ad 14d)...');
 
-      const [campaignResult, adsetResult, adResult] = await Promise.allSettled([
-        this.meta.getAccountInsightsDaily('campaign', 14, opts),
-        this.meta.getAccountInsightsDaily('adset', 14, opts),
-        this.meta.getAccountInsightsDaily('ad', 14, opts)
-      ]);
+      const sleep = ms => new Promise(r => setTimeout(r, ms));
+      const runStep = async (level) => {
+        try {
+          const data = await this.meta.getAccountInsightsDaily(level, 14, opts);
+          return { status: 'fulfilled', value: data };
+        } catch (err) {
+          return { status: 'rejected', reason: err };
+        }
+      };
+
+      const campaignResult = await runStep('campaign');
+      await sleep(1000);
+      const adsetResult = await runStep('adset');
+      await sleep(1000);
+      const adResult = await runStep('ad');
 
       // Process campaign insights
       const campaignInsights = campaignResult.status === 'fulfilled'
@@ -265,7 +302,11 @@ class DataCollector {
 
         let allAds = allAdsData.data || [];
 
-        // Paginate with retry and auth header
+        // Paginate with retry and auth header.
+        // Importante: pasamos cada response a _checkRateLimitHeaders para que
+        // adaptive throttling responda durante la paginación, no solo al
+        // primer call. Sin esto, podemos hacer 8-10 páginas sin notar que el
+        // usage subió a 100% en la primera.
         let paging = allAdsData.paging;
         while (paging?.next) {
           const nextRes = await this.meta.limiter.schedule(() =>
@@ -274,6 +315,7 @@ class DataCollector {
               { maxRetries: 2, baseDelay: 2000, shouldRetry: shouldRetryMetaError, label: 'META PAGINATION ads' }
             )
           );
+          this.meta._checkRateLimitHeaders(nextRes);
           allAds = allAds.concat(nextRes.data?.data || []);
           paging = nextRes.data?.paging;
         }

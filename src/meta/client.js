@@ -33,23 +33,59 @@ class MetaClient {
     // With ~60 active ads = ~214,000 pts/hour. We cap at 5,000/hour locally
     // (still very conservative at ~2.3% of quota). Adaptive throttling via
     // _checkRateLimitHeaders adjusts minTime dynamically when Meta reports high usage.
-    this.limiter = new Bottleneck({
-      reservoir: 5000,
-      reservoirRefreshAmount: 5000,
-      reservoirRefreshInterval: 60 * 60 * 1000, // 1 hour
-      maxConcurrent: 8, // 3 parallel insight levels + pagination + structural + buffer
-      minTime: 300 // 300ms between calls — adaptive throttling adjusts dynamically
-    });
+    //
+    // maxConcurrent=5 (was 8): Meta best practice — "Sending several queries at once
+    // are more likely to trigger our rate limiting". 5 da headroom para 1 structural +
+    // 1 insights serial + paginación + 2 agentes (Athena/Apollo) sin saturar.
+    this.limiter = this._buildLimiter();
 
     this.client = axios.create({
       baseURL: this.baseUrl,
       timeout: 30000 // 30s per-request timeout — prevents single calls from hanging indefinitely
     });
+  }
 
-    // Log rate limit warnings
-    this.limiter.on('depleted', () => {
+  /**
+   * Construye el limiter Bottleneck con los settings actuales. Llamado desde el
+   * constructor y desde resetLimiter() cuando se necesita drenar la cola.
+   */
+  _buildLimiter() {
+    const limiter = new Bottleneck({
+      reservoir: 5000,
+      reservoirRefreshAmount: 5000,
+      reservoirRefreshInterval: 60 * 60 * 1000, // 1 hour
+      maxConcurrent: 5,
+      minTime: 300
+    });
+    limiter.on('depleted', () => {
       logger.warn('Meta API rate limit alcanzado, esperando...');
     });
+    return limiter;
+  }
+
+  /**
+   * Drena la cola del limiter y lo recrea desde cero. Usado por data-collector
+   * cuando dispara COLLECT_TIMEOUT — sin esto, los jobs encolados (a veces cientos
+   * de páginas pendientes) sobreviven al timeout y bloquean el siguiente ciclo.
+   *
+   * dropWaitingJobs=true cancela los jobs que NO empezaron a ejecutarse.
+   * Los que ya están corriendo terminan o son cancelados por su AbortController.
+   *
+   * SOLO debe llamarse cuando isBusy().label === 'data-collector' para no matar
+   * jobs in-flight de Athena/Apollo/Prometheus.
+   */
+  async resetLimiter() {
+    const oldLimiter = this.limiter;
+    const queued = oldLimiter.queued();
+    try {
+      await oldLimiter.stop({ dropWaitingJobs: true });
+      logger.warn(`[META-CLIENT] Limiter drained — ${queued} queued jobs dropped`);
+    } catch (err) {
+      logger.warn(`[META-CLIENT] Error draining limiter: ${err.message}`);
+    }
+    this.limiter = this._buildLimiter();
+    this._rateLimitedUntil = null;
+    this._lastUsage = null;
   }
 
   /**
@@ -109,6 +145,9 @@ class MetaClient {
       const bucHeader = response.headers?.['x-business-use-case-usage'];
       // 2. Insights throttle header — specific to ads_insights endpoint
       const insightsHeader = response.headers?.['x-fb-ads-insights-throttle'];
+      // 3. Ad Account Usage header — Meta doc declara este como el header principal
+      //    para monitorear quota del account. Incluye reset_time_duration.
+      const accountUsageHeader = response.headers?.['x-ad-account-usage'];
 
       let maxUsage = 0;
 
@@ -142,6 +181,24 @@ class MetaClient {
         if (insightsMax > maxUsage) maxUsage = insightsMax;
         if (!this._lastUsage || insightsMax > (this._lastUsage.max || 0)) {
           this._lastUsage = { app_id_util_pct: insights.app_id_util_pct, acc_id_util_pct: insights.acc_id_util_pct, max: insightsMax, ts: Date.now() };
+        }
+      }
+
+      if (accountUsageHeader) {
+        const accountUsage = JSON.parse(accountUsageHeader);
+        const accUsageMax = accountUsage.acc_id_util_pct || 0;
+        if (accUsageMax > maxUsage) maxUsage = accUsageMax;
+        if (!this._lastUsage || accUsageMax > (this._lastUsage.max || 0)) {
+          this._lastUsage = {
+            acc_id_util_pct: accountUsage.acc_id_util_pct,
+            reset_time_duration: accountUsage.reset_time_duration,
+            ads_api_access_tier: accountUsage.ads_api_access_tier,
+            max: accUsageMax,
+            ts: Date.now()
+          };
+        }
+        if (accUsageMax > 75) {
+          logger.warn(`[META-RATE] Account usage at ${accUsageMax}% — reset in ${accountUsage.reset_time_duration}s, tier: ${accountUsage.ads_api_access_tier}`);
         }
       }
 
