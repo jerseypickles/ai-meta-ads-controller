@@ -64,8 +64,48 @@ function pickOffer() {
     cumulative += offer.weight;
     if (random <= cumulative) return offer;
   }
-  // Fallback (no debería pasar si weights suman 1)
   return OFFERS.free_pickle;
+}
+
+/**
+ * Selecciona una oferta evitando repetir la última usada.
+ *
+ * Consulta HermesProposal para encontrar la última generada (cualquier
+ * status). Si pickOffer() random elige la misma → re-pick excluyéndola
+ * para garantizar variedad consecutiva.
+ *
+ * Esto resolvió el comportamiento observado donde 2 ciclos consecutivos
+ * salieron "FREE PICKLE" porque 50% weight × random = puede caer igual
+ * fácilmente.
+ */
+async function pickOfferAvoidingRepeat() {
+  const HermesProposal = require('../../db/models/HermesProposal');
+
+  // Última oferta usada (cualquier status)
+  const last = await HermesProposal.findOne({})
+    .sort({ generated_at: -1 })
+    .select('offer_type')
+    .lean();
+
+  const lastOfferType = last?.offer_type;
+  const candidate = pickOffer();
+
+  // Si no hay historia o el candidate ya es distinto → OK
+  if (!lastOfferType || candidate.type !== lastOfferType) {
+    return candidate;
+  }
+
+  // Re-pick excluyendo lastOfferType: weighted random sobre las otras
+  const remaining = Object.values(OFFERS).filter(o => o.type !== lastOfferType);
+  const totalWeight = remaining.reduce((sum, o) => sum + o.weight, 0);
+  if (totalWeight === 0) return candidate;  // edge case: solo 1 oferta
+
+  let r = Math.random() * totalWeight;
+  for (const offer of remaining) {
+    r -= offer.weight;
+    if (r <= 0) return offer;
+  }
+  return remaining[0];
 }
 
 /**
@@ -90,4 +130,4 @@ function validateWeights() {
   return Math.abs(total - 1.0) < 0.01;
 }
 
-module.exports = { OFFERS, pickOffer, getOffer, listOffers, validateWeights };
+module.exports = { OFFERS, pickOffer, pickOfferAvoidingRepeat, getOffer, listOffers, validateWeights };

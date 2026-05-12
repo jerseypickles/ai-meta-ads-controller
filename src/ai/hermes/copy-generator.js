@@ -75,10 +75,34 @@ ESTRUCTURA DEL PROMPT (en este orden):
 3. **Lighting + style** (10-20 palabras): warm cinematic lighting,
    professional food photography, shallow depth of field, magazine
    quality, hyper-realistic NOT illustration.
-4. **Text overlay** (THE KEY for gpt-image-2): explicit con exact text:
-   Example: 'Text overlay in bold sans-serif at the bottom: "FREE PICKLE
-   ON YOUR 1ST VISIT" in white on dark red banner strip. Below in
-   smaller text: "JERSEY PICKLES · 9 ROMANELLI AVE · SOUTH HACKENSACK NJ"'
+4. **Text overlay** (THE KEY for gpt-image-2): SIEMPRE incluir el text
+   exacto provisto en el prompt user. CADA AD DEBE VARIAR el estilo
+   tipográfico para evitar uniformidad. Elegí UNO de estos templates
+   (rotando, no usar siempre el mismo):
+
+   - **A. Classic Halal Guys style**: bold condensed sans-serif (Impact /
+     Bebas Neue style), white text on dark red bottom banner, all caps
+   - **B. Diner retro**: hand-painted style serif font, cream/yellow on
+     dark green panel, slight vintage texture
+   - **C. Modern minimal**: thin elegant sans-serif (Helvetica Light),
+     black text on white strip at top, lots of negative space
+   - **D. Bold display**: thick stencil-style typeface, yellow on black
+     banner with subtle drop shadow
+   - **E. Italic editorial**: italic serif (Playfair Display style),
+     white on translucent dark gradient at bottom
+   - **F. Spray paint / urban**: rough hand-drawn or graffiti style font,
+     bold colors with slight grunge texture (NJ street vibe)
+   - **G. Vintage deli**: distressed wooden sign aesthetic, painted-look
+     serif font, warm earthy palette
+
+   El JSON respondido debe especificar cuál template usaste en el prompt.
+   NO repetir el template de la generación anterior si lo sabés.
+
+   Example concrete: 'Text overlay using "vintage deli" style: distressed
+   white serif typography reading "FREE PICKLE ON YOUR 1ST VISIT" painted
+   on a weathered wooden sign at the bottom of the frame. Below in
+   smaller hand-painted text: "JERSEY PICKLES · 9 ROMANELLI AVE · SOUTH
+   HACKENSACK NJ"'
 5. **EXPLICIT EXCLUSIONS** (CRÍTICO): SIEMPRE incluir literalmente:
    "Do NOT generate any logo, brand watermark, or fictional brand emblem
    in the image. Do NOT show real human faces. Do NOT include competitor

@@ -86,8 +86,8 @@ async function preChecks() {
  * Genera un ad completo: offer + scene + brief + imagen.
  */
 async function generateProposal(cycleId) {
-  // 1. Offer del ciclo (weighted random)
-  const offer = offerRotator.pickOffer();
+  // 1. Offer del ciclo (weighted random + anti-repeat de la última usada)
+  const offer = await offerRotator.pickOfferAvoidingRepeat();
   logger.info(`[HERMES] Ciclo ${cycleId} — offer: ${offer.type} (${offer.title})`);
 
   // 2. Scene NJ compatible con la oferta
