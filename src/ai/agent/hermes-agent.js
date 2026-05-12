@@ -1,33 +1,35 @@
 /**
  * Hermes Agent — agente autónomo de foot traffic para la tienda física NJ.
  *
- * Construido el 12-may-2026. Decisiones de diseño en docs/sesión:
- *   - Foot traffic (no online sales) — CTA Get Directions a Google Maps
- *   - 3 ofertas rotando: free pickle (50%), big dill chamoy (30%), mystery (20%)
- *   - Banco de fotos pro reales (no AI generation como Apollo) + text overlay automático
- *   - Voz brand Jersey Pickles: NJ attitude, punny, irreverent
- *   - Tracking: estimated_visits de Meta + reportes manuales en tienda
+ * Redesign 12-may-2026: pasó de hybrid (photo bank + overlay sharp) a
+ * 100% generativo con gpt-image-2 (OpenAI, lanzado 21-abr-2026). El text
+ * overlay lo genera el mismo modelo dentro de la imagen — gpt-image-2 fue
+ * el primer modelo en hacer text accurately, lo que elimina la dependencia
+ * del overlay-composer.
  *
- * Modos de operación (config.hermes.mode):
- *   - manual_approval (default): genera HermesProposal status=pending,
- *                                usuario aprueba en dashboard, después se sube manual a Meta
- *   - auto:                      genera + auto-publica en Meta (Fase 2, requiere page_id)
+ * Flujo del ciclo:
+ *   1. Pre-checks (enabled, capacity, directive)
+ *   2. Pick offer (free_pickle / big_dill_chamoy / mystery_pickle)
+ *   3. Pick NJ scene del scene-bank (deli, diner, BBQ NJ, etc.)
+ *   4. Claude genera image_prompt + headline + primary_text en 1 call
+ *   5. gpt-image-2 genera la imagen completa con text overlay integrado
+ *   6. Save HermesProposal status=pending
  *
- * Cron: 2x/día (9am, 3pm ET).
+ * Modos (config.hermes.mode):
+ *   - manual_approval (default) — usuario aprueba en dashboard
+ *   - auto — Hermes publica solo (Fase 2)
  */
 
 const config = require('../../../config');
 const logger = require('../../utils/logger');
-const HermesPhotoAsset = require('../../db/models/HermesPhotoAsset');
 const HermesProposal = require('../../db/models/HermesProposal');
-const photoBank = require('../hermes/photo-bank');
 const offerRotator = require('../hermes/offer-rotator');
-const { generateCopy } = require('../hermes/copy-generator');
-const { composeAd } = require('../hermes/overlay-composer');
+const { pickSceneForOffer } = require('../hermes/scenes');
+const { generateCreativeBrief } = require('../hermes/copy-generator');
+const { generateImage } = require('../hermes/gpt-image');
 
 /**
- * Housekeeping — expira proposals stale (pending > N horas sin aprobación).
- * Corre como Fase 0 de cada ciclo + standalone via cron.
+ * Housekeeping — expira proposals stale (pending +N horas sin aprobación).
  */
 async function runHermesHousekeeping() {
   const expiryMs = (config.hermes.proposalExpiryHours || 72) * 3600 * 1000;
@@ -50,92 +52,88 @@ async function runHermesHousekeeping() {
 }
 
 /**
- * Pre-checks antes de generar un ad nuevo.
- * Retorna { allowed: bool, reason: string }.
+ * Pre-checks antes de generar.
  */
 async function preChecks() {
   if (!config.hermes.enabled) {
     return { allowed: false, reason: 'HERMES_ENABLED=false' };
   }
 
-  // Cap de proposals pendientes — no acumular pool si nadie aprueba
   const pendingCount = await HermesProposal.countDocuments({ status: 'pending' });
   if (pendingCount >= config.hermes.maxActiveAds) {
     return { allowed: false, reason: `${pendingCount} proposals pending (max ${config.hermes.maxActiveAds})` };
   }
 
-  // ¿Hay fotos en el banco?
-  const photoCount = await HermesPhotoAsset.countDocuments({ active: true, archived: false });
-  if (photoCount === 0) {
-    return { allowed: false, reason: 'photo bank empty — sube fotos al banco antes de ejecutar' };
+  // OpenAI API key requerida para gpt-image-2
+  const openaiKey = config.imageGen?.openai?.apiKey || process.env.OPENAI_API_KEY;
+  if (!openaiKey) {
+    return { allowed: false, reason: 'OPENAI_API_KEY no configurada — gpt-image-2 requiere OpenAI' };
   }
 
-  // Directive guard (Zeus puede bloquear el agente)
+  // Directive guard (Zeus puede bloquear)
   try {
     const { isAgentBlocked } = require('../zeus/directive-guard');
     const block = await isAgentBlocked('hermes');
     if (block.blocked) {
       return { allowed: false, reason: `directive: ${block.reason}` };
     }
-  } catch (_) { /* fail-open si directive-guard module falla */ }
+  } catch (_) { /* fail-open */ }
 
   return { allowed: true };
 }
 
 /**
- * Genera un ad: pickea oferta + foto, compone overlay, llama Claude para copy.
- * No publica todavía — guarda como HermesProposal status='pending'.
+ * Genera un ad completo: offer + scene + brief + imagen.
  */
 async function generateProposal(cycleId) {
-  // 1. Oferta del ciclo (weighted random)
+  // 1. Offer del ciclo (weighted random)
   const offer = offerRotator.pickOffer();
   logger.info(`[HERMES] Ciclo ${cycleId} — offer: ${offer.type} (${offer.title})`);
 
-  // 2. Foto del banco compatible con la oferta
-  const photo = await photoBank.pickPhotoForOffer(offer.type);
-  if (!photo) {
-    logger.warn(`[HERMES] Sin fotos para offer=${offer.type} — skip`);
-    return null;
-  }
+  // 2. Scene NJ compatible con la oferta
+  const scene = pickSceneForOffer(offer.type);
+  logger.info(`[HERMES] Scene: ${scene.id} (mood: ${scene.mood})`);
 
-  // 3. Decodificar la foto base
-  if (!photo.image_base64) {
-    logger.error(`[HERMES] Photo ${photo._id} sin image_base64 — skip`);
-    return null;
-  }
-  const baseBuffer = Buffer.from(photo.image_base64, 'base64');
-
-  // 4. Compose overlay
-  const overlayConfig = {
-    offer_text: offer.title,
-    brand_text: 'JERSEY PICKLES NJ',
-    address_text: `${config.hermes.addressShort} · Open daily`
+  // 3. Address info para el overlay
+  const addressInfo = {
+    full: config.hermes.warehouseAddress,
+    short: config.hermes.addressShort
   };
 
-  let composedBuffer;
+  // 4. Claude genera image_prompt + headline + primary_text
+  let brief;
   try {
-    composedBuffer = await composeAd(baseBuffer, overlayConfig);
+    brief = await generateCreativeBrief(offer, scene, addressInfo);
   } catch (err) {
-    logger.error(`[HERMES] composeAd failed: ${err.message}`);
+    logger.error(`[HERMES] Brief generation failed: ${err.message}`);
     return null;
   }
 
-  // 5. Generar copy con Claude
-  let copy;
+  // 5. gpt-image-2 genera la imagen con el image_prompt
+  let imageResult;
   try {
-    copy = await generateCopy(offer);
+    imageResult = await generateImage(brief.image_prompt, {
+      size: '1024x1536',     // portrait para feed Meta
+      quality: 'high'
+    });
   } catch (err) {
-    logger.error(`[HERMES] copy generation failed: ${err.message}`);
+    logger.error(`[HERMES] Image generation failed: ${err.message}`);
     return null;
   }
 
   // 6. Save HermesProposal
   const proposal = await HermesProposal.create({
-    photo_asset_id: photo._id,
-    composed_image_base64: composedBuffer.toString('base64'),
-    overlay_config: overlayConfig,
-    headline: copy.headline,
-    primary_text: copy.primary_text,
+    photo_asset_id: null,  // Ya no usamos photo bank
+    composed_image_base64: imageResult.base64,
+    overlay_config: {
+      offer_text: offer.title,
+      brand_text: 'JERSEY PICKLES',
+      address_text: addressInfo.short,
+      overlay_style: 'gpt-image-2-integrated',  // text overlay generado dentro de la imagen
+      generated_image_prompt: brief.image_prompt  // audit del prompt usado
+    },
+    headline: brief.headline,
+    primary_text: brief.primary_text,
     cta_button: 'GET_DIRECTIONS',
     offer_type: offer.type,
     offer_details: {
@@ -147,32 +145,26 @@ async function generateProposal(cycleId) {
     cycle_id: cycleId
   });
 
-  // 7. Marcar foto como usada
-  await photoBank.markPhotoUsed(photo._id);
-
-  logger.info(`[HERMES] Proposal ${proposal._id} creado — offer=${offer.type}, photo=${photo.filename}, status=pending`);
+  logger.info(`[HERMES] Proposal ${proposal._id} creado — offer=${offer.type}, scene=${scene.id}, image=${imageResult.size}, brief=${brief.elapsed_s}s, img=${imageResult.elapsed_s}s`);
   return proposal;
 }
 
 /**
- * Run main del agente — orquesta housekeeping + pre-checks + generación.
+ * Run main del agente.
  */
 async function runHermesAgent() {
   const startTime = Date.now();
   const cycleId = `hermes_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   logger.info(`═══ Iniciando Hermes Agent [${cycleId}] ═══`);
 
-  // Fase 0 — housekeeping (corre SIEMPRE, igual que Apollo)
   await runHermesHousekeeping();
 
-  // Fase 1 — pre-checks
   const check = await preChecks();
   if (!check.allowed) {
     logger.info(`[HERMES] Ciclo skipped: ${check.reason}`);
     return { skipped: true, reason: check.reason, cycle_id: cycleId };
   }
 
-  // Fase 2 — generar proposal
   const proposal = await generateProposal(cycleId);
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -193,7 +185,7 @@ async function runHermesAgent() {
 }
 
 /**
- * Approval flow — usuario aprueba via dashboard.
+ * Approval flow.
  */
 async function approveProposal(proposalId, approvedBy = 'user') {
   const proposal = await HermesProposal.findById(proposalId);
@@ -207,18 +199,15 @@ async function approveProposal(proposalId, approvedBy = 'user') {
 
   logger.info(`[HERMES] Proposal ${proposalId} aprobado por ${approvedBy}`);
 
-  // En modo manual_approval, el usuario sube manualmente a Meta después
-  // En modo auto (Fase 2), acá disparamos la subida automática
   if (config.hermes.mode === 'auto') {
-    // TODO Fase 2: uploadProposalToMeta(proposal)
-    logger.info(`[HERMES] Mode=auto detected — auto-upload no implementado todavía (Fase 2)`);
+    logger.info(`[HERMES] Mode=auto — auto-upload no implementado todavía (Fase 2)`);
   }
 
   return proposal;
 }
 
 /**
- * Reject flow — usuario rechaza desde dashboard con razón.
+ * Reject flow.
  */
 async function rejectProposal(proposalId, reason = '', rejectedBy = 'user') {
   const proposal = await HermesProposal.findById(proposalId);

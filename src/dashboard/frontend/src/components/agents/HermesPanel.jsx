@@ -604,7 +604,7 @@ export default function HermesPanel() {
       {/* Stats strip */}
       {stats && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
-          <StatCard label="Fotos en banco" value={stats.photos?.total} subtitle={`${stats.photos?.active} activas`} />
+          <StatCard label="Ofertas activas" value="3" subtitle="free · bigdill · mystery" />
           <StatCard label="Pending approval" value={stats.proposals?.pending} highlight={stats.proposals?.pending > 0} />
           <StatCard label="Ads live" value={stats.proposals?.live} />
           <StatCard
@@ -618,7 +618,6 @@ export default function HermesPanel() {
       <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid #334155' }}>
         {[
           { id: 'proposals', label: '📋 Proposals' },
-          { id: 'photos', label: '📸 Photo Bank' },
           { id: 'visits', label: '🚪 Store Visits' }
         ].map(t => (
           <button
@@ -639,7 +638,6 @@ export default function HermesPanel() {
       </div>
 
       {tab === 'proposals' && <ProposalsTab />}
-      {tab === 'photos' && <PhotoBankTab />}
       {tab === 'visits' && <VisitsTab />}
     </div>
   );
