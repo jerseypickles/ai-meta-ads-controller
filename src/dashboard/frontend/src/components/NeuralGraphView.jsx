@@ -621,7 +621,7 @@ export default function NeuralGraphView({ onAgentClick }) {
 
   const handleClick = useCallback((node) => {
     if (!node) return;
-    if (onAgentClick && ['zeus', 'athena', 'apollo', 'prometheus', 'ares', 'demeter'].includes(node.id)) {
+    if (onAgentClick && ['zeus', 'athena', 'apollo', 'prometheus', 'ares', 'demeter', 'hermes'].includes(node.id)) {
       onAgentClick(node.id);
     }
   }, [onAgentClick]);
