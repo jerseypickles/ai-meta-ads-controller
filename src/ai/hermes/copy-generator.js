@@ -106,7 +106,7 @@ Generá el JSON con los 3 fields. Responde SOLO con el JSON.`;
 
   try {
     const response = await claude.messages.create({
-      model: 'claude-sonnet-4-6-20250514',
+      model: config.claude.model || 'claude-sonnet-4-6',
       max_tokens: 1200,
       system: [
         { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }
