@@ -14,8 +14,10 @@ const mongoose = require('mongoose');
  *   expired    — generado pero nunca aprobado en 72h → auto-expire
  */
 const hermesProposalSchema = new mongoose.Schema({
-  // Source asset
-  photo_asset_id: { type: mongoose.Schema.Types.ObjectId, ref: 'HermesPhotoAsset', required: true, index: true },
+  // Source asset — opcional desde el redesign 12-may-2026 (Hermes ahora
+  // es 100% generative con gpt-image-2). Queda en el schema por
+  // backwards-compat con proposals antiguas que tenían foto base.
+  photo_asset_id: { type: mongoose.Schema.Types.ObjectId, ref: 'HermesPhotoAsset', default: null, index: true },
 
   // Composed image (foto base + text overlay)
   composed_image_base64: { type: String, default: '' },  // El ad final listo para Meta
