@@ -285,7 +285,7 @@ function ProposalsTab() {
     try {
       // Timeout 3 min — gpt-image-2 high quality puede tardar 60-90s,
       // sumado al brief de Claude (~10s) total puede llegar a ~100s
-      const { data } = await api.post('/api/hermes/trigger-cycle', null, { timeout: 180000 });
+      const { data } = await api.post('/api/hermes/trigger-cycle', {}, { timeout: 180000 });
       if (data.skipped) alert(`Skipped: ${data.reason}`);
       else if (data.generated) alert(`Proposal generado: ${data.offer_type}`);
       await fetchProposals();
