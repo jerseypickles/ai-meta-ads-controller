@@ -42,6 +42,7 @@ export default function NeuralGraphView({ onAgentClick }) {
   const containerRef = useRef(null);
   const [status, setStatus] = useState(null);
   const [demeter, setDemeter] = useState(null);
+  const [hermes, setHermes] = useState(null);
   const [hoverNode, setHoverNode] = useState(null);
   const [hoverLinks, setHoverLinks] = useState(new Set());
   const [hoverNeighbors, setHoverNeighbors] = useState(new Set());
@@ -51,7 +52,8 @@ export default function NeuralGraphView({ onAgentClick }) {
   useEffect(() => {
     loadStatus();
     loadDemeter();
-    const t = setInterval(() => { loadStatus(); loadDemeter(); }, 30000);
+    loadHermes();
+    const t = setInterval(() => { loadStatus(); loadDemeter(); loadHermes(); }, 30000);
     return () => clearInterval(t);
   }, []);
 
@@ -70,6 +72,15 @@ export default function NeuralGraphView({ onAgentClick }) {
       });
     } catch {
       setDemeter({ count: 0, error: true });
+    }
+  }
+
+  async function loadHermes() {
+    try {
+      const res = await api.get('/api/hermes/stats?days=30');
+      setHermes(res.data);
+    } catch {
+      setHermes({ photos: { total: 0 }, proposals: { pending: 0 }, visits: { by_offer: [] }, config: { enabled: false }, error: true });
     }
   }
 
@@ -232,9 +243,42 @@ export default function NeuralGraphView({ onAgentClick }) {
       color: AGENT_COLORS.demeter, icon: AGENT_ICONS.demeter
     });
 
+    // ─── HERMES — agente activo (foot traffic NJ store) ───────────────────
+    // Métrica primaria: pending approvals (lo accionable) → visits 30d → fotos
+    const hermesEnabled = hermes?.config?.enabled || false;
+    const hermesPending = hermes?.proposals?.pending || 0;
+    const hermesPhotos = hermes?.photos?.active || 0;
+    const hermesVisits = (hermes?.visits?.by_offer || []).reduce((s, o) => s + (o.count || 0), 0);
+
+    let hermesMetric, hermesMetricLabel, hermesStatus;
+    if (!hermesEnabled) {
+      hermesMetric = '○';
+      hermesMetricLabel = 'disabled';
+      hermesStatus = 'paused';
+    } else if (hermesPending > 0) {
+      hermesMetric = `${hermesPending}`;
+      hermesMetricLabel = 'pending approval';
+      hermesStatus = 'running';
+    } else if (hermesVisits > 0) {
+      hermesMetric = `${hermesVisits}`;
+      hermesMetricLabel = 'visits 30d';
+      hermesStatus = 'running';
+    } else {
+      hermesMetric = `${hermesPhotos}`;
+      hermesMetricLabel = hermesPhotos > 0 ? 'fotos en banco' : 'sin fotos';
+      hermesStatus = 'idle';
+    }
+
+    nodes.push({
+      id: 'hermes', group: 'hermes', tier: 1, size: 13,
+      label: 'HERMES', sub: 'NJ Store',
+      metric: hermesMetric, metricLabel: hermesMetricLabel,
+      status: hermesStatus,
+      color: AGENT_COLORS.hermes, icon: AGENT_ICONS.hermes
+    });
+
     // ─── PLANNED AGENTS (coming soon — ghosted) ───────────────────────────
     const plannedAgents = [
-      { id: 'hermes', label: 'HERMES', sub: 'Comms · Slack', color: AGENT_COLORS.hermes, icon: AGENT_ICONS.hermes },
       { id: 'artemis', label: 'ARTEMIS', sub: 'Audiences · LAL', color: AGENT_COLORS.artemis, icon: AGENT_ICONS.artemis },
       { id: 'hefesto', label: 'HEFESTO', sub: 'Infra · Deploys', color: AGENT_COLORS.hefesto, icon: AGENT_ICONS.hefesto }
     ];
@@ -275,7 +319,10 @@ export default function NeuralGraphView({ onAgentClick }) {
       // Demeter — agente activo (cash reconciliation)
       { source: 'zeus', target: 'demeter', kind: 'primary', active: demeterCount > 0 },
       { source: 'athena', target: 'demeter', kind: 'workflow', active: demeterCount > 0 },
-      { source: 'ares', target: 'demeter', kind: 'workflow', active: demeterCount > 0 }
+      { source: 'ares', target: 'demeter', kind: 'workflow', active: demeterCount > 0 },
+
+      // Hermes — agente activo (foot traffic NJ store, separado del flujo online)
+      { source: 'zeus', target: 'hermes', kind: 'primary', active: hermesEnabled }
     ];
 
     // Planned agent links — Zeus como hub también de los futuros
