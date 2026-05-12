@@ -347,4 +347,60 @@ router.post('/trigger-cycle', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/hermes/lookup-ids — auto-detecta Facebook Page ID + Instagram Business ID
+ * usando el Meta access token ya configurado. Útil para setup inicial sin tener
+ * que ir a Graph API Explorer manualmente.
+ *
+ * Devuelve los IDs + valores listos para copy-paste en env vars de Render.
+ */
+router.get('/lookup-ids', async (req, res) => {
+  try {
+    const { getMetaClient } = require('../../meta/client');
+    const meta = getMetaClient();
+
+    // Page ID — usa el helper que ya existe (extrae de ads)
+    const pageId = await meta.getPageId();
+    if (!pageId) {
+      return res.status(404).json({
+        error: 'No se pudo detectar Page ID. Asegúrate de tener al menos 1 ad creado en Meta Ads Manager.'
+      });
+    }
+
+    // Page info + Instagram business account (1 call con field expansion)
+    const pageInfo = await meta.get(`/${pageId}`, {
+      fields: 'id,name,category,link,instagram_business_account{id,username,name}'
+    });
+
+    const igAccount = pageInfo.instagram_business_account || null;
+
+    res.json({
+      facebook: {
+        page_id: pageInfo.id,
+        page_name: pageInfo.name,
+        category: pageInfo.category,
+        url: pageInfo.link
+      },
+      instagram: igAccount ? {
+        business_id: igAccount.id,
+        username: igAccount.username,
+        name: igAccount.name
+      } : null,
+      env_vars_for_render: {
+        HERMES_FACEBOOK_PAGE_ID: pageInfo.id,
+        HERMES_INSTAGRAM_ID: igAccount?.id || '(no Instagram Business linked — link in Meta Business Settings)'
+      },
+      hint: igAccount
+        ? '✅ Both IDs found. Copy the env_vars_for_render to Render dashboard env settings.'
+        : '⚠️ Instagram not linked to this Page. Go to Meta Business Settings → Instagram Accounts → link @jerseypickles.'
+    });
+  } catch (err) {
+    const metaError = err.response?.data?.error;
+    res.status(500).json({
+      error: metaError?.message || err.message,
+      meta_error_code: metaError?.code
+    });
+  }
+});
+
 module.exports = router;
