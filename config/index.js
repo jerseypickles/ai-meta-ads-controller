@@ -47,6 +47,33 @@ module.exports = {
     maxTokens: 4096
   },
 
+  // ═══ Hermes — agente de foot traffic para tienda física NJ ═══
+  // Tienda en 9 Romanelli Ave, South Hackensack NJ 07606. Maneja la campaña
+  // local desde día 1 con modo manual_approval (usuario aprueba en dashboard).
+  // Cuando esté validado, switch a HERMES_MODE=auto para autonomía completa.
+  hermes: {
+    enabled: process.env.HERMES_ENABLED === 'true',
+    mode: process.env.HERMES_MODE || 'manual_approval', // manual_approval | auto
+    warehouseAddress: process.env.HERMES_WAREHOUSE_ADDRESS || '9 Romanelli Ave, South Hackensack, NJ 07606',
+    addressShort: process.env.HERMES_ADDRESS_SHORT || '9 Romanelli Ave · South Hackensack NJ',
+    brandSince: process.env.HERMES_BRAND_SINCE || '2014',
+    targetingRadiusMi: parseInt(process.env.HERMES_TARGETING_RADIUS_MI) || 10,
+    // Page IDs Meta (necesarios para auto-publish en Fase 2 — pendiente de pasarlos)
+    facebookPageUrl: process.env.HERMES_FACEBOOK_URL || 'https://www.facebook.com/picklesjersey',
+    facebookPageId: process.env.HERMES_FACEBOOK_PAGE_ID || '',
+    instagramUrl: process.env.HERMES_INSTAGRAM_URL || 'https://www.instagram.com/jerseypickles/',
+    instagramId: process.env.HERMES_INSTAGRAM_ID || '',
+    // Google Maps CTA — destination del Get Directions
+    googleMapsUrl: process.env.HERMES_GOOGLE_MAPS_URL || 'https://maps.google.com/?q=9+Romanelli+Ave,+South+Hackensack+NJ+07606',
+    // Budget caps (solo aplican cuando mode=auto en Fase 2+)
+    initialDailyBudget: parseInt(process.env.HERMES_INITIAL_BUDGET) || 45,
+    maxDailyBudget: parseInt(process.env.HERMES_MAX_DAILY_BUDGET) || 100,
+    minDailyBudget: parseInt(process.env.HERMES_MIN_DAILY_BUDGET) || 20,
+    // Operacional
+    maxActiveAds: parseInt(process.env.HERMES_MAX_ACTIVE_ADS) || 5,
+    proposalExpiryHours: parseInt(process.env.HERMES_PROPOSAL_EXPIRY_HOURS) || 72
+  },
+
   googleAI: {
     apiKey: process.env.GOOGLE_AI_API_KEY || ''
   },

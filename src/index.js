@@ -861,6 +861,48 @@ async function jobCreativeHousekeeping() {
 }
 
 /**
+ * Job: Hermes Agent — 2x/día (9am, 3pm ET).
+ * Genera ads para foot traffic de la tienda física NJ (9 Romanelli Ave,
+ * South Hackensack). En modo manual_approval (default) crea HermesProposal
+ * con status=pending — el usuario aprueba en dashboard y sube manual a Meta.
+ *
+ * NO comparte gates con Apollo (Apollo es online/nacional, Hermes es local NJ).
+ * NO se pausa por warehouse throttle (foot traffic es independiente de spend Meta).
+ */
+async function jobHermesAgent() {
+  if (!config.hermes?.enabled) return;
+  try {
+    const { runHermesAgent } = require('./ai/agent/hermes-agent');
+    const result = await runHermesAgent();
+    if (result.generated > 0) {
+      logger.info(`[CRON] Hermes Agent: 1 proposal generado (offer=${result.offer_type}, ${result.elapsed})`);
+    } else if (result.skipped) {
+      logger.debug(`[CRON] Hermes Agent skipped: ${result.reason}`);
+    }
+  } catch (error) {
+    logger.error('[CRON] Error en Hermes Agent:', error);
+  }
+}
+
+/**
+ * Job: Hermes Housekeeping — diario 3:30am ET.
+ * Expira proposals pending +72h (configurable). Corre independiente del
+ * agente Hermes, igual que Creative Housekeeping.
+ */
+async function jobHermesHousekeeping() {
+  if (!config.hermes?.enabled) return;
+  try {
+    const { runHermesHousekeeping } = require('./ai/agent/hermes-agent');
+    const result = await runHermesHousekeeping();
+    if (result.expired > 0) {
+      logger.info(`[CRON] Hermes Housekeeping: ${result.expired} proposals expiradas`);
+    }
+  } catch (error) {
+    logger.error('[CRON] Error en Hermes Housekeeping:', error);
+  }
+}
+
+/**
  * Job: AI Ops Metrics Refresh — 24/7 con frecuencia adaptativa.
  * Horas activas: cada 15 min (Meta refresca insights cada ~15 min).
  * Fuera de horas: cada 30 min (mantener datos razonablemente frescos).
@@ -1358,6 +1400,22 @@ function initCronJobs() {
     name: 'creative-agent'
   });
   logger.info('  [*] Creative Agent — 3x/día: 8am, 2pm, 8pm ET');
+
+  // Hermes Agent — 2x/día (9am, 3pm ET) — foot traffic NJ store
+  // Solo registra el cron si HERMES_ENABLED=true (la función jobHermesAgent
+  // chequea internamente y skipea si está disabled).
+  cron.schedule('0 9,15 * * *', jobHermesAgent, {
+    timezone: TIMEZONE,
+    name: 'hermes-agent'
+  });
+  logger.info(`  [*] Hermes Agent — 2x/día: 9am, 3pm ET ${config.hermes?.enabled ? '(ENABLED)' : '(disabled — set HERMES_ENABLED=true)'}`);
+
+  // Hermes Housekeeping — diario 3:30am ET, expira proposals pending +72h
+  cron.schedule('30 3 * * *', jobHermesHousekeeping, {
+    timezone: TIMEZONE,
+    name: 'hermes-housekeeping'
+  });
+  logger.info('  [*] Hermes Housekeeping — diario 3:30am ET');
 
   // Testing Agent — 5x/día durante horas activas (6am, 10am, 2pm, 6pm, 10pm ET)
   cron.schedule('30 6,10,14,18,22 * * *', jobTestingAgent, {

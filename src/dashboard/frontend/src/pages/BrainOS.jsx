@@ -12,6 +12,7 @@ import ApolloPanel from '../components/agents/ApolloPanel';
 import PrometheusPanel from '../components/agents/PrometheusPanel';
 import AresPanel from '../components/agents/AresPanel';
 import DemeterPanel from '../components/agents/DemeterPanel';
+import HermesPanel from '../components/agents/HermesPanel';
 
 export default function BrainOS() {
   const [selectedAgent, setSelectedAgent] = useState(null);
@@ -46,7 +47,7 @@ export default function BrainOS() {
       };
 
       const targetAgent = agentMap[kind];
-      if (targetAgent && ['zeus', 'athena', 'apollo', 'prometheus', 'ares', 'demeter'].includes(targetAgent)) {
+      if (targetAgent && ['zeus', 'athena', 'apollo', 'prometheus', 'ares', 'demeter', 'hermes'].includes(targetAgent)) {
         setSelectedAgent(targetAgent);
         if (id) setFocusRequest({ kind, id, ts: Date.now() });
       }
@@ -147,7 +148,8 @@ function AgentDetailPanel({ agent, focusRequest, onClose, onFocused }) {
     apollo: <ApolloPanel />,
     prometheus: <PrometheusPanel />,
     ares: <AresPanel />,
-    demeter: <DemeterPanel />
+    demeter: <DemeterPanel />,
+    hermes: <HermesPanel />
   };
 
   return (

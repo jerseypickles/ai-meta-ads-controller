@@ -14,25 +14,26 @@ const AGENT_COLORS = {
   apollo: '#fbbf24',     // amber-400 — Creator
   prometheus: '#f87171', // red-400 — Testing
   ares: '#a78bfa',       // violet-400 — Portfolio
+  hermes: '#f59e0b',      // amber-500 — Foot traffic NJ store
+  demeter: '#14b8a6',    // teal-500 — Cash reconciliation
   satellite: '#94a3b8',  // slate-400 — sub-nodes
   cbo: '#c084fc',        // purple-400 — CBOs (Ares children)
   directive: '#38bdf8',  // sky-400 — directives
 
   // ─── Planned / coming soon ───
-  hermes: '#06b6d4',     // cyan-500 — Comms/Ops (Slack, alerts)
   artemis: '#ec4899',    // pink-500 — Audiences (lookalike, custom)
   hefesto: '#f97316',    // orange-500 — Platform Eng (infra, deploys)
-  demeter: '#14b8a6',    // teal-500 — Analytics (LTV, reports)
   planned: '#475569'     // slate-600 — fallback para planned features
 };
 
 const AGENT_ICONS = {
   zeus: '⚡', athena: '🦉', apollo: '☀️',
   prometheus: '🔥', ares: '⚔️',
+  hermes: '🏪', demeter: '✿',
   cbo: '◎', test: '⚗', directive: '▣', pool: '✦',
 
   // Planned
-  hermes: '✉', artemis: '☽', hefesto: '⚒', demeter: '✿',
+  artemis: '☽', hefesto: '⚒',
   video: '▶', audio: '♪', crossplatform: '⊛', memory: '◈'
 };
 

@@ -144,6 +144,7 @@ app.use('/api/zeus', zeusRoutes);
 app.use('/api/zeus', zeusChatRoutes);
 app.use('/api/ares', aresRoutes);
 app.use('/api/demeter', require('./routes/demeter'));
+app.use('/api/hermes', require('./routes/hermes'));
 app.use('/api/system/warehouse-throttle', require('./routes/warehouse-throttle'));
 app.use('/api/system/tribe-validation', require('./routes/tribe-validation'));
 
