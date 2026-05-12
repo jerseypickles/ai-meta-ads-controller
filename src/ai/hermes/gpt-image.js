@@ -23,7 +23,11 @@ const OpenAI = require('openai');
 const config = require('../../../config');
 const logger = require('../../utils/logger');
 
-const openai = new OpenAI({ apiKey: config.imageGen?.openai?.apiKey || process.env.OPENAI_API_KEY });
+const openai = new OpenAI({
+  apiKey: config.imageGen?.openai?.apiKey || process.env.OPENAI_API_KEY,
+  timeout: 180 * 1000,   // 3 min — gpt-image-2 high quality puede tardar 60-90s
+  maxRetries: 0          // retry lo manejamos nosotros con backoff custom
+});
 
 const MODEL = 'gpt-image-2';
 const DEFAULT_SIZE = '1024x1536';     // portrait — mejor ratio para Meta feed/stories

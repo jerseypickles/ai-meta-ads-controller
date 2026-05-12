@@ -283,12 +283,22 @@ function ProposalsTab() {
   async function triggerCycle() {
     setTriggering(true);
     try {
-      const { data } = await api.post('/api/hermes/trigger-cycle');
+      // Timeout 3 min — gpt-image-2 high quality puede tardar 60-90s,
+      // sumado al brief de Claude (~10s) total puede llegar a ~100s
+      const { data } = await api.post('/api/hermes/trigger-cycle', null, { timeout: 180000 });
       if (data.skipped) alert(`Skipped: ${data.reason}`);
       else if (data.generated) alert(`Proposal generado: ${data.offer_type}`);
       await fetchProposals();
     } catch (err) {
-      alert(`Error: ${err.response?.data?.error || err.message}`);
+      // Si fue timeout del axios cliente, el backend probablemente sigue
+      // generando. Refrescamos la lista igual para mostrar cuando aparezca.
+      const isTimeout = err.code === 'ECONNABORTED' || /timeout/i.test(err.message);
+      if (isTimeout) {
+        alert('Generación en progreso (>3min). Refrescá en 1-2 minutos para ver el proposal.');
+        await fetchProposals();
+      } else {
+        alert(`Error: ${err.response?.data?.error || err.message}`);
+      }
     } finally {
       setTriggering(false);
     }
