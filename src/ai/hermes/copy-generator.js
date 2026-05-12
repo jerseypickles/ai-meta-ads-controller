@@ -40,26 +40,63 @@ EJEMPLOS DE VOZ CORRECTA:
 - "Mystery Pickle Tuesday" / "One new flavor every Tuesday. We pick. You taste. No spoilers."
 
 GUÍA PARA image_prompt (CRÍTICO):
-El prompt va a gpt-image-2, modelo de OpenAI con capacidad real de generar text dentro de imágenes. ESCRIBIR EN INGLÉS. Estructura:
+El prompt va a gpt-image-2, modelo de OpenAI con capacidad real de generar text dentro de imágenes. ESCRIBIR EN INGLÉS.
 
-1. **Scene** (donde transcurre): la ubicación NJ-local que se pasa como context.
-2. **Hero subject** (qué se muestra): pickle/olives in context — be specific (a hand holding a dripping pickle, an overstuffed sandwich with pickles spilling out, an olive in a martini glass, etc.). Real photography style, NOT illustration.
-3. **Composition + lighting**: photorealistic ad style, warm cinematic lighting, professional food photography, shallow depth of field, vibrant colors, mouth-watering, magazine-quality.
-4. **Text overlay** (this is KEY for gpt-image-2): explicit instruction with EXACT TEXT:
-   Example: 'Text overlay in bold sans-serif: "FREE PICKLE ON YOUR 1ST VISIT" at the bottom in white on dark red strip. Below in smaller text: "JERSEY PICKLES · 9 ROMANELLI AVE · SOUTH HACKENSACK NJ"'
-5. **Brand cue** (sutil): "small Jersey Pickles logo or text watermark in corner". Don't overdo it.
-6. **Negative space**: avoid mention of competitor brands, no humans' faces in detail (privacy), no real celebrities.
+REGLA #1 — EL PICKLE/OLIVA ES EL HÉROE ABSOLUTO DEL SHOT:
+NUNCA poner sándwich, carnes, o otros elementos compitiendo por atención.
+El pickle/oliva debe ocupar 40-70% del frame visual. El scene NJ-local
+es contexto secundario (background blurred, props mínimos).
+
+Buenos hero shots (ejemplos):
+- A single glossy dill pickle held vertically with brine dripping down,
+  beads of liquid visible, vibrant green skin reflecting warm light,
+  shallow depth of field, background blurred to suggest a NJ deli
+- Macro close-up of pickle being bitten, crisp crunch frozen, drops of
+  brine flying, ultra-sharp focus on the pickle
+- A pickle popsicle on a wooden stick, chamoy sauce dripping down its
+  length, hand holding the stick from below
+- Hand reaching into a glass pickle jar, single pickle being pulled out
+  with brine streaming, jar still partially visible
+- Three olives on a toothpick over a martini, oil droplets glistening
+- Cross-section of a half-cut pickle showing crisp wet interior detail
+
+Malos hero shots (NO USAR):
+- Overstuffed sandwich where pickle is one ingredient among many
+- Charcuterie board where pickles compete with cheese/meats
+- Top-down flat lay with multiple products
+- Pickle floating without context or interaction
+
+ESTRUCTURA DEL PROMPT (en este orden):
+1. **Hero composition** (40-60 palabras): el pickle/oliva como protagonist
+   absoluto, con angle dinámico (close-up macro, drip frozen in motion,
+   hand interaction, cross-section). Describí texture, color, moisture.
+2. **Background context** (15-25 palabras): el scene NJ-local como
+   atmósfera BLURRED/out-of-focus. Solo sugerir el setting, no detallar.
+3. **Lighting + style** (10-20 palabras): warm cinematic lighting,
+   professional food photography, shallow depth of field, magazine
+   quality, hyper-realistic NOT illustration.
+4. **Text overlay** (THE KEY for gpt-image-2): explicit con exact text:
+   Example: 'Text overlay in bold sans-serif at the bottom: "FREE PICKLE
+   ON YOUR 1ST VISIT" in white on dark red banner strip. Below in
+   smaller text: "JERSEY PICKLES · 9 ROMANELLI AVE · SOUTH HACKENSACK NJ"'
+5. **EXPLICIT EXCLUSIONS** (CRÍTICO): SIEMPRE incluir literalmente:
+   "Do NOT generate any logo, brand watermark, or fictional brand emblem
+   in the image. Do NOT show real human faces. Do NOT include competitor
+   brand names. No comic illustration style."
 
 ESTÉTICA REFERENCIA — APUNTAR A LOOK COMO:
-- Halal Guys ads: warm lighting + hands interacting + text overlay clean
-- Big Dill Chamoy estilo: vibrant background color (yellow/red), product as hero, bold typography
-- Modern food brands con confianza visual (No corporate stock photo look)
+- Big Dill Chamoy hero shot: vibrant background, product as ONLY hero,
+  bold typography, drip/motion frozen, hand interaction
+- High-end food magazine covers (Bon Appétit, Cherry Bombe)
+- Modern food brand ads where ONE product dominates the frame
 
 ESTILO A EVITAR:
+- Sandwich-as-hero shots con pickles secundarios (HAPPENED before, fix)
 - AI-looking renders (too perfect, plastic skin, generic stock)
-- Crowded compositions
+- Crowded compositions con multi-product
+- Top-down flat lay genérico
 - Comic-book illustration style
-- Too many text elements (max 2-3 lines of overlay)
+- Cualquier logo, badge circular, o text emblem inventado en la imagen
 
 REGLAS:
 - Headline: 30-40 chars. Hook fuerte, sin emoji.
