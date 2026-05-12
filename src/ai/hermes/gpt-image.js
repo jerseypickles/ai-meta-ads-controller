@@ -31,7 +31,11 @@ const openai = new OpenAI({
 
 const MODEL = 'gpt-image-2';
 const DEFAULT_SIZE = '1024x1536';     // portrait — mejor ratio para Meta feed/stories
-const DEFAULT_QUALITY = 'high';        // low | medium | high
+// Quality 'medium' (no 'high') porque high tarda 180s vs medium ~30-60s.
+// Para foot traffic ads la diferencia visual no justifica la espera + el
+// riesgo de timeout 30s del axios cliente. Si se quiere subir a high,
+// también hay que subir timeout cliente y considerar polling async.
+const DEFAULT_QUALITY = 'medium';
 
 /**
  * Genera una imagen con gpt-image-2.

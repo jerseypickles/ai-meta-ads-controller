@@ -109,12 +109,16 @@ async function generateProposal(cycleId) {
     return null;
   }
 
-  // 5. gpt-image-2 genera la imagen con el image_prompt
+  // 5. gpt-image-2 genera la imagen con el image_prompt.
+  // Quality 'medium' (~30-60s) en lugar de 'high' (~180s) por:
+  //   - Evita timeout del axios cliente (180s)
+  //   - Reduce ventana donde un deploy pueda matar el ciclo mid-flight
+  //   - Para foot traffic ads la diferencia visual no justifica la espera
   let imageResult;
   try {
     imageResult = await generateImage(brief.image_prompt, {
       size: '1024x1536',     // portrait para feed Meta
-      quality: 'high'
+      quality: 'medium'
     });
   } catch (err) {
     logger.error(`[HERMES] Image generation failed: ${err.message}`);
