@@ -81,7 +81,8 @@ const QUERY_TOKEN_ASSET_PATHS = [
   '/testing-agent/tests/',  // /testing-agent/tests/:id/image
   '/creative-agent/',       // /creative-agent/proposals/:id/image + products
   '/creatives/',            // futuros endpoints de preview
-  '/ai-creations/'
+  '/ai-creations/',
+  '/hermes/'                // /hermes/photos/:id/image + /hermes/proposals/:id/image
 ];
 
 function isSSEPath(pathname) {

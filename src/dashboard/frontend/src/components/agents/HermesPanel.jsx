@@ -203,7 +203,7 @@ function PhotoBankTab() {
               opacity: p.active ? 1 : 0.5
             }}>
               <img
-                src={`${api.defaults.baseURL}/api/hermes/photos/${p._id}/image`}
+                src={`${api.defaults.baseURL}/api/hermes/photos/${p._id}/image?token=${localStorage.getItem('auth_token') || ''}`}
                 alt={p.filename}
                 style={{ width: '100%', height: 160, objectFit: 'cover', display: 'block' }}
               />
@@ -339,7 +339,7 @@ function ProposalsTab() {
               overflow: 'hidden'
             }}>
               <img
-                src={`${api.defaults.baseURL}/api/hermes/proposals/${p._id}/image`}
+                src={`${api.defaults.baseURL}/api/hermes/proposals/${p._id}/image?token=${localStorage.getItem('auth_token') || ''}`}
                 alt="composed ad"
                 style={{ width: '100%', display: 'block', background: '#000' }}
               />
