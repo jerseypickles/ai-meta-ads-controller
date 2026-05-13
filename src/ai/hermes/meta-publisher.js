@@ -210,21 +210,54 @@ async function publishProposalToMeta(proposalId) {
     try { fs.unlinkSync(tmpPath); } catch (_) {}
   }
 
-  // 4. Crear ad creative con CTA GET_DIRECTIONS al Google Maps
+  // 4. Crear ad creative MANUAL (sin helper genérico) para tener control
+  // total: NO usa instagram_user_id default hardcoded, NO aplica advantage+
+  // features global, NO añade campos que pueden romper OUTCOME_TRAFFIC.
   const linkUrl = config.hermes.googleMapsUrl || `https://maps.google.com/?q=${encodeURIComponent(config.hermes.warehouseAddress)}`;
 
-  const creativeParams = {
-    page_id: pageId,
+  const linkData = {
+    message: proposal.primary_text || '',
+    link: linkUrl,
+    name: proposal.headline || '',
     image_hash: imageHash,
-    headline: proposal.headline,
-    body: proposal.primary_text,
-    description: proposal.offer_details?.description || '',
-    cta: proposal.cta_button || 'GET_DIRECTIONS',
-    link_url: linkUrl
+    call_to_action: {
+      type: proposal.cta_button || 'GET_DIRECTIONS',
+      value: { link: linkUrl }
+    }
   };
-  if (instagramId) creativeParams.instagram_user_id = instagramId;
 
-  const creative = await meta.createAdCreative(creativeParams);
+  const objectStorySpec = { page_id: pageId, link_data: linkData };
+  if (instagramId) objectStorySpec.instagram_user_id = instagramId;
+
+  const creativeParams = {
+    name: `[Hermes] Creative · ${proposal.offer_details?.title || proposal.offer_type} · ${new Date().toISOString().split('T')[0]}`,
+    object_story_spec: JSON.stringify(objectStorySpec)
+  };
+
+  logger.info(`[HERMES-PUBLISHER] Creando creative directo (page=${pageId}, ig=${instagramId || 'none'}, cta=${proposal.cta_button || 'GET_DIRECTIONS'})`);
+  let creativeResult;
+  try {
+    creativeResult = await meta.post(`/${meta.adAccountId}/adcreatives`, creativeParams);
+  } catch (err) {
+    const metaError = err.response?.data?.error;
+    const fullError = metaError ? {
+      message: metaError.message,
+      code: metaError.code,
+      type: metaError.type,
+      error_subcode: metaError.error_subcode,
+      error_user_title: metaError.error_user_title,
+      error_user_msg: metaError.error_user_msg,
+      error_data: metaError.error_data,
+      fbtrace_id: metaError.fbtrace_id
+    } : { raw: err.message };
+    logger.error(`[HERMES-PUBLISHER] Creative creation failed — full error: ${JSON.stringify(fullError)}`);
+    const detail = metaError?.error_user_msg ||
+                  (metaError?.message + (metaError?.error_subcode ? ` (subcode ${metaError.error_subcode})` : '')) ||
+                  err.message;
+    throw new Error(`Meta API error al crear creative: ${detail}`);
+  }
+
+  const creative = { creative_id: creativeResult.id };
   logger.info(`[HERMES-PUBLISHER] Creative creado: ${creative.creative_id}`);
 
   // 5. Crear ad — PAUSED por seguridad si la campaign acaba de ser creada,
