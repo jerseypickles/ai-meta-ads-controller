@@ -1004,7 +1004,7 @@ async function handlePauseAdSet(input, ctx) {
   const healthyAdSets = allSnapshots.filter(s =>
     s.status === 'ACTIVE'
     && s.entity_id !== adset_id
-    && !['[TEST]', 'AI -', 'AMAZON', '[Ares]'].some(ex => (s.entity_name || '').toUpperCase().includes(ex.toUpperCase()))
+    && !['[TEST]', 'AI -', 'AMAZON', '[Ares]', '[HERMES]', '[Hermes]'].some(ex => (s.entity_name || '').toUpperCase().includes(ex.toUpperCase()))
     && (s.metrics?.last_7d?.roas || 0) >= 2.0
   );
   if (healthyAdSets.length < 10) {
@@ -1227,7 +1227,7 @@ async function runAccountAgent() {
 
   // Get ALL active ad set snapshots
   const allSnapshots = await getLatestSnapshots('adset');
-  const activeAdSets = allSnapshots.filter(s => s.status === 'ACTIVE' && !(s.entity_name || '').startsWith('[TEST]') && !(s.entity_name || '').startsWith('[Ares]'));
+  const activeAdSets = allSnapshots.filter(s => s.status === 'ACTIVE' && !(s.entity_name || '').startsWith('[TEST]') && !(s.entity_name || '').startsWith('[Ares]') && !(s.entity_name || '').startsWith('[HERMES]') && !(s.entity_name || '').startsWith('[Hermes]'));
 
   if (activeAdSets.length === 0) {
     logger.info('[ACCOUNT-AGENT] No active ad sets found');
@@ -1462,7 +1462,7 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
   }
 
   // ═══ PRE-CHECK: Excluded ad sets (traffic campaigns, manual-only) ═══
-  const excludePatterns = ['DONT TOUCH', 'DONT_TOUCH', 'NO TOCAR', 'EXCLUDE', 'MANUAL ONLY', '[TEST]', '[ARES]'];
+  const excludePatterns = ['DONT TOUCH', 'DONT_TOUCH', 'NO TOCAR', 'EXCLUDE', 'MANUAL ONLY', '[TEST]', '[ARES]', '[HERMES]'];
   if (excludePatterns.some(p => (adSetName || '').toUpperCase().includes(p))) {
     logger.debug(`[ACCOUNT-AGENT] ${adSetName}: excluded by name pattern — skip`);
     return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: 'Excluded by name' };

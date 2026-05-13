@@ -319,8 +319,14 @@ async function analyzeAllCBOs() {
 
   // Filtrar CBOs + excluir stale (snapshots congelados de campañas que Meta
   // ya no reporta — archivadas/eliminadas pero quedaron en DB)
+  // También excluir campañas namespace-owned por otros agentes: [HERMES] tiene
+  // su propia campaign de foot traffic NJ que NO debe ser gestionada por Ares.
   const staleThreshold = Date.now() - STALE_THRESHOLD_HOURS * 3600000;
-  const allCBOs = campaigns.filter(isCBO);
+  const otherAgentNamespaces = ['[HERMES]', '[Hermes]', '[TEST]'];
+  const allCBOs = campaigns.filter(isCBO).filter(c => {
+    const name = c.entity_name || '';
+    return !otherAgentNamespaces.some(ns => name.includes(ns));
+  });
   const cbos = allCBOs.filter(c => {
     const snapTime = new Date(c.snapshot_at).getTime();
     return snapTime > staleThreshold;

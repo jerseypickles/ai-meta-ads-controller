@@ -29,7 +29,9 @@ const MAX_DUPLICATES_PER_CYCLE = 3;
 const FAST_TRACK_DISABLED = true;
 
 // Patrones a excluir de duplicacion
-const EXCLUDE_PATTERNS = ['[TEST]', 'AI -', 'AMAZON', 'DONT TOUCH', 'DONT_TOUCH', 'EXCLUDE', 'MANUAL ONLY'];
+// [HERMES] excluido porque tiene su propia campaign (foot traffic NJ store) que
+// Ares NO debe tocar — cada agente solo gestiona sus campañas.
+const EXCLUDE_PATTERNS = ['[TEST]', 'AI -', 'AMAZON', 'DONT TOUCH', 'DONT_TOUCH', 'EXCLUDE', 'MANUAL ONLY', '[HERMES]', '[Hermes]'];
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // HELPERS
