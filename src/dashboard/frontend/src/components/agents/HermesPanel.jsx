@@ -270,8 +270,20 @@ function ProposalsTab() {
   useEffect(() => { fetchProposals(); }, [filter]);
 
   async function approve(p) {
-    await api.post(`/api/hermes/proposals/${p._id}/approve`);
-    fetchProposals();
+    try {
+      // Timeout 60s — approve dispara publish a Meta (upload imagen +
+      // crear creative + crear ad) que puede tardar 10-30s
+      const { data } = await api.post(`/api/hermes/proposals/${p._id}/approve`, {}, { timeout: 60000 });
+      if (data.proposal?.status === 'live') {
+        alert(`✓ Publicado a Meta · ad_id: ${data.proposal.meta_ad_id}`);
+      } else if (data.proposal?.rejection_reason?.startsWith('publish_failed')) {
+        alert(`⚠️ Aprobado pero falló publish a Meta:\n${data.proposal.rejection_reason}`);
+      }
+      fetchProposals();
+    } catch (err) {
+      alert(`Error: ${err.response?.data?.error || err.message}`);
+      fetchProposals();
+    }
   }
 
   async function reject(p) {
@@ -374,7 +386,7 @@ function ProposalsTab() {
                         color: '#000', border: 'none', borderRadius: 6,
                         fontWeight: 700, cursor: 'pointer', fontSize: '0.78rem'
                       }}
-                    >✓ Aprobar</button>
+                    >✓ Aprobar y publicar a Meta</button>
                     <button
                       onClick={() => reject(p)}
                       style={{
@@ -385,9 +397,33 @@ function ProposalsTab() {
                     >✗ Rechazar</button>
                   </div>
                 )}
+                {p.status === 'live' && p.meta_ad_id && (
+                  <div style={{ fontSize: '0.72rem', color: '#60a5fa', marginTop: 8, padding: 8, background: 'rgba(96,165,250,0.08)', borderRadius: 4 }}>
+                    📡 Live en Meta · ad_id: <code>{p.meta_ad_id}</code>
+                    <br />
+                    <a
+                      href={`https://business.facebook.com/adsmanager/manage/ads/edit?act=${(p.meta_campaign_id || '').replace('act_', '')}&selected_ad_ids=${p.meta_ad_id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: '#60a5fa', textDecoration: 'underline' }}
+                    >Ver en Meta Ads Manager →</a>
+                    {p.meta_published_at && (
+                      <div style={{ color: '#94a3b8', marginTop: 4 }}>
+                        Publicado: {new Date(p.meta_published_at).toLocaleString()}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {p.rejection_reason && (
-                  <div style={{ fontSize: '0.72rem', color: '#f87171', marginTop: 8 }}>
-                    Razón: {p.rejection_reason}
+                  <div style={{
+                    fontSize: '0.72rem',
+                    color: p.rejection_reason.startsWith('publish_failed') ? '#fbbf24' : '#f87171',
+                    marginTop: 8,
+                    padding: 6,
+                    background: p.rejection_reason.startsWith('publish_failed') ? 'rgba(251,191,36,0.08)' : 'transparent',
+                    borderRadius: 4
+                  }}>
+                    {p.rejection_reason.startsWith('publish_failed') ? '⚠️ ' : 'Razón: '}{p.rejection_reason}
                   </div>
                 )}
               </div>

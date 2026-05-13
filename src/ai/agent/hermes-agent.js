@@ -193,7 +193,16 @@ async function runHermesAgent() {
 }
 
 /**
- * Approval flow.
+ * Approval flow — Fase 2 (13-may-2026): auto-publica a Meta al aprobar.
+ *
+ * Flow:
+ *   1. status='pending' → 'approved' (transición visible)
+ *   2. Si HERMES_AUTO_PUBLISH=true (default true desde Fase 2): publica a Meta
+ *      - Upload image → create creative → create ad
+ *      - status='approved' → 'live' (success) o queda 'approved' con error en
+ *        rejection_reason si falló (audit + reintento manual posible)
+ *
+ * Para mantener Fase 1 manual: setear HERMES_AUTO_PUBLISH=false en env.
  */
 async function approveProposal(proposalId, approvedBy = 'user') {
   const proposal = await HermesProposal.findById(proposalId);
@@ -207,11 +216,29 @@ async function approveProposal(proposalId, approvedBy = 'user') {
 
   logger.info(`[HERMES] Proposal ${proposalId} aprobado por ${approvedBy}`);
 
-  if (config.hermes.mode === 'auto') {
-    logger.info(`[HERMES] Mode=auto — auto-upload no implementado todavía (Fase 2)`);
+  // Auto-publish a Meta (default true). Para skip explícito: HERMES_AUTO_PUBLISH=false
+  const autoPublish = process.env.HERMES_AUTO_PUBLISH !== 'false';
+  if (!autoPublish) {
+    logger.info(`[HERMES] HERMES_AUTO_PUBLISH=false — proposal queda en 'approved' (subir manual)`);
+    return proposal;
   }
 
-  return proposal;
+  try {
+    const { publishProposalToMeta } = require('../hermes/meta-publisher');
+    const result = await publishProposalToMeta(proposalId);
+    logger.info(`[HERMES] Proposal ${proposalId} publicado a Meta — ad_id=${result.meta_ad_id} status=${result.ad_status}`);
+
+    // Re-leer del DB porque publish actualiza el doc
+    return await HermesProposal.findById(proposalId);
+  } catch (err) {
+    logger.error(`[HERMES] Publish to Meta failed for ${proposalId}: ${err.message}`);
+    // Guardar el error en el proposal para visibilidad en dashboard
+    proposal.rejection_reason = `publish_failed: ${err.message}`;
+    await proposal.save();
+    // No tirar el error — el approve sí fue exitoso, solo el publish falló.
+    // El user puede reintentar publish manualmente o investigar.
+    return proposal;
+  }
 }
 
 /**
