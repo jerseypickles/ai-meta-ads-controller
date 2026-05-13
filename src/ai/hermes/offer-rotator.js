@@ -75,7 +75,7 @@ const OFFERS = {
           'scattered bright red Tajín seasoning crystals clinging to the chamoy',
           'on a wooden popsicle stick'
         ],
-        accent_color: 'bright red on black'
+        accent_color: 'bright red'
       },
       {
         id: 'tajin',
@@ -88,7 +88,7 @@ const OFFERS = {
           'small pieces of fresh lime zest on the surface',
           'fresh lime wedge resting at the base'
         ],
-        accent_color: 'deep red on mustard yellow'
+        accent_color: 'deep red'
       },
       {
         id: 'hot_honey',
@@ -100,7 +100,7 @@ const OFFERS = {
           'subtle steam suggestion',
           'fresh thyme sprig as garnish'
         ],
-        accent_color: 'golden yellow on warm brown'
+        accent_color: 'golden yellow'
       },
       {
         id: 'everything_bagel',
@@ -111,7 +111,7 @@ const OFFERS = {
           'sesame seeds poppy seeds garlic flakes onion bits visible',
           'small flake of cream cheese on top'
         ],
-        accent_color: 'cream on navy blue'
+        accent_color: 'cream'
       }
     ]
   },
@@ -131,7 +131,7 @@ const OFFERS = {
           'question mark suggestion or mystery vibe',
           'unidentifiable coating or color hint'
         ],
-        accent_color: 'electric purple on black'
+        accent_color: 'electric purple'
       },
       {
         id: 'flavor_of_week',
@@ -142,7 +142,7 @@ const OFFERS = {
           'fresh herbs as garnish suggesting flavor profile',
           'subtle date stamp suggestion'
         ],
-        accent_color: 'forest green on cream'
+        accent_color: 'forest green'
       },
       {
         id: 'blind_taste',
@@ -153,7 +153,7 @@ const OFFERS = {
           'mysterious moody side-lit shot',
           'minimal props'
         ],
-        accent_color: 'pale gold on charcoal'
+        accent_color: 'pale gold'
       },
       {
         id: 'roulette',
@@ -164,7 +164,7 @@ const OFFERS = {
           'subtle motion blur suggesting spinning',
           'one bite taken showing surprise interior color'
         ],
-        accent_color: 'red on white'
+        accent_color: 'crimson red'
       }
     ]
   }

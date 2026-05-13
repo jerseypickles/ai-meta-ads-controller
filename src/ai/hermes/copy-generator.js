@@ -28,50 +28,68 @@ Para cada ciclo generás 4 outputs:
 4. **tagline_with_arrow**: tagline corto NJ-voice con flecha → al final (max 20 chars con la flecha incluida), usado dentro del image_prompt para el bottom-right corner del overlay
 
 ═══════════════════════════════════════════════════════════════
+ESTRUCTURA OBLIGATORIA — REGLA #0:
+═══════════════════════════════════════════════════════════════
+
+LITERAL > CREATIVO. NO PARAFRASEÉS, COPIÁ LITERAL CADA FRASE TÉCNICA.
+Tu trabajo es ENSAMBLAR el image_prompt usando las frases exactas
+provistas, no reescribirlas con sinónimos. gpt-image-2 responde mucho
+mejor a frases técnicas literales que han sido testeadas.
+
+═══════════════════════════════════════════════════════════════
 ESTRUCTURA OBLIGATORIA del image_prompt (12 bloques EN ESTE ORDEN):
 ═══════════════════════════════════════════════════════════════
 
-[1] TECHNICAL OPENING (fijo, copiá literal):
+[1] TECHNICAL OPENING (copiá LITERAL, sin cambios):
 "Documentary editorial food photograph shot on Kodak Portra 400 film with a Canon 5D Mark IV and 100mm macro lens"
 
-[2] STYLE DECLARATION (fijo):
+[2] STYLE DECLARATION (copiá LITERAL):
 "natural authentic photography style"
 
-[3] POV + HERO (se te pasa en el user prompt como POV template):
-Usá el POV template provisto + el producto exacto de la variante.
-Ejemplo: "first-person POV hand from below holding a single large real dill pickle on a wooden popsicle stick"
+[3] POV + HERO:
+Tomá el "pov.description" del user prompt EXACTO y completalo con el
+producto. Ejemplo si POV es "first-person POV hand from below holding a
+single large real" + variant es free_pickle/first_visit:
+→ "first-person POV hand from below holding a single large real classic glossy dill pickle"
 
-[4] PRODUCT TREATMENT (CRÍTICO - usar treatment_keywords de la variante):
-Incorporá los treatment keywords provistos en una descripción rica.
-Ejemplo (chamoy): "the pickle is generously drenched in glossy thick deep red chamoy sauce coating roughly two thirds of the pickle leaving the bottom third showing the natural emerald green bumpy skin for clear product identity, viscous chamoy drips slowly falling from the bottom in irregular natural drops, scattered bright red Tajín seasoning crystals clinging to the chamoy coating catching the light"
+[4] PRODUCT TREATMENT (CRÍTICO):
+Concatená TODOS los treatment_keywords provistos, separados por comas.
+LITERAL, sin reformular. Ejemplo chamoy:
+"the pickle is generously drenched in glossy thick deep red chamoy sauce, coating roughly two thirds of the pickle leaving the bottom third showing the natural emerald green bumpy skin for clear product identity, viscous chamoy drips slowly falling from the bottom in irregular natural drops, scattered bright red Tajín seasoning crystals clinging to the chamoy coating catching the light, on a wooden popsicle stick"
 
-[5] BITE DETAIL (CRÍTICO — siempre incluir):
-"a clean fresh bite taken from the [upper side / side / top / corner] revealing the [crisp pale green firm interior / textured filling] creating dramatic contrast against the [exterior color]"
-El bite es lo que da appetite appeal. NUNCA omitir.
+[5] BITE DETAIL (CRÍTICO — copiá LITERAL ajustando solo color interior):
+"a clean fresh bite taken from the upper side revealing the crisp pale green firm interior creating dramatic contrast against the [exterior_color_from_treatment]"
 
-[6] TEXTURAL MICRO-DETAILS (2-4 items):
-- "real beads of moisture on the exposed surface"
-- "subtle natural sheen of oil/brine"
-- "small droplets clinging naturally"
-- "[herb] sprig resting on top" (oregano, thyme, dill, parsley)
-- "[fresh element] nearby with juice droplets" (lime wedge, fresh dill, etc.)
+[6] TEXTURAL MICRO-DETAILS (2-3 items LITERAL):
+"real beads of moisture on the exposed surface", "subtle natural sheen", "a fresh [herb] sprig resting on top"
 
-[7] LIGHTING (fijo, copiá literal):
+[7] LIGHTING (copiá LITERAL):
 "soft natural diffused window light from the upper left with realistic gentle shadows"
 
-[8] BACKGROUND (usar el provisto en el user prompt):
-Ejemplo: "deep matte black seamless paper background"
+[8] BACKGROUND (copiá LITERAL del user prompt):
+Ejemplo si user pasó "deep matte black seamless paper background":
+→ "deep matte black seamless paper background"
 
-[9] ANTI-RENDER BLOCK (fijo, copiá literal):
+[9] ANTI-RENDER BLOCK (copiá LITERAL):
 "slight 35mm film grain, photographed in the editorial style of Bon Appétit magazine, not a 3D render or digital illustration"
 
-[10] ASPECT RATIO (fijo):
+[10] ASPECT RATIO (LITERAL):
 "vertical 9:16 aspect ratio"
 
-[11] LAYOUT MATEMÁTICO (CRÍTICO — usar typography combo provisto):
-"magazine cover composition: upper 30 percent contains two stacked text elements: first line [HEADLINE_STYLE] reading \\"[OFFER_TITLE]\\" as the main headline, directly below it [SUBHEAD_STYLE] reading \\"[OFFER_HOOK]\\", the central 60 percent dominated by the [product description] as visual hero, bottom 10 percent contains two lines of small text: first line [TAGLINE_STYLE] reading \\"[TAGLINE_WITH_ARROW]\\" in [ACCENT_COLOR], below it [BRAND_LINE_STYLE] reading \\"JERSEY PICKLES • NJ SHOP\\" in muted [COMPLEMENT_COLOR]"
+[11] LAYOUT MATEMÁTICO (CRÍTICO — formato EXACTO con colores explícitos):
 
-[12] EXPLICIT EXCLUSIONS (fijo, copiá literal):
+Usá EXACTAMENTE este template, reemplazando solo los [PLACEHOLDERS]:
+
+"magazine cover composition: upper 30 percent contains two stacked text elements: first line [HEADLINE_FONT_STYLE] typography reading \\"[OFFER_TITLE]\\" in [HEADLINE_COLOR] as the main headline, directly below it [SUBHEAD_FONT_STYLE] reading \\"[OFFER_HOOK]\\" in [SUBHEAD_COLOR], the central 60 percent dominated by the [PRODUCT_BRIEF_DESCRIPTION] as visual hero, bottom 10 percent contains two lines of small text: first line [TAGLINE_FONT_STYLE] uppercase reading \\"[TAGLINE_WITH_ARROW]\\" in [TAGLINE_COLOR], below it [BRAND_LINE_FONT_STYLE] reading \\"JERSEY PICKLES • NJ SHOP\\" in muted [BRAND_LINE_COLOR]"
+
+REGLAS DE COLOR PARA LAYOUT:
+- HEADLINE_COLOR: SIEMPRE "white" (uniforme en todos los ads, no negociable)
+- SUBHEAD_COLOR: usar el "accent_color" de la variant (ej. "bright red", "deep red", "forest green")
+- TAGLINE_COLOR: mismo que SUBHEAD_COLOR (mantiene coherencia visual)
+- BRAND_LINE_COLOR: usar "cream", "muted cream", o "muted [accent]" — siempre sutil
+- Los font_styles vienen LITERAL del typography combo del user prompt
+
+[12] EXPLICIT EXCLUSIONS (copiá LITERAL):
 "Do NOT generate any fictional brand logo, watermark, badge, or emblem in the image. Do NOT show real human faces in detail. Do NOT include competitor brand names visible in the frame."
 
 ═══════════════════════════════════════════════════════════════
