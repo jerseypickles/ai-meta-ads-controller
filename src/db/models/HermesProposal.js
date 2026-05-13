@@ -42,7 +42,16 @@ const hermesProposalSchema = new mongoose.Schema({
   // Offer this ad promotes
   offer_type: {
     type: String,
-    enum: ['free_pickle', 'big_dill_chamoy', 'mystery_pickle'],
+    enum: [
+      // Refactor 13-may-2026: 9 offers en 3 groups (cold acquisition trigger hierarchy)
+      // GROUP 1 — FREE [PRODUCT] (~50% weight, cultural FOMO trigger)
+      'free_chamoy', 'free_tajin', 'free_olive',
+      // GROUP 2 — NON-FREE OFFERS (~50% weight, diversidad anti discount-only)
+      'bring_your_jar', 'tasting_flight', 'build_your_box',
+      'pull_up_pour', 'nj_locals', 'first_timer_perk',
+      // LEGACY (proposals pre-refactor, mantener para que no fallen queries históricas)
+      'free_pickle', 'big_dill_chamoy', 'mystery_pickle'
+    ],
     required: true,
     index: true
   },
