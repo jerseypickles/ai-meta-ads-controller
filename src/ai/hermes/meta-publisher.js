@@ -96,12 +96,18 @@ async function getOrCreateCampaignAndAdset(meta) {
   // Params para OUTCOME_TRAFFIC + LINK_CLICKS + CBO.
   //
   // SIN daily_budget en el adset porque la campaign ya lo tiene (CBO mode).
-  // Meta rechaza con "You can only set an ad set budget or a campaign budget"
-  // si ambos están. CBO es mejor para Hermes (1 adset) porque Meta optimiza
-  // distribución automáticamente y no tenemos que mantener budgets sync.
+  // SIN destination_type porque con LINK_CLICKS optimization Meta lo infiere.
   //
-  // SIN destination_type porque con LINK_CLICKS optimization Meta lo infiere
-  // del link del ad creative.
+  // PLACEMENT FEED-ONLY (decisión 13-may-2026 post crop issue en Stories):
+  // gpt-image-2 genera 1024×1536 (2:3 ratio). Instagram Stories es 9:16,
+  // Meta hace zoom-fill que corta el contenido importante. Para evitarlo
+  // SIN tener que generar 2 imágenes por ciclo (costo $ doblado), limitamos
+  // el adset a Feed placements donde 2:3 funciona bien sin crop:
+  //   - Facebook Feed (display vertical fits ~4:5)
+  //   - Instagram Feed/Stream (display fits ~4:5)
+  //
+  // Stories + Reels quedan EXCLUIDOS hasta que implementemos
+  // Placement Asset Customization (Fase 3) con imagen 9:16 dedicada.
   const adsetParams = {
     campaign_id: campaignId,
     name: '[HERMES] Local NJ Foot Traffic',
@@ -119,7 +125,11 @@ async function getOrCreateCampaignAndAdset(meta) {
         }]
       },
       age_min: 21,
-      age_max: 65
+      age_max: 65,
+      // Feed-only placements
+      publisher_platforms: ['facebook', 'instagram'],
+      facebook_positions: ['feed'],
+      instagram_positions: ['stream']
     })
   };
 
