@@ -392,6 +392,24 @@ router.post('/trigger-cycle', async (req, res) => {
 });
 
 /**
+ * POST /api/hermes/update-adset-targeting
+ *
+ * Actualiza el targeting del adset existente de Hermes a Tri-state regions
+ * (NJ+NY+PA) + Feed-only placements. Útil para migrar adsets creados antes
+ * del fix de targeting sin tener que archivarlos y recrear.
+ */
+router.post('/update-adset-targeting', async (req, res) => {
+  try {
+    const { updateExistingAdsetTargeting } = require('../../ai/hermes/meta-publisher');
+    const result = await updateExistingAdsetTargeting();
+    res.json(result);
+  } catch (err) {
+    logger.error(`[HERMES-API] update-adset-targeting failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/hermes/lookup-ids — auto-detecta Facebook Page ID + Instagram Business ID
  * usando el Meta access token ya configurado. Útil para setup inicial sin tener
  * que ir a Graph API Explorer manualmente.

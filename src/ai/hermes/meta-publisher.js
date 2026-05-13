@@ -32,6 +32,50 @@ const HermesProposal = require('../../db/models/HermesProposal');
 
 const HERMES_CAMPAIGN_KEY = 'hermes_meta_campaign';
 const HERMES_ADSET_KEY = 'hermes_meta_adset';
+const HERMES_REGION_KEYS = 'hermes_tristate_region_keys';
+
+/**
+ * Resuelve los region keys de Meta para NJ, NY, PA via targeting search API.
+ * Cachea en SystemConfig para no re-resolver cada ciclo.
+ *
+ * Decisión 13-may-2026: el warehouse está en NJ pero el reach natural cubre
+ * Tri-state (NJ+NY+PA). Anterior radius 10mi era demasiado chico y no llegaba
+ * a PA. Ahora targeting por states completos (NJ+NY+PA) para que cubra todo
+ * el área donde un cliente potencial podría manejar a la store de NJ.
+ */
+async function resolveTriStateRegionKeys(meta) {
+  const cached = await SystemConfig.get(HERMES_REGION_KEYS);
+  if (cached?.regions && cached.regions.length === 3) {
+    return cached.regions;
+  }
+
+  const stateNames = ['New Jersey', 'New York', 'Pennsylvania'];
+  const regions = [];
+  for (const name of stateNames) {
+    try {
+      const result = await meta.get('/search', {
+        type: 'adgeolocation',
+        q: name,
+        country_code: 'US',
+        location_types: JSON.stringify(['region'])
+      });
+      const match = (result.data || []).find(r => r.name === name);
+      if (match?.key) {
+        regions.push({ key: match.key, name: match.name });
+        logger.info(`[HERMES-PUBLISHER] Region resuelto: ${name} → key=${match.key}`);
+      } else {
+        logger.warn(`[HERMES-PUBLISHER] No se encontró region key para "${name}" en Meta search`);
+      }
+    } catch (err) {
+      logger.error(`[HERMES-PUBLISHER] Error resolviendo region "${name}": ${err.message}`);
+    }
+  }
+
+  if (regions.length > 0) {
+    await SystemConfig.set(HERMES_REGION_KEYS, { regions, resolved_at: new Date() });
+  }
+  return regions;
+}
 
 /**
  * Lazy resolver — devuelve { campaign_id, adset_id } o los crea.
@@ -88,10 +132,12 @@ async function getOrCreateCampaignAndAdset(meta) {
   // Compatibility con código viejo: la variable `campaign` ya no existe, usar campaignId
   const campaign = { campaign_id: campaignId, name: campaignName };
 
-  // Targeting NJ — radio configurable desde warehouse
-  const NJ_LAT = 40.8742;
-  const NJ_LON = -74.0473;
-  const radius = config.hermes.targetingRadiusMi || 10;
+  // Targeting Tri-state — NJ + NY + PA regions completas (los 3 states donde
+  // un cliente potencial podría manejar a la store NJ).
+  const triStateRegions = await resolveTriStateRegionKeys(meta);
+  if (triStateRegions.length === 0) {
+    throw new Error('No se pudieron resolver region keys NJ/NY/PA en Meta — verificar permisos de targeting search');
+  }
 
   // Params para OUTCOME_TRAFFIC + LINK_CLICKS + CBO.
   //
@@ -117,12 +163,7 @@ async function getOrCreateCampaignAndAdset(meta) {
     status: 'PAUSED',
     targeting: JSON.stringify({
       geo_locations: {
-        custom_locations: [{
-          latitude: NJ_LAT,
-          longitude: NJ_LON,
-          radius,
-          distance_unit: 'mile'
-        }]
+        regions: triStateRegions.map(r => ({ key: r.key }))
       },
       age_min: 21,
       age_max: 65,
@@ -160,7 +201,8 @@ async function getOrCreateCampaignAndAdset(meta) {
   }
 
   const adsetId = adsetResult.id;
-  logger.info(`[HERMES-PUBLISHER] AdSet creado: ${adsetId} (PAUSED, radius ${radius}mi)`);
+  const regionNames = triStateRegions.map(r => r.name).join(' + ');
+  logger.info(`[HERMES-PUBLISHER] AdSet creado: ${adsetId} (PAUSED, regions: ${regionNames})`);
 
   // Persistir adset (la campaign ya se persistió arriba si fue creada nueva)
   await SystemConfig.set(HERMES_ADSET_KEY, {
@@ -311,4 +353,59 @@ async function publishProposalToMeta(proposalId) {
   };
 }
 
-module.exports = { publishProposalToMeta, getOrCreateCampaignAndAdset };
+/**
+ * Actualiza el targeting del adset existente de Hermes a Tri-state regions
+ * (NJ+NY+PA) + Feed-only placements. Útil para migrar adsets viejos sin
+ * tener que recrearlos.
+ */
+async function updateExistingAdsetTargeting() {
+  const { getMetaClient } = require('../../meta/client');
+  const meta = getMetaClient();
+
+  const stored = await SystemConfig.get(HERMES_ADSET_KEY);
+  const adsetId = process.env.HERMES_ADSET_ID || stored?.adset_id;
+  if (!adsetId) {
+    throw new Error('No hay HERMES_ADSET_ID configurado ni en SystemConfig');
+  }
+
+  const triStateRegions = await resolveTriStateRegionKeys(meta);
+  if (triStateRegions.length === 0) {
+    throw new Error('No se pudieron resolver region keys NJ/NY/PA');
+  }
+
+  const targeting = {
+    geo_locations: {
+      regions: triStateRegions.map(r => ({ key: r.key }))
+    },
+    age_min: 21,
+    age_max: 65,
+    publisher_platforms: ['facebook', 'instagram'],
+    facebook_positions: ['feed'],
+    instagram_positions: ['stream']
+  };
+
+  logger.info(`[HERMES-PUBLISHER] Actualizando targeting de adset ${adsetId} → Tri-state + Feed-only`);
+  try {
+    await meta.post(`/${adsetId}`, {
+      targeting: JSON.stringify(targeting)
+    });
+    return {
+      success: true,
+      adset_id: adsetId,
+      new_regions: triStateRegions.map(r => r.name),
+      new_placements: ['Facebook Feed', 'Instagram Feed']
+    };
+  } catch (err) {
+    const metaError = err.response?.data?.error;
+    const detail = metaError?.error_user_msg || metaError?.message || err.message;
+    logger.error(`[HERMES-PUBLISHER] Update adset targeting failed: ${detail}`);
+    throw new Error(`Meta API error actualizando adset: ${detail}`);
+  }
+}
+
+module.exports = {
+  publishProposalToMeta,
+  getOrCreateCampaignAndAdset,
+  resolveTriStateRegionKeys,
+  updateExistingAdsetTargeting
+};
