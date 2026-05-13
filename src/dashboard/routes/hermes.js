@@ -205,6 +205,50 @@ router.post('/proposals/:id/reject', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/hermes/proposals/:id/publish
+ *
+ * Publica a Meta una proposal que ya está en status='approved' pero no
+ * llegó a Meta (caso típico: aprobadas pre-Fase 2, o reintento después
+ * de publish_failed). Idempotente: si ya tiene meta_ad_id, error.
+ */
+router.post('/proposals/:id/publish', async (req, res) => {
+  try {
+    const HermesProposal = require('../../db/models/HermesProposal');
+    const proposal = await HermesProposal.findById(req.params.id);
+    if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+    if (proposal.meta_ad_id) {
+      return res.status(400).json({ error: `Proposal ya está publicada en Meta (ad_id: ${proposal.meta_ad_id})` });
+    }
+    if (proposal.status !== 'approved') {
+      return res.status(400).json({ error: `Status es "${proposal.status}", debe ser "approved" para publicar` });
+    }
+
+    // Limpia el rejection_reason si era de publish_failed anterior
+    if (proposal.rejection_reason?.startsWith('publish_failed')) {
+      proposal.rejection_reason = '';
+      await proposal.save();
+    }
+
+    const { publishProposalToMeta } = require('../../ai/hermes/meta-publisher');
+    const result = await publishProposalToMeta(req.params.id);
+
+    // Re-leer porque publisher actualiza
+    const updated = await HermesProposal.findById(req.params.id);
+    res.json({ proposal: updated, publish_result: result });
+  } catch (err) {
+    logger.error(`[HERMES-API] publish failed: ${err.message}`);
+    // Persistir el error para audit
+    try {
+      const HermesProposal = require('../../db/models/HermesProposal');
+      await HermesProposal.findByIdAndUpdate(req.params.id, {
+        rejection_reason: `publish_failed: ${err.message}`
+      });
+    } catch (_) {}
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════
 // STORE VISITS — log manual desde tienda
 // ═══════════════════════════════════════════════════════════════════════

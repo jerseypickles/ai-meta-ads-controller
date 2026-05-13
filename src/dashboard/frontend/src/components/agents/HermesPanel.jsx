@@ -292,6 +292,19 @@ function ProposalsTab() {
     fetchProposals();
   }
 
+  async function publish(p) {
+    try {
+      const { data } = await api.post(`/api/hermes/proposals/${p._id}/publish`, {}, { timeout: 60000 });
+      if (data.proposal?.status === 'live') {
+        alert(`✓ Publicado a Meta · ad_id: ${data.proposal.meta_ad_id}`);
+      }
+      fetchProposals();
+    } catch (err) {
+      alert(`Error: ${err.response?.data?.error || err.message}`);
+      fetchProposals();
+    }
+  }
+
   async function triggerCycle() {
     setTriggering(true);
     try {
@@ -396,6 +409,16 @@ function ProposalsTab() {
                       }}
                     >✗ Rechazar</button>
                   </div>
+                )}
+                {p.status === 'approved' && !p.meta_ad_id && (
+                  <button
+                    onClick={() => publish(p)}
+                    style={{
+                      width: '100%', padding: '8px', background: '#60a5fa',
+                      color: '#000', border: 'none', borderRadius: 6,
+                      fontWeight: 700, cursor: 'pointer', fontSize: '0.78rem'
+                    }}
+                  >📡 Publicar a Meta</button>
                 )}
                 {p.status === 'live' && p.meta_ad_id && (
                   <div style={{ fontSize: '0.72rem', color: '#60a5fa', marginTop: 8, padding: 8, background: 'rgba(96,165,250,0.08)', borderRadius: 4 }}>
