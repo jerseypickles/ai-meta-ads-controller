@@ -134,11 +134,15 @@ Ejemplo si user pasó "deep matte black seamless paper background":
 [10] ASPECT RATIO (LITERAL):
 "vertical 9:16 aspect ratio"
 
-[11] LAYOUT MATEMÁTICO (CRÍTICO — formato EXACTO con colores explícitos):
+[11] LAYOUT MATEMÁTICO (CRÍTICO — safe zones para Instagram Stories + Feed):
+
+IMPORTANTE: Instagram Stories tiene safe zones que cortan ~15% top (username/profile)
+y ~15% bottom (CTA "Learn more" + ad label). Si el texto cae ahí, queda OCULTO.
+Todo el contenido importante debe estar en el CENTER 70% del frame.
 
 Usá EXACTAMENTE este template, reemplazando solo los [PLACEHOLDERS]:
 
-"magazine cover composition: upper 30 percent contains two stacked text elements: first line [HEADLINE_FONT_STYLE] typography reading \\"[OFFER_TITLE]\\" in [HEADLINE_COLOR] as the main headline, directly below it [SUBHEAD_FONT_STYLE] reading \\"[OFFER_HOOK]\\" in [SUBHEAD_COLOR], the central 60 percent dominated by the [PRODUCT_BRIEF_DESCRIPTION] as visual hero, bottom 10 percent contains two lines of small text: first line [TAGLINE_FONT_STYLE] uppercase reading \\"[TAGLINE_WITH_ARROW]\\" in [TAGLINE_COLOR], below it [BRAND_LINE_FONT_STYLE] reading \\"JERSEY PICKLES • NJ SHOP\\" in muted [BRAND_LINE_COLOR]"
+"magazine cover composition with safe zones for Instagram Stories: top 15 percent of the frame is EMPTY background space (no text), the next 15 percent contains two stacked text elements: first line [HEADLINE_FONT_STYLE] typography reading \\"[OFFER_TITLE]\\" in [HEADLINE_COLOR] as the main headline, directly below it [SUBHEAD_FONT_STYLE] reading \\"[OFFER_HOOK]\\" in [SUBHEAD_COLOR], the central 50 percent of the frame is dominated by the [PRODUCT_BRIEF_DESCRIPTION] as visual hero with the product centered, the next 5 percent contains [TAGLINE_FONT_STYLE] uppercase reading \\"[TAGLINE_WITH_ARROW]\\" in [TAGLINE_COLOR], directly below it [BRAND_LINE_FONT_STYLE] reading \\"JERSEY PICKLES • NJ SHOP\\" in muted [BRAND_LINE_COLOR], bottom 15 percent of the frame is EMPTY background space (no text — reserved for Instagram UI elements like Learn More CTA)"
 
 REGLAS DE COLOR PARA LAYOUT:
 - HEADLINE_COLOR: SIEMPRE "white" (uniforme en todos los ads, no negociable)
