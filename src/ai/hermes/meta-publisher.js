@@ -93,13 +93,18 @@ async function getOrCreateCampaignAndAdset(meta) {
   const NJ_LON = -74.0473;
   const radius = config.hermes.targetingRadiusMi || 10;
 
-  // Params mínimos para OUTCOME_TRAFFIC + LINK_CLICKS.
-  // NO uso destination_type porque para LINK_CLICKS optimization Meta lo
-  // infiere del link del ad creative — agregarlo causó "Invalid parameter".
+  // Params para OUTCOME_TRAFFIC + LINK_CLICKS + CBO.
+  //
+  // SIN daily_budget en el adset porque la campaign ya lo tiene (CBO mode).
+  // Meta rechaza con "You can only set an ad set budget or a campaign budget"
+  // si ambos están. CBO es mejor para Hermes (1 adset) porque Meta optimiza
+  // distribución automáticamente y no tenemos que mantener budgets sync.
+  //
+  // SIN destination_type porque con LINK_CLICKS optimization Meta lo infiere
+  // del link del ad creative.
   const adsetParams = {
     campaign_id: campaignId,
     name: '[HERMES] Local NJ Foot Traffic',
-    daily_budget: Math.round((config.hermes.initialDailyBudget || 45) * 100),
     optimization_goal: 'LINK_CLICKS',
     billing_event: 'IMPRESSIONS',
     bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
