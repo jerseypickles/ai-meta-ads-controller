@@ -93,17 +93,16 @@ async function getOrCreateCampaignAndAdset(meta) {
   const NJ_LON = -74.0473;
   const radius = config.hermes.targetingRadiusMi || 10;
 
-  // Crear ad set manualmente (no via createAdSet helper) porque ese helper
-  // hace asunciones para OUTCOME_SALES (attribution_spec VIEW_THROUGH, etc)
-  // que NO aplican a OUTCOME_TRAFFIC. Params explícitos para foot traffic.
+  // Params mínimos para OUTCOME_TRAFFIC + LINK_CLICKS.
+  // NO uso destination_type porque para LINK_CLICKS optimization Meta lo
+  // infiere del link del ad creative — agregarlo causó "Invalid parameter".
   const adsetParams = {
-    campaign_id: campaign.campaign_id,
+    campaign_id: campaignId,
     name: '[HERMES] Local NJ Foot Traffic',
     daily_budget: Math.round((config.hermes.initialDailyBudget || 45) * 100),
     optimization_goal: 'LINK_CLICKS',
     billing_event: 'IMPRESSIONS',
     bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
-    destination_type: 'WEBSITE',           // REQUERIDO para OUTCOME_TRAFFIC
     status: 'PAUSED',
     targeting: JSON.stringify({
       geo_locations: {
@@ -119,14 +118,29 @@ async function getOrCreateCampaignAndAdset(meta) {
     })
   };
 
-  logger.info(`[HERMES-PUBLISHER] Creando adset directo (OUTCOME_TRAFFIC + LINK_CLICKS + WEBSITE)`);
+  logger.info(`[HERMES-PUBLISHER] Creando adset directo (OUTCOME_TRAFFIC + LINK_CLICKS)`);
   let adsetResult;
   try {
     adsetResult = await meta.post(`/${meta.adAccountId}/adsets`, adsetParams);
   } catch (err) {
     const metaError = err.response?.data?.error;
-    const detail = metaError ? `${metaError.message} (code=${metaError.code}, type=${metaError.type})` : err.message;
-    logger.error(`[HERMES-PUBLISHER] AdSet creation failed: ${detail}`);
+    // Extraer TODOS los campos del error de Meta para diagnóstico real
+    const fullError = metaError ? {
+      message: metaError.message,
+      code: metaError.code,
+      type: metaError.type,
+      error_subcode: metaError.error_subcode,
+      error_user_title: metaError.error_user_title,
+      error_user_msg: metaError.error_user_msg,
+      error_data: metaError.error_data,
+      fbtrace_id: metaError.fbtrace_id
+    } : { raw: err.message };
+    logger.error(`[HERMES-PUBLISHER] AdSet creation failed — full error: ${JSON.stringify(fullError)}`);
+    logger.error(`[HERMES-PUBLISHER] Params enviados: ${JSON.stringify({ ...adsetParams, targeting: '<...>' })}`);
+
+    const detail = metaError?.error_user_msg ||
+                  (metaError?.message + (metaError?.error_subcode ? ` (subcode ${metaError.error_subcode})` : '')) ||
+                  err.message;
     throw new Error(`Meta API error al crear adset: ${detail}`);
   }
 
