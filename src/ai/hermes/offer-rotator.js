@@ -1,216 +1,327 @@
 /**
- * Offer Rotator — selecciona oferta + sub-variante turnante.
+ * Offer Rotator — refactor estratégico 13-may-2026 post-feedback cold acquisition.
  *
- * Estructura (refactor 13-may-2026 post-feedback editorial prompt):
+ * Brief del user (resumen):
+ *   - Cold viewer = 0.5s de atención → product clarity + craving + offer + action
+ *   - NO siempre "FREE [product]" — diversificar (BRING YOUR JAR, TASTING FLIGHT,
+ *     PULL UP & POUR, NJ LOCALS, etc.)
+ *   - FREE [product] cap ~50% del weight, otras categorías el resto
+ *   - REMOVE mystery_pickle entirely (anti-pattern: curiosity ≠ store visit)
+ *   - Solo "1ST-TIMER PERK" como mystery aceptable (porque el gift está garantizado)
  *
- *   Cada offer tiene N sub-variantes (call-to-action distintos).
- *   Esto reemplaza el campo `title` único con un pool rotativo:
- *     - free_pickle puede ser FREE PICKLE, FREE REFILL, FREE TASTING, etc.
- *     - big_dill_chamoy puede ser CHAMOY, TAJÍN, HOT HONEY, etc.
+ * Trigger hierarchy aplicada: concrete offer > cultural FOMO > visceral craving >
+ *   wordplay > editorial premium.
  *
- *   Anti-repeat funciona a 2 niveles:
- *     1. Offer type (no repetir free_pickle 2 ciclos seguidos)
- *     2. Sub-variant (no repetir "FREE REFILL" 2 ciclos del mismo offer)
+ * Anti-patterns sacados del pool:
+ *   - mystery_pickle entero (blind_taste, mystery_drop, flavor_of_week, roulette)
+ *   - everything_bagel (no es viralmente craveable como chamoy/tajín)
  */
 
 const OFFERS = {
-  free_pickle: {
-    type: 'free_pickle',
-    weight: 0.50,
-    short_label: 'Free Pickle',
-    description: 'Gateway offer — primera visita, gancho de fricción cero.',
+  // ═══════════════════════════════════════════════════════════════
+  // GROUP 1 — FREE [PRODUCT]: cap ~50% del total (cultural FOMO trigger)
+  // Solo productos con visual virality real (chamoy, tajín, olive)
+  // ═══════════════════════════════════════════════════════════════
+  free_chamoy: {
+    type: 'free_chamoy',
+    weight: 0.20,
+    short_label: 'Free Chamoy',
+    group: 'free_product',
+    description: 'Chamoy pickle hero — cultural FOMO Mexicano + visceral red drip',
     variants: [
       {
-        id: 'first_visit',
-        title: 'FREE PICKLE',
+        id: 'chamoy_classic',
+        title: 'FREE CHAMOY',
         hook: 'on your 1st visit',
-        treatment_keywords: ['classic glossy dill', 'natural emerald green', 'beads of brine moisture'],
-        accent_color: 'bright red'
-      },
-      {
-        id: 'refill',
-        title: 'FREE REFILL',
-        hook: 'with any jar purchase',
-        treatment_keywords: ['fresh pickle dropped into a jar', 'brine splashing', 'just-opened lid nearby'],
-        accent_color: 'deep red'
-      },
-      {
-        id: 'tasting',
-        title: 'FREE TASTING',
-        hook: 'every Saturday',
-        treatment_keywords: ['pickle slice on a toothpick', 'cutting board with multiple varieties faded behind', 'fresh dill sprig nearby'],
-        accent_color: 'forest green'
-      },
-      {
-        id: 'bundle',
-        title: 'BUY 2 GET 1',
-        hook: 'all weekend',
-        treatment_keywords: ['three pickle spears arranged vertically', 'one of them with a bite taken'],
-        accent_color: 'crimson'
-      },
-      {
-        id: 'flight',
-        title: 'FREE FLIGHT',
-        hook: 'with any $20+ jar',
-        treatment_keywords: ['small pickle slices on individual wooden tasting paddles', 'pickle as star of the flight'],
-        accent_color: 'burnt orange'
+        product_focus: 'chamoy-drenched pickle popsicle',
+        treatment_keywords: [
+          'generously drenched in glossy thick deep red chamoy sauce',
+          'coating two thirds of the pickle leaving bottom third showing natural emerald green skin',
+          'viscous chamoy drips slowly falling in irregular natural drops',
+          'scattered bright red Tajín seasoning crystals catching the light',
+          'on a wooden popsicle stick'
+        ],
+        accent_color: 'bright red',
+        cultural_hook: 'chamoy + Tajín = Mexican/Latino paleta culture, viral on TikTok'
       }
     ]
   },
 
-  big_dill_chamoy: {
-    type: 'big_dill_chamoy',
-    weight: 0.30,
-    short_label: 'Big Dill',
-    description: 'Hero product line — pickles tratados con sabores premium o virales.',
+  free_tajin: {
+    type: 'free_tajin',
+    weight: 0.15,
+    short_label: 'Free Tajín',
+    group: 'free_product',
+    description: 'Tajín-crusted pickle — chili-lime FOMO',
     variants: [
       {
-        id: 'chamoy',
-        title: 'BIG DILL CHAMOY',
-        hook: 'limited time only',
-        treatment_keywords: [
-          'generously drenched in glossy thick deep red chamoy sauce',
-          'coating roughly two thirds of the pickle leaving bottom third showing natural emerald green skin',
-          'viscous chamoy drips slowly falling in irregular natural drops',
-          'scattered bright red Tajín seasoning crystals clinging to the chamoy',
-          'on a wooden popsicle stick'
-        ],
-        accent_color: 'bright red'
-      },
-      {
-        id: 'tajin',
-        title: 'BIG DILL TAJÍN',
-        hook: 'this week only',
+        id: 'tajin_classic',
+        title: 'FREE TAJÍN',
+        hook: 'on your 1st visit',
+        product_focus: 'Tajín-crusted pickle with lime',
         treatment_keywords: [
           'thick crystalline crust of vibrant red Tajín chili-lime seasoning',
           'covering most of the surface with visible texture of seasoning crystals',
-          'glossy drizzle of fresh lime juice running down the side',
-          'small pieces of fresh lime zest on the surface',
-          'fresh lime wedge resting at the base'
+          'glossy drizzle of fresh lime juice running down the side catching light',
+          'small pieces of fresh lime zest visible on the surface',
+          'fresh lime wedge resting at the base with juice droplets'
         ],
-        accent_color: 'deep red'
+        accent_color: 'deep red',
+        cultural_hook: 'Tajín = universal Mexican-American snack signal'
+      }
+    ]
+  },
+
+  free_olive: {
+    type: 'free_olive',
+    weight: 0.15,
+    short_label: 'Free Olive',
+    group: 'free_product',
+    description: 'Stuffed olive single — premium cheese FOMO',
+    variants: [
+      {
+        id: 'olive_feta',
+        title: 'FREE OLIVE',
+        hook: 'on your 1st visit',
+        product_focus: 'feta-stuffed Castelvetrano olive',
+        treatment_keywords: [
+          'large glossy green Castelvetrano olive stuffed densely with crumbly white feta cheese',
+          'a clean fresh bite revealing the compacted feta filling packed inside with visible crumbly chunky texture',
+          'small distinct fragments of feta visible on the bite edge',
+          'subtle natural sheen of olive oil on the skin',
+          'a few small leaves of fresh oregano scattered on top',
+          'real droplets of olive brine clinging to the surface'
+        ],
+        accent_color: 'deep red',
+        cultural_hook: 'gourmet Mediterranean premium positioning'
       },
       {
-        id: 'hot_honey',
-        title: 'BIG DILL HOT HONEY',
-        hook: 'sweet heat drop',
+        id: 'olive_blue',
+        title: 'FREE OLIVE',
+        hook: 'on your 1st visit',
+        product_focus: 'blue cheese-stuffed olive',
         treatment_keywords: [
-          'amber hot honey glaze dripping in slow viscous streams',
-          'red chili flakes scattered across the honey coating catching the light',
-          'subtle steam suggestion',
-          'fresh thyme sprig as garnish'
+          'large glossy green olive stuffed densely with crumbly blue cheese',
+          'clean fresh bite revealing the compacted blue cheese filling with distinct blue-grey veining',
+          'cheese chunks showing the blue mold veins on the bite edge',
+          'subtle natural sheen of olive oil',
+          'single fresh thyme sprig resting on top'
         ],
-        accent_color: 'golden yellow'
+        accent_color: 'deep red',
+        cultural_hook: 'blue cheese pairing — sophisticated bar snack'
+      }
+    ]
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  // GROUP 2 — NON-FREE OFFERS: el otro ~50% (diversidad para no entrenar
+  // a la audience como discount-only)
+  // ═══════════════════════════════════════════════════════════════
+  bring_your_jar: {
+    type: 'bring_your_jar',
+    weight: 0.10,
+    short_label: 'Bring Your Jar',
+    group: 'community_repeat',
+    description: 'Refill ritual — sustainability + repeat visit driver',
+    variants: [
+      {
+        id: 'refill_jar',
+        title: 'BRING YOUR JAR',
+        hook: 'free refill on your visit',
+        product_focus: 'fresh pickle dropped into an open glass jar',
+        treatment_keywords: [
+          'a glass jar mid-refill with fresh pickles tumbling in',
+          'brine splashing in slow motion',
+          'pickles glossy and abundant',
+          'a hand from below holding the jar with intentional clean glass surface'
+        ],
+        accent_color: 'forest green'
       },
       {
-        id: 'everything_bagel',
-        title: 'BIG DILL EVERYTHING',
-        hook: 'NJ deli twist',
+        id: 'trae_frasco',
+        title: 'TRAE TU FRASCO',
+        hook: 'te lo rellenamos gratis',
+        product_focus: 'jar refill — Spanish-first version',
         treatment_keywords: [
-          'pickle rolled in everything bagel seasoning',
-          'sesame seeds poppy seeds garlic flakes onion bits visible',
-          'small flake of cream cheese on top'
+          'fresh pickles being poured into a glass jar',
+          'brine cascade catching light',
+          'abundant pickle quantity visible',
+          'Mexican-style ceramic counter texture in background blur'
+        ],
+        accent_color: 'bright red',
+        cultural_hook: 'bilingual NJ Hispanic market'
+      }
+    ]
+  },
+
+  tasting_flight: {
+    type: 'tasting_flight',
+    weight: 0.08,
+    short_label: 'Tasting Flight',
+    group: 'discovery',
+    description: 'Multi-variant sampler — lowers commitment, drives discovery',
+    variants: [
+      {
+        id: 'flight_classic',
+        title: 'TASTING FLIGHT',
+        hook: '5 flavors free, just pull up',
+        product_focus: 'wooden flight paddle with 5 small pickle samples',
+        treatment_keywords: [
+          'wooden tasting paddle with 5 small cups',
+          'each cup holds a different colored pickle (green dill, red Tajín, yellow curry, dark hot honey, classic green)',
+          'abundance and variety visible',
+          'tiny pretzel sticks or toothpicks for picking'
         ],
         accent_color: 'cream'
       }
     ]
   },
 
-  mystery_pickle: {
-    type: 'mystery_pickle',
-    weight: 0.20,
-    short_label: 'Mystery',
-    description: 'Repeat-visit driver. Sabor rotando semanalmente, foco en surprise.',
+  build_your_box: {
+    type: 'build_your_box',
+    weight: 0.07,
+    short_label: 'Build Your Box',
+    group: 'bundle_aov',
+    description: 'Bundle psychology — raises AOV, repeat customer signal',
     variants: [
       {
-        id: 'mystery_drop',
-        title: 'MYSTERY DROP',
-        hook: 'this Tuesday only',
+        id: 'box_4_plus_1',
+        title: 'BUILD YOUR BOX',
+        hook: '1 jar on us with any 4',
+        product_focus: 'open craft cardboard box with multiple pickle jars',
         treatment_keywords: [
-          'pickle partially wrapped in brown butcher paper revealing only part',
-          'question mark suggestion or mystery vibe',
-          'unidentifiable coating or color hint'
+          'open kraft cardboard gift-box style with 4 visible jars of different pickles',
+          'jars labeled simply',
+          'one extra jar slightly outside the box suggesting the free bonus',
+          'overhead three-quarter angle showing abundance'
         ],
-        accent_color: 'electric purple'
+        accent_color: 'bright red'
+      }
+    ]
+  },
+
+  pull_up_pour: {
+    type: 'pull_up_pour',
+    weight: 0.10,
+    short_label: 'Pull Up',
+    group: 'jersey_slang_immediate',
+    description: 'Jersey slang + energy + immediate FOMO',
+    variants: [
+      {
+        id: 'pickle_shot',
+        title: 'PULL UP & POUR',
+        hook: 'free pickle juice shot today',
+        product_focus: 'small shot glass of pickle juice',
+        treatment_keywords: [
+          'a small shot glass filled with bright cloudy yellow-green pickle brine',
+          'condensation droplets on the cold glass',
+          'a single pickle spear used as garnish',
+          'hand from below holding the shot in toast position'
+        ],
+        accent_color: 'electric green'
       },
       {
-        id: 'flavor_of_week',
-        title: 'FLAVOR OF THE WEEK',
-        hook: 'rotating Tuesdays',
+        id: 'late_fridays',
+        title: 'OPEN LATE FRIDAYS',
+        hook: 'late-night crunch on us',
+        product_focus: 'pickle backlit with late-night neon vibe',
         treatment_keywords: [
-          'pickle with unusual but appetizing coating (this week could be curry-yellow, ranch-white, sriracha-red)',
-          'fresh herbs as garnish suggesting flavor profile',
-          'subtle date stamp suggestion'
+          'a classic dill pickle in clean fresh light NOT moody',
+          'subtle bright pink/cyan glow on the edges suggesting late-night neon',
+          'still product-first — the pickle dominates the frame',
+          'maybe a tiny "OPEN" sign blurred in background'
         ],
-        accent_color: 'forest green'
-      },
+        accent_color: 'electric pink'
+      }
+    ]
+  },
+
+  nj_locals: {
+    type: 'nj_locals',
+    weight: 0.10,
+    short_label: 'NJ Locals',
+    group: 'local_pride',
+    description: 'Geographic targeting — local pride + recurring discount',
+    variants: [
       {
-        id: 'blind_taste',
-        title: 'BLIND TASTE',
-        hook: 'no spoilers',
+        id: 'sunday_locals',
+        title: 'NJ LOCALS',
+        hook: '10% off every Sunday',
+        product_focus: 'pickle with subtle NJ-state-shape brand cue',
         treatment_keywords: [
-          'pickle in dramatic silhouette lighting hiding the exact coating color',
-          'mysterious moody side-lit shot',
-          'minimal props'
+          'a vibrant classic dill pickle as hero',
+          'tiny garnish detail referencing NJ (could be small green pepper, Jersey-style mustard splash, or sub-roll crumb)',
+          'product is the absolute hero — local nod is subtle'
         ],
-        accent_color: 'pale gold'
-      },
+        accent_color: 'bright red'
+      }
+    ]
+  },
+
+  first_timer_perk: {
+    type: 'first_timer_perk',
+    weight: 0.05,
+    short_label: '1st-Timer Perk',
+    group: 'mystery_only_guaranteed_gift',
+    description: 'The ONLY acceptable mystery — gift itself is guaranteed',
+    variants: [
       {
-        id: 'roulette',
-        title: 'PICKLE ROULETTE',
-        hook: 'spin to win',
+        id: 'surprise_jar',
+        title: '1ST-TIMER PERK',
+        hook: 'surprise jar from the chef',
+        product_focus: 'wrapped jar with kraft paper and twine',
         treatment_keywords: [
-          'pickle dramatically centered',
-          'subtle motion blur suggesting spinning',
-          'one bite taken showing surprise interior color'
+          'a glass pickle jar partially wrapped in kraft paper with butcher twine',
+          'a handwritten chef tag visible',
+          'one pickle visible through the gap in wrapping',
+          'still bright and inviting NOT dark or mysterious'
         ],
-        accent_color: 'crimson red'
+        accent_color: 'cream'
       }
     ]
   }
 };
 
-// ─── Background palette (rota) ────────────────────────────────────────
-// Colores seamless paper estilo editorial Bon Appétit
+// ─── Background palette — solo BRIGHT/CRAVEABLE (anti-patterns removed) ───
 const BACKGROUND_PALETTE = [
-  'deep matte black seamless paper background',
   'vibrant solid mustard yellow seamless paper background',
   'deep mustard cream yellow seamless paper background',
-  'cool sage green seamless paper background',
   'dusty terracotta seamless paper background',
   'soft vintage cream seamless paper background',
-  'dark forest green seamless paper background',
-  'rich navy blue seamless paper background',
   'warm burnt orange seamless paper background',
-  'soft dusty pink seamless paper background'
+  'soft dusty pink seamless paper background',
+  'sage cream seamless paper background',
+  'butter yellow seamless paper background',
+  'salmon pink seamless paper background',
+  'paper-bag tan seamless paper background'
 ];
+// REMOVED anti-patterns: deep matte black, dark forest green, rich navy blue,
+//                       cool sage green (era ambiguo)
 
-// ─── POV rotation (4 ángulos) ─────────────────────────────────────────
+// ─── POV — solo A-tier (hand_below default, macro permitido, overhead) ─────
 const POV_TEMPLATES = [
   {
     id: 'hand_below',
     description: 'first-person POV hand from below holding a single large real',
-    notes: 'intimate, ad-style, action implied'
+    notes: 'A-tier default — intimate, ad-style, action implied, foot traffic winning shot',
+    weight: 0.55
   },
   {
     id: 'macro_closeup',
     description: 'extreme macro close-up shot tightly framed on a single large real',
-    notes: 'shallow depth of field, texture-focused'
+    notes: 'texture-focused, drip details, hunger trigger',
+    weight: 0.25
   },
   {
     id: 'overhead_dramatic',
     description: 'overhead three-quarter angle shot dramatically lit of a single large real',
-    notes: 'editorial top-down with depth'
-  },
-  {
-    id: 'side_profile',
-    description: 'side profile macro shot at table level showing the full silhouette of a single large real',
-    notes: 'minimalist, brand-like, museum-quality'
+    notes: 'editorial top-down with depth, abundance shots',
+    weight: 0.20
   }
 ];
+// REMOVED anti-pattern: side_profile (museum-quality minimalist = curiosity not craving)
 
-// ─── Typography combos (rotativos) ────────────────────────────────────
-// Cada combo define el look del 30% top + 10% bottom del layout
+// ─── Typography combos — solo A-tier punchy (anti-patterns removed) ────────
 const TYPOGRAPHY_COMBOS = [
   {
     id: 'classic_editorial',
@@ -220,53 +331,43 @@ const TYPOGRAPHY_COMBOS = [
     brand_line: 'tiny small-caps'
   },
   {
-    id: 'modern_minimal',
-    headline: 'large thin Helvetica Light all-caps with wide letter-spacing',
-    subhead: 'smaller italic Garamond serif',
-    tagline: 'bold geometric sans-serif',
-    brand_line: 'monospace small-caps'
+    id: 'bold_display',
+    headline: 'extremely heavy slab-serif (Rockwell Black) typography',
+    subhead: 'bold italic complement',
+    tagline: 'thick sans-serif',
+    brand_line: 'all-caps tracked sans'
   },
   {
     id: 'retro_diner',
     headline: 'hand-painted bold serif with subtle distress texture',
-    subhead: 'flowing 1950s script',
+    subhead: 'flowing 1950s diner script',
     tagline: 'condensed retro display font',
     brand_line: 'rounded vintage sans'
   },
   {
-    id: 'urban_grunge',
-    headline: 'rough stencil display font',
-    subhead: 'spray-paint italic',
-    tagline: 'bold condensed industrial sans',
-    brand_line: 'plain typewriter mono'
-  },
-  {
-    id: 'high_fashion',
-    headline: 'ultra-thin elegant serif (Didot style)',
-    subhead: 'delicate italic script',
-    tagline: 'tracked-out modern sans',
-    brand_line: 'small-caps with extreme letter spacing'
-  },
-  {
-    id: 'bold_display',
-    headline: 'extremely heavy slab-serif (Rockwell Black)',
-    subhead: 'bold italic complement',
-    tagline: 'thick sans-serif',
-    brand_line: 'all-caps tracked sans'
+    id: 'punchy_modern',
+    headline: 'extra-bold sans-serif (Futura Black) all-caps with tight tracking',
+    subhead: 'condensed italic',
+    tagline: 'monospace caps',
+    brand_line: 'small-caps tracked'
   }
 ];
+// REMOVED anti-patterns:
+//   - high_fashion (Didot ultra-thin = curiosity, slow read)
+//   - modern_minimal (Helvetica Light + spacious = negative-space dominant)
+//   - urban_grunge (stencil grunge = brand confusion in 0.5s)
 
 /**
  * Weighted random pick básico de offer (sin anti-repeat).
  */
 function pickOffer() {
-  const random = Math.random();
-  let cumulative = 0;
+  const totalWeight = Object.values(OFFERS).reduce((sum, o) => sum + o.weight, 0);
+  let r = Math.random() * totalWeight;
   for (const offer of Object.values(OFFERS)) {
-    cumulative += offer.weight;
-    if (random <= cumulative) return offer;
+    r -= offer.weight;
+    if (r <= 0) return offer;
   }
-  return OFFERS.free_pickle;
+  return OFFERS.free_chamoy;
 }
 
 /**
@@ -277,14 +378,11 @@ function pickVariant(offer) {
 }
 
 /**
- * Pick offer + variant evitando repetir la última usada en BD.
- * Antiguamente pickOfferAvoidingRepeat — ahora extendido a 2 niveles.
+ * Pick offer + variant evitando repetir las últimas 2 usadas en BD.
  */
 async function pickOfferAvoidingRepeat() {
   const HermesProposal = require('../../db/models/HermesProposal');
 
-  // Buscar últimas 2 proposals para conocer offer_type + variante (vía
-  // offer_details.title que persistimos)
   const recent = await HermesProposal.find({})
     .sort({ generated_at: -1 })
     .limit(2)
@@ -294,7 +392,6 @@ async function pickOfferAvoidingRepeat() {
   const lastOfferType = recent[0]?.offer_type;
   const lastVariantTitle = recent[0]?.offer_details?.title;
 
-  // 1. Pick offer type
   let candidate = pickOffer();
   if (lastOfferType && candidate.type === lastOfferType) {
     const remaining = Object.values(OFFERS).filter(o => o.type !== lastOfferType);
@@ -308,7 +405,6 @@ async function pickOfferAvoidingRepeat() {
     }
   }
 
-  // 2. Pick variant del offer, evitando la última de ese mismo offer
   let variant = pickVariant(candidate);
   if (candidate.type === lastOfferType && variant.title === lastVariantTitle && candidate.variants.length > 1) {
     const remainingVariants = candidate.variants.filter(v => v.title !== lastVariantTitle);
@@ -318,9 +414,6 @@ async function pickOfferAvoidingRepeat() {
   return { offer: candidate, variant };
 }
 
-/**
- * Pick background color rotativo (anti-repeat sobre la última usada).
- */
 async function pickBackground() {
   const HermesProposal = require('../../db/models/HermesProposal');
   const last = await HermesProposal.findOne({})
@@ -333,9 +426,6 @@ async function pickBackground() {
   return candidates[Math.floor(Math.random() * candidates.length)];
 }
 
-/**
- * Pick POV rotativo (anti-repeat sobre la última usada).
- */
 async function pickPOV() {
   const HermesProposal = require('../../db/models/HermesProposal');
   const last = await HermesProposal.findOne({})
@@ -345,12 +435,17 @@ async function pickPOV() {
 
   const lastPOV = last?.overlay_config?.pov_id;
   const candidates = POV_TEMPLATES.filter(p => p.id !== lastPOV);
-  return candidates[Math.floor(Math.random() * candidates.length)];
+
+  // Weighted pick — hand_below tiene mayor weight como A-tier default
+  const totalWeight = candidates.reduce((s, p) => s + (p.weight || 0.33), 0);
+  let r = Math.random() * totalWeight;
+  for (const pov of candidates) {
+    r -= (pov.weight || 0.33);
+    if (r <= 0) return pov;
+  }
+  return candidates[0];
 }
 
-/**
- * Pick typography combo rotativo.
- */
 async function pickTypography() {
   const HermesProposal = require('../../db/models/HermesProposal');
   const last = await HermesProposal.findOne({})
@@ -372,6 +467,7 @@ function listOffers() {
     type: o.type,
     short_label: o.short_label,
     weight: o.weight,
+    group: o.group,
     variant_count: o.variants.length
   }));
 }
