@@ -1,61 +1,263 @@
 /**
- * Offer Rotator — selecciona qué oferta promueve Hermes en este ciclo.
+ * Offer Rotator — selecciona oferta + sub-variante turnante.
  *
- * Tres ofertas core (definidas en sesión de planning 12-may-2026):
- *   1. free_pickle      — gateway, always-on, 50% weight
- *   2. big_dill_chamoy  — hero product, 30% weight
- *   3. mystery_pickle   — repeat driver, Tuesday-themed, 20% weight
+ * Estructura (refactor 13-may-2026 post-feedback editorial prompt):
  *
- * En Fase 3 los weights pasarán a ser dinámicos según performance
- * (más visits/$ → más weight). Por ahora son estáticos para validar
- * el ciclo end-to-end.
+ *   Cada offer tiene N sub-variantes (call-to-action distintos).
+ *   Esto reemplaza el campo `title` único con un pool rotativo:
+ *     - free_pickle puede ser FREE PICKLE, FREE REFILL, FREE TASTING, etc.
+ *     - big_dill_chamoy puede ser CHAMOY, TAJÍN, HOT HONEY, etc.
+ *
+ *   Anti-repeat funciona a 2 niveles:
+ *     1. Offer type (no repetir free_pickle 2 ciclos seguidos)
+ *     2. Sub-variant (no repetir "FREE REFILL" 2 ciclos del mismo offer)
  */
 
 const OFFERS = {
   free_pickle: {
     type: 'free_pickle',
     weight: 0.50,
-    title: 'FREE PICKLE ON YOUR 1ST VISIT',
-    short_label: 'Free pickle',
-    description: 'Walk in, get a free pickle. No purchase required.',
-    valid_until: null,  // always-on
-    voice_hooks: [
-      "The first pickle's on us.",
-      "Free pickle on us. Walk in, taste it.",
-      "First-timers get a free pickle — that's the whole pitch."
+    short_label: 'Free Pickle',
+    description: 'Gateway offer — primera visita, gancho de fricción cero.',
+    variants: [
+      {
+        id: 'first_visit',
+        title: 'FREE PICKLE',
+        hook: 'on your 1st visit',
+        treatment_keywords: ['classic glossy dill', 'natural emerald green', 'beads of brine moisture'],
+        accent_color: 'bright red'
+      },
+      {
+        id: 'refill',
+        title: 'FREE REFILL',
+        hook: 'with any jar purchase',
+        treatment_keywords: ['fresh pickle dropped into a jar', 'brine splashing', 'just-opened lid nearby'],
+        accent_color: 'deep red'
+      },
+      {
+        id: 'tasting',
+        title: 'FREE TASTING',
+        hook: 'every Saturday',
+        treatment_keywords: ['pickle slice on a toothpick', 'cutting board with multiple varieties faded behind', 'fresh dill sprig nearby'],
+        accent_color: 'forest green'
+      },
+      {
+        id: 'bundle',
+        title: 'BUY 2 GET 1',
+        hook: 'all weekend',
+        treatment_keywords: ['three pickle spears arranged vertically', 'one of them with a bite taken'],
+        accent_color: 'crimson'
+      },
+      {
+        id: 'flight',
+        title: 'FREE FLIGHT',
+        hook: 'with any $20+ jar',
+        treatment_keywords: ['small pickle slices on individual wooden tasting paddles', 'pickle as star of the flight'],
+        accent_color: 'burnt orange'
+      }
     ]
   },
+
   big_dill_chamoy: {
     type: 'big_dill_chamoy',
     weight: 0.30,
-    title: 'BIG DILL CHAMOY — LIMITED TIME',
-    short_label: 'Big Dill Chamoy',
-    description: 'Our chamoy-dipped pickle popsicle. Only in NJ.',
-    valid_until: null,  // se actualiza si decides hacerla limited-time
-    voice_hooks: [
-      "Big Dill Chamoy. Pickle. Chamoy. Stick. Done.",
-      "We dipped a pickle in chamoy and put it on a stick. Come try it.",
-      "Yes, it's a pickle popsicle. Yes, you want one."
+    short_label: 'Big Dill',
+    description: 'Hero product line — pickles tratados con sabores premium o virales.',
+    variants: [
+      {
+        id: 'chamoy',
+        title: 'BIG DILL CHAMOY',
+        hook: 'limited time only',
+        treatment_keywords: [
+          'generously drenched in glossy thick deep red chamoy sauce',
+          'coating roughly two thirds of the pickle leaving bottom third showing natural emerald green skin',
+          'viscous chamoy drips slowly falling in irregular natural drops',
+          'scattered bright red Tajín seasoning crystals clinging to the chamoy',
+          'on a wooden popsicle stick'
+        ],
+        accent_color: 'bright red on black'
+      },
+      {
+        id: 'tajin',
+        title: 'BIG DILL TAJÍN',
+        hook: 'this week only',
+        treatment_keywords: [
+          'thick crystalline crust of vibrant red Tajín chili-lime seasoning',
+          'covering most of the surface with visible texture of seasoning crystals',
+          'glossy drizzle of fresh lime juice running down the side',
+          'small pieces of fresh lime zest on the surface',
+          'fresh lime wedge resting at the base'
+        ],
+        accent_color: 'deep red on mustard yellow'
+      },
+      {
+        id: 'hot_honey',
+        title: 'BIG DILL HOT HONEY',
+        hook: 'sweet heat drop',
+        treatment_keywords: [
+          'amber hot honey glaze dripping in slow viscous streams',
+          'red chili flakes scattered across the honey coating catching the light',
+          'subtle steam suggestion',
+          'fresh thyme sprig as garnish'
+        ],
+        accent_color: 'golden yellow on warm brown'
+      },
+      {
+        id: 'everything_bagel',
+        title: 'BIG DILL EVERYTHING',
+        hook: 'NJ deli twist',
+        treatment_keywords: [
+          'pickle rolled in everything bagel seasoning',
+          'sesame seeds poppy seeds garlic flakes onion bits visible',
+          'small flake of cream cheese on top'
+        ],
+        accent_color: 'cream on navy blue'
+      }
     ]
   },
+
   mystery_pickle: {
     type: 'mystery_pickle',
     weight: 0.20,
-    title: 'MYSTERY PICKLE TUESDAYS',
-    short_label: 'Mystery Pickle',
-    description: 'New flavor every Tuesday. We pick. You taste.',
-    valid_until: null,
-    voice_hooks: [
-      "Tuesday is Mystery Pickle day. We pick the flavor. No spoilers.",
-      "Every Tuesday: one new flavor. You'll know when you taste it.",
-      "Mystery Pickle Tuesdays. The flavor changes weekly. So do the regulars."
+    short_label: 'Mystery',
+    description: 'Repeat-visit driver. Sabor rotando semanalmente, foco en surprise.',
+    variants: [
+      {
+        id: 'mystery_drop',
+        title: 'MYSTERY DROP',
+        hook: 'this Tuesday only',
+        treatment_keywords: [
+          'pickle partially wrapped in brown butcher paper revealing only part',
+          'question mark suggestion or mystery vibe',
+          'unidentifiable coating or color hint'
+        ],
+        accent_color: 'electric purple on black'
+      },
+      {
+        id: 'flavor_of_week',
+        title: 'FLAVOR OF THE WEEK',
+        hook: 'rotating Tuesdays',
+        treatment_keywords: [
+          'pickle with unusual but appetizing coating (this week could be curry-yellow, ranch-white, sriracha-red)',
+          'fresh herbs as garnish suggesting flavor profile',
+          'subtle date stamp suggestion'
+        ],
+        accent_color: 'forest green on cream'
+      },
+      {
+        id: 'blind_taste',
+        title: 'BLIND TASTE',
+        hook: 'no spoilers',
+        treatment_keywords: [
+          'pickle in dramatic silhouette lighting hiding the exact coating color',
+          'mysterious moody side-lit shot',
+          'minimal props'
+        ],
+        accent_color: 'pale gold on charcoal'
+      },
+      {
+        id: 'roulette',
+        title: 'PICKLE ROULETTE',
+        hook: 'spin to win',
+        treatment_keywords: [
+          'pickle dramatically centered',
+          'subtle motion blur suggesting spinning',
+          'one bite taken showing surprise interior color'
+        ],
+        accent_color: 'red on white'
+      }
     ]
   }
 };
 
+// ─── Background palette (rota) ────────────────────────────────────────
+// Colores seamless paper estilo editorial Bon Appétit
+const BACKGROUND_PALETTE = [
+  'deep matte black seamless paper background',
+  'vibrant solid mustard yellow seamless paper background',
+  'deep mustard cream yellow seamless paper background',
+  'cool sage green seamless paper background',
+  'dusty terracotta seamless paper background',
+  'soft vintage cream seamless paper background',
+  'dark forest green seamless paper background',
+  'rich navy blue seamless paper background',
+  'warm burnt orange seamless paper background',
+  'soft dusty pink seamless paper background'
+];
+
+// ─── POV rotation (4 ángulos) ─────────────────────────────────────────
+const POV_TEMPLATES = [
+  {
+    id: 'hand_below',
+    description: 'first-person POV hand from below holding a single large real',
+    notes: 'intimate, ad-style, action implied'
+  },
+  {
+    id: 'macro_closeup',
+    description: 'extreme macro close-up shot tightly framed on a single large real',
+    notes: 'shallow depth of field, texture-focused'
+  },
+  {
+    id: 'overhead_dramatic',
+    description: 'overhead three-quarter angle shot dramatically lit of a single large real',
+    notes: 'editorial top-down with depth'
+  },
+  {
+    id: 'side_profile',
+    description: 'side profile macro shot at table level showing the full silhouette of a single large real',
+    notes: 'minimalist, brand-like, museum-quality'
+  }
+];
+
+// ─── Typography combos (rotativos) ────────────────────────────────────
+// Cada combo define el look del 30% top + 10% bottom del layout
+const TYPOGRAPHY_COMBOS = [
+  {
+    id: 'classic_editorial',
+    headline: 'very large white serif typography in Bodoni style',
+    subhead: 'smaller flowing italic script',
+    tagline: 'bold sans-serif uppercase',
+    brand_line: 'tiny small-caps'
+  },
+  {
+    id: 'modern_minimal',
+    headline: 'large thin Helvetica Light all-caps with wide letter-spacing',
+    subhead: 'smaller italic Garamond serif',
+    tagline: 'bold geometric sans-serif',
+    brand_line: 'monospace small-caps'
+  },
+  {
+    id: 'retro_diner',
+    headline: 'hand-painted bold serif with subtle distress texture',
+    subhead: 'flowing 1950s script',
+    tagline: 'condensed retro display font',
+    brand_line: 'rounded vintage sans'
+  },
+  {
+    id: 'urban_grunge',
+    headline: 'rough stencil display font',
+    subhead: 'spray-paint italic',
+    tagline: 'bold condensed industrial sans',
+    brand_line: 'plain typewriter mono'
+  },
+  {
+    id: 'high_fashion',
+    headline: 'ultra-thin elegant serif (Didot style)',
+    subhead: 'delicate italic script',
+    tagline: 'tracked-out modern sans',
+    brand_line: 'small-caps with extreme letter spacing'
+  },
+  {
+    id: 'bold_display',
+    headline: 'extremely heavy slab-serif (Rockwell Black)',
+    subhead: 'bold italic complement',
+    tagline: 'thick sans-serif',
+    brand_line: 'all-caps tracked sans'
+  }
+];
+
 /**
- * Selecciona una oferta usando weighted random pick.
- * @returns {Object} offer config
+ * Weighted random pick básico de offer (sin anti-repeat).
  */
 function pickOffer() {
   const random = Math.random();
@@ -68,66 +270,123 @@ function pickOffer() {
 }
 
 /**
- * Selecciona una oferta evitando repetir la última usada.
- *
- * Consulta HermesProposal para encontrar la última generada (cualquier
- * status). Si pickOffer() random elige la misma → re-pick excluyéndola
- * para garantizar variedad consecutiva.
- *
- * Esto resolvió el comportamiento observado donde 2 ciclos consecutivos
- * salieron "FREE PICKLE" porque 50% weight × random = puede caer igual
- * fácilmente.
+ * Pick variante de un offer (sin anti-repeat).
+ */
+function pickVariant(offer) {
+  return offer.variants[Math.floor(Math.random() * offer.variants.length)];
+}
+
+/**
+ * Pick offer + variant evitando repetir la última usada en BD.
+ * Antiguamente pickOfferAvoidingRepeat — ahora extendido a 2 niveles.
  */
 async function pickOfferAvoidingRepeat() {
   const HermesProposal = require('../../db/models/HermesProposal');
 
-  // Última oferta usada (cualquier status)
-  const last = await HermesProposal.findOne({})
+  // Buscar últimas 2 proposals para conocer offer_type + variante (vía
+  // offer_details.title que persistimos)
+  const recent = await HermesProposal.find({})
     .sort({ generated_at: -1 })
-    .select('offer_type')
+    .limit(2)
+    .select('offer_type offer_details.title')
     .lean();
 
-  const lastOfferType = last?.offer_type;
-  const candidate = pickOffer();
+  const lastOfferType = recent[0]?.offer_type;
+  const lastVariantTitle = recent[0]?.offer_details?.title;
 
-  // Si no hay historia o el candidate ya es distinto → OK
-  if (!lastOfferType || candidate.type !== lastOfferType) {
-    return candidate;
+  // 1. Pick offer type
+  let candidate = pickOffer();
+  if (lastOfferType && candidate.type === lastOfferType) {
+    const remaining = Object.values(OFFERS).filter(o => o.type !== lastOfferType);
+    const totalWeight = remaining.reduce((s, o) => s + o.weight, 0);
+    if (totalWeight > 0) {
+      let r = Math.random() * totalWeight;
+      for (const offer of remaining) {
+        r -= offer.weight;
+        if (r <= 0) { candidate = offer; break; }
+      }
+    }
   }
 
-  // Re-pick excluyendo lastOfferType: weighted random sobre las otras
-  const remaining = Object.values(OFFERS).filter(o => o.type !== lastOfferType);
-  const totalWeight = remaining.reduce((sum, o) => sum + o.weight, 0);
-  if (totalWeight === 0) return candidate;  // edge case: solo 1 oferta
-
-  let r = Math.random() * totalWeight;
-  for (const offer of remaining) {
-    r -= offer.weight;
-    if (r <= 0) return offer;
+  // 2. Pick variant del offer, evitando la última de ese mismo offer
+  let variant = pickVariant(candidate);
+  if (candidate.type === lastOfferType && variant.title === lastVariantTitle && candidate.variants.length > 1) {
+    const remainingVariants = candidate.variants.filter(v => v.title !== lastVariantTitle);
+    variant = remainingVariants[Math.floor(Math.random() * remainingVariants.length)];
   }
-  return remaining[0];
+
+  return { offer: candidate, variant };
 }
 
 /**
- * Devuelve oferta específica por tipo.
+ * Pick background color rotativo (anti-repeat sobre la última usada).
  */
+async function pickBackground() {
+  const HermesProposal = require('../../db/models/HermesProposal');
+  const last = await HermesProposal.findOne({})
+    .sort({ generated_at: -1 })
+    .select('overlay_config.background_color')
+    .lean();
+
+  const lastBg = last?.overlay_config?.background_color;
+  const candidates = BACKGROUND_PALETTE.filter(bg => bg !== lastBg);
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+/**
+ * Pick POV rotativo (anti-repeat sobre la última usada).
+ */
+async function pickPOV() {
+  const HermesProposal = require('../../db/models/HermesProposal');
+  const last = await HermesProposal.findOne({})
+    .sort({ generated_at: -1 })
+    .select('overlay_config.pov_id')
+    .lean();
+
+  const lastPOV = last?.overlay_config?.pov_id;
+  const candidates = POV_TEMPLATES.filter(p => p.id !== lastPOV);
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
+/**
+ * Pick typography combo rotativo.
+ */
+async function pickTypography() {
+  const HermesProposal = require('../../db/models/HermesProposal');
+  const last = await HermesProposal.findOne({})
+    .sort({ generated_at: -1 })
+    .select('overlay_config.typography_id')
+    .lean();
+
+  const lastTypo = last?.overlay_config?.typography_id;
+  const candidates = TYPOGRAPHY_COMBOS.filter(t => t.id !== lastTypo);
+  return candidates[Math.floor(Math.random() * candidates.length)];
+}
+
 function getOffer(type) {
   return OFFERS[type] || null;
 }
 
-/**
- * Lista todas las ofertas activas (para UI/debug).
- */
 function listOffers() {
-  return Object.values(OFFERS);
+  return Object.values(OFFERS).map(o => ({
+    type: o.type,
+    short_label: o.short_label,
+    weight: o.weight,
+    variant_count: o.variants.length
+  }));
 }
 
-/**
- * Valida que los weights sumen ~1.0 (sanity check).
- */
-function validateWeights() {
-  const total = Object.values(OFFERS).reduce((sum, o) => sum + o.weight, 0);
-  return Math.abs(total - 1.0) < 0.01;
-}
-
-module.exports = { OFFERS, pickOffer, pickOfferAvoidingRepeat, getOffer, listOffers, validateWeights };
+module.exports = {
+  OFFERS,
+  BACKGROUND_PALETTE,
+  POV_TEMPLATES,
+  TYPOGRAPHY_COMBOS,
+  pickOffer,
+  pickVariant,
+  pickOfferAvoidingRepeat,
+  pickBackground,
+  pickPOV,
+  pickTypography,
+  getOffer,
+  listOffers
+};

@@ -1,17 +1,16 @@
 /**
- * Copy + Visual Prompt Generator — Claude genera 3 outputs en 1 call:
+ * Copy + Visual Prompt Generator — refactor 13-may-2026 con fórmula
+ * editorial 12-bloques basada en los prompts de referencia del user.
  *
- * 1. image_prompt: prompt visual rico para gpt-image-2 (incluye scene NJ +
- *    producto + text overlay deseado + estilo brand)
- * 2. headline: hook corto para el ad (Meta headline ~40 chars)
- * 3. primary_text: cuerpo del ad (60-120 chars típico)
+ * Claude genera 3 outputs en 1 call:
  *
- * Voz Jersey Pickles definida en sesión planning 12-may-2026:
- *   NJ attitude, confident, irreverent, punny but smart, anti-corporate.
- *
- * El text overlay que aparece en la imagen lo genera gpt-image-2 directamente
- * (su mejora clave vs DALL-E 3 es generar text accurately). Por eso el
- * image_prompt incluye instrucciones específicas del text a renderizar.
+ * 1. image_prompt: prompt visual estructurado siguiendo el template de
+ *    Bon Appétit editorial photography (Kodak Portra 400 + Canon 5D +
+ *    100mm macro + layout 30/60/10) con variables rotantes (POV,
+ *    background, typography combo, sub-variant del offer).
+ * 2. headline: hook corto para el ad de Meta (~40 chars)
+ * 3. primary_text: cuerpo del ad (60-120 chars, voz NJ)
+ * 4. tagline: NJ-voice tagline corto con flecha → (~15 chars)
  */
 
 const Anthropic = require('@anthropic-ai/sdk');
@@ -22,153 +21,160 @@ const claude = new Anthropic({ apiKey: config.claude.apiKey });
 
 const SYSTEM_PROMPT = `Eres el creative director de Jersey Pickles — tienda artisanal de pickles + olivas en South Hackensack, NJ (founded 2014).
 
-Para cada ciclo generás 3 outputs:
-1. **image_prompt**: prompt en INGLÉS para gpt-image-2 que genera el ad completo (imagen + text overlay integrado)
-2. **headline**: hook del ad (max 40 chars, voz NJ)
-3. **primary_text**: body del ad (60-120 chars, voz NJ)
+Para cada ciclo generás 4 outputs:
+1. **image_prompt**: prompt en INGLÉS estructurado en formato Bon Appétit editorial para gpt-image-2
+2. **headline**: hook del ad de Meta (max 40 chars, voz NJ)
+3. **primary_text**: body del ad de Meta (60-120 chars, voz NJ)
+4. **tagline_with_arrow**: tagline corto NJ-voice con flecha → al final (max 20 chars con la flecha incluida), usado dentro del image_prompt para el bottom-right corner del overlay
 
-VOZ DEL BRAND (para headline + primary_text):
-- Confident, irreverent, NJ attitude — directness y self-awareness
-- Punny but smart (ej. "Big Dill" sí, "Pickle-licious" no)
+═══════════════════════════════════════════════════════════════
+ESTRUCTURA OBLIGATORIA del image_prompt (12 bloques EN ESTE ORDEN):
+═══════════════════════════════════════════════════════════════
+
+[1] TECHNICAL OPENING (fijo, copiá literal):
+"Documentary editorial food photograph shot on Kodak Portra 400 film with a Canon 5D Mark IV and 100mm macro lens"
+
+[2] STYLE DECLARATION (fijo):
+"natural authentic photography style"
+
+[3] POV + HERO (se te pasa en el user prompt como POV template):
+Usá el POV template provisto + el producto exacto de la variante.
+Ejemplo: "first-person POV hand from below holding a single large real dill pickle on a wooden popsicle stick"
+
+[4] PRODUCT TREATMENT (CRÍTICO - usar treatment_keywords de la variante):
+Incorporá los treatment keywords provistos en una descripción rica.
+Ejemplo (chamoy): "the pickle is generously drenched in glossy thick deep red chamoy sauce coating roughly two thirds of the pickle leaving the bottom third showing the natural emerald green bumpy skin for clear product identity, viscous chamoy drips slowly falling from the bottom in irregular natural drops, scattered bright red Tajín seasoning crystals clinging to the chamoy coating catching the light"
+
+[5] BITE DETAIL (CRÍTICO — siempre incluir):
+"a clean fresh bite taken from the [upper side / side / top / corner] revealing the [crisp pale green firm interior / textured filling] creating dramatic contrast against the [exterior color]"
+El bite es lo que da appetite appeal. NUNCA omitir.
+
+[6] TEXTURAL MICRO-DETAILS (2-4 items):
+- "real beads of moisture on the exposed surface"
+- "subtle natural sheen of oil/brine"
+- "small droplets clinging naturally"
+- "[herb] sprig resting on top" (oregano, thyme, dill, parsley)
+- "[fresh element] nearby with juice droplets" (lime wedge, fresh dill, etc.)
+
+[7] LIGHTING (fijo, copiá literal):
+"soft natural diffused window light from the upper left with realistic gentle shadows"
+
+[8] BACKGROUND (usar el provisto en el user prompt):
+Ejemplo: "deep matte black seamless paper background"
+
+[9] ANTI-RENDER BLOCK (fijo, copiá literal):
+"slight 35mm film grain, photographed in the editorial style of Bon Appétit magazine, not a 3D render or digital illustration"
+
+[10] ASPECT RATIO (fijo):
+"vertical 9:16 aspect ratio"
+
+[11] LAYOUT MATEMÁTICO (CRÍTICO — usar typography combo provisto):
+"magazine cover composition: upper 30 percent contains two stacked text elements: first line [HEADLINE_STYLE] reading \\"[OFFER_TITLE]\\" as the main headline, directly below it [SUBHEAD_STYLE] reading \\"[OFFER_HOOK]\\", the central 60 percent dominated by the [product description] as visual hero, bottom 10 percent contains two lines of small text: first line [TAGLINE_STYLE] reading \\"[TAGLINE_WITH_ARROW]\\" in [ACCENT_COLOR], below it [BRAND_LINE_STYLE] reading \\"JERSEY PICKLES • NJ SHOP\\" in muted [COMPLEMENT_COLOR]"
+
+[12] EXPLICIT EXCLUSIONS (fijo, copiá literal):
+"Do NOT generate any fictional brand logo, watermark, badge, or emblem in the image. Do NOT show real human faces in detail. Do NOT include competitor brand names visible in the frame."
+
+═══════════════════════════════════════════════════════════════
+VOZ JERSEY PICKLES (para headline + primary_text + tagline):
+═══════════════════════════════════════════════════════════════
+
+- Confident, irreverent, NJ attitude
+- Punny but smart ("Big Dill" sí, "Pickle-licious" no)
 - Anti-corporate — evitar "delicious", "premium", "award-winning"
-- Casual con contracciones ("we're", "you'll", "don't")
-- Cierra con invitación a la tienda física
+- Casual con contracciones
+- Termina invitando a visita física
 
-EJEMPLOS DE VOZ CORRECTA:
-- "First pickle's on us" / "Walk in, taste it, take a jar home or don't. Either way you'll remember us."
-- "Pickle. Chamoy. Stick." / "We dipped a pickle in chamoy and stuck it on a stick. It's weirder than it sounds. Better too."
-- "Mystery Pickle Tuesday" / "One new flavor every Tuesday. We pick. You taste. No spoilers."
-
-GUÍA PARA image_prompt (CRÍTICO):
-El prompt va a gpt-image-2, modelo de OpenAI con capacidad real de generar text dentro de imágenes. ESCRIBIR EN INGLÉS.
-
-REGLA #1 — EL PICKLE/OLIVA ES EL HÉROE ABSOLUTO DEL SHOT:
-NUNCA poner sándwich, carnes, o otros elementos compitiendo por atención.
-El pickle/oliva debe ocupar 40-70% del frame visual. El scene NJ-local
-es contexto secundario (background blurred, props mínimos).
-
-Buenos hero shots (ejemplos):
-- A single glossy dill pickle held vertically with brine dripping down,
-  beads of liquid visible, vibrant green skin reflecting warm light,
-  shallow depth of field, background blurred to suggest a NJ deli
-- Macro close-up of pickle being bitten, crisp crunch frozen, drops of
-  brine flying, ultra-sharp focus on the pickle
-- A pickle popsicle on a wooden stick, chamoy sauce dripping down its
-  length, hand holding the stick from below
-- Hand reaching into a glass pickle jar, single pickle being pulled out
-  with brine streaming, jar still partially visible
-- Three olives on a toothpick over a martini, oil droplets glistening
-- Cross-section of a half-cut pickle showing crisp wet interior detail
-
-Malos hero shots (NO USAR):
-- Overstuffed sandwich where pickle is one ingredient among many
-- Charcuterie board where pickles compete with cheese/meats
-- Top-down flat lay with multiple products
-- Pickle floating without context or interaction
-
-ESTRUCTURA DEL PROMPT (en este orden):
-1. **Hero composition** (40-60 palabras): el pickle/oliva como protagonist
-   absoluto, con angle dinámico (close-up macro, drip frozen in motion,
-   hand interaction, cross-section). Describí texture, color, moisture.
-2. **Background context** (15-25 palabras): el scene NJ-local como
-   atmósfera BLURRED/out-of-focus. Solo sugerir el setting, no detallar.
-3. **Lighting + style** (10-20 palabras): warm cinematic lighting,
-   professional food photography, shallow depth of field, magazine
-   quality, hyper-realistic NOT illustration.
-4. **Text overlay** (THE KEY for gpt-image-2): SIEMPRE incluir el text
-   exacto provisto en el prompt user. CADA AD DEBE VARIAR el estilo
-   tipográfico para evitar uniformidad. Elegí UNO de estos templates
-   (rotando, no usar siempre el mismo):
-
-   - **A. Classic Halal Guys style**: bold condensed sans-serif (Impact /
-     Bebas Neue style), white text on dark red bottom banner, all caps
-   - **B. Diner retro**: hand-painted style serif font, cream/yellow on
-     dark green panel, slight vintage texture
-   - **C. Modern minimal**: thin elegant sans-serif (Helvetica Light),
-     black text on white strip at top, lots of negative space
-   - **D. Bold display**: thick stencil-style typeface, yellow on black
-     banner with subtle drop shadow
-   - **E. Italic editorial**: italic serif (Playfair Display style),
-     white on translucent dark gradient at bottom
-   - **F. Spray paint / urban**: rough hand-drawn or graffiti style font,
-     bold colors with slight grunge texture (NJ street vibe)
-   - **G. Vintage deli**: distressed wooden sign aesthetic, painted-look
-     serif font, warm earthy palette
-
-   El JSON respondido debe especificar cuál template usaste en el prompt.
-   NO repetir el template de la generación anterior si lo sabés.
-
-   Example concrete: 'Text overlay using "vintage deli" style: distressed
-   white serif typography reading "FREE PICKLE ON YOUR 1ST VISIT" painted
-   on a weathered wooden sign at the bottom of the frame. Below in
-   smaller hand-painted text: "JERSEY PICKLES · 9 ROMANELLI AVE · SOUTH
-   HACKENSACK NJ"'
-5. **EXPLICIT EXCLUSIONS** (CRÍTICO): SIEMPRE incluir literalmente:
-   "Do NOT generate any logo, brand watermark, or fictional brand emblem
-   in the image. Do NOT show real human faces. Do NOT include competitor
-   brand names. No comic illustration style."
-
-ESTÉTICA REFERENCIA — APUNTAR A LOOK COMO:
-- Big Dill Chamoy hero shot: vibrant background, product as ONLY hero,
-  bold typography, drip/motion frozen, hand interaction
-- High-end food magazine covers (Bon Appétit, Cherry Bombe)
-- Modern food brand ads where ONE product dominates the frame
-
-ESTILO A EVITAR:
-- Sandwich-as-hero shots con pickles secundarios (HAPPENED before, fix)
-- AI-looking renders (too perfect, plastic skin, generic stock)
-- Crowded compositions con multi-product
-- Top-down flat lay genérico
-- Comic-book illustration style
-- Cualquier logo, badge circular, o text emblem inventado en la imagen
+EJEMPLOS DE TAGLINES (los que vas a inventar):
+- "BIG DILL CHAMOY →"
+- "OLIVE ME →"
+- "BRINE TIME →"
+- "WALK IN, BITE OUT →"
+- "PICKLE DROP →"
+- "GET IN HERE →"
+- "JERSEY GOLD →"
+- "FRESH BRINE FRIDAYS →"
+- "CRUNCH HOUR →"
+- "DELI THERAPY →"
 
 REGLAS:
-- Headline: 30-40 chars. Hook fuerte, sin emoji.
-- Primary text: 60-120 chars. Puede empezar con 🥒 emoji.
-- image_prompt: 250-400 palabras, denso en specifics visuales, en inglés.
+- Headline (ad Meta): 30-40 chars. Hook fuerte, sin emoji.
+- Primary text (ad Meta): 60-120 chars. Puede empezar con 🥒 emoji.
+- Tagline (overlay imagen): max 20 chars incluyendo flecha →. ALL CAPS punny NJ-voice. Distinto del offer.title.
+- image_prompt: 350-500 palabras, denso en specifics, en INGLÉS.
 
 Formato de respuesta: SOLO JSON válido (sin markdown fences, sin texto antes/después).
 {
   "image_prompt": "...",
   "headline": "...",
-  "primary_text": "..."
+  "primary_text": "...",
+  "tagline_with_arrow": "..."
 }`;
 
 /**
- * Genera prompt visual + headline + primary_text para un offer y scene dados.
+ * Genera image_prompt + headline + primary_text + tagline para una combinación.
  *
- * @param {Object} offer - Resultado de offer-rotator.pickOffer()
- * @param {Object} scene - Resultado de scenes.pickSceneForOffer()
- * @param {Object} addressInfo - { full, short } — direcciones para overlay
- * @returns {Promise<{image_prompt, headline, primary_text}>}
+ * @param {Object} ctx
+ * @param {Object} ctx.offer - Offer config (free_pickle, big_dill_chamoy, mystery_pickle)
+ * @param {Object} ctx.variant - Sub-variant elegida del offer
+ * @param {Object} ctx.pov - POV template del rotator
+ * @param {string} ctx.background - Background color seamless paper
+ * @param {Object} ctx.typography - Typography combo del rotator
+ * @param {Object} ctx.addressInfo - { full, short } direcciones
+ * @returns {Promise<{image_prompt, headline, primary_text, tagline_with_arrow}>}
  */
-async function generateCreativeBrief(offer, scene, addressInfo) {
-  const userPrompt = `Genera image_prompt + headline + primary_text para esta combinación:
+async function generateCreativeBrief(ctx) {
+  const { offer, variant, pov, background, typography, addressInfo } = ctx;
 
-OFERTA: ${offer.title}
-Descripción interna: ${offer.description}
-Voice hooks de inspiración (no copiar literal):
-${offer.voice_hooks.map(h => `- "${h}"`).join('\n')}
+  const userPrompt = `Genera el JSON con image_prompt + headline + primary_text + tagline_with_arrow para esta combinación.
 
-SCENE (debe aparecer en image_prompt):
-${scene.description}
-(mood: ${scene.mood})
+═══ OFFER ═══
+Type: ${offer.type}
+Variant title: "${variant.title}"
+Variant hook: "${variant.hook}"
+Accent color spec: ${variant.accent_color}
 
-TEXT OVERLAY QUE DEBE APARECER EN LA IMAGEN (gpt-image-2 lo renderizará):
-- Línea principal (bold, grande): "${offer.title}"
-- Brand line: "JERSEY PICKLES"
-- Address: "${addressInfo.short}"
+═══ PRODUCT TREATMENT KEYWORDS (incorporar TODOS en el bloque [4]) ═══
+${variant.treatment_keywords.map(k => `- ${k}`).join('\n')}
 
-PRODUCTO: pickles + olivas artisanales hand-brined desde 2014.
+═══ POV TEMPLATE (bloque [3]) ═══
+"${pov.description} [PRODUCT]"
+Style notes: ${pov.notes}
 
-Generá el JSON con los 3 fields. Responde SOLO con el JSON.`;
+═══ BACKGROUND (bloque [8]) ═══
+"${background}"
+
+═══ TYPOGRAPHY COMBO (bloque [11]) ═══
+- headline_style: "${typography.headline}"
+- subhead_style: "${typography.subhead}"
+- tagline_style: "${typography.tagline}"
+- brand_line_style: "${typography.brand_line}"
+
+═══ TEXT LITERAL EN OVERLAY ═══
+- Headline (línea 1, top 30%): "${variant.title}"
+- Subhead (línea 2, top 30%): "${variant.hook}"
+- Tagline (bottom 10%, línea 1): YOU MUST INVENT — NJ voice, max 20 chars incluyendo → al final, ALL CAPS
+- Brand line (bottom 10%, línea 2): "JERSEY PICKLES • NJ SHOP"
+
+═══ OFFER VOICE HOOKS (inspiración para headline + primary_text, no copiar literal) ═══
+- "Walk in, taste it, take a jar home or don't"
+- "First pickle's on us"
+- "We dipped it. You taste it."
+- "Brine time at the shop"
+
+Generá el JSON. Recordá:
+- image_prompt: los 12 bloques EN ORDEN, en inglés, 350-500 palabras
+- headline: 30-40 chars NJ voice
+- primary_text: 60-120 chars, puede empezar 🥒
+- tagline_with_arrow: max 20 chars con → al final, ALL CAPS, NJ punny
+
+SOLO JSON. NO markdown fences.`;
 
   const startTime = Date.now();
 
   try {
     const response = await claude.messages.create({
       model: config.claude.model || 'claude-sonnet-4-6',
-      max_tokens: 1200,
+      max_tokens: 1500,
       system: [
         { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }
       ],
@@ -176,38 +182,41 @@ Generá el JSON con los 3 fields. Responde SOLO con el JSON.`;
     });
 
     const text = response.content[0].text.trim();
-
-    // Tolerance for markdown fences
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error(`No JSON found in response: ${text.slice(0, 200)}`);
 
     const parsed = JSON.parse(jsonMatch[0]);
 
-    if (!parsed.image_prompt || !parsed.headline || !parsed.primary_text) {
-      throw new Error(`Missing fields: ${JSON.stringify(Object.keys(parsed))}`);
+    const required = ['image_prompt', 'headline', 'primary_text', 'tagline_with_arrow'];
+    for (const f of required) {
+      if (!parsed[f]) throw new Error(`Missing field: ${f}. Got keys: ${Object.keys(parsed).join(',')}`);
     }
 
-    // Validación
+    // Validaciones suaves
     if (parsed.headline.length > 60) {
-      logger.warn(`[HERMES-COPY] Headline ${parsed.headline.length}c > 60: "${parsed.headline}"`);
+      logger.warn(`[HERMES-COPY] Headline ${parsed.headline.length}c > 60`);
     }
-    if (parsed.image_prompt.length < 200) {
-      logger.warn(`[HERMES-COPY] image_prompt suspiciously short (${parsed.image_prompt.length}c) — may produce generic image`);
+    if (parsed.image_prompt.length < 300) {
+      logger.warn(`[HERMES-COPY] image_prompt suspicious short (${parsed.image_prompt.length}c) — debería tener 350-500`);
+    }
+    if (!parsed.tagline_with_arrow.includes('→')) {
+      logger.warn(`[HERMES-COPY] tagline sin flecha →: "${parsed.tagline_with_arrow}"`);
     }
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    logger.info(`[HERMES-COPY] Generated for ${offer.type} + ${scene.id} in ${elapsed}s — H: "${parsed.headline}"`);
+    logger.info(`[HERMES-COPY] Generated for ${offer.type}/${variant.id} + POV:${pov.id} + Typo:${typography.id} in ${elapsed}s — H: "${parsed.headline}" | Tag: "${parsed.tagline_with_arrow}"`);
 
     return {
       image_prompt: parsed.image_prompt,
       headline: parsed.headline,
       primary_text: parsed.primary_text,
+      tagline_with_arrow: parsed.tagline_with_arrow,
       tokens_used: (response.usage.input_tokens || 0) + (response.usage.output_tokens || 0),
       cache_read: response.usage.cache_read_input_tokens || 0,
       elapsed_s: parseFloat(elapsed)
     };
   } catch (err) {
-    logger.error(`[HERMES-COPY] generateCreativeBrief failed (${offer.type}/${scene.id}): ${err.message}`);
+    logger.error(`[HERMES-COPY] generateCreativeBrief failed (${offer.type}/${variant?.id || '?'}): ${err.message}`);
     throw err;
   }
 }

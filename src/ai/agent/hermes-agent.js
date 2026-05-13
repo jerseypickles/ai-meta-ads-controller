@@ -24,7 +24,6 @@ const config = require('../../../config');
 const logger = require('../../utils/logger');
 const HermesProposal = require('../../db/models/HermesProposal');
 const offerRotator = require('../hermes/offer-rotator');
-const { pickSceneForOffer } = require('../hermes/scenes');
 const { generateCreativeBrief } = require('../hermes/copy-generator');
 const { generateImage } = require('../hermes/gpt-image');
 
@@ -83,41 +82,40 @@ async function preChecks() {
 }
 
 /**
- * Genera un ad completo: offer + scene + brief + imagen.
+ * Genera un ad completo: offer + variant + POV + background + typography
+ * + brief + imagen. Cada eje rota con anti-repeat sobre la última usada.
  */
 async function generateProposal(cycleId) {
-  // 1. Offer del ciclo (weighted random + anti-repeat de la última usada)
-  const offer = await offerRotator.pickOfferAvoidingRepeat();
-  logger.info(`[HERMES] Ciclo ${cycleId} — offer: ${offer.type} (${offer.title})`);
+  // 1. Offer + variant (anti-repeat 2-niveles)
+  const { offer, variant } = await offerRotator.pickOfferAvoidingRepeat();
+  logger.info(`[HERMES] Ciclo ${cycleId} — offer: ${offer.type}/${variant.id} ("${variant.title}")`);
 
-  // 2. Scene NJ compatible con la oferta
-  const scene = pickSceneForOffer(offer.type);
-  logger.info(`[HERMES] Scene: ${scene.id} (mood: ${scene.mood})`);
+  // 2. POV + background + typography rotativos
+  const pov = await offerRotator.pickPOV();
+  const background = await offerRotator.pickBackground();
+  const typography = await offerRotator.pickTypography();
+  logger.info(`[HERMES] Rotations — POV:${pov.id} · BG:"${background.slice(0, 40)}..." · Typo:${typography.id}`);
 
-  // 3. Address info para el overlay
+  // 3. Address info
   const addressInfo = {
     full: config.hermes.warehouseAddress,
     short: config.hermes.addressShort
   };
 
-  // 4. Claude genera image_prompt + headline + primary_text
+  // 4. Claude genera el creative brief (image_prompt 12-bloques + copy + tagline)
   let brief;
   try {
-    brief = await generateCreativeBrief(offer, scene, addressInfo);
+    brief = await generateCreativeBrief({ offer, variant, pov, background, typography, addressInfo });
   } catch (err) {
     logger.error(`[HERMES] Brief generation failed: ${err.message}`);
     return null;
   }
 
-  // 5. gpt-image-2 genera la imagen con el image_prompt.
-  // Quality 'medium' (~30-60s) en lugar de 'high' (~180s) por:
-  //   - Evita timeout del axios cliente (180s)
-  //   - Reduce ventana donde un deploy pueda matar el ciclo mid-flight
-  //   - Para foot traffic ads la diferencia visual no justifica la espera
+  // 5. gpt-image-2 genera la imagen (medium quality ~30-60s)
   let imageResult;
   try {
     imageResult = await generateImage(brief.image_prompt, {
-      size: '1024x1536',     // portrait para feed Meta
+      size: '1024x1536',
       quality: 'medium'
     });
   } catch (err) {
@@ -125,31 +123,37 @@ async function generateProposal(cycleId) {
     return null;
   }
 
-  // 6. Save HermesProposal
+  // 6. Save HermesProposal con todos los rotations metadata para anti-repeat futuros
   const proposal = await HermesProposal.create({
-    photo_asset_id: null,  // Ya no usamos photo bank
+    photo_asset_id: null,
     composed_image_base64: imageResult.base64,
     overlay_config: {
-      offer_text: offer.title,
+      offer_text: variant.title,
       brand_text: 'JERSEY PICKLES',
       address_text: addressInfo.short,
-      overlay_style: 'gpt-image-2-integrated',  // text overlay generado dentro de la imagen
-      generated_image_prompt: brief.image_prompt  // audit del prompt usado
+      overlay_style: 'gpt-image-2-12-block-editorial',
+      generated_image_prompt: brief.image_prompt,
+      // Metadata de rotations para anti-repeat de próximos ciclos
+      variant_id: variant.id,
+      pov_id: pov.id,
+      background_color: background,
+      typography_id: typography.id,
+      tagline_with_arrow: brief.tagline_with_arrow
     },
     headline: brief.headline,
     primary_text: brief.primary_text,
     cta_button: 'GET_DIRECTIONS',
     offer_type: offer.type,
     offer_details: {
-      title: offer.title,
-      description: offer.description,
-      valid_until: offer.valid_until
+      title: variant.title,
+      description: variant.hook,
+      valid_until: null
     },
     status: 'pending',
     cycle_id: cycleId
   });
 
-  logger.info(`[HERMES] Proposal ${proposal._id} creado — offer=${offer.type}, scene=${scene.id}, image=${imageResult.size}, brief=${brief.elapsed_s}s, img=${imageResult.elapsed_s}s`);
+  logger.info(`[HERMES] Proposal ${proposal._id} creado — ${offer.type}/${variant.id} · POV:${pov.id} · Typo:${typography.id} · brief=${brief.elapsed_s}s · img=${imageResult.elapsed_s}s`);
   return proposal;
 }
 
