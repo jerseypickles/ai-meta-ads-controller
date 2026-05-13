@@ -210,10 +210,24 @@ async function publishProposalToMeta(proposalId) {
     try { fs.unlinkSync(tmpPath); } catch (_) {}
   }
 
-  // 4. Crear ad creative MANUAL (sin helper genérico) para tener control
-  // total: NO usa instagram_user_id default hardcoded, NO aplica advantage+
-  // features global, NO añade campos que pueden romper OUTCOME_TRAFFIC.
+  // 4. Crear ad creative MANUAL (sin helper genérico) para control total.
   const linkUrl = config.hermes.googleMapsUrl || `https://maps.google.com/?q=${encodeURIComponent(config.hermes.warehouseAddress)}`;
+
+  // CTA: GET_DIRECTIONS de Meta requiere formato fbgeo://lat,long,"addr"
+  // Y que la Page tenga Business Location verificada en Meta Business Suite.
+  // Sin esa setup, GET_DIRECTIONS con URL normal devuelve 400.
+  //
+  // Fallback automático a LEARN_MORE — acepta cualquier URL externa,
+  // mismo destino (Google Maps con la dirección), botón dice "Learn More"
+  // en lugar de "Get Directions". UX casi idéntica.
+  //
+  // Para usar GET_DIRECTIONS nativo Meta, setear HERMES_NATIVE_GET_DIRECTIONS=true
+  // en env vars Y tener Business Location verificada en Meta.
+  let ctaType = proposal.cta_button || 'LEARN_MORE';
+  if (ctaType === 'GET_DIRECTIONS' && process.env.HERMES_NATIVE_GET_DIRECTIONS !== 'true') {
+    logger.info(`[HERMES-PUBLISHER] CTA GET_DIRECTIONS → fallback a LEARN_MORE (sin Business Location verificada)`);
+    ctaType = 'LEARN_MORE';
+  }
 
   const linkData = {
     message: proposal.primary_text || '',
@@ -221,7 +235,7 @@ async function publishProposalToMeta(proposalId) {
     name: proposal.headline || '',
     image_hash: imageHash,
     call_to_action: {
-      type: proposal.cta_button || 'GET_DIRECTIONS',
+      type: ctaType,
       value: { link: linkUrl }
     }
   };
