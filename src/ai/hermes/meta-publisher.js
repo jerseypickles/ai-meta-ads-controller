@@ -41,47 +41,71 @@ const HERMES_ADSET_KEY = 'hermes_meta_adset';
  *   3. Crear nuevos (primera vez)
  */
 async function getOrCreateCampaignAndAdset(meta) {
+  // Prioridad 1: env vars completos
   const envCampaign = process.env.HERMES_CAMPAIGN_ID;
   const envAdset = process.env.HERMES_ADSET_ID;
   if (envCampaign && envAdset) {
     return { campaign_id: envCampaign, adset_id: envAdset, source: 'env' };
   }
 
+  // Prioridad 2: SystemConfig completo (campaign + adset)
   const stored = await SystemConfig.get(HERMES_CAMPAIGN_KEY);
   const storedAdset = await SystemConfig.get(HERMES_ADSET_KEY);
   if (stored?.campaign_id && storedAdset?.adset_id) {
     return { campaign_id: stored.campaign_id, adset_id: storedAdset.adset_id, source: 'systemconfig' };
   }
 
-  // Crear nuevos
-  logger.info('[HERMES-PUBLISHER] No campaign/adset configurados — creando nuevos en Meta (PAUSED)');
+  // Prioridad 3: persistencia incremental — reusar lo que ya exista
+  // (caso típico: la campaign se creó antes pero el adset falló)
+  let campaignId = envCampaign || stored?.campaign_id;
+  let campaignName = stored?.name || '[HERMES] NJ Foot Traffic';
+  let justCreatedCampaign = false;
 
-  const campaign = await meta.createCampaign({
-    name: '[HERMES] NJ Foot Traffic',
-    objective: 'OUTCOME_TRAFFIC',
-    status: 'PAUSED',  // Usuario debe activar manualmente
-    bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
-    daily_budget: config.hermes.initialDailyBudget || 45
-  });
+  if (!campaignId) {
+    logger.info('[HERMES-PUBLISHER] No campaign — creando nueva en Meta (PAUSED)');
+    const campaign = await meta.createCampaign({
+      name: '[HERMES] NJ Foot Traffic',
+      objective: 'OUTCOME_TRAFFIC',
+      status: 'PAUSED',
+      bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
+      daily_budget: config.hermes.initialDailyBudget || 45
+    });
+    campaignId = campaign.campaign_id;
+    campaignName = campaign.name;
+    justCreatedCampaign = true;
 
-  logger.info(`[HERMES-PUBLISHER] Campaign creada: ${campaign.campaign_id} (PAUSED)`);
+    // PERSISTIR INMEDIATAMENTE — si el adset falla, no se crea campaign duplicada en retry
+    await SystemConfig.set(HERMES_CAMPAIGN_KEY, {
+      campaign_id: campaignId,
+      name: campaignName,
+      created_at: new Date()
+    });
+    logger.info(`[HERMES-PUBLISHER] Campaign creada y persistida: ${campaignId} (PAUSED)`);
+  } else {
+    logger.info(`[HERMES-PUBLISHER] Reusando campaign existente: ${campaignId}`);
+  }
+
+  // Compatibility con código viejo: la variable `campaign` ya no existe, usar campaignId
+  const campaign = { campaign_id: campaignId, name: campaignName };
 
   // Targeting NJ — radio configurable desde warehouse
-  // Coordenadas aproximadas de 9 Romanelli Ave, South Hackensack NJ 07606
-  // Si querés más preciso, geocode con Google Maps API
   const NJ_LAT = 40.8742;
   const NJ_LON = -74.0473;
   const radius = config.hermes.targetingRadiusMi || 10;
 
-  const adset = await meta.createAdSet({
+  // Crear ad set manualmente (no via createAdSet helper) porque ese helper
+  // hace asunciones para OUTCOME_SALES (attribution_spec VIEW_THROUGH, etc)
+  // que NO aplican a OUTCOME_TRAFFIC. Params explícitos para foot traffic.
+  const adsetParams = {
     campaign_id: campaign.campaign_id,
     name: '[HERMES] Local NJ Foot Traffic',
-    daily_budget: config.hermes.initialDailyBudget || 45,
+    daily_budget: Math.round((config.hermes.initialDailyBudget || 45) * 100),
     optimization_goal: 'LINK_CLICKS',
     billing_event: 'IMPRESSIONS',
     bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
+    destination_type: 'WEBSITE',           // REQUERIDO para OUTCOME_TRAFFIC
     status: 'PAUSED',
-    targeting: {
+    targeting: JSON.stringify({
       geo_locations: {
         custom_locations: [{
           latitude: NJ_LAT,
@@ -92,25 +116,32 @@ async function getOrCreateCampaignAndAdset(meta) {
       },
       age_min: 21,
       age_max: 65
-    }
-  });
+    })
+  };
 
-  logger.info(`[HERMES-PUBLISHER] AdSet creado: ${adset.adset_id} (PAUSED, radius ${radius}mi)`);
+  logger.info(`[HERMES-PUBLISHER] Creando adset directo (OUTCOME_TRAFFIC + LINK_CLICKS + WEBSITE)`);
+  let adsetResult;
+  try {
+    adsetResult = await meta.post(`/${meta.adAccountId}/adsets`, adsetParams);
+  } catch (err) {
+    const metaError = err.response?.data?.error;
+    const detail = metaError ? `${metaError.message} (code=${metaError.code}, type=${metaError.type})` : err.message;
+    logger.error(`[HERMES-PUBLISHER] AdSet creation failed: ${detail}`);
+    throw new Error(`Meta API error al crear adset: ${detail}`);
+  }
 
-  // Persistir en SystemConfig para reuso
-  await SystemConfig.set(HERMES_CAMPAIGN_KEY, {
-    campaign_id: campaign.campaign_id,
-    name: campaign.name,
-    created_at: new Date()
-  });
+  const adsetId = adsetResult.id;
+  logger.info(`[HERMES-PUBLISHER] AdSet creado: ${adsetId} (PAUSED, radius ${radius}mi)`);
+
+  // Persistir adset (la campaign ya se persistió arriba si fue creada nueva)
   await SystemConfig.set(HERMES_ADSET_KEY, {
-    adset_id: adset.adset_id,
-    campaign_id: campaign.campaign_id,
-    name: adset.name,
+    adset_id: adsetId,
+    campaign_id: campaignId,
+    name: adsetParams.name,
     created_at: new Date()
   });
 
-  return { campaign_id: campaign.campaign_id, adset_id: adset.adset_id, source: 'newly_created', _just_created: true };
+  return { campaign_id: campaignId, adset_id: adsetId, source: 'newly_created', _just_created: justCreatedCampaign };
 }
 
 /**
