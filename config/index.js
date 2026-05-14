@@ -6,8 +6,13 @@ module.exports = {
     appSecret: process.env.META_APP_SECRET,
     accessToken: process.env.META_ACCESS_TOKEN,
     adAccountId: process.env.META_AD_ACCOUNT_ID,
-    apiVersion: process.env.META_API_VERSION || 'v21.0',
-    baseUrl: `https://graph.facebook.com/${process.env.META_API_VERSION || 'v21.0'}`,
+    // Migración 14-may-2026: v21.0 → v25.0 (email Meta: deprecation de versions
+    // prior to v24.0 el 9-jun-2026, recomiendan v25.0 para minimizar migraciones).
+    // gpt-image-2 + Advantage+ Standard Enhancements requieren v25.0+. Nuestros
+    // endpoints (campaigns, adsets, ads, adcreatives, adimages, insights, search)
+    // todos disponibles en v25.0 sin breaking changes para nuestros usos.
+    apiVersion: process.env.META_API_VERSION || 'v25.0',
+    baseUrl: `https://graph.facebook.com/${process.env.META_API_VERSION || 'v25.0'}`,
     pageId: process.env.META_PAGE_ID || '',
     pixelId: process.env.META_PIXEL_ID || '',
     defaultLinkUrl: process.env.META_DEFAULT_LINK_URL || '',
