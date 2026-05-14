@@ -494,25 +494,62 @@ router.get('/lookup-ids', async (req, res) => {
 
     const igAccount = pageInfo.instagram_business_account || null;
 
+    // Current config (lo que el running process tiene seteado AHORA)
+    const currentFbPageId = process.env.HERMES_FACEBOOK_PAGE_ID || config.hermes?.facebookPageId || null;
+    const currentIgId = process.env.HERMES_INSTAGRAM_ID || config.hermes?.instagramId || null;
+
+    // Verificación: ¿el IG ID seteado matches con el detected del Page?
+    const igMatch = currentIgId && igAccount && currentIgId === igAccount.id;
+    const fbMatch = currentFbPageId && currentFbPageId === pageInfo.id;
+
+    // Si hay IG ID seteado pero NO matches con el del Page → verificación independiente
+    // (lookup directo del ID seteado para ver a quién pertenece)
+    let currentIgInfo = null;
+    if (currentIgId && !igMatch) {
+      try {
+        currentIgInfo = await meta.get(`/${currentIgId}`, { fields: 'id,username,name' });
+      } catch (lookupErr) {
+        currentIgInfo = { error: lookupErr.response?.data?.error?.message || lookupErr.message };
+      }
+    }
+
     res.json({
-      facebook: {
-        page_id: pageInfo.id,
-        page_name: pageInfo.name,
-        category: pageInfo.category,
-        url: pageInfo.link
+      detected_from_page: {
+        facebook: {
+          page_id: pageInfo.id,
+          page_name: pageInfo.name,
+          category: pageInfo.category,
+          url: pageInfo.link
+        },
+        instagram: igAccount ? {
+          business_id: igAccount.id,
+          username: igAccount.username,
+          name: igAccount.name
+        } : null
       },
-      instagram: igAccount ? {
-        business_id: igAccount.id,
-        username: igAccount.username,
-        name: igAccount.name
-      } : null,
+      current_config: {
+        HERMES_FACEBOOK_PAGE_ID: currentFbPageId || '(not set — using auto-detect)',
+        HERMES_INSTAGRAM_ID: currentIgId || '(not set — ads will run Facebook only)',
+        facebook_matches_detected: fbMatch,
+        instagram_matches_detected: igMatch,
+        current_instagram_owner: currentIgInfo
+      },
       env_vars_for_render: {
         HERMES_FACEBOOK_PAGE_ID: pageInfo.id,
         HERMES_INSTAGRAM_ID: igAccount?.id || '(no Instagram Business linked — link in Meta Business Settings)'
       },
-      hint: igAccount
-        ? '✅ Both IDs found. Copy the env_vars_for_render to Render dashboard env settings.'
-        : '⚠️ Instagram not linked to this Page. Go to Meta Business Settings → Instagram Accounts → link @jerseypickles.'
+      verification: {
+        facebook_ok: !currentFbPageId || fbMatch,
+        instagram_ok: !currentIgId || igMatch,
+        all_ok: (!currentFbPageId || fbMatch) && (!currentIgId || igMatch)
+      },
+      hint: !igAccount
+        ? '⚠️ Instagram not linked to this Page. Go to Meta Business Settings → Instagram Accounts → link @jerseypickles.'
+        : (igMatch && fbMatch)
+          ? '✅ Current config matches detected IDs from Page. Both IG + FB serving correctly.'
+          : (currentIgId && !igMatch)
+            ? `🚨 MISMATCH: HERMES_INSTAGRAM_ID is set to ${currentIgId} but Page is linked to ${igAccount.id} (@${igAccount.username}). Ads may be serving under wrong IG account!`
+            : 'ℹ️ Copy env_vars_for_render values to Render env settings to enable IG serving.'
     });
   } catch (err) {
     const metaError = err.response?.data?.error;

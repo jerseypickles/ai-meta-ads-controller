@@ -308,7 +308,18 @@ async function publishProposalToMeta(proposalId) {
 
   const creativeParams = {
     name: `[Hermes] Creative · ${proposal.offer_details?.title || proposal.offer_type} · ${new Date().toISOString().split('T')[0]}`,
-    object_story_spec: JSON.stringify(objectStorySpec)
+    object_story_spec: JSON.stringify(objectStorySpec),
+    // Advantage+ Creative Features (Meta Marketing API v25.0+).
+    // SOLO inline_comment OPT_IN — Meta puede mostrar social proof comments
+    // bajo el ad para +engagement. Zero riesgo visual: no toca la imagen ni
+    // el copy. Otras features (image_touchups, text_optimizations, image_uncrop,
+    // image_template) quedan OFF intencionalmente para preservar el look
+    // editorial de gpt-image-2 + 12-block prompt + voz NJ del copy.
+    degrees_of_freedom_spec: JSON.stringify({
+      creative_features_spec: {
+        inline_comment: { enroll_status: 'OPT_IN' }
+      }
+    })
   };
 
   logger.info(`[HERMES-PUBLISHER] Creando creative directo (page=${pageId}, ig=${instagramId || 'none'}, cta=${proposal.cta_button || 'GET_DIRECTIONS'})`);
