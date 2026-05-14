@@ -627,6 +627,228 @@ function VisitsTab() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// TAB: Performance — métricas Meta de ads live
+// ═══════════════════════════════════════════════════════════════════════
+
+function fmtMoney(n) {
+  if (n == null || isNaN(n)) return '—';
+  if (n === 0) return '$0';
+  if (n < 1) return `$${n.toFixed(2)}`;
+  if (n < 100) return `$${n.toFixed(2)}`;
+  return `$${Math.round(n).toLocaleString()}`;
+}
+function fmtNum(n) {
+  if (n == null || isNaN(n)) return '—';
+  if (n === 0) return '0';
+  if (n < 1000) return `${Math.round(n)}`;
+  if (n < 1000000) return `${(n / 1000).toFixed(1)}k`;
+  return `${(n / 1000000).toFixed(2)}M`;
+}
+function fmtPct(n) {
+  if (n == null || isNaN(n)) return '—';
+  return `${n.toFixed(2)}%`;
+}
+
+function PerformanceTab() {
+  const [proposals, setProposals] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+
+  async function fetchLive() {
+    setLoading(true);
+    try {
+      // Live = todos los proposals con meta_ad_id (live, completed, etc)
+      const { data } = await api.get('/api/hermes/proposals?status=all&limit=200');
+      const withAdId = (data.proposals || []).filter(p => p.meta_ad_id);
+      setProposals(withAdId);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function syncAll() {
+    setSyncing(true);
+    try {
+      await api.post('/api/hermes/sync-all-metrics', {}, { timeout: 120000 });
+      await fetchLive();
+    } catch (err) {
+      alert(`Sync error: ${err.response?.data?.error || err.message}`);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  useEffect(() => { fetchLive(); }, []);
+
+  // Aggregations por dimensión
+  const totals = proposals.reduce((acc, p) => {
+    const perf = p.performance || {};
+    acc.spend += (perf.spend || 0);
+    acc.reach += (perf.reach || 0);
+    acc.impressions += (perf.impressions || 0);
+    acc.link_clicks += (perf.link_clicks || 0);
+    acc.manual_visits += (perf.manual_visits_reported || 0);
+    return acc;
+  }, { spend: 0, reach: 0, impressions: 0, link_clicks: 0, manual_visits: 0 });
+  const avgCtr = totals.impressions > 0 ? (totals.link_clicks / totals.impressions) * 100 : 0;
+  const costPerClick = totals.link_clicks > 0 ? totals.spend / totals.link_clicks : 0;
+  const costPerVisit = totals.manual_visits > 0 ? totals.spend / totals.manual_visits : 0;
+
+  // Breakdown por dimension
+  function groupBy(field) {
+    const groups = {};
+    for (const p of proposals) {
+      const key = field === 'offer'
+        ? p.offer_type
+        : (p.overlay_config?.[field] || 'unknown');
+      if (!groups[key]) groups[key] = { spend: 0, link_clicks: 0, impressions: 0, count: 0, manual_visits: 0 };
+      groups[key].spend += (p.performance?.spend || 0);
+      groups[key].link_clicks += (p.performance?.link_clicks || 0);
+      groups[key].impressions += (p.performance?.impressions || 0);
+      groups[key].manual_visits += (p.performance?.manual_visits_reported || 0);
+      groups[key].count++;
+    }
+    return Object.entries(groups)
+      .map(([k, v]) => ({
+        key: k,
+        ...v,
+        ctr: v.impressions > 0 ? (v.link_clicks / v.impressions) * 100 : 0,
+        cpc: v.link_clicks > 0 ? v.spend / v.link_clicks : 0
+      }))
+      .sort((a, b) => b.spend - a.spend);
+  }
+
+  const byOffer = groupBy('offer');
+  const byPov = groupBy('pov_id');
+  const byTypo = groupBy('typography_id');
+  const byBg = groupBy('background_color');
+
+  return (
+    <div>
+      {/* Header con sync button */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ color: '#94a3b8', fontSize: '0.8rem' }}>
+          {proposals.length} ads con meta_ad_id · last sync: {proposals[0]?.performance?.measured_at ? new Date(proposals[0].performance.measured_at).toLocaleString() : 'nunca'}
+        </div>
+        <button
+          onClick={syncAll}
+          disabled={syncing}
+          style={{
+            background: HERMES_COLOR, color: '#0a0a0a',
+            border: 'none', padding: '6px 14px', borderRadius: 6,
+            fontWeight: 700, cursor: syncing ? 'wait' : 'pointer', fontSize: '0.8rem'
+          }}
+        >{syncing ? 'Sincronizando...' : '🔄 Pull métricas Meta'}</button>
+      </div>
+
+      {/* Totals */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 10, marginBottom: 20 }}>
+        <StatCard label="Spend total" value={fmtMoney(totals.spend)} />
+        <StatCard label="Reach" value={fmtNum(totals.reach)} />
+        <StatCard label="Impressions" value={fmtNum(totals.impressions)} />
+        <StatCard label="Link clicks" value={fmtNum(totals.link_clicks)} />
+        <StatCard label="CTR" value={fmtPct(avgCtr)} />
+        <StatCard label="Cost / visit" value={totals.manual_visits > 0 ? fmtMoney(costPerVisit) : '—'} subtitle={`${totals.manual_visits} visits`} />
+      </div>
+
+      {loading ? <p>Cargando...</p> : proposals.length === 0 ? (
+        <p style={{ color: '#94a3b8' }}>Sin ads live aún. Aprobá una proposal para que se publique a Meta.</p>
+      ) : (
+        <>
+          {/* Breakdowns 2 columnas */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
+            <BreakdownTable title="Por oferta" rows={byOffer} renderKey={k => <OfferBadge type={k} />} />
+            <BreakdownTable title="Por POV (ángulo)" rows={byPov} renderKey={k => <code style={{ color: HERMES_COLOR }}>{k}</code>} />
+            <BreakdownTable title="Por tipografía" rows={byTypo} renderKey={k => <code style={{ color: HERMES_COLOR }}>{k}</code>} />
+            <BreakdownTable title="Por background" rows={byBg} renderKey={k => <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>{(k || '').slice(0, 30)}...</span>} />
+          </div>
+
+          {/* Tabla de ads detallada */}
+          <h4 style={{ margin: '20px 0 10px 0', color: '#cbd5e1' }}>Ads individuales ({proposals.length})</h4>
+          <div style={{ display: 'grid', gap: 6 }}>
+            {proposals.map(p => (
+              <div key={p._id} style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid #334155',
+                borderRadius: 6,
+                padding: 10,
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 60px',
+                gap: 10,
+                fontSize: '0.78rem',
+                alignItems: 'center'
+              }}>
+                <div>
+                  <OfferBadge type={p.offer_type} />
+                  <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: 4 }}>
+                    {p.overlay_config?.variant_id || '—'}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ color: '#94a3b8', fontSize: '0.7rem' }}>spend</div>
+                  <div style={{ fontWeight: 600 }}>{fmtMoney(p.performance?.spend || 0)}</div>
+                </div>
+                <div>
+                  <div style={{ color: '#94a3b8', fontSize: '0.7rem' }}>reach / clicks</div>
+                  <div style={{ fontWeight: 600 }}>{fmtNum(p.performance?.reach || 0)} / {fmtNum(p.performance?.link_clicks || 0)}</div>
+                </div>
+                <div>
+                  <div style={{ color: '#94a3b8', fontSize: '0.7rem' }}>CTR / CPC</div>
+                  <div style={{ fontWeight: 600 }}>{fmtPct(p.performance?.ctr || 0)} / {fmtMoney(p.performance?.cost_per_click || 0)}</div>
+                </div>
+                <div>
+                  <div style={{ color: '#94a3b8', fontSize: '0.7rem' }}>visits</div>
+                  <div style={{ fontWeight: 600 }}>{p.performance?.manual_visits_reported || 0}</div>
+                </div>
+                <a
+                  href={`https://business.facebook.com/adsmanager/manage/ads/edit?selected_ad_ids=${p.meta_ad_id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: '#60a5fa', textDecoration: 'underline', fontSize: '0.7rem', textAlign: 'right' }}
+                >→ Meta</a>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function BreakdownTable({ title, rows, renderKey }) {
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.02)',
+      border: '1px solid #334155',
+      borderRadius: 8,
+      padding: 12
+    }}>
+      <h4 style={{ margin: '0 0 10px 0', color: '#cbd5e1', fontSize: '0.85rem' }}>{title}</h4>
+      {rows.length === 0 ? (
+        <p style={{ color: '#94a3b8', fontSize: '0.78rem' }}>Sin data</p>
+      ) : (
+        <div style={{ display: 'grid', gap: 6 }}>
+          {rows.map(r => (
+            <div key={r.key} style={{
+              display: 'grid',
+              gridTemplateColumns: '1.5fr 0.7fr 0.7fr 0.6fr',
+              gap: 8,
+              fontSize: '0.72rem',
+              alignItems: 'center'
+            }}>
+              <div>{renderKey(r.key)} <span style={{ color: '#64748b' }}>({r.count})</span></div>
+              <div style={{ color: '#cbd5e1' }}>{fmtMoney(r.spend)}</div>
+              <div style={{ color: '#cbd5e1' }}>{fmtNum(r.link_clicks)} clk</div>
+              <div style={{ color: r.ctr > 1 ? '#22c55e' : '#94a3b8' }}>{fmtPct(r.ctr)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // MAIN: HermesPanel
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -687,6 +909,7 @@ export default function HermesPanel() {
       <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid #334155' }}>
         {[
           { id: 'proposals', label: '📋 Proposals' },
+          { id: 'performance', label: '📊 Performance' },
           { id: 'visits', label: '🚪 Store Visits' }
         ].map(t => (
           <button
@@ -707,6 +930,7 @@ export default function HermesPanel() {
       </div>
 
       {tab === 'proposals' && <ProposalsTab />}
+      {tab === 'performance' && <PerformanceTab />}
       {tab === 'visits' && <VisitsTab />}
     </div>
   );
