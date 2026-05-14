@@ -1,257 +1,262 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell, Tooltip, XAxis, YAxis, PieChart, Pie } from 'recharts';
+import {
+  Store, MapPin, Activity, Zap, Check, X, Send, RefreshCw, ExternalLink,
+  DollarSign, Eye, MousePointerClick, Users, TrendingUp, Layers, Sparkles,
+  FileText, BarChart3, DoorOpen, Plus, Loader2, AlertCircle, Trash2,
+  Image as ImageIcon, Camera
+} from 'lucide-react';
 import api from '../../api';
 
-const HERMES_COLOR = '#f59e0b'; // amber — local/warm vibe
-const OFFER_COLORS = {
-  free_pickle: '#22c55e',
-  big_dill_chamoy: '#ef4444',
-  mystery_pickle: '#a855f7'
+// ═══════════════════════════════════════════════════════════════════════
+// DESIGN SYSTEM
+// ═══════════════════════════════════════════════════════════════════════
+const COLORS = {
+  hermes: '#f59e0b',          // amber-500
+  hermesSoft: '#f59e0b22',
+  bg: '#0a0a0f',
+  surface: 'rgba(255,255,255,0.025)',
+  surfaceHover: 'rgba(255,255,255,0.045)',
+  border: 'rgba(255,255,255,0.06)',
+  borderStrong: 'rgba(255,255,255,0.10)',
+  text: '#e2e8f0',
+  textMuted: '#94a3b8',
+  textDim: '#64748b',
+  success: '#10b981',
+  warning: '#fbbf24',
+  error: '#f43f5e',
+  info: '#3b82f6'
 };
 
-function OfferBadge({ type }) {
-  const color = OFFER_COLORS[type] || '#94a3b8';
-  const label = {
-    free_pickle: 'Free Pickle',
-    big_dill_chamoy: 'Big Dill Chamoy',
-    mystery_pickle: 'Mystery Pickle'
-  }[type] || type;
+const OFFER_META = {
+  free_chamoy:      { color: '#ef4444', label: 'Free Chamoy', icon: '🌶' },
+  free_tajin:       { color: '#f97316', label: 'Free Tajín', icon: '🍋' },
+  free_olive:       { color: '#10b981', label: 'Free Olive', icon: '🫒' },
+  bring_your_jar:   { color: '#14b8a6', label: 'Bring Your Jar', icon: '🏺' },
+  tasting_flight:   { color: '#a855f7', label: 'Tasting Flight', icon: '🍴' },
+  build_your_box:   { color: '#06b6d4', label: 'Build Your Box', icon: '📦' },
+  pull_up_pour:     { color: '#ec4899', label: 'Pull Up', icon: '🍸' },
+  nj_locals:        { color: '#3b82f6', label: 'NJ Locals', icon: '🗽' },
+  first_timer_perk: { color: '#fbbf24', label: '1st-Timer Perk', icon: '🎁' },
+  // Legacy
+  free_pickle:      { color: '#22c55e', label: 'Free Pickle', icon: '🥒' },
+  big_dill_chamoy:  { color: '#ef4444', label: 'Big Dill', icon: '🌶' },
+  mystery_pickle:   { color: '#a855f7', label: 'Mystery', icon: '❓' }
+};
+
+const STATUS_META = {
+  pending:   { color: COLORS.warning, label: 'Pending' },
+  approved:  { color: COLORS.success, label: 'Approved' },
+  rejected:  { color: COLORS.error,   label: 'Rejected' },
+  live:      { color: COLORS.info,    label: 'Live' },
+  paused:    { color: COLORS.textDim, label: 'Paused' },
+  completed: { color: '#a78bfa',      label: 'Completed' },
+  expired:   { color: COLORS.textDim, label: 'Expired' }
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// PRIMITIVES
+// ═══════════════════════════════════════════════════════════════════════
+
+function GlassCard({ children, padding = 16, hover = false, accent, style = {}, ...rest }) {
+  return (
+    <motion.div
+      whileHover={hover ? { y: -2, borderColor: accent || COLORS.borderStrong } : undefined}
+      transition={{ duration: 0.15 }}
+      style={{
+        background: COLORS.surface,
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        border: `1px solid ${COLORS.border}`,
+        borderRadius: 12,
+        padding,
+        ...style
+      }}
+      {...rest}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+function OfferBadge({ type, size = 'md' }) {
+  const meta = OFFER_META[type] || { color: COLORS.textDim, label: type, icon: '·' };
+  const padding = size === 'sm' ? '2px 7px' : '4px 10px';
+  const fontSize = size === 'sm' ? '0.65rem' : '0.7rem';
   return (
     <span style={{
-      display: 'inline-block',
-      padding: '2px 8px',
-      borderRadius: 4,
-      background: `${color}22`,
-      color,
-      fontSize: '0.7rem',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 4,
+      padding,
+      borderRadius: 999,
+      background: `${meta.color}1a`,
+      color: meta.color,
+      fontSize,
       fontWeight: 600,
-      letterSpacing: 0.3
-    }}>{label}</span>
+      letterSpacing: 0.3,
+      border: `1px solid ${meta.color}33`
+    }}>
+      <span style={{ fontSize: '0.9em' }}>{meta.icon}</span>
+      {meta.label}
+    </span>
   );
 }
 
 function StatusBadge({ status }) {
-  const colors = {
-    pending: '#fbbf24',
-    approved: '#34d399',
-    rejected: '#f87171',
-    live: '#60a5fa',
-    paused: '#94a3b8',
-    completed: '#a78bfa',
-    expired: '#64748b'
-  };
-  const color = colors[status] || '#94a3b8';
+  const meta = STATUS_META[status] || { color: COLORS.textDim, label: status };
+  const isLive = status === 'live';
   return (
     <span style={{
-      display: 'inline-block',
-      padding: '2px 8px',
-      borderRadius: 4,
-      background: `${color}22`,
-      color,
-      fontSize: '0.7rem',
-      fontWeight: 600,
-      textTransform: 'uppercase'
-    }}>{status}</span>
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 5,
+      padding: '3px 9px',
+      borderRadius: 6,
+      background: `${meta.color}1a`,
+      color: meta.color,
+      fontSize: '0.65rem',
+      fontWeight: 700,
+      textTransform: 'uppercase',
+      letterSpacing: 0.6,
+      border: `1px solid ${meta.color}33`
+    }}>
+      {isLive && (
+        <motion.span
+          animate={{ opacity: [0.4, 1, 0.4] }}
+          transition={{ duration: 1.8, repeat: Infinity }}
+          style={{ width: 6, height: 6, borderRadius: 999, background: meta.color }}
+        />
+      )}
+      {meta.label}
+    </span>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// TAB: Photo Bank
-// ═══════════════════════════════════════════════════════════════════════
-
-function PhotoBankTab() {
-  const [photos, setPhotos] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
-  const fileRef = useRef(null);
-  const [uploadForm, setUploadForm] = useState({
-    tags: '',
-    offer_types: 'any',
-    mood: '',
-    notes: ''
-  });
-
-  async function fetchPhotos() {
-    setLoading(true);
-    try {
-      const { data } = await api.get('/api/hermes/photos');
-      setPhotos(data.photos || []);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => { fetchPhotos(); }, []);
-
-  async function handleUpload(e) {
-    e.preventDefault();
-    const file = fileRef.current?.files?.[0];
-    if (!file) return alert('Selecciona una foto primero');
-
-    setUploading(true);
-    try {
-      const form = new FormData();
-      form.append('photo', file);
-      Object.entries(uploadForm).forEach(([k, v]) => form.append(k, v));
-      await api.post('/api/hermes/photos/upload', form, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-      fileRef.current.value = '';
-      setUploadForm({ tags: '', offer_types: 'any', mood: '', notes: '' });
-      await fetchPhotos();
-    } catch (err) {
-      alert(`Upload failed: ${err.response?.data?.error || err.message}`);
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  async function toggleActive(photo) {
-    await api.patch(`/api/hermes/photos/${photo._id}`, { active: !photo.active });
-    fetchPhotos();
-  }
-
-  async function archivePhoto(photo) {
-    if (!confirm(`Archive "${photo.filename}"?`)) return;
-    await api.delete(`/api/hermes/photos/${photo._id}`);
-    fetchPhotos();
-  }
+function Button({ children, onClick, variant = 'primary', loading, disabled, icon: Icon, fullWidth, size = 'md' }) {
+  const styles = {
+    primary: { bg: COLORS.hermes, color: '#0a0a0a', hoverBg: '#fbbf24' },
+    secondary: { bg: 'transparent', color: COLORS.text, hoverBg: COLORS.surfaceHover, border: `1px solid ${COLORS.borderStrong}` },
+    success: { bg: COLORS.success, color: '#000', hoverBg: '#34d399' },
+    danger: { bg: COLORS.error, color: '#fff', hoverBg: '#fb7185' },
+    ghost: { bg: 'transparent', color: COLORS.textMuted, hoverBg: COLORS.surface }
+  };
+  const s = styles[variant];
+  const sz = size === 'sm' ? { p: '5px 10px', fs: '0.72rem' } : { p: '8px 14px', fs: '0.82rem' };
 
   return (
-    <div>
-      {/* Upload form */}
-      <form onSubmit={handleUpload} style={{
-        background: 'rgba(245, 158, 11, 0.08)',
-        border: `1px solid ${HERMES_COLOR}44`,
+    <motion.button
+      whileHover={!disabled && !loading ? { scale: 1.02 } : undefined}
+      whileTap={!disabled && !loading ? { scale: 0.97 } : undefined}
+      onClick={onClick}
+      disabled={disabled || loading}
+      style={{
+        background: s.bg,
+        color: s.color,
+        border: s.border || 'none',
+        padding: sz.p,
         borderRadius: 8,
-        padding: 16,
-        marginBottom: 24
-      }}>
-        <h3 style={{ margin: '0 0 12px 0', color: HERMES_COLOR }}>📸 Subir foto al banco</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            required
-            style={{ gridColumn: '1 / 3' }}
-          />
-          <input
-            type="text"
-            placeholder="Tags (CSV): hero, with-hand"
-            value={uploadForm.tags}
-            onChange={e => setUploadForm({ ...uploadForm, tags: e.target.value })}
-          />
-          <select
-            value={uploadForm.offer_types}
-            onChange={e => setUploadForm({ ...uploadForm, offer_types: e.target.value })}
-          >
-            <option value="any">Any offer</option>
-            <option value="free_pickle">Free Pickle only</option>
-            <option value="big_dill_chamoy">Big Dill Chamoy only</option>
-            <option value="mystery_pickle">Mystery Pickle only</option>
-            <option value="free_pickle,big_dill_chamoy">Free Pickle + Big Dill</option>
-            <option value="free_pickle,mystery_pickle">Free Pickle + Mystery</option>
-          </select>
-          <select
-            value={uploadForm.mood}
-            onChange={e => setUploadForm({ ...uploadForm, mood: e.target.value })}
-          >
-            <option value="">— Mood (optional) —</option>
-            <option value="playful">Playful</option>
-            <option value="gourmet">Gourmet</option>
-            <option value="casual">Casual</option>
-            <option value="bold">Bold</option>
-            <option value="cozy">Cozy</option>
-          </select>
-          <input
-            type="text"
-            placeholder="Notes (optional)"
-            value={uploadForm.notes}
-            onChange={e => setUploadForm({ ...uploadForm, notes: e.target.value })}
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={uploading}
-          style={{
-            background: HERMES_COLOR,
-            color: '#0a0a0a',
-            border: 'none',
-            padding: '8px 16px',
-            borderRadius: 6,
-            fontWeight: 700,
-            cursor: uploading ? 'wait' : 'pointer'
-          }}
-        >
-          {uploading ? 'Subiendo...' : 'Subir foto'}
-        </button>
-      </form>
-
-      {/* Grid de fotos */}
-      {loading ? (
-        <p>Cargando...</p>
-      ) : photos.length === 0 ? (
-        <p style={{ color: '#94a3b8' }}>Banco vacío. Sube fotos profesionales del producto (estilo Big Dill Chamoy).</p>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16 }}>
-          {photos.map(p => (
-            <div key={p._id} style={{
-              background: 'rgba(255,255,255,0.03)',
-              border: `1px solid ${p.active ? 'rgba(245,158,11,0.3)' : 'rgba(100,116,139,0.3)'}`,
-              borderRadius: 8,
-              overflow: 'hidden',
-              opacity: p.active ? 1 : 0.5
-            }}>
-              <img
-                src={`${api.defaults.baseURL}/api/hermes/photos/${p._id}/image?token=${localStorage.getItem('auth_token') || ''}`}
-                alt={p.filename}
-                style={{ width: '100%', height: 160, objectFit: 'cover', display: 'block' }}
-              />
-              <div style={{ padding: 10, fontSize: '0.78rem' }}>
-                <div style={{ fontWeight: 600, marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.filename}</div>
-                <div style={{ color: '#94a3b8', marginBottom: 6 }}>
-                  {p.width}×{p.height} · usado {p.usage_count}x
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
-                  {(p.offer_types || []).map(t => <OfferBadge key={t} type={t} />)}
-                </div>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button
-                    onClick={() => toggleActive(p)}
-                    style={{
-                      flex: 1, padding: '4px 8px', fontSize: '0.7rem',
-                      background: p.active ? '#94a3b822' : '#22c55e22',
-                      color: p.active ? '#94a3b8' : '#22c55e',
-                      border: 'none', borderRadius: 4, cursor: 'pointer'
-                    }}
-                  >
-                    {p.active ? 'Desactivar' : 'Activar'}
-                  </button>
-                  <button
-                    onClick={() => archivePhoto(p)}
-                    style={{
-                      padding: '4px 8px', fontSize: '0.7rem',
-                      background: '#ef444422', color: '#ef4444',
-                      border: 'none', borderRadius: 4, cursor: 'pointer'
-                    }}
-                  >
-                    🗑
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+        fontWeight: 600,
+        fontSize: sz.fs,
+        cursor: (disabled || loading) ? 'wait' : 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        width: fullWidth ? '100%' : 'auto',
+        justifyContent: fullWidth ? 'center' : 'flex-start',
+        opacity: disabled ? 0.5 : 1,
+        transition: 'background 0.15s'
+      }}
+    >
+      {loading ? <Loader2 size={14} className="spin" /> : Icon ? <Icon size={14} /> : null}
+      {children}
+    </motion.button>
   );
 }
 
+function Toast({ message, type = 'info', onClose }) {
+  const styles = {
+    info: { bg: '#3b82f622', border: COLORS.info, text: COLORS.info, icon: AlertCircle },
+    success: { bg: '#10b98122', border: COLORS.success, text: COLORS.success, icon: Check },
+    error: { bg: '#f43f5e22', border: COLORS.error, text: COLORS.error, icon: AlertCircle },
+    warning: { bg: '#fbbf2422', border: COLORS.warning, text: COLORS.warning, icon: AlertCircle }
+  };
+  const s = styles[type];
+  const Icon = s.icon;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 20, scale: 0.95 }}
+      style={{
+        position: 'fixed',
+        bottom: 24,
+        right: 24,
+        background: s.bg,
+        backdropFilter: 'blur(16px)',
+        border: `1px solid ${s.border}66`,
+        borderRadius: 12,
+        padding: '12px 16px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        color: s.text,
+        fontSize: '0.85rem',
+        fontWeight: 500,
+        zIndex: 9999,
+        maxWidth: 420,
+        boxShadow: `0 10px 40px -10px ${s.border}40`
+      }}
+    >
+      <Icon size={16} />
+      <span>{message}</span>
+      <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'currentColor', cursor: 'pointer', marginLeft: 8, opacity: 0.5 }}>
+        <X size={14} />
+      </button>
+    </motion.div>
+  );
+}
+
+function useToast() {
+  const [toast, setToast] = useState(null);
+  const show = (message, type = 'info') => {
+    setToast({ message, type, id: Date.now() });
+    setTimeout(() => setToast(null), 4000);
+  };
+  return [toast, show, () => setToast(null)];
+}
+
 // ═══════════════════════════════════════════════════════════════════════
-// TAB: Proposals approval queue
+// FORMATTERS
+// ═══════════════════════════════════════════════════════════════════════
+const fmt = {
+  money: (n) => {
+    if (n == null || isNaN(n)) return '—';
+    if (n === 0) return '$0';
+    if (n < 1) return `$${n.toFixed(2)}`;
+    if (n < 100) return `$${n.toFixed(2)}`;
+    if (n < 1000) return `$${Math.round(n)}`;
+    return `$${(n / 1000).toFixed(1)}k`;
+  },
+  num: (n) => {
+    if (n == null || isNaN(n)) return '—';
+    if (n === 0) return '0';
+    if (n < 1000) return `${Math.round(n)}`;
+    if (n < 1000000) return `${(n / 1000).toFixed(1)}k`;
+    return `${(n / 1000000).toFixed(2)}M`;
+  },
+  pct: (n) => {
+    if (n == null || isNaN(n)) return '—';
+    return `${n.toFixed(2)}%`;
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════
+// PROPOSALS TAB
 // ═══════════════════════════════════════════════════════════════════════
 
-function ProposalsTab() {
+function ProposalsTab({ onToast }) {
   const [proposals, setProposals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('pending');
@@ -262,26 +267,19 @@ function ProposalsTab() {
     try {
       const { data } = await api.get(`/api/hermes/proposals?status=${filter}`);
       setProposals(data.proposals || []);
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }
 
   useEffect(() => { fetchProposals(); }, [filter]);
 
   async function approve(p) {
     try {
-      // Timeout 60s — approve dispara publish a Meta (upload imagen +
-      // crear creative + crear ad) que puede tardar 10-30s
       const { data } = await api.post(`/api/hermes/proposals/${p._id}/approve`, {}, { timeout: 60000 });
-      if (data.proposal?.status === 'live') {
-        alert(`✓ Publicado a Meta · ad_id: ${data.proposal.meta_ad_id}`);
-      } else if (data.proposal?.rejection_reason?.startsWith('publish_failed')) {
-        alert(`⚠️ Aprobado pero falló publish a Meta:\n${data.proposal.rejection_reason}`);
-      }
+      if (data.proposal?.status === 'live') onToast(`Publicado a Meta · ad_id: ${data.proposal.meta_ad_id}`, 'success');
+      else if (data.proposal?.rejection_reason?.startsWith('publish_failed')) onToast(`Aprobado pero publish falló: ${data.proposal.rejection_reason}`, 'warning');
       fetchProposals();
     } catch (err) {
-      alert(`Error: ${err.response?.data?.error || err.message}`);
+      onToast(err.response?.data?.error || err.message, 'error');
       fetchProposals();
     }
   }
@@ -295,12 +293,10 @@ function ProposalsTab() {
   async function publish(p) {
     try {
       const { data } = await api.post(`/api/hermes/proposals/${p._id}/publish`, {}, { timeout: 60000 });
-      if (data.proposal?.status === 'live') {
-        alert(`✓ Publicado a Meta · ad_id: ${data.proposal.meta_ad_id}`);
-      }
+      if (data.proposal?.status === 'live') onToast(`Publicado · ad_id: ${data.proposal.meta_ad_id}`, 'success');
       fetchProposals();
     } catch (err) {
-      alert(`Error: ${err.response?.data?.error || err.message}`);
+      onToast(err.response?.data?.error || err.message, 'error');
       fetchProposals();
     }
   }
@@ -308,170 +304,412 @@ function ProposalsTab() {
   async function triggerCycle() {
     setTriggering(true);
     try {
-      // Timeout 3 min — gpt-image-2 high quality puede tardar 60-90s,
-      // sumado al brief de Claude (~10s) total puede llegar a ~100s
       const { data } = await api.post('/api/hermes/trigger-cycle', {}, { timeout: 180000 });
-      if (data.skipped) alert(`Skipped: ${data.reason}`);
-      else if (data.generated) alert(`Proposal generado: ${data.offer_type}`);
-      await fetchProposals();
+      if (data.skipped) onToast(`Skipped: ${data.reason}`, 'warning');
+      else if (data.generated) onToast(`Generado · ${data.offer_type}`, 'success');
+      fetchProposals();
     } catch (err) {
-      // Si fue timeout del axios cliente, el backend probablemente sigue
-      // generando. Refrescamos la lista igual para mostrar cuando aparezca.
       const isTimeout = err.code === 'ECONNABORTED' || /timeout/i.test(err.message);
       if (isTimeout) {
-        alert('Generación en progreso (>3min). Refrescá en 1-2 minutos para ver el proposal.');
-        await fetchProposals();
-      } else {
-        alert(`Error: ${err.response?.data?.error || err.message}`);
-      }
-    } finally {
-      setTriggering(false);
-    }
+        onToast('Generando en background, refresca en 1-2 min', 'info');
+        fetchProposals();
+      } else onToast(err.response?.data?.error || err.message, 'error');
+    } finally { setTriggering(false); }
   }
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {['pending', 'approved', 'rejected', 'live', 'all'].map(s => (
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {['pending', 'approved', 'live', 'rejected', 'all'].map(s => (
             <button
               key={s}
               onClick={() => setFilter(s)}
               style={{
-                padding: '6px 12px', fontSize: '0.78rem',
-                background: filter === s ? `${HERMES_COLOR}33` : 'transparent',
-                color: filter === s ? HERMES_COLOR : '#94a3b8',
-                border: `1px solid ${filter === s ? HERMES_COLOR : '#334155'}`,
-                borderRadius: 6, cursor: 'pointer', textTransform: 'capitalize'
+                padding: '6px 14px',
+                fontSize: '0.78rem',
+                fontWeight: filter === s ? 700 : 500,
+                background: filter === s ? `${COLORS.hermes}22` : 'transparent',
+                color: filter === s ? COLORS.hermes : COLORS.textMuted,
+                border: `1px solid ${filter === s ? COLORS.hermes + '66' : COLORS.border}`,
+                borderRadius: 8,
+                cursor: 'pointer',
+                textTransform: 'capitalize',
+                transition: 'all 0.15s'
               }}
             >{s}</button>
           ))}
         </div>
-        <button
-          onClick={triggerCycle}
-          disabled={triggering}
-          style={{
-            background: HERMES_COLOR, color: '#0a0a0a',
-            border: 'none', padding: '6px 14px', borderRadius: 6,
-            fontWeight: 700, cursor: triggering ? 'wait' : 'pointer', fontSize: '0.8rem'
-          }}
-        >
-          {triggering ? 'Generando...' : '⚡ Generar ahora'}
-        </button>
+        <Button onClick={triggerCycle} loading={triggering} icon={Sparkles}>
+          {triggering ? 'Generando...' : 'Generar ahora'}
+        </Button>
       </div>
 
       {loading ? (
-        <p>Cargando...</p>
+        <SkeletonGrid count={6} />
       ) : proposals.length === 0 ? (
-        <p style={{ color: '#94a3b8' }}>Sin proposals en este estado.</p>
+        <EmptyState icon={ImageIcon} title="Sin proposals" message={`No hay proposals en estado "${filter}"`} />
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 20 }}>
+        <motion.div
+          initial="hidden"
+          animate="visible"
+          variants={{ visible: { transition: { staggerChildren: 0.04 } } }}
+          style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 18 }}
+        >
           {proposals.map(p => (
-            <div key={p._id} style={{
-              background: 'rgba(255,255,255,0.03)',
-              border: `1px solid ${HERMES_COLOR}33`,
-              borderRadius: 8,
-              overflow: 'hidden'
-            }}>
-              <img
-                src={`${api.defaults.baseURL}/api/hermes/proposals/${p._id}/image?token=${localStorage.getItem('auth_token') || ''}`}
-                alt="composed ad"
-                style={{ width: '100%', display: 'block', background: '#000' }}
-              />
-              <div style={{ padding: 12 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, gap: 8 }}>
-                  <OfferBadge type={p.offer_type} />
-                  <StatusBadge status={p.status} />
-                </div>
-                <div style={{ fontWeight: 700, fontSize: '0.92rem', marginBottom: 4 }}>{p.headline}</div>
-                <div style={{ fontSize: '0.78rem', color: '#cbd5e1', marginBottom: 10, lineHeight: 1.4 }}>
-                  {p.primary_text}
-                </div>
-                <div style={{ fontSize: '0.7rem', color: '#64748b', marginBottom: 10 }}>
-                  CTA: {p.cta_button} · {new Date(p.generated_at).toLocaleString()}
-                </div>
-                {p.status === 'pending' && (
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button
-                      onClick={() => approve(p)}
-                      style={{
-                        flex: 1, padding: '8px', background: '#22c55e',
-                        color: '#000', border: 'none', borderRadius: 6,
-                        fontWeight: 700, cursor: 'pointer', fontSize: '0.78rem'
-                      }}
-                    >✓ Aprobar y publicar a Meta</button>
-                    <button
-                      onClick={() => reject(p)}
-                      style={{
-                        flex: 1, padding: '8px', background: '#ef4444',
-                        color: '#fff', border: 'none', borderRadius: 6,
-                        fontWeight: 700, cursor: 'pointer', fontSize: '0.78rem'
-                      }}
-                    >✗ Rechazar</button>
-                  </div>
-                )}
-                {p.status === 'approved' && !p.meta_ad_id && (
-                  <button
-                    onClick={() => publish(p)}
-                    style={{
-                      width: '100%', padding: '8px', background: '#60a5fa',
-                      color: '#000', border: 'none', borderRadius: 6,
-                      fontWeight: 700, cursor: 'pointer', fontSize: '0.78rem'
-                    }}
-                  >📡 Publicar a Meta</button>
-                )}
-                {p.status === 'live' && p.meta_ad_id && (
-                  <div style={{ fontSize: '0.72rem', color: '#60a5fa', marginTop: 8, padding: 8, background: 'rgba(96,165,250,0.08)', borderRadius: 4 }}>
-                    📡 Live en Meta · ad_id: <code>{p.meta_ad_id}</code>
-                    <br />
-                    <a
-                      href={`https://business.facebook.com/adsmanager/manage/ads/edit?act=${(p.meta_campaign_id || '').replace('act_', '')}&selected_ad_ids=${p.meta_ad_id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{ color: '#60a5fa', textDecoration: 'underline' }}
-                    >Ver en Meta Ads Manager →</a>
-                    {p.meta_published_at && (
-                      <div style={{ color: '#94a3b8', marginTop: 4 }}>
-                        Publicado: {new Date(p.meta_published_at).toLocaleString()}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {p.rejection_reason && (
-                  <div style={{
-                    fontSize: '0.72rem',
-                    color: p.rejection_reason.startsWith('publish_failed') ? '#fbbf24' : '#f87171',
-                    marginTop: 8,
-                    padding: 6,
-                    background: p.rejection_reason.startsWith('publish_failed') ? 'rgba(251,191,36,0.08)' : 'transparent',
-                    borderRadius: 4
-                  }}>
-                    {p.rejection_reason.startsWith('publish_failed') ? '⚠️ ' : 'Razón: '}{p.rejection_reason}
-                  </div>
-                )}
-              </div>
-            </div>
+            <motion.div
+              key={p._id}
+              variants={{
+                hidden: { opacity: 0, y: 12 },
+                visible: { opacity: 1, y: 0 }
+              }}
+            >
+              <ProposalCard p={p} onApprove={() => approve(p)} onReject={() => reject(p)} onPublish={() => publish(p)} />
+            </motion.div>
           ))}
-        </div>
+        </motion.div>
       )}
     </div>
   );
 }
 
+function ProposalCard({ p, onApprove, onReject, onPublish }) {
+  const meta = OFFER_META[p.offer_type] || {};
+  return (
+    <GlassCard padding={0} hover accent={meta.color} style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ position: 'relative', background: '#000' }}>
+        <img
+          src={`${api.defaults.baseURL}/api/hermes/proposals/${p._id}/image?token=${localStorage.getItem('auth_token') || ''}`}
+          alt="composed ad"
+          style={{ width: '100%', display: 'block' }}
+        />
+        <div style={{ position: 'absolute', top: 10, left: 10 }}>
+          <OfferBadge type={p.offer_type} size="sm" />
+        </div>
+        <div style={{ position: 'absolute', top: 10, right: 10 }}>
+          <StatusBadge status={p.status} />
+        </div>
+      </div>
+      <div style={{ padding: 14, flex: 1, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ fontWeight: 700, fontSize: '0.95rem', marginBottom: 4 }}>{p.headline}</div>
+        <div style={{ fontSize: '0.78rem', color: COLORS.textMuted, lineHeight: 1.45, marginBottom: 12 }}>
+          {p.primary_text}
+        </div>
+        <div style={{ fontSize: '0.68rem', color: COLORS.textDim, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+          {new Date(p.generated_at).toLocaleString()}
+        </div>
+        {p.status === 'pending' && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button variant="success" fullWidth size="sm" icon={Check} onClick={onApprove}>Aprobar</Button>
+            <Button variant="danger" size="sm" icon={X} onClick={onReject}>Rechazar</Button>
+          </div>
+        )}
+        {p.status === 'approved' && !p.meta_ad_id && (
+          <Button variant="primary" fullWidth size="sm" icon={Send} onClick={onPublish}>Publicar a Meta</Button>
+        )}
+        {p.status === 'live' && p.meta_ad_id && (
+          <a
+            href={`https://business.facebook.com/adsmanager/manage/ads/edit?selected_ad_ids=${p.meta_ad_id}`}
+            target="_blank" rel="noopener noreferrer"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              fontSize: '0.74rem', color: COLORS.info, textDecoration: 'none'
+            }}
+          >
+            <ExternalLink size={12} /> ad_id: {p.meta_ad_id}
+          </a>
+        )}
+        {p.rejection_reason && (
+          <div style={{
+            fontSize: '0.72rem',
+            color: p.rejection_reason.startsWith('publish_failed') ? COLORS.warning : COLORS.error,
+            marginTop: 8,
+            padding: 8,
+            background: p.rejection_reason.startsWith('publish_failed') ? `${COLORS.warning}1a` : `${COLORS.error}1a`,
+            borderRadius: 6
+          }}>{p.rejection_reason}</div>
+        )}
+      </div>
+    </GlassCard>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════
-// TAB: Store Visits logger + stats
+// PERFORMANCE TAB
 // ═══════════════════════════════════════════════════════════════════════
 
-function VisitsTab() {
+function PerformanceTab({ onToast }) {
+  const [proposals, setProposals] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+
+  async function fetchLive() {
+    setLoading(true);
+    try {
+      const { data } = await api.get('/api/hermes/proposals?status=all&limit=200');
+      setProposals((data.proposals || []).filter(p => p.meta_ad_id));
+    } finally { setLoading(false); }
+  }
+  async function syncAll() {
+    setSyncing(true);
+    try {
+      const { data } = await api.post('/api/hermes/sync-all-metrics', {}, { timeout: 120000 });
+      onToast(`Sync OK · ${data.synced} ads`, 'success');
+      await fetchLive();
+    } catch (err) {
+      onToast(err.response?.data?.error || err.message, 'error');
+    } finally { setSyncing(false); }
+  }
+
+  useEffect(() => { fetchLive(); }, []);
+
+  const totals = useMemo(() => proposals.reduce((acc, p) => {
+    const perf = p.performance || {};
+    acc.spend += (perf.spend || 0);
+    acc.reach += (perf.reach || 0);
+    acc.impressions += (perf.impressions || 0);
+    acc.link_clicks += (perf.link_clicks || 0);
+    acc.manual_visits += (perf.manual_visits_reported || 0);
+    return acc;
+  }, { spend: 0, reach: 0, impressions: 0, link_clicks: 0, manual_visits: 0 }), [proposals]);
+
+  const avgCtr = totals.impressions > 0 ? (totals.link_clicks / totals.impressions) * 100 : 0;
+  const costPerVisit = totals.manual_visits > 0 ? totals.spend / totals.manual_visits : 0;
+
+  // Donut data — distribution by offer
+  const offerDistribution = useMemo(() => {
+    const groups = {};
+    for (const p of proposals) {
+      const key = p.offer_type;
+      if (!groups[key]) groups[key] = 0;
+      groups[key] += (p.performance?.spend || 0) + 1;  // +1 fallback para que no quede vacío con $0 spend
+    }
+    return Object.entries(groups).map(([key, value]) => ({
+      key, value, color: OFFER_META[key]?.color || COLORS.textDim, label: OFFER_META[key]?.label || key
+    }));
+  }, [proposals]);
+
+  // Breakdowns
+  function groupBy(field) {
+    const groups = {};
+    for (const p of proposals) {
+      const key = field === 'offer' ? p.offer_type : (p.overlay_config?.[field] || 'unknown');
+      if (!groups[key]) groups[key] = { spend: 0, link_clicks: 0, impressions: 0, count: 0, manual_visits: 0 };
+      groups[key].spend += (p.performance?.spend || 0);
+      groups[key].link_clicks += (p.performance?.link_clicks || 0);
+      groups[key].impressions += (p.performance?.impressions || 0);
+      groups[key].manual_visits += (p.performance?.manual_visits_reported || 0);
+      groups[key].count++;
+    }
+    return Object.entries(groups)
+      .map(([k, v]) => ({ key: k, ...v, ctr: v.impressions > 0 ? (v.link_clicks / v.impressions) * 100 : 0 }))
+      .sort((a, b) => b.spend - a.spend);
+  }
+  const byOffer = useMemo(() => groupBy('offer'), [proposals]);
+  const byPov = useMemo(() => groupBy('pov_id'), [proposals]);
+  const byTypo = useMemo(() => groupBy('typography_id'), [proposals]);
+
+  const lastSync = proposals.find(p => p.performance?.measured_at)?.performance?.measured_at;
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <div style={{ color: COLORS.textMuted, fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Activity size={14} />
+          <span><strong style={{ color: COLORS.text }}>{proposals.length}</strong> ads con datos · last sync: {lastSync ? new Date(lastSync).toLocaleString() : 'nunca'}</span>
+        </div>
+        <Button onClick={syncAll} loading={syncing} icon={RefreshCw}>
+          {syncing ? 'Sincronizando...' : 'Pull métricas Meta'}
+        </Button>
+      </div>
+
+      {loading ? (
+        <SkeletonGrid count={4} />
+      ) : proposals.length === 0 ? (
+        <EmptyState icon={BarChart3} title="Sin ads live aún" message="Aprobá una proposal en el tab Proposals para que se publique a Meta y empiecen las métricas." />
+      ) : (
+        <>
+          {/* KPI grid — bento style */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 14, marginBottom: 20 }}>
+            <KpiCard icon={DollarSign} label="Spend total" value={fmt.money(totals.spend)} accent={COLORS.success} />
+            <KpiCard icon={Eye} label="Reach" value={fmt.num(totals.reach)} accent={COLORS.info} />
+            <KpiCard icon={Layers} label="Impressions" value={fmt.num(totals.impressions)} accent="#a855f7" />
+            <KpiCard icon={MousePointerClick} label="Link clicks" value={fmt.num(totals.link_clicks)} accent="#ec4899" />
+            <KpiCard icon={TrendingUp} label="CTR" value={fmt.pct(avgCtr)} accent={avgCtr > 1 ? COLORS.success : COLORS.warning} />
+            <KpiCard icon={Users} label="Cost / visit" value={totals.manual_visits > 0 ? fmt.money(costPerVisit) : '—'} subtitle={`${totals.manual_visits} visits`} accent={COLORS.hermes} />
+          </div>
+
+          {/* Charts row */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 14, marginBottom: 20 }}>
+            <GlassCard>
+              <SectionTitle icon={Layers}>Distribución por oferta</SectionTitle>
+              <DonutChart data={offerDistribution} />
+            </GlassCard>
+            <GlassCard>
+              <SectionTitle icon={BarChart3}>Performance por oferta</SectionTitle>
+              <BreakdownChart rows={byOffer} accent={COLORS.hermes} />
+            </GlassCard>
+          </div>
+
+          {/* Más breakdowns */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 20 }}>
+            <GlassCard>
+              <SectionTitle icon={Camera}>Performance por POV</SectionTitle>
+              <BreakdownChart rows={byPov} accent={COLORS.info} />
+            </GlassCard>
+            <GlassCard>
+              <SectionTitle icon={FileText}>Performance por tipografía</SectionTitle>
+              <BreakdownChart rows={byTypo} accent="#a855f7" />
+            </GlassCard>
+          </div>
+
+          {/* Tabla detalle */}
+          <GlassCard>
+            <SectionTitle icon={Layers}>Ads individuales ({proposals.length})</SectionTitle>
+            <div style={{ display: 'grid', gap: 6, marginTop: 12 }}>
+              {proposals.map(p => <AdRow key={p._id} p={p} />)}
+            </div>
+          </GlassCard>
+        </>
+      )}
+    </div>
+  );
+}
+
+function KpiCard({ icon: Icon, label, value, subtitle, accent }) {
+  return (
+    <GlassCard hover accent={accent} padding={14}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <span style={{ fontSize: '0.68rem', color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</span>
+        <Icon size={14} style={{ color: accent || COLORS.textDim }} />
+      </div>
+      <div style={{ fontSize: '1.55rem', fontWeight: 700, color: COLORS.text, fontFamily: 'JetBrains Mono, ui-monospace, monospace', letterSpacing: -0.5 }}>
+        {value ?? '—'}
+      </div>
+      {subtitle && <div style={{ fontSize: '0.68rem', color: COLORS.textDim, marginTop: 2 }}>{subtitle}</div>}
+    </GlassCard>
+  );
+}
+
+function SectionTitle({ children, icon: Icon }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, color: COLORS.text, fontSize: '0.85rem', fontWeight: 600 }}>
+      {Icon && <Icon size={15} style={{ color: COLORS.hermes }} />}
+      {children}
+    </div>
+  );
+}
+
+function DonutChart({ data }) {
+  if (!data || data.length === 0) return <p style={{ color: COLORS.textMuted, fontSize: '0.78rem' }}>Sin data</p>;
+  return (
+    <div style={{ height: 200 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie data={data} dataKey="value" nameKey="label" innerRadius={50} outerRadius={80} paddingAngle={2}>
+            {data.map((entry, i) => <Cell key={i} fill={entry.color} stroke="none" />)}
+          </Pie>
+          <Tooltip
+            contentStyle={{ background: 'rgba(15,23,42,0.95)', border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: '0.78rem' }}
+            formatter={(v, n) => [`${v}`, n]}
+          />
+        </PieChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function BreakdownChart({ rows, accent }) {
+  if (!rows || rows.length === 0) return <p style={{ color: COLORS.textMuted, fontSize: '0.78rem' }}>Sin data</p>;
+  const chartData = rows.map(r => ({
+    name: OFFER_META[r.key]?.label || r.key,
+    spend: r.spend,
+    clicks: r.link_clicks,
+    ctr: r.ctr,
+    color: OFFER_META[r.key]?.color || accent
+  }));
+  return (
+    <div style={{ height: 200 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+          <XAxis type="number" hide />
+          <YAxis dataKey="name" type="category" tick={{ fill: COLORS.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={100} />
+          <Tooltip
+            contentStyle={{ background: 'rgba(15,23,42,0.95)', border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: '0.78rem' }}
+            formatter={(v, n) => [n === 'spend' ? fmt.money(v) : fmt.num(v), n]}
+            cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+          />
+          <Bar dataKey="spend" radius={[0, 4, 4, 0]}>
+            {chartData.map((d, i) => <Cell key={i} fill={d.color} />)}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function AdRow({ p }) {
+  return (
+    <motion.div
+      whileHover={{ background: COLORS.surfaceHover, x: 2 }}
+      transition={{ duration: 0.12 }}
+      style={{
+        background: COLORS.surface,
+        border: `1px solid ${COLORS.border}`,
+        borderRadius: 8,
+        padding: '10px 12px',
+        display: 'grid',
+        gridTemplateColumns: '1.4fr 0.8fr 1fr 1fr 0.7fr 70px',
+        gap: 10,
+        fontSize: '0.78rem',
+        alignItems: 'center'
+      }}
+    >
+      <div>
+        <OfferBadge type={p.offer_type} size="sm" />
+        <div style={{ fontSize: '0.65rem', color: COLORS.textDim, marginTop: 4 }}>
+          {p.overlay_config?.variant_id || '—'}
+        </div>
+      </div>
+      <Stat label="spend" value={fmt.money(p.performance?.spend || 0)} />
+      <Stat label="reach / clk" value={`${fmt.num(p.performance?.reach || 0)} / ${fmt.num(p.performance?.link_clicks || 0)}`} />
+      <Stat label="CTR / CPC" value={`${fmt.pct(p.performance?.ctr || 0)} / ${fmt.money(p.performance?.cost_per_click || 0)}`} />
+      <Stat label="visits" value={p.performance?.manual_visits_reported || 0} />
+      <a
+        href={`https://business.facebook.com/adsmanager/manage/ads/edit?selected_ad_ids=${p.meta_ad_id}`}
+        target="_blank" rel="noopener noreferrer"
+        style={{ color: COLORS.info, textDecoration: 'none', textAlign: 'right', fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 3 }}
+      >
+        <ExternalLink size={11} />
+      </a>
+    </motion.div>
+  );
+}
+
+function Stat({ label, value }) {
+  return (
+    <div>
+      <div style={{ color: COLORS.textDim, fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
+      <div style={{ fontWeight: 600, fontFamily: 'JetBrains Mono, ui-monospace, monospace' }}>{value}</div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// VISITS TAB
+// ═══════════════════════════════════════════════════════════════════════
+
+function VisitsTab({ onToast }) {
   const [visits, setVisits] = useState([]);
   const [stats, setStats] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({
-    source_offer: 'free_pickle',
+    source_offer: 'free_chamoy',
     source_platform: 'facebook',
     converted_to_purchase: false,
     purchase_amount: 0,
     customer_zip: '',
-    is_first_visit: null,
     visitor_party_size: 1,
     notes: ''
   });
@@ -484,471 +722,376 @@ function VisitsTab() {
     setVisits(v.data.visits || []);
     setStats(s.data);
   }
-
   useEffect(() => { fetchAll(); }, []);
 
   async function logVisit(e) {
     e.preventDefault();
+    setSubmitting(true);
     try {
       await api.post('/api/hermes/visits', form);
       setForm({
-        source_offer: 'free_pickle',
-        source_platform: 'facebook',
-        converted_to_purchase: false,
-        purchase_amount: 0,
-        customer_zip: '',
-        is_first_visit: null,
-        visitor_party_size: 1,
-        notes: ''
+        source_offer: 'free_chamoy', source_platform: 'facebook',
+        converted_to_purchase: false, purchase_amount: 0,
+        customer_zip: '', visitor_party_size: 1, notes: ''
       });
       fetchAll();
+      onToast('Visita registrada', 'success');
     } catch (err) {
-      alert(`Error: ${err.response?.data?.error || err.message}`);
-    }
+      onToast(err.response?.data?.error || err.message, 'error');
+    } finally { setSubmitting(false); }
   }
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '380px 1fr', gap: 18 }}>
       {/* Form */}
-      <form onSubmit={logVisit} style={{
-        background: 'rgba(245, 158, 11, 0.08)',
-        border: `1px solid ${HERMES_COLOR}44`,
-        borderRadius: 8,
-        padding: 16
-      }}>
-        <h3 style={{ margin: '0 0 12px 0', color: HERMES_COLOR }}>🚪 Loggear visita</h3>
-        <div style={{ display: 'grid', gap: 10 }}>
-          <label>
-            <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: 3 }}>¿Qué oferta mencionó?</div>
-            <select value={form.source_offer} onChange={e => setForm({ ...form, source_offer: e.target.value })}>
-              <option value="free_pickle">Free Pickle</option>
-              <option value="big_dill_chamoy">Big Dill Chamoy</option>
-              <option value="mystery_pickle">Mystery Pickle</option>
+      <GlassCard padding={20}>
+        <SectionTitle icon={DoorOpen}>Registrar visita</SectionTitle>
+        <form onSubmit={logVisit} style={{ display: 'grid', gap: 12, marginTop: 4 }}>
+          <Field label="¿Qué oferta mencionó?">
+            <select value={form.source_offer} onChange={e => setForm({ ...form, source_offer: e.target.value })} style={selectStyle}>
+              {Object.entries(OFFER_META).map(([k, v]) => (
+                <option key={k} value={k}>{v.icon} {v.label}</option>
+              ))}
               <option value="other">Otra</option>
               <option value="unknown">No supo decir</option>
             </select>
-          </label>
-          <label>
-            <div style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: 3 }}>Plataforma</div>
-            <select value={form.source_platform} onChange={e => setForm({ ...form, source_platform: e.target.value })}>
+          </Field>
+          <Field label="Plataforma">
+            <select value={form.source_platform} onChange={e => setForm({ ...form, source_platform: e.target.value })} style={selectStyle}>
               <option value="facebook">Facebook</option>
               <option value="instagram">Instagram</option>
               <option value="unknown">No supo</option>
             </select>
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <input
-              type="checkbox"
-              checked={form.converted_to_purchase}
-              onChange={e => setForm({ ...form, converted_to_purchase: e.target.checked })}
-            />
+          </Field>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 10, background: COLORS.surface, borderRadius: 8, border: `1px solid ${COLORS.border}`, cursor: 'pointer' }}>
+            <input type="checkbox" checked={form.converted_to_purchase} onChange={e => setForm({ ...form, converted_to_purchase: e.target.checked })} />
             <span style={{ fontSize: '0.85rem' }}>¿Compró algo?</span>
           </label>
           {form.converted_to_purchase && (
-            <input
-              type="number"
-              step="0.01"
-              placeholder="Monto compra $"
-              value={form.purchase_amount}
-              onChange={e => setForm({ ...form, purchase_amount: parseFloat(e.target.value) || 0 })}
-            />
+            <Field label="Monto compra $">
+              <input type="number" step="0.01" value={form.purchase_amount} onChange={e => setForm({ ...form, purchase_amount: parseFloat(e.target.value) || 0 })} style={inputStyle} />
+            </Field>
           )}
-          <input
-            type="text"
-            placeholder="Zip code del cliente (opcional)"
-            value={form.customer_zip}
-            onChange={e => setForm({ ...form, customer_zip: e.target.value })}
-          />
-          <textarea
-            placeholder="Notas (opcional)"
-            value={form.notes}
-            onChange={e => setForm({ ...form, notes: e.target.value })}
-            rows="2"
-          />
-          <button
-            type="submit"
-            style={{
-              background: HERMES_COLOR, color: '#0a0a0a',
-              border: 'none', padding: '10px', borderRadius: 6,
-              fontWeight: 700, cursor: 'pointer'
-            }}
-          >Registrar visita</button>
-        </div>
-      </form>
+          <Field label="Zip cliente (opcional)">
+            <input type="text" value={form.customer_zip} onChange={e => setForm({ ...form, customer_zip: e.target.value })} style={inputStyle} placeholder="07601" />
+          </Field>
+          <Field label="Notas (opcional)">
+            <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows="2" style={inputStyle} />
+          </Field>
+          <Button onClick={null} fullWidth loading={submitting} icon={Plus}>
+            {submitting ? 'Registrando...' : 'Registrar'}
+          </Button>
+        </form>
+      </GlassCard>
 
-      {/* Stats */}
+      {/* Right side */}
       <div>
-        <h3 style={{ margin: '0 0 12px 0', color: HERMES_COLOR }}>📊 Últimos 30 días</h3>
-        {stats?.visits?.by_offer?.length > 0 ? (
-          <div style={{ display: 'grid', gap: 8 }}>
-            {stats.visits.by_offer.map(s => (
-              <div key={s._id} style={{
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid #334155',
-                borderRadius: 6,
-                padding: 12,
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center'
-              }}>
-                <OfferBadge type={s._id} />
-                <div style={{ fontSize: '0.85rem', textAlign: 'right' }}>
-                  <div><strong>{s.count}</strong> visitas</div>
-                  <div style={{ color: '#94a3b8', fontSize: '0.72rem' }}>
-                    {s.converted} comp · ${Math.round(s.revenue)} rev
+        <GlassCard padding={18}>
+          <SectionTitle icon={BarChart3}>Últimos 30 días</SectionTitle>
+          {stats?.visits?.by_offer?.length > 0 ? (
+            <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
+              {stats.visits.by_offer.map(s => (
+                <div key={s._id} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  padding: '10px 12px', background: COLORS.surface, borderRadius: 8,
+                  border: `1px solid ${COLORS.border}`
+                }}>
+                  <OfferBadge type={s._id} size="sm" />
+                  <div style={{ display: 'flex', gap: 16, fontSize: '0.78rem', fontFamily: 'JetBrains Mono, monospace' }}>
+                    <span><strong>{s.count}</strong> <span style={{ color: COLORS.textDim }}>visits</span></span>
+                    <span style={{ color: COLORS.success }}>{s.converted} comp</span>
+                    <span style={{ color: COLORS.hermes }}>${Math.round(s.revenue)}</span>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p style={{ color: '#94a3b8' }}>Aún sin visitas registradas.</p>
-        )}
-
-        <h4 style={{ margin: '20px 0 8px 0', color: '#cbd5e1', fontSize: '0.85rem' }}>Últimas 10 visitas</h4>
-        <div style={{ display: 'grid', gap: 6, maxHeight: 280, overflowY: 'auto' }}>
-          {visits.slice(0, 10).map(v => (
-            <div key={v._id} style={{
-              padding: 8,
-              background: 'rgba(255,255,255,0.02)',
-              borderLeft: `3px solid ${OFFER_COLORS[v.source_offer] || '#94a3b8'}`,
-              fontSize: '0.75rem',
-              display: 'flex',
-              justifyContent: 'space-between'
-            }}>
-              <span>{v.source_offer} {v.converted_to_purchase ? `· $${v.purchase_amount}` : ''}</span>
-              <span style={{ color: '#94a3b8' }}>{new Date(v.visited_at).toLocaleString()}</span>
+              ))}
             </div>
-          ))}
-        </div>
+          ) : (
+            <EmptyState icon={DoorOpen} title="Sin visitas" message="Cuando alguien llegue a la tienda, registra la visita acá para empezar a trackear performance real." compact />
+          )}
+        </GlassCard>
+
+        <GlassCard padding={18} style={{ marginTop: 14 }}>
+          <SectionTitle icon={Activity}>Timeline reciente</SectionTitle>
+          {visits.length === 0 ? (
+            <p style={{ color: COLORS.textMuted, fontSize: '0.78rem', marginTop: 8 }}>Sin actividad.</p>
+          ) : (
+            <div style={{ display: 'grid', gap: 6, marginTop: 8, maxHeight: 320, overflowY: 'auto' }}>
+              {visits.slice(0, 15).map(v => (
+                <div key={v._id} style={{
+                  padding: '8px 12px',
+                  background: COLORS.surface,
+                  borderLeft: `3px solid ${OFFER_META[v.source_offer]?.color || COLORS.textDim}`,
+                  borderRadius: 6,
+                  fontSize: '0.75rem',
+                  display: 'flex', justifyContent: 'space-between'
+                }}>
+                  <span>
+                    <strong>{OFFER_META[v.source_offer]?.label || v.source_offer}</strong>
+                    {v.converted_to_purchase && <span style={{ color: COLORS.hermes, marginLeft: 8 }}>${v.purchase_amount}</span>}
+                  </span>
+                  <span style={{ color: COLORS.textDim }}>{new Date(v.visited_at).toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </GlassCard>
       </div>
     </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// TAB: Performance — métricas Meta de ads live
-// ═══════════════════════════════════════════════════════════════════════
+const inputStyle = {
+  background: COLORS.surface,
+  border: `1px solid ${COLORS.border}`,
+  borderRadius: 8,
+  padding: '8px 12px',
+  color: COLORS.text,
+  fontSize: '0.85rem',
+  fontFamily: 'inherit',
+  outline: 'none',
+  width: '100%'
+};
+const selectStyle = { ...inputStyle, cursor: 'pointer' };
 
-function fmtMoney(n) {
-  if (n == null || isNaN(n)) return '—';
-  if (n === 0) return '$0';
-  if (n < 1) return `$${n.toFixed(2)}`;
-  if (n < 100) return `$${n.toFixed(2)}`;
-  return `$${Math.round(n).toLocaleString()}`;
-}
-function fmtNum(n) {
-  if (n == null || isNaN(n)) return '—';
-  if (n === 0) return '0';
-  if (n < 1000) return `${Math.round(n)}`;
-  if (n < 1000000) return `${(n / 1000).toFixed(1)}k`;
-  return `${(n / 1000000).toFixed(2)}M`;
-}
-function fmtPct(n) {
-  if (n == null || isNaN(n)) return '—';
-  return `${n.toFixed(2)}%`;
-}
-
-function PerformanceTab() {
-  const [proposals, setProposals] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-
-  async function fetchLive() {
-    setLoading(true);
-    try {
-      // Live = todos los proposals con meta_ad_id (live, completed, etc)
-      const { data } = await api.get('/api/hermes/proposals?status=all&limit=200');
-      const withAdId = (data.proposals || []).filter(p => p.meta_ad_id);
-      setProposals(withAdId);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function syncAll() {
-    setSyncing(true);
-    try {
-      await api.post('/api/hermes/sync-all-metrics', {}, { timeout: 120000 });
-      await fetchLive();
-    } catch (err) {
-      alert(`Sync error: ${err.response?.data?.error || err.message}`);
-    } finally {
-      setSyncing(false);
-    }
-  }
-
-  useEffect(() => { fetchLive(); }, []);
-
-  // Aggregations por dimensión
-  const totals = proposals.reduce((acc, p) => {
-    const perf = p.performance || {};
-    acc.spend += (perf.spend || 0);
-    acc.reach += (perf.reach || 0);
-    acc.impressions += (perf.impressions || 0);
-    acc.link_clicks += (perf.link_clicks || 0);
-    acc.manual_visits += (perf.manual_visits_reported || 0);
-    return acc;
-  }, { spend: 0, reach: 0, impressions: 0, link_clicks: 0, manual_visits: 0 });
-  const avgCtr = totals.impressions > 0 ? (totals.link_clicks / totals.impressions) * 100 : 0;
-  const costPerClick = totals.link_clicks > 0 ? totals.spend / totals.link_clicks : 0;
-  const costPerVisit = totals.manual_visits > 0 ? totals.spend / totals.manual_visits : 0;
-
-  // Breakdown por dimension
-  function groupBy(field) {
-    const groups = {};
-    for (const p of proposals) {
-      const key = field === 'offer'
-        ? p.offer_type
-        : (p.overlay_config?.[field] || 'unknown');
-      if (!groups[key]) groups[key] = { spend: 0, link_clicks: 0, impressions: 0, count: 0, manual_visits: 0 };
-      groups[key].spend += (p.performance?.spend || 0);
-      groups[key].link_clicks += (p.performance?.link_clicks || 0);
-      groups[key].impressions += (p.performance?.impressions || 0);
-      groups[key].manual_visits += (p.performance?.manual_visits_reported || 0);
-      groups[key].count++;
-    }
-    return Object.entries(groups)
-      .map(([k, v]) => ({
-        key: k,
-        ...v,
-        ctr: v.impressions > 0 ? (v.link_clicks / v.impressions) * 100 : 0,
-        cpc: v.link_clicks > 0 ? v.spend / v.link_clicks : 0
-      }))
-      .sort((a, b) => b.spend - a.spend);
-  }
-
-  const byOffer = groupBy('offer');
-  const byPov = groupBy('pov_id');
-  const byTypo = groupBy('typography_id');
-  const byBg = groupBy('background_color');
-
+function Field({ label, children }) {
   return (
-    <div>
-      {/* Header con sync button */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <div style={{ color: '#94a3b8', fontSize: '0.8rem' }}>
-          {proposals.length} ads con meta_ad_id · last sync: {proposals[0]?.performance?.measured_at ? new Date(proposals[0].performance.measured_at).toLocaleString() : 'nunca'}
-        </div>
-        <button
-          onClick={syncAll}
-          disabled={syncing}
-          style={{
-            background: HERMES_COLOR, color: '#0a0a0a',
-            border: 'none', padding: '6px 14px', borderRadius: 6,
-            fontWeight: 700, cursor: syncing ? 'wait' : 'pointer', fontSize: '0.8rem'
-          }}
-        >{syncing ? 'Sincronizando...' : '🔄 Pull métricas Meta'}</button>
-      </div>
+    <label style={{ display: 'block' }}>
+      <div style={{ fontSize: '0.7rem', color: COLORS.textMuted, marginBottom: 4, fontWeight: 500, textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
+      {children}
+    </label>
+  );
+}
 
-      {/* Totals */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 10, marginBottom: 20 }}>
-        <StatCard label="Spend total" value={fmtMoney(totals.spend)} />
-        <StatCard label="Reach" value={fmtNum(totals.reach)} />
-        <StatCard label="Impressions" value={fmtNum(totals.impressions)} />
-        <StatCard label="Link clicks" value={fmtNum(totals.link_clicks)} />
-        <StatCard label="CTR" value={fmtPct(avgCtr)} />
-        <StatCard label="Cost / visit" value={totals.manual_visits > 0 ? fmtMoney(costPerVisit) : '—'} subtitle={`${totals.manual_visits} visits`} />
-      </div>
+// ═══════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════
 
-      {loading ? <p>Cargando...</p> : proposals.length === 0 ? (
-        <p style={{ color: '#94a3b8' }}>Sin ads live aún. Aprobá una proposal para que se publique a Meta.</p>
-      ) : (
-        <>
-          {/* Breakdowns 2 columnas */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
-            <BreakdownTable title="Por oferta" rows={byOffer} renderKey={k => <OfferBadge type={k} />} />
-            <BreakdownTable title="Por POV (ángulo)" rows={byPov} renderKey={k => <code style={{ color: HERMES_COLOR }}>{k}</code>} />
-            <BreakdownTable title="Por tipografía" rows={byTypo} renderKey={k => <code style={{ color: HERMES_COLOR }}>{k}</code>} />
-            <BreakdownTable title="Por background" rows={byBg} renderKey={k => <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>{(k || '').slice(0, 30)}...</span>} />
-          </div>
-
-          {/* Tabla de ads detallada */}
-          <h4 style={{ margin: '20px 0 10px 0', color: '#cbd5e1' }}>Ads individuales ({proposals.length})</h4>
-          <div style={{ display: 'grid', gap: 6 }}>
-            {proposals.map(p => (
-              <div key={p._id} style={{
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid #334155',
-                borderRadius: 6,
-                padding: 10,
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 60px',
-                gap: 10,
-                fontSize: '0.78rem',
-                alignItems: 'center'
-              }}>
-                <div>
-                  <OfferBadge type={p.offer_type} />
-                  <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: 4 }}>
-                    {p.overlay_config?.variant_id || '—'}
-                  </div>
-                </div>
-                <div>
-                  <div style={{ color: '#94a3b8', fontSize: '0.7rem' }}>spend</div>
-                  <div style={{ fontWeight: 600 }}>{fmtMoney(p.performance?.spend || 0)}</div>
-                </div>
-                <div>
-                  <div style={{ color: '#94a3b8', fontSize: '0.7rem' }}>reach / clicks</div>
-                  <div style={{ fontWeight: 600 }}>{fmtNum(p.performance?.reach || 0)} / {fmtNum(p.performance?.link_clicks || 0)}</div>
-                </div>
-                <div>
-                  <div style={{ color: '#94a3b8', fontSize: '0.7rem' }}>CTR / CPC</div>
-                  <div style={{ fontWeight: 600 }}>{fmtPct(p.performance?.ctr || 0)} / {fmtMoney(p.performance?.cost_per_click || 0)}</div>
-                </div>
-                <div>
-                  <div style={{ color: '#94a3b8', fontSize: '0.7rem' }}>visits</div>
-                  <div style={{ fontWeight: 600 }}>{p.performance?.manual_visits_reported || 0}</div>
-                </div>
-                <a
-                  href={`https://business.facebook.com/adsmanager/manage/ads/edit?selected_ad_ids=${p.meta_ad_id}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ color: '#60a5fa', textDecoration: 'underline', fontSize: '0.7rem', textAlign: 'right' }}
-                >→ Meta</a>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
+function SkeletonGrid({ count = 6 }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
+      {Array.from({ length: count }).map((_, i) => (
+        <motion.div
+          key={i}
+          animate={{ opacity: [0.4, 0.6, 0.4] }}
+          transition={{ duration: 1.5, repeat: Infinity, delay: i * 0.1 }}
+          style={{ height: 280, background: COLORS.surface, borderRadius: 12, border: `1px solid ${COLORS.border}` }}
+        />
+      ))}
     </div>
   );
 }
 
-function BreakdownTable({ title, rows, renderKey }) {
+function EmptyState({ icon: Icon, title, message, compact }) {
   return (
     <div style={{
-      background: 'rgba(255,255,255,0.02)',
-      border: '1px solid #334155',
-      borderRadius: 8,
-      padding: 12
+      textAlign: 'center', padding: compact ? '24px' : '60px 24px',
+      color: COLORS.textMuted
     }}>
-      <h4 style={{ margin: '0 0 10px 0', color: '#cbd5e1', fontSize: '0.85rem' }}>{title}</h4>
-      {rows.length === 0 ? (
-        <p style={{ color: '#94a3b8', fontSize: '0.78rem' }}>Sin data</p>
-      ) : (
-        <div style={{ display: 'grid', gap: 6 }}>
-          {rows.map(r => (
-            <div key={r.key} style={{
-              display: 'grid',
-              gridTemplateColumns: '1.5fr 0.7fr 0.7fr 0.6fr',
-              gap: 8,
-              fontSize: '0.72rem',
-              alignItems: 'center'
-            }}>
-              <div>{renderKey(r.key)} <span style={{ color: '#64748b' }}>({r.count})</span></div>
-              <div style={{ color: '#cbd5e1' }}>{fmtMoney(r.spend)}</div>
-              <div style={{ color: '#cbd5e1' }}>{fmtNum(r.link_clicks)} clk</div>
-              <div style={{ color: r.ctr > 1 ? '#22c55e' : '#94a3b8' }}>{fmtPct(r.ctr)}</div>
-            </div>
-          ))}
-        </div>
-      )}
+      <div style={{
+        width: 56, height: 56, borderRadius: 14,
+        background: `${COLORS.hermes}1a`, border: `1px solid ${COLORS.hermes}33`,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        marginBottom: 12, color: COLORS.hermes
+      }}>
+        <Icon size={24} />
+      </div>
+      <div style={{ fontSize: '0.95rem', fontWeight: 600, color: COLORS.text, marginBottom: 4 }}>{title}</div>
+      <div style={{ fontSize: '0.82rem', maxWidth: 420, margin: '0 auto', lineHeight: 1.5 }}>{message}</div>
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// MAIN: HermesPanel
+// MAIN
 // ═══════════════════════════════════════════════════════════════════════
 
 export default function HermesPanel() {
   const [tab, setTab] = useState('proposals');
   const [stats, setStats] = useState(null);
+  const [toast, showToast, dismissToast] = useToast();
 
   useEffect(() => {
     api.get('/api/hermes/stats').then(r => setStats(r.data)).catch(() => {});
+    const t = setInterval(() => {
+      api.get('/api/hermes/stats').then(r => setStats(r.data)).catch(() => {});
+    }, 30000);
+    return () => clearInterval(t);
   }, []);
 
-  return (
-    <div style={{ padding: 24, color: '#e2e8f0', fontFamily: 'Inter, system-ui, sans-serif' }}>
-      {/* Header */}
-      <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div>
-          <h2 style={{ margin: 0, color: HERMES_COLOR, fontSize: '1.4rem' }}>
-            🏪 Hermes — NJ Store Foot Traffic
-          </h2>
-          <p style={{ margin: '4px 0 0 0', color: '#94a3b8', fontSize: '0.85rem' }}>
-            9 Romanelli Ave · South Hackensack, NJ 07606
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: 8, fontSize: '0.78rem' }}>
-          <div style={{
-            padding: '6px 12px',
-            borderRadius: 6,
-            background: stats?.config?.enabled ? '#22c55e22' : '#64748b22',
-            color: stats?.config?.enabled ? '#22c55e' : '#94a3b8'
-          }}>
-            {stats?.config?.enabled ? '● Enabled' : '○ Disabled'}
-          </div>
-          <div style={{
-            padding: '6px 12px',
-            borderRadius: 6,
-            background: '#334155',
-            color: '#cbd5e1'
-          }}>
-            Mode: {stats?.config?.mode || '—'}
-          </div>
-        </div>
-      </div>
+  const enabled = stats?.config?.enabled;
+  const mode = stats?.config?.mode || 'manual_approval';
+  const pendingCount = stats?.proposals?.pending || 0;
+  const liveCount = stats?.proposals?.live || 0;
+  const visitsCount = (stats?.visits?.by_offer || []).reduce((s, o) => s + (o.count || 0), 0);
 
-      {/* Stats strip */}
-      {stats && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
-          <StatCard label="Ofertas activas" value="3" subtitle="free · bigdill · mystery" />
-          <StatCard label="Pending approval" value={stats.proposals?.pending} highlight={stats.proposals?.pending > 0} />
-          <StatCard label="Ads live" value={stats.proposals?.live} />
-          <StatCard
-            label="Visitas (30d)"
-            value={(stats.visits?.by_offer || []).reduce((s, o) => s + o.count, 0)}
-          />
+  const tabs = [
+    { id: 'proposals', label: 'Proposals', icon: FileText, badge: pendingCount > 0 ? pendingCount : null },
+    { id: 'performance', label: 'Performance', icon: BarChart3, badge: liveCount > 0 ? liveCount : null },
+    { id: 'visits', label: 'Store Visits', icon: DoorOpen, badge: visitsCount > 0 ? visitsCount : null }
+  ];
+
+  return (
+    <div style={{
+      padding: 24,
+      color: COLORS.text,
+      fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+      background: `radial-gradient(ellipse at top, ${COLORS.hermes}08 0%, transparent 50%), ${COLORS.bg}`,
+      minHeight: '100vh'
+    }}>
+      <style>{`
+        .spin { animation: spin 1s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        input::placeholder, textarea::placeholder { color: ${COLORS.textDim}; }
+        input:focus, textarea:focus, select:focus { border-color: ${COLORS.hermes}66 !important; }
+      `}</style>
+
+      {/* Hero header */}
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        style={{ marginBottom: 28 }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+              <div style={{
+                width: 42, height: 42, borderRadius: 12,
+                background: `linear-gradient(135deg, ${COLORS.hermes}, #fbbf24)`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: '#0a0a0a',
+                boxShadow: `0 8px 24px -8px ${COLORS.hermes}66`
+              }}>
+                <Store size={22} strokeWidth={2.5} />
+              </div>
+              <div>
+                <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700, letterSpacing: -0.5 }}>Hermes</h1>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', color: COLORS.textMuted, marginTop: 2 }}>
+                  <MapPin size={11} />
+                  9 Romanelli Ave · South Hackensack, NJ
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '7px 14px', borderRadius: 8,
+              background: enabled ? `${COLORS.success}1a` : `${COLORS.textDim}1a`,
+              border: `1px solid ${enabled ? COLORS.success + '33' : COLORS.border}`,
+              color: enabled ? COLORS.success : COLORS.textMuted,
+              fontSize: '0.78rem', fontWeight: 600
+            }}>
+              {enabled && <motion.span
+                animate={{ opacity: [0.4, 1, 0.4] }}
+                transition={{ duration: 1.8, repeat: Infinity }}
+                style={{ width: 6, height: 6, borderRadius: 999, background: COLORS.success }}
+              />}
+              {enabled ? 'Active' : 'Disabled'}
+            </div>
+            <div style={{
+              padding: '7px 14px', borderRadius: 8,
+              background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+              color: COLORS.textMuted, fontSize: '0.78rem', fontWeight: 500
+            }}>
+              {mode === 'auto' ? '⚡ Auto' : '👤 Manual approval'}
+            </div>
+          </div>
         </div>
-      )}
+
+        {/* Hero KPIs */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginTop: 16 }}>
+          <HeroKpi label="Pending approval" value={pendingCount} accent={pendingCount > 0 ? COLORS.warning : COLORS.textDim} />
+          <HeroKpi label="Live ads" value={liveCount} accent={COLORS.info} />
+          <HeroKpi label="Visitas 30d" value={visitsCount} accent={COLORS.hermes} />
+          <HeroKpi label="Ofertas activas" value="9" subtitle="3 free + 6 hooks" accent={COLORS.success} />
+        </div>
+      </motion.div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid #334155' }}>
-        {[
-          { id: 'proposals', label: '📋 Proposals' },
-          { id: 'performance', label: '📊 Performance' },
-          { id: 'visits', label: '🚪 Store Visits' }
-        ].map(t => (
+      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: `1px solid ${COLORS.border}` }}>
+        {tabs.map(t => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
             style={{
-              padding: '10px 16px',
+              padding: '10px 18px',
               background: 'transparent',
               border: 'none',
-              borderBottom: tab === t.id ? `2px solid ${HERMES_COLOR}` : '2px solid transparent',
-              color: tab === t.id ? HERMES_COLOR : '#94a3b8',
+              borderBottom: tab === t.id ? `2px solid ${COLORS.hermes}` : '2px solid transparent',
+              color: tab === t.id ? COLORS.hermes : COLORS.textMuted,
               cursor: 'pointer',
-              fontWeight: tab === t.id ? 700 : 400,
-              fontSize: '0.9rem'
+              fontWeight: tab === t.id ? 600 : 500,
+              fontSize: '0.88rem',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              transition: 'color 0.15s',
+              fontFamily: 'inherit'
             }}
-          >{t.label}</button>
+          >
+            <t.icon size={15} />
+            {t.label}
+            {t.badge != null && (
+              <span style={{
+                fontSize: '0.65rem', padding: '2px 6px', borderRadius: 999,
+                background: tab === t.id ? COLORS.hermes : `${COLORS.textMuted}22`,
+                color: tab === t.id ? '#0a0a0a' : COLORS.textMuted,
+                fontWeight: 700,
+                minWidth: 18, textAlign: 'center'
+              }}>{t.badge}</span>
+            )}
+          </button>
         ))}
       </div>
 
-      {tab === 'proposals' && <ProposalsTab />}
-      {tab === 'performance' && <PerformanceTab />}
-      {tab === 'visits' && <VisitsTab />}
+      {/* Tab content with transition */}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={tab}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          transition={{ duration: 0.2 }}
+        >
+          {tab === 'proposals' && <ProposalsTab onToast={showToast} />}
+          {tab === 'performance' && <PerformanceTab onToast={showToast} />}
+          {tab === 'visits' && <VisitsTab onToast={showToast} />}
+        </motion.div>
+      </AnimatePresence>
+
+      {/* Toast */}
+      <AnimatePresence>
+        {toast && <Toast key={toast.id} message={toast.message} type={toast.type} onClose={dismissToast} />}
+      </AnimatePresence>
     </div>
   );
 }
 
-function StatCard({ label, value, subtitle, highlight }) {
+function HeroKpi({ label, value, subtitle, accent }) {
   return (
-    <div style={{
-      background: highlight ? 'rgba(245, 158, 11, 0.15)' : 'rgba(255,255,255,0.03)',
-      border: `1px solid ${highlight ? HERMES_COLOR : '#334155'}`,
-      borderRadius: 8,
-      padding: 14
-    }}>
-      <div style={{ fontSize: '0.7rem', color: '#94a3b8', textTransform: 'uppercase', marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: '1.6rem', fontWeight: 700, color: highlight ? HERMES_COLOR : '#e2e8f0' }}>
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      style={{
+        background: COLORS.surface,
+        backdropFilter: 'blur(12px)',
+        border: `1px solid ${COLORS.border}`,
+        borderRadius: 12,
+        padding: 14,
+        position: 'relative',
+        overflow: 'hidden'
+      }}
+    >
+      <div style={{
+        position: 'absolute', top: 0, left: 0, right: 0, height: 2,
+        background: `linear-gradient(90deg, ${accent}, transparent)`
+      }} />
+      <div style={{ fontSize: '0.68rem', color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: '1.8rem', fontWeight: 700, color: accent, fontFamily: 'JetBrains Mono, ui-monospace, monospace', lineHeight: 1, letterSpacing: -1 }}>
         {value ?? '—'}
       </div>
-      {subtitle && <div style={{ fontSize: '0.7rem', color: '#64748b', marginTop: 2 }}>{subtitle}</div>}
-    </div>
+      {subtitle && <div style={{ fontSize: '0.7rem', color: COLORS.textDim, marginTop: 4 }}>{subtitle}</div>}
+    </motion.div>
   );
 }
