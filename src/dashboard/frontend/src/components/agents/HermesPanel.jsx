@@ -442,6 +442,7 @@ function PerformanceTab({ onToast }) {
   const [proposals, setProposals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [autoSynced, setAutoSynced] = useState(false);
 
   async function fetchLive() {
     setLoading(true);
@@ -450,18 +451,27 @@ function PerformanceTab({ onToast }) {
       setProposals((data.proposals || []).filter(p => p.meta_ad_id));
     } finally { setLoading(false); }
   }
-  async function syncAll() {
+  async function syncAll(silent = false) {
     setSyncing(true);
     try {
       const { data } = await api.post('/api/hermes/sync-all-metrics', {}, { timeout: 120000 });
-      onToast(`Sync OK · ${data.synced} ads`, 'success');
+      if (!silent) onToast(`Sync OK · ${data.synced} ads`, 'success');
       await fetchLive();
     } catch (err) {
-      onToast(err.response?.data?.error || err.message, 'error');
+      if (!silent) onToast(err.response?.data?.error || err.message, 'error');
     } finally { setSyncing(false); }
   }
 
-  useEffect(() => { fetchLive(); }, []);
+  // Auto-sync una vez al mount — para que el user no tenga que apretar
+  // el botón manualmente cada vez que entra al tab. Silent (sin toast).
+  useEffect(() => {
+    fetchLive().then(() => {
+      if (!autoSynced) {
+        setAutoSynced(true);
+        syncAll(true);
+      }
+    });
+  }, []);
 
   const totals = useMemo(() => proposals.reduce((acc, p) => {
     const perf = p.performance || {};

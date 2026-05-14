@@ -148,13 +148,24 @@ router.delete('/photos/:id', async (req, res) => {
  */
 router.get('/proposals', async (req, res) => {
   try {
-    const { status = 'pending', limit = 50 } = req.query;
+    const { status = 'pending', limit = 50, include_image = 'false' } = req.query;
     const query = status === 'all' ? {} : { status };
-    const proposals = await HermesProposal.find(query)
+
+    // Por default EXCLUIR composed_image_base64 (~1-3MB cada uno → con
+    // status=all+limit=200 hace 32MB+ de response). La imagen se sirve via
+    // endpoint dedicado /proposals/:id/image. Pasar include_image=true para
+    // incluirla inline (raro, casi nunca necesario).
+    const select = include_image === 'true'
+      ? undefined
+      : '-composed_image_base64 -overlay_config.generated_image_prompt';
+
+    let q = HermesProposal.find(query)
       .sort({ generated_at: -1 })
       .limit(parseInt(limit))
-      .populate('photo_asset_id', 'filename')
-      .lean();
+      .populate('photo_asset_id', 'filename');
+
+    if (select) q = q.select(select);
+    const proposals = await q.lean();
 
     res.json({ proposals, count: proposals.length });
   } catch (err) {
