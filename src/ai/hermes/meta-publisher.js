@@ -464,8 +464,6 @@ async function updateExistingAdsetTargeting() {
     throw new Error('No se pudieron resolver region keys NJ/NY/PA');
   }
 
-  const pageId = process.env.HERMES_FACEBOOK_PAGE_ID || config.hermes.facebookPageId || await meta.getPageId();
-
   const targeting = {
     geo_locations: {
       regions: triStateRegions.map(r => ({ key: r.key })),
@@ -479,20 +477,24 @@ async function updateExistingAdsetTargeting() {
     instagram_positions: ['stream']
   };
 
-  logger.info(`[HERMES-PUBLISHER] Actualizando adset ${adsetId} → Tri-state + Feed-only + mobile + home+recent + promoted_object`);
+  // NOTA: promoted_object NO se incluye acá. Meta lo trata como inmutable
+  // post-creación del adset (devuelve "The promoted object is immutable for
+  // most cases"). Solo se setea al crear adset nuevo en getOrCreateCampaignAndAdset.
+  // Adsets existentes sin promoted_object pierden el boost de local awareness
+  // pero el resto del targeting sí se actualiza correctamente.
+  logger.info(`[HERMES-PUBLISHER] Actualizando adset ${adsetId} → Tri-state + Feed-only + mobile + home+recent`);
   try {
     await meta.post(`/${adsetId}`, {
-      targeting: JSON.stringify(targeting),
-      promoted_object: JSON.stringify({ page_id: pageId })   // local awareness boost
+      targeting: JSON.stringify(targeting)
     });
     return {
       success: true,
       adset_id: adsetId,
       new_regions: triStateRegions.map(r => r.name),
       new_placements: ['Facebook Feed', 'Instagram Feed'],
-      promoted_page_id: pageId,
       device_platforms: ['mobile'],
-      location_types: ['home', 'recent']
+      location_types: ['home', 'recent'],
+      note: 'promoted_object NO se actualizó (Meta lo trata como inmutable post-creación). Solo aplicará a adsets nuevos creados desde ahora.'
     };
   } catch (err) {
     const metaError = err.response?.data?.error;
