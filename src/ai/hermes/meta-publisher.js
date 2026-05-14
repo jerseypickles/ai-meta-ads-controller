@@ -154,6 +154,10 @@ async function getOrCreateCampaignAndAdset(meta) {
   //
   // Stories + Reels quedan EXCLUIDOS hasta que implementemos
   // Placement Asset Customization (Fase 3) con imagen 9:16 dedicada.
+  // promoted_object con page_id — recomendado por Meta para local awareness
+  // ads (ayuda al algoritmo a entender el contexto de business local).
+  const pageId = process.env.HERMES_FACEBOOK_PAGE_ID || config.hermes.facebookPageId || await meta.getPageId();
+
   const adsetParams = {
     campaign_id: campaignId,
     name: '[HERMES] Local NJ Foot Traffic',
@@ -161,12 +165,19 @@ async function getOrCreateCampaignAndAdset(meta) {
     billing_event: 'IMPRESSIONS',
     bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
     status: 'PAUSED',
+    promoted_object: JSON.stringify({ page_id: pageId }),
     targeting: JSON.stringify({
       geo_locations: {
-        regions: triStateRegions.map(r => ({ key: r.key }))
+        regions: triStateRegions.map(r => ({ key: r.key })),
+        // location_types: 'home' = gente que vive en NJ/NY/PA (no solo turistas de paso).
+        // Foot traffic real viene de residentes que pueden manejar a la store.
+        location_types: ['home', 'recent']
       },
       age_min: 21,
       age_max: 65,
+      // Mobile-first: foot traffic ads son para gente que puede manejar AHORA.
+      // Desktop users rara vez convierten para visitas físicas.
+      device_platforms: ['mobile'],
       // Feed-only placements
       publisher_platforms: ['facebook', 'instagram'],
       facebook_positions: ['feed'],
@@ -442,27 +453,35 @@ async function updateExistingAdsetTargeting() {
     throw new Error('No se pudieron resolver region keys NJ/NY/PA');
   }
 
+  const pageId = process.env.HERMES_FACEBOOK_PAGE_ID || config.hermes.facebookPageId || await meta.getPageId();
+
   const targeting = {
     geo_locations: {
-      regions: triStateRegions.map(r => ({ key: r.key }))
+      regions: triStateRegions.map(r => ({ key: r.key })),
+      location_types: ['home', 'recent']     // residentes (+ recent visitors)
     },
     age_min: 21,
     age_max: 65,
+    device_platforms: ['mobile'],            // foot traffic = mobile-first
     publisher_platforms: ['facebook', 'instagram'],
     facebook_positions: ['feed'],
     instagram_positions: ['stream']
   };
 
-  logger.info(`[HERMES-PUBLISHER] Actualizando targeting de adset ${adsetId} → Tri-state + Feed-only`);
+  logger.info(`[HERMES-PUBLISHER] Actualizando adset ${adsetId} → Tri-state + Feed-only + mobile + home+recent + promoted_object`);
   try {
     await meta.post(`/${adsetId}`, {
-      targeting: JSON.stringify(targeting)
+      targeting: JSON.stringify(targeting),
+      promoted_object: JSON.stringify({ page_id: pageId })   // local awareness boost
     });
     return {
       success: true,
       adset_id: adsetId,
       new_regions: triStateRegions.map(r => r.name),
-      new_placements: ['Facebook Feed', 'Instagram Feed']
+      new_placements: ['Facebook Feed', 'Instagram Feed'],
+      promoted_page_id: pageId,
+      device_platforms: ['mobile'],
+      location_types: ['home', 'recent']
     };
   } catch (err) {
     const metaError = err.response?.data?.error;
