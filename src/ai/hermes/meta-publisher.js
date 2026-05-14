@@ -354,6 +354,75 @@ async function publishProposalToMeta(proposalId) {
 }
 
 /**
+ * Pull metrics actuales del ad de Meta y los persiste en HermesProposal.performance.
+ * Usado para sync manual (endpoint /sync-metrics) y eventualmente en cron T+3d/T+7d.
+ *
+ * @param {String|ObjectId} proposalId
+ * @returns {Promise<{performance, raw_meta_data}>}
+ */
+async function syncProposalMetricsFromMeta(proposalId) {
+  const proposal = await HermesProposal.findById(proposalId);
+  if (!proposal) throw new Error(`Proposal ${proposalId} not found`);
+  if (!proposal.meta_ad_id) {
+    throw new Error(`Proposal ${proposalId} no tiene meta_ad_id (status: ${proposal.status})`);
+  }
+
+  const { getMetaClient } = require('../../meta/client');
+  const meta = getMetaClient();
+
+  // Pull insights desde Meta — lifetime metrics del ad
+  const insightsResult = await meta.get(`/${proposal.meta_ad_id}/insights`, {
+    fields: 'spend,reach,impressions,clicks,inline_link_clicks,ctr,inline_link_click_ctr,cpm,cpc,frequency,date_start,date_stop',
+    date_preset: 'maximum'  // lifetime
+  });
+
+  const rows = insightsResult.data || [];
+  if (rows.length === 0) {
+    logger.warn(`[HERMES-METRICS] Ad ${proposal.meta_ad_id} sin data de insights aún (puede tardar 1-24h)`);
+    return {
+      performance: proposal.performance || {},
+      raw_meta_data: null,
+      note: 'Meta no tiene insights aún para este ad (típicamente toma 1-24h de servir)'
+    };
+  }
+
+  const row = rows[0];
+  const spend = parseFloat(row.spend || 0);
+  const reach = parseInt(row.reach || 0);
+  const impressions = parseInt(row.impressions || 0);
+  const link_clicks = parseInt(row.inline_link_clicks || 0);
+  const ctr = parseFloat(row.inline_link_click_ctr || row.ctr || 0);
+  const cpm = parseFloat(row.cpm || 0);
+  const cpc = parseFloat(row.cpc || 0);
+  const frequency = parseFloat(row.frequency || 0);
+
+  // Update HermesProposal.performance
+  proposal.performance = {
+    ...(proposal.performance || {}),
+    spend,
+    reach,
+    impressions,
+    link_clicks,
+    ctr,
+    cpm,
+    cost_per_click: cpc,
+    frequency,
+    measured_at: new Date(),
+    estimated_store_visits: proposal.performance?.estimated_store_visits || 0,
+    manual_visits_reported: proposal.performance?.manual_visits_reported || 0
+  };
+  await proposal.save();
+
+  logger.info(`[HERMES-METRICS] Synced ${proposal.meta_ad_id} — spend $${spend}, reach ${reach}, link_clicks ${link_clicks}, ctr ${(ctr).toFixed(2)}%`);
+
+  return {
+    performance: proposal.performance,
+    raw_meta_data: row,
+    period: { date_start: row.date_start, date_stop: row.date_stop }
+  };
+}
+
+/**
  * Actualiza el targeting del adset existente de Hermes a Tri-state regions
  * (NJ+NY+PA) + Feed-only placements. Útil para migrar adsets viejos sin
  * tener que recrearlos.
@@ -407,5 +476,6 @@ module.exports = {
   publishProposalToMeta,
   getOrCreateCampaignAndAdset,
   resolveTriStateRegionKeys,
-  updateExistingAdsetTargeting
+  updateExistingAdsetTargeting,
+  syncProposalMetricsFromMeta
 };

@@ -392,6 +392,53 @@ router.post('/trigger-cycle', async (req, res) => {
 });
 
 /**
+ * POST /api/hermes/proposals/:id/sync-metrics
+ *
+ * Pull metrics actuales del ad de Meta y persistir en HermesProposal.performance.
+ * Devuelve también raw_meta_data para inspección.
+ */
+router.post('/proposals/:id/sync-metrics', async (req, res) => {
+  try {
+    const { syncProposalMetricsFromMeta } = require('../../ai/hermes/meta-publisher');
+    const result = await syncProposalMetricsFromMeta(req.params.id);
+    res.json(result);
+  } catch (err) {
+    logger.error(`[HERMES-API] sync-metrics failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/hermes/sync-all-metrics
+ *
+ * Pull metrics para TODOS los proposals live (meta_ad_id presente).
+ * Útil para refresh masivo on-demand. Eventualmente lo va a llamar el cron diario.
+ */
+router.post('/sync-all-metrics', async (req, res) => {
+  try {
+    const HermesProposal = require('../../db/models/HermesProposal');
+    const { syncProposalMetricsFromMeta } = require('../../ai/hermes/meta-publisher');
+
+    const liveProposals = await HermesProposal.find({
+      meta_ad_id: { $exists: true, $ne: null }
+    }).select('_id meta_ad_id offer_type').lean();
+
+    const results = [];
+    for (const p of liveProposals) {
+      try {
+        const r = await syncProposalMetricsFromMeta(p._id);
+        results.push({ proposal_id: p._id, offer_type: p.offer_type, meta_ad_id: p.meta_ad_id, ...r });
+      } catch (err) {
+        results.push({ proposal_id: p._id, error: err.message });
+      }
+    }
+    res.json({ synced: results.length, results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * POST /api/hermes/update-adset-targeting
  *
  * Actualiza el targeting del adset existente de Hermes a Tri-state regions
