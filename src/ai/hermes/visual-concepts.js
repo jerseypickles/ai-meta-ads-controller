@@ -27,7 +27,7 @@ const VISUAL_CONCEPTS = {
     composition_directive: 'subject centered occupying middle 60 percent of frame vertically, upper 25 percent of frame is pure dark seamless negative space with nothing in it, lower 15 percent of frame is pure dark seamless negative space with nothing in it',
     lighting: 'single hard rim light from upper left creating dramatic specular highlights on the wet surface, deep shadows in the negative space zones',
     mood: 'dramatic, dynamic, mid-action, hunger-triggering',
-    product_compatibility: ['free_chamoy', 'free_tajin', 'big_dill_chamoy', 'pull_up_pour'],
+    product_compatibility: ['free_chamoy', 'free_tajin', 'free_pickle_juice'],
     aspect_ratio: 'vertical 9:16 portrait',
     background: 'pure black seamless background, slight vignetting'
   },
@@ -40,7 +40,7 @@ const VISUAL_CONCEPTS = {
     composition_directive: 'pickle on stick occupies central vertical 65 percent of frame, hand barely visible only at bottom edge, upper 25 percent of frame is clean simple background with no objects, lower 15 percent of frame has only the wooden stick base with empty space around it',
     lighting: 'bright natural sunlight from upper left, clean shadows, bright cheerful daylight feel',
     mood: 'iconic, brand-building, street food energy, immediate craving',
-    product_compatibility: ['free_chamoy', 'free_tajin', 'free_pickle', 'nj_locals', 'pull_up_pour', 'first_timer_perk'],
+    product_compatibility: ['free_chamoy', 'free_tajin', 'free_big_dill', 'free_pickle_juice'],
     aspect_ratio: 'vertical 9:16 portrait',
     background: 'vibrant solid mustard yellow seamless paper background'
   },
@@ -53,7 +53,7 @@ const VISUAL_CONCEPTS = {
     composition_directive: 'pickle bite shot centered in middle 55 percent of frame, upper 25 percent of frame is clean simple negative space with no objects, lower 20 percent of frame is clean simple negative space with no objects',
     lighting: 'soft natural diffused window light from upper left, gentle highlight on bite edge, subtle shadows',
     mood: 'texture porn, crunch, fresh, visceral hunger',
-    product_compatibility: ['free_chamoy', 'free_tajin', 'free_pickle', 'big_dill_chamoy', 'free_olive', 'tasting_flight'],
+    product_compatibility: ['free_chamoy', 'free_tajin', 'free_big_dill', 'free_olive', 'free_pickle_flight'],
     aspect_ratio: 'vertical 9:16 portrait',
     background: 'soft vintage cream seamless paper background'
   },
@@ -66,7 +66,7 @@ const VISUAL_CONCEPTS = {
     composition_directive: 'jar centered occupying middle 55 percent of frame, jar positioned slightly lower than center to leave upper 30 percent of frame as clean empty background, lower 15 percent of frame is clean empty surface with only minimal dill sprig accent',
     lighting: 'classic three-point studio lighting, soft key from upper left, gentle fill from right, subtle rim light separating jar from background, looks like high-end agency advertising photography',
     mood: 'premium, brand-building, confident, iconic',
-    product_compatibility: ['free_pickle', 'bring_your_jar', 'first_timer_perk', 'nj_locals', 'build_your_box'],
+    product_compatibility: ['free_big_dill', 'bring_your_jar'],
     aspect_ratio: 'vertical 9:16 portrait',
     background: 'soft warm cream seamless paper background with subtle gradient'
   },
@@ -79,7 +79,7 @@ const VISUAL_CONCEPTS = {
     composition_directive: 'hand and pickle chip occupy right two-thirds of middle vertical band of frame, upper 25 percent of frame is clean empty background, lower 15 percent of frame is clean empty surface',
     lighting: 'warm natural daylight from upper right, glossy specular highlights on wet skin and chip, soft shadows',
     mood: 'visceral, messy, intimate, hunger taking over',
-    product_compatibility: ['free_chamoy', 'free_tajin', 'pull_up_pour', 'big_dill_chamoy'],
+    product_compatibility: ['free_chamoy', 'free_tajin', 'bring_your_cup'],
     aspect_ratio: 'vertical 9:16 portrait',
     background: 'warm burnt orange seamless paper background'
   },
@@ -92,20 +92,33 @@ const VISUAL_CONCEPTS = {
     composition_directive: 'pouring vessel at top quarter of frame just barely visible, stream of liquid or seasoning fills middle band, target pickle in lower middle, upper 22 percent of frame has only the vessel rim and stream beginning with mostly empty background, lower 15 percent of frame is clean empty surface',
     lighting: 'hard side spotlight from left to catch the stream texture, dark background to make the stream pop, dramatic',
     mood: 'dynamic, action moment, ASMR-like, in-the-act',
-    product_compatibility: ['free_chamoy', 'free_tajin', 'pull_up_pour', 'big_dill_chamoy'],
+    product_compatibility: ['free_chamoy', 'free_tajin', 'bring_your_jar'],
     aspect_ratio: 'vertical 9:16 portrait',
     background: 'deep moody dark brown seamless background'
+  },
+
+  the_olive_bar: {
+    id: 'the_olive_bar',
+    label: 'THE OLIVE BAR',
+    weight: 0.10,
+    shot_description: 'five distinct bright green stuffed olives arranged in a clean tight horizontal row across the middle of the frame, each olive shows its filling clearly and distinctly: one with bright red pimento, one with crumbly white feta cheese, one with blue-grey blue cheese veining, one with bright green jalapeño slice and visible seeds, one with whole white peeled garlic clove, all olives glistening with olive oil, scattered fresh oregano and rosemary sprigs as accent, abundance and variety showcased',
+    composition_directive: 'olives arranged in horizontal row occupying middle 55 percent of frame vertically, upper 25 percent of frame is clean empty background with no objects, lower 20 percent of frame is clean empty surface with at most a tiny rosemary sprig accent',
+    lighting: 'bright clean overhead studio light, each olive crisply lit with visible filling textures, soft shadows underneath, gourmet food magazine clarity',
+    mood: 'discovery, variety, gourmet abundance, premium showcase',
+    product_compatibility: ['free_olive_flight', 'free_olive'],
+    aspect_ratio: 'vertical 9:16 portrait',
+    background: 'soft warm cream seamless paper background'
   },
 
   the_cocktail: {
     id: 'the_cocktail',
     label: 'THE COCKTAIL',
-    weight: 0.07,
+    weight: 0.05,
     shot_description: 'classic martini glass filled with crystal clear icy liquid, garnished with three large bright green stuffed olives skewered on a single silver cocktail pick crossing the rim, condensation droplets running down the outside of the glass, the olives clearly stuffed with visible filling such as bright red pimento or crumbly white feta peeking through, sophisticated cocktail bar atmosphere',
     composition_directive: 'martini glass centered occupying middle 60 percent of frame, glass positioned slightly low so olives sit at center height, upper 25 percent of frame is moody empty background with subtle bokeh, lower 15 percent of frame is clean empty bar surface',
     lighting: 'moody bar lighting, single warm spotlight from upper right hitting the glass and olives, deep blue shadow tones in negative space, glass refraction visible',
     mood: 'sophisticated, after-work, discovery of olives category, adult premium',
-    product_compatibility: ['free_olive'],
+    product_compatibility: ['free_olive', 'free_olive_flight'],
     aspect_ratio: 'vertical 9:16 portrait',
     background: 'deep moody dark blue with subtle bokeh of distant bar lights'
   },
@@ -113,40 +126,14 @@ const VISUAL_CONCEPTS = {
   the_stack: {
     id: 'the_stack',
     label: 'THE STACK',
-    weight: 0.05,
+    weight: 0.02,
     shot_description: 'multiple stuffed olives tumbling and falling mid-air from above into frame, mix of different stuffed olives visible (some with bright red pimento filling, some with crumbly white feta filling, some with green jalapeño filling), olives caught in motion at various heights, droplets of olive brine suspended around them, dynamic explosive composition',
     composition_directive: 'olives scattered across middle 55 percent of frame in motion, upper 25 percent of frame shows only one or two olives entering frame from top with mostly empty background, lower 20 percent of frame has only a couple of olives reaching the bottom with empty surface',
     lighting: 'bright clean studio light, hard shadows on the falling olives for depth, freeze-motion clarity',
     mood: 'dynamic, abundance, variety showcase, fun energy',
-    product_compatibility: ['free_olive', 'tasting_flight', 'build_your_box'],
+    product_compatibility: ['free_olive', 'free_olive_flight'],
     aspect_ratio: 'vertical 9:16 portrait',
     background: 'bright clean white seamless paper background'
-  },
-
-  the_platter: {
-    id: 'the_platter',
-    label: 'THE PLATTER',
-    weight: 0.03,
-    shot_description: 'overhead three-quarter angle shot of a generous wooden serving board loaded with abundance, three to four small bowls of different pickles and stuffed olives (chamoy pickles, dill spears, garlic stuffed olives, pimento stuffed olives), scattered small dish of red chamoy sauce, sprinkles of red Tajín seasoning visible, fresh dill sprigs scattered, the entire spread looks like Sunday afternoon snacking',
-    composition_directive: 'platter centered occupying middle 60 percent of frame, items spread out with breathing room, upper 25 percent of frame is empty wood surface beyond the board, lower 15 percent of frame is empty wood surface in front of the board',
-    lighting: 'soft natural overhead window light, warm tones, slight shadow under board edges',
-    mood: 'abundance, discovery, Sunday afternoon, share moment',
-    product_compatibility: ['tasting_flight', 'build_your_box', 'nj_locals'],
-    aspect_ratio: 'vertical 9:16 portrait',
-    background: 'warm aged wooden table surface'
-  },
-
-  the_bodega_window: {
-    id: 'the_bodega_window',
-    label: 'THE BODEGA',
-    weight: 0.02,
-    shot_description: 'single pickle on a wooden stick photographed through the slightly condensation-foggy window of a Jersey corner bodega, the pickle is the clear hero in sharp focus on the inside of the window, outside the window blurred suggestion of a New Jersey street scene with bokeh of distant streetlight, neon glow tint reflecting on the window glass, butcher paper wrapped around the base of the stick',
-    composition_directive: 'pickle on stick occupies middle 55 percent of frame, upper 25 percent of frame is mostly empty foggy window glass with subtle bokeh, lower 20 percent of frame is empty windowsill or butcher paper texture with no other objects',
-    lighting: 'mixed light, warm interior bodega light on the pickle, cool blue ambient outside light creating contrast, slight neon glow on window edges',
-    mood: 'brand culture, Jersey local, late-night, distinctive',
-    product_compatibility: ['nj_locals', 'pull_up_pour', 'free_pickle'],
-    aspect_ratio: 'vertical 9:16 portrait',
-    background: 'fogged window glass with bokeh of NJ street outside'
   }
 };
 

@@ -1,39 +1,49 @@
 /**
- * Offer Rotator — refactor estratégico 13-may-2026 post-feedback cold acquisition.
+ * Offer Rotator — refactor estratégico 14-may-2026.
  *
- * Brief del user (resumen):
- *   - Cold viewer = 0.5s de atención → product clarity + craving + offer + action
- *   - NO siempre "FREE [product]" — diversificar (BRING YOUR JAR, TASTING FLIGHT,
- *     PULL UP & POUR, NJ LOCALS, etc.)
- *   - FREE [product] cap ~50% del weight, otras categorías el resto
- *   - REMOVE mystery_pickle entirely (anti-pattern: curiosity ≠ store visit)
- *   - Solo "1ST-TIMER PERK" como mystery aceptable (porque el gift está garantizado)
+ * Aprendizaje: la mezcla anterior incluía bundles (build_your_box) + discounts
+ * (nj_locals Sunday 10% off) + mystery (first_timer_perk). NADA de eso drive
+ * foot traffic para cold viewers — son ofertas de loyalty / repeat, no de
+ * acquisition para primera visita.
  *
- * Trigger hierarchy aplicada: concrete offer > cultural FOMO > visceral craving >
- *   wordplay > editorial premium.
+ * NUEVA REGLA: TODAS las ofertas deben ser "FREE [PRODUCT] on your 1st visit"
+ * o equivalente directo (bring your jar/cup → free refill 1st visit). Nada
+ * de descuentos %, nada de bundles, nada de mystery, nada de "every Sunday".
  *
- * Anti-patterns sacados del pool:
- *   - mystery_pickle entero (blind_taste, mystery_drop, flavor_of_week, roulette)
- *   - everything_bagel (no es viralmente craveable como chamoy/tajín)
+ * El único trigger que vale para cold acquisition foot traffic es:
+ *   "If I drive there RIGHT NOW, I get [free X]"
+ *
+ * Pool actual (9 ofertas, todas free + 1st visit):
+ *   - FREE CHAMOY PICKLE       (cultural FOMO Mexicano, drip visceral)
+ *   - FREE TAJÍN PICKLE        (cultural FOMO chili-lime)
+ *   - FREE OLIVE FLIGHT        (prueba TODAS las olivas stuffed — 5 variedades)
+ *   - FREE STUFFED OLIVE       (single olive de discovery)
+ *   - FREE PICKLE FLIGHT       (prueba 5 sabores de pickle free)
+ *   - FREE BIG DILL            (bestseller iconico, on us)
+ *   - BRING YOUR JAR           (free refill 1st visit)
+ *   - BRING YOUR CUP           (free fill 1st visit — entry low-commitment)
+ *   - FREE PICKLE JUICE SHOT   (shot brine on us)
  */
 
 const OFFERS = {
   // ═══════════════════════════════════════════════════════════════
-  // GROUP 1 — FREE [PRODUCT]: cap ~50% del total (cultural FOMO trigger)
-  // Solo productos con visual virality real (chamoy, tajín, olive)
+  // FREE [PRODUCT] on 1st visit — TODAS las ofertas siguen este patrón.
+  // Single trigger: "drive there now → get free X". Nada de bundles,
+  // discounts %, mystery, ni recurring deals.
   // ═══════════════════════════════════════════════════════════════
+
   free_chamoy: {
     type: 'free_chamoy',
-    weight: 0.20,
+    weight: 0.18,
     short_label: 'Free Chamoy',
-    group: 'free_product',
-    description: 'Chamoy pickle hero — cultural FOMO Mexicano + visceral red drip',
+    group: 'free_1st_visit',
+    description: 'Chamoy pickle on 1st visit — cultural FOMO Mexicano + drip visceral',
     variants: [
       {
         id: 'chamoy_classic',
-        title: 'FREE CHAMOY',
+        title: 'FREE CHAMOY PICKLE',
         hook: 'on your 1st visit',
-        product_focus: 'chamoy-drenched pickle popsicle',
+        product_focus: 'chamoy-drenched pickle on a stick',
         treatment_keywords: [
           'generously drenched in glossy thick deep red chamoy sauce',
           'coating two thirds of the pickle leaving bottom third showing natural emerald green skin',
@@ -42,21 +52,21 @@ const OFFERS = {
           'on a wooden popsicle stick'
         ],
         accent_color: 'bright red',
-        cultural_hook: 'chamoy + Tajín = Mexican/Latino paleta culture, viral on TikTok'
+        cultural_hook: 'chamoy + Tajín = Mexican/Latino paleta culture'
       }
     ]
   },
 
   free_tajin: {
     type: 'free_tajin',
-    weight: 0.15,
+    weight: 0.13,
     short_label: 'Free Tajín',
-    group: 'free_product',
-    description: 'Tajín-crusted pickle — chili-lime FOMO',
+    group: 'free_1st_visit',
+    description: 'Tajín-crusted pickle on 1st visit — chili-lime FOMO',
     variants: [
       {
         id: 'tajin_classic',
-        title: 'FREE TAJÍN',
+        title: 'FREE TAJÍN PICKLE',
         hook: 'on your 1st visit',
         product_focus: 'Tajín-crusted pickle with lime',
         treatment_keywords: [
@@ -72,81 +82,170 @@ const OFFERS = {
     ]
   },
 
-  free_olive: {
-    type: 'free_olive',
+  free_olive_flight: {
+    type: 'free_olive_flight',
     weight: 0.15,
-    short_label: 'Free Olive',
-    group: 'free_product',
-    description: 'Stuffed olive single — premium cheese FOMO',
+    short_label: 'Free Olive Flight',
+    group: 'free_1st_visit',
+    description: 'TODAS las olivas stuffed prueba free on 1st visit — discovery del olive bar entero',
     variants: [
       {
-        id: 'olive_feta',
-        title: 'FREE OLIVE',
-        hook: 'on your 1st visit',
-        product_focus: 'feta-stuffed Castelvetrano olive',
+        id: 'olive_flight_5',
+        title: 'FREE OLIVE FLIGHT',
+        hook: 'try all our stuffed olives free',
+        product_focus: '5 stuffed olives variety: garlic, jalapeño, pimento, blue cheese, feta',
         treatment_keywords: [
-          'large glossy green Castelvetrano olive stuffed densely with crumbly white feta cheese',
-          'a clean fresh bite revealing the compacted feta filling packed inside with visible crumbly chunky texture',
-          'small distinct fragments of feta visible on the bite edge',
-          'subtle natural sheen of olive oil on the skin',
-          'a few small leaves of fresh oregano scattered on top',
-          'real droplets of olive brine clinging to the surface'
+          'five different bright green stuffed olives arranged in a row',
+          'each olive shows its distinct filling clearly: bright red pimento, crumbly white feta, blue-grey blue cheese, fresh green jalapeño, white garlic clove',
+          'glossy olive oil sheen on each',
+          'olives lined up on a small dark slate or wooden tasting paddle with cocktail picks',
+          'visible variety and abundance, premium artisanal feel'
         ],
         accent_color: 'deep red',
-        cultural_hook: 'gourmet Mediterranean premium positioning'
+        cultural_hook: 'olive bar discovery — gourmet Mediterranean premium'
+      }
+    ]
+  },
+
+  free_olive: {
+    type: 'free_olive',
+    weight: 0.10,
+    short_label: 'Free Olive',
+    group: 'free_1st_visit',
+    description: 'Single stuffed olive on 1st visit — premium FOMO',
+    variants: [
+      {
+        id: 'olive_pimento',
+        title: 'FREE STUFFED OLIVE',
+        hook: 'on your 1st visit',
+        product_focus: 'pimento-stuffed Castelvetrano olive',
+        treatment_keywords: [
+          'large glossy bright green Castelvetrano olive stuffed densely with bright red pimento',
+          'clean fresh bite revealing the pimento filling clearly visible',
+          'subtle natural sheen of olive oil on the skin',
+          'fresh oregano sprig accent on the side',
+          'real droplets of olive brine clinging to the surface'
+        ],
+        accent_color: 'deep red'
+      },
+      {
+        id: 'olive_jalapeno',
+        title: 'FREE STUFFED OLIVE',
+        hook: 'on your 1st visit',
+        product_focus: 'jalapeño-stuffed olive',
+        treatment_keywords: [
+          'large glossy green olive stuffed with bright green jalapeño slice clearly visible',
+          'clean fresh bite revealing the jalapeño filling with seeds visible',
+          'subtle natural sheen of olive oil',
+          'tiny chili flakes scattered around'
+        ],
+        accent_color: 'bright red'
       },
       {
         id: 'olive_blue',
-        title: 'FREE OLIVE',
+        title: 'FREE STUFFED OLIVE',
         hook: 'on your 1st visit',
         product_focus: 'blue cheese-stuffed olive',
         treatment_keywords: [
           'large glossy green olive stuffed densely with crumbly blue cheese',
           'clean fresh bite revealing the compacted blue cheese filling with distinct blue-grey veining',
-          'cheese chunks showing the blue mold veins on the bite edge',
           'subtle natural sheen of olive oil',
           'single fresh thyme sprig resting on top'
         ],
-        accent_color: 'deep red',
-        cultural_hook: 'blue cheese pairing — sophisticated bar snack'
+        accent_color: 'deep red'
+      },
+      {
+        id: 'olive_garlic',
+        title: 'FREE STUFFED OLIVE',
+        hook: 'on your 1st visit',
+        product_focus: 'garlic-stuffed olive',
+        treatment_keywords: [
+          'large glossy green olive stuffed with whole peeled garlic clove clearly visible',
+          'clean fresh bite revealing the white garlic clove inside',
+          'subtle natural sheen of olive oil',
+          'tiny sprigs of rosemary scattered nearby'
+        ],
+        accent_color: 'forest green'
       }
     ]
   },
 
-  // ═══════════════════════════════════════════════════════════════
-  // GROUP 2 — NON-FREE OFFERS: el otro ~50% (diversidad para no entrenar
-  // a la audience como discount-only)
-  // ═══════════════════════════════════════════════════════════════
+  free_pickle_flight: {
+    type: 'free_pickle_flight',
+    weight: 0.12,
+    short_label: 'Free Pickle Flight',
+    group: 'free_1st_visit',
+    description: 'Prueba 5 sabores de pickle free on 1st visit',
+    variants: [
+      {
+        id: 'pickle_flight_5',
+        title: 'FREE PICKLE FLIGHT',
+        hook: 'try 5 pickle flavors free',
+        product_focus: 'wooden flight paddle with 5 different pickle varieties',
+        treatment_keywords: [
+          'wooden tasting paddle with 5 small bowls or cups',
+          'each holds a different pickle variety: classic green dill, bright red chamoy, vibrant Tajín-coated, dark hot honey, golden curry',
+          'abundance and color variety visible',
+          'wooden cocktail picks or pretzel sticks for picking'
+        ],
+        accent_color: 'cream'
+      }
+    ]
+  },
+
+  free_big_dill: {
+    type: 'free_big_dill',
+    weight: 0.11,
+    short_label: 'Free Big Dill',
+    group: 'free_1st_visit',
+    description: 'Big Dill bestseller free on 1st visit — brand icon',
+    variants: [
+      {
+        id: 'big_dill_classic',
+        title: 'FREE BIG DILL',
+        hook: 'our bestseller, on us',
+        product_focus: 'iconic Big Dill pickle — large classic dill',
+        treatment_keywords: [
+          'one extra-large classic dill pickle hero — emerald green with bumpy skin',
+          'glossy wet surface with visible brine droplets',
+          'fresh dill sprig casually placed beside',
+          'a few peppercorns and a small piece of garlic visible',
+          'the pickle dominates the frame as iconic hero'
+        ],
+        accent_color: 'forest green'
+      }
+    ]
+  },
+
   bring_your_jar: {
     type: 'bring_your_jar',
-    weight: 0.10,
+    weight: 0.08,
     short_label: 'Bring Your Jar',
-    group: 'community_repeat',
-    description: 'Refill ritual — sustainability + repeat visit driver',
+    group: 'free_1st_visit',
+    description: 'Trae tu frasco — free refill on 1st visit',
     variants: [
       {
         id: 'refill_jar',
         title: 'BRING YOUR JAR',
-        hook: 'free refill on your visit',
-        product_focus: 'fresh pickle dropped into an open glass jar',
+        hook: 'free refill on your 1st visit',
+        product_focus: 'fresh pickles tumbling into an empty glass jar',
         treatment_keywords: [
-          'a glass jar mid-refill with fresh pickles tumbling in',
+          'a clean empty glass jar mid-refill with fresh pickles tumbling in from above',
           'brine splashing in slow motion',
           'pickles glossy and abundant',
-          'a hand from below holding the jar with intentional clean glass surface'
+          'overhead three-quarter angle showing the abundance entering the jar'
         ],
         accent_color: 'forest green'
       },
       {
         id: 'trae_frasco',
         title: 'TRAE TU FRASCO',
-        hook: 'te lo rellenamos gratis',
+        hook: 'te lo rellenamos gratis · 1ra visita',
         product_focus: 'jar refill — Spanish-first version',
         treatment_keywords: [
           'fresh pickles being poured into a glass jar',
           'brine cascade catching light',
-          'abundant pickle quantity visible',
-          'Mexican-style ceramic counter texture in background blur'
+          'abundant pickle quantity visible'
         ],
         accent_color: 'bright red',
         cultural_hook: 'bilingual NJ Hispanic market'
@@ -154,129 +253,48 @@ const OFFERS = {
     ]
   },
 
-  tasting_flight: {
-    type: 'tasting_flight',
-    weight: 0.08,
-    short_label: 'Tasting Flight',
-    group: 'discovery',
-    description: 'Multi-variant sampler — lowers commitment, drives discovery',
-    variants: [
-      {
-        id: 'flight_classic',
-        title: 'TASTING FLIGHT',
-        hook: '5 flavors free, just pull up',
-        product_focus: 'wooden flight paddle with 5 small pickle samples',
-        treatment_keywords: [
-          'wooden tasting paddle with 5 small cups',
-          'each cup holds a different colored pickle (green dill, red Tajín, yellow curry, dark hot honey, classic green)',
-          'abundance and variety visible',
-          'tiny pretzel sticks or toothpicks for picking'
-        ],
-        accent_color: 'cream'
-      }
-    ]
-  },
-
-  build_your_box: {
-    type: 'build_your_box',
+  bring_your_cup: {
+    type: 'bring_your_cup',
     weight: 0.07,
-    short_label: 'Build Your Box',
-    group: 'bundle_aov',
-    description: 'Bundle psychology — raises AOV, repeat customer signal',
+    short_label: 'Bring Your Cup',
+    group: 'free_1st_visit',
+    description: 'Trae tu vaso — entry low-commitment, free fill on 1st visit',
     variants: [
       {
-        id: 'box_4_plus_1',
-        title: 'BUILD YOUR BOX',
-        hook: '1 jar on us with any 4',
-        product_focus: 'open craft cardboard box with multiple pickle jars',
+        id: 'fill_cup',
+        title: 'BRING YOUR CUP',
+        hook: 'we fill it free · 1st visit',
+        product_focus: 'paper or glass cup being filled with pickle chips',
         treatment_keywords: [
-          'open kraft cardboard gift-box style with 4 visible jars of different pickles',
-          'jars labeled simply',
-          'one extra jar slightly outside the box suggesting the free bonus',
-          'overhead three-quarter angle showing abundance'
+          'a kraft paper takeaway cup or clear plastic cup being filled with bright green pickle chips and brine',
+          'cup held by a hand from below',
+          'chips overflowing slightly suggesting abundance',
+          'fresh brine droplets visible around the rim'
         ],
-        accent_color: 'bright red'
+        accent_color: 'electric green'
       }
     ]
   },
 
-  pull_up_pour: {
-    type: 'pull_up_pour',
-    weight: 0.10,
-    short_label: 'Pull Up',
-    group: 'jersey_slang_immediate',
-    description: 'Jersey slang + energy + immediate FOMO',
+  free_pickle_juice: {
+    type: 'free_pickle_juice',
+    weight: 0.06,
+    short_label: 'Free Pickle Juice',
+    group: 'free_1st_visit',
+    description: 'Pickle juice shot free on 1st visit — low commitment entry',
     variants: [
       {
         id: 'pickle_shot',
-        title: 'PULL UP & POUR',
-        hook: 'free pickle juice shot today',
-        product_focus: 'small shot glass of pickle juice',
+        title: 'FREE PICKLE JUICE',
+        hook: 'shot on us · 1st visit',
+        product_focus: 'shot glass of pickle brine',
         treatment_keywords: [
           'a small shot glass filled with bright cloudy yellow-green pickle brine',
           'condensation droplets on the cold glass',
-          'a single pickle spear used as garnish',
+          'a single small pickle spear used as garnish across the rim',
           'hand from below holding the shot in toast position'
         ],
         accent_color: 'electric green'
-      },
-      {
-        id: 'late_fridays',
-        title: 'OPEN LATE FRIDAYS',
-        hook: 'late-night crunch on us',
-        product_focus: 'pickle backlit with late-night neon vibe',
-        treatment_keywords: [
-          'a classic dill pickle in clean fresh light NOT moody',
-          'subtle bright pink/cyan glow on the edges suggesting late-night neon',
-          'still product-first — the pickle dominates the frame',
-          'maybe a tiny "OPEN" sign blurred in background'
-        ],
-        accent_color: 'electric pink'
-      }
-    ]
-  },
-
-  nj_locals: {
-    type: 'nj_locals',
-    weight: 0.10,
-    short_label: 'NJ Locals',
-    group: 'local_pride',
-    description: 'Geographic targeting — local pride + recurring discount',
-    variants: [
-      {
-        id: 'sunday_locals',
-        title: 'NJ LOCALS',
-        hook: '10% off every Sunday',
-        product_focus: 'pickle with subtle NJ-state-shape brand cue',
-        treatment_keywords: [
-          'a vibrant classic dill pickle as hero',
-          'tiny garnish detail referencing NJ (could be small green pepper, Jersey-style mustard splash, or sub-roll crumb)',
-          'product is the absolute hero — local nod is subtle'
-        ],
-        accent_color: 'bright red'
-      }
-    ]
-  },
-
-  first_timer_perk: {
-    type: 'first_timer_perk',
-    weight: 0.05,
-    short_label: '1st-Timer Perk',
-    group: 'mystery_only_guaranteed_gift',
-    description: 'The ONLY acceptable mystery — gift itself is guaranteed',
-    variants: [
-      {
-        id: 'surprise_jar',
-        title: '1ST-TIMER PERK',
-        hook: 'surprise jar from the chef',
-        product_focus: 'wrapped jar with kraft paper and twine',
-        treatment_keywords: [
-          'a glass pickle jar partially wrapped in kraft paper with butcher twine',
-          'a handwritten chef tag visible',
-          'one pickle visible through the gap in wrapping',
-          'still bright and inviting NOT dark or mysterious'
-        ],
-        accent_color: 'cream'
       }
     ]
   }

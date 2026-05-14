@@ -54,14 +54,16 @@ const hermesProposalSchema = new mongoose.Schema({
   offer_type: {
     type: String,
     enum: [
-      // Refactor 13-may-2026: 9 offers en 3 groups (cold acquisition trigger hierarchy)
-      // GROUP 1 — FREE [PRODUCT] (~50% weight, cultural FOMO trigger)
-      'free_chamoy', 'free_tajin', 'free_olive',
-      // GROUP 2 — NON-FREE OFFERS (~50% weight, diversidad anti discount-only)
-      'bring_your_jar', 'tasting_flight', 'build_your_box',
-      'pull_up_pour', 'nj_locals', 'first_timer_perk',
-      // LEGACY (proposals pre-refactor, mantener para que no fallen queries históricas)
-      'free_pickle', 'big_dill_chamoy', 'mystery_pickle'
+      // Refactor 14-may-2026: 9 offers TODAS "FREE X on 1st visit" cold acquisition.
+      // No bundles, no descuentos %, no mystery, no recurring deals.
+      'free_chamoy', 'free_tajin',
+      'free_olive', 'free_olive_flight',
+      'free_pickle_flight', 'free_big_dill',
+      'bring_your_jar', 'bring_your_cup', 'free_pickle_juice',
+      // LEGACY (proposals históricas, mantener para que no fallen queries pasadas)
+      'free_pickle', 'big_dill_chamoy', 'mystery_pickle',
+      'tasting_flight', 'build_your_box', 'pull_up_pour',
+      'nj_locals', 'first_timer_perk'
     ],
     required: true,
     index: true
