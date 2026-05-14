@@ -861,7 +861,13 @@ async function jobCreativeHousekeeping() {
 }
 
 /**
- * Job: Hermes Agent — 2x/día (9am, 3pm ET).
+ * Job: Hermes Agent — 5x/día (9am, 12pm, 3pm, 6pm, 9pm ET).
+ *
+ * Volumen aumentado 14-may-2026 (de 2x → 5x/día) para acelerar inyección de
+ * creativos en los primeros 7d post-launch. Target: 10-12 ads live al cierre
+ * de semana. Spread 3h en waking hours ET para que el user pueda aprobar
+ * mismo día (en horario CL = 10am-10pm).
+ *
  * Genera ads para foot traffic de la tienda física NJ (9 Romanelli Ave,
  * South Hackensack). En modo manual_approval (default) crea HermesProposal
  * con status=pending — el usuario aprueba en dashboard y sube manual a Meta.
@@ -1401,14 +1407,14 @@ function initCronJobs() {
   });
   logger.info('  [*] Creative Agent — 3x/día: 8am, 2pm, 8pm ET');
 
-  // Hermes Agent — 2x/día (9am, 3pm ET) — foot traffic NJ store
-  // Solo registra el cron si HERMES_ENABLED=true (la función jobHermesAgent
-  // chequea internamente y skipea si está disabled).
-  cron.schedule('0 9,15 * * *', jobHermesAgent, {
+  // Hermes Agent — 5x/día (9am, 12pm, 3pm, 6pm, 9pm ET) — foot traffic NJ store
+  // Aumentado de 2x → 5x el 14-may-2026 para acelerar inyección de creativos
+  // los primeros 7d. Solo registra el cron si HERMES_ENABLED=true.
+  cron.schedule('0 9,12,15,18,21 * * *', jobHermesAgent, {
     timezone: TIMEZONE,
     name: 'hermes-agent'
   });
-  logger.info(`  [*] Hermes Agent — 2x/día: 9am, 3pm ET ${config.hermes?.enabled ? '(ENABLED)' : '(disabled — set HERMES_ENABLED=true)'}`);
+  logger.info(`  [*] Hermes Agent — 5x/día: 9am, 12pm, 3pm, 6pm, 9pm ET ${config.hermes?.enabled ? '(ENABLED)' : '(disabled — set HERMES_ENABLED=true)'}`);
 
   // Hermes Housekeeping — diario 3:30am ET, expira proposals pending +72h
   cron.schedule('30 3 * * *', jobHermesHousekeeping, {
