@@ -499,11 +499,14 @@ function PerformanceTab({ onToast }) {
     }));
   }, [proposals]);
 
-  // Breakdowns
+  // Breakdowns — filtran proposals legacy sin pov_id/typography_id (pre-13-may)
   function groupBy(field) {
     const groups = {};
     for (const p of proposals) {
-      const key = field === 'offer' ? p.offer_type : (p.overlay_config?.[field] || 'unknown');
+      const rawKey = field === 'offer' ? p.offer_type : p.overlay_config?.[field];
+      // Skip los que no tienen el field (proposals pre-refactor del 13-may)
+      if (field !== 'offer' && !rawKey) continue;
+      const key = rawKey || p.offer_type;
       if (!groups[key]) groups[key] = { spend: 0, link_clicks: 0, impressions: 0, count: 0, manual_visits: 0 };
       groups[key].spend += (p.performance?.spend || 0);
       groups[key].link_clicks += (p.performance?.link_clicks || 0);
@@ -518,6 +521,7 @@ function PerformanceTab({ onToast }) {
   const byOffer = useMemo(() => groupBy('offer'), [proposals]);
   const byPov = useMemo(() => groupBy('pov_id'), [proposals]);
   const byTypo = useMemo(() => groupBy('typography_id'), [proposals]);
+  const byBg = useMemo(() => groupBy('background_color'), [proposals]);
 
   const lastSync = proposals.find(p => p.performance?.measured_at)?.performance?.measured_at;
 
@@ -550,29 +554,51 @@ function PerformanceTab({ onToast }) {
             <KpiCard icon={Users} label="Cost / visit" value={totals.manual_visits > 0 ? fmt.money(costPerVisit) : '—'} subtitle={`${totals.manual_visits} visits`} accent={COLORS.hermes} />
           </div>
 
-          {/* Charts row */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 14, marginBottom: 20 }}>
-            <GlassCard>
+          {/* Charts row principal — distribución + performance por oferta */}
+          <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 12, marginBottom: 12 }}>
+            <GlassCard padding={14}>
               <SectionTitle icon={Layers}>Distribución por oferta</SectionTitle>
               <DonutChart data={offerDistribution} />
             </GlassCard>
-            <GlassCard>
+            <GlassCard padding={14}>
               <SectionTitle icon={BarChart3}>Performance por oferta</SectionTitle>
               <BreakdownChart rows={byOffer} accent={COLORS.hermes} />
             </GlassCard>
           </div>
 
-          {/* Más breakdowns */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 20 }}>
-            <GlassCard>
-              <SectionTitle icon={Camera}>Performance por POV</SectionTitle>
-              <BreakdownChart rows={byPov} accent={COLORS.info} />
+          {/* Breakdowns secundarios — solo mostrar si hay AL MENOS 2 grupos
+              (sino significa que es legacy sin rotation data) */}
+          {(byPov.length > 1 || byTypo.length > 1 || byBg.length > 1) ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 12 }}>
+              <GlassCard padding={14}>
+                <SectionTitle icon={Camera}>Por POV</SectionTitle>
+                {byPov.length >= 2 ? (
+                  <BreakdownChart rows={byPov} accent={COLORS.info} compact />
+                ) : <NeedsMoreData />}
+              </GlassCard>
+              <GlassCard padding={14}>
+                <SectionTitle icon={FileText}>Por tipografía</SectionTitle>
+                {byTypo.length >= 2 ? (
+                  <BreakdownChart rows={byTypo} accent="#a855f7" compact />
+                ) : <NeedsMoreData />}
+              </GlassCard>
+              <GlassCard padding={14}>
+                <SectionTitle icon={Sparkles}>Por background</SectionTitle>
+                {byBg.length >= 2 ? (
+                  <BreakdownChart rows={byBg} accent="#10b981" compact />
+                ) : <NeedsMoreData />}
+              </GlassCard>
+            </div>
+          ) : (
+            <GlassCard style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 8 }}>
+                <Sparkles size={20} style={{ color: COLORS.hermes, flexShrink: 0 }} />
+                <div style={{ fontSize: '0.82rem', color: COLORS.textMuted, lineHeight: 1.5 }}>
+                  <strong style={{ color: COLORS.text }}>Breakdowns por POV / Tipografía / Background pendientes.</strong> Los ads pre-refactor (13-may) no tienen estos campos persistidos. A medida que se publiquen nuevos ads con las rotaciones nuevas, aparecerán los breakdowns acá.
+                </div>
+              </div>
             </GlassCard>
-            <GlassCard>
-              <SectionTitle icon={FileText}>Performance por tipografía</SectionTitle>
-              <BreakdownChart rows={byTypo} accent="#a855f7" />
-            </GlassCard>
-          </div>
+          )}
 
           {/* Tabla detalle */}
           <GlassCard>
@@ -630,21 +656,29 @@ function DonutChart({ data }) {
   );
 }
 
-function BreakdownChart({ rows, accent }) {
+function BreakdownChart({ rows, accent, compact }) {
   if (!rows || rows.length === 0) return <p style={{ color: COLORS.textMuted, fontSize: '0.78rem' }}>Sin data</p>;
+
+  // Truncar labels largos (background_color names son verbose)
+  const truncate = (s, n = 18) => s && s.length > n ? s.slice(0, n) + '…' : s;
+
   const chartData = rows.map(r => ({
-    name: OFFER_META[r.key]?.label || r.key,
+    name: truncate(OFFER_META[r.key]?.label || r.key),
     spend: r.spend,
     clicks: r.link_clicks,
     ctr: r.ctr,
     color: OFFER_META[r.key]?.color || accent
   }));
+
+  const height = compact ? 140 : 200;
+  const width = compact ? 80 : 100;
+
   return (
-    <div style={{ height: 200 }}>
+    <div style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
           <XAxis type="number" hide />
-          <YAxis dataKey="name" type="category" tick={{ fill: COLORS.textMuted, fontSize: 11 }} axisLine={false} tickLine={false} width={100} />
+          <YAxis dataKey="name" type="category" tick={{ fill: COLORS.textMuted, fontSize: compact ? 10 : 11 }} axisLine={false} tickLine={false} width={width} />
           <Tooltip
             contentStyle={{ background: 'rgba(15,23,42,0.95)', border: `1px solid ${COLORS.border}`, borderRadius: 8, fontSize: '0.78rem' }}
             formatter={(v, n) => [n === 'spend' ? fmt.money(v) : fmt.num(v), n]}
@@ -655,6 +689,22 @@ function BreakdownChart({ rows, accent }) {
           </Bar>
         </BarChart>
       </ResponsiveContainer>
+    </div>
+  );
+}
+
+function NeedsMoreData() {
+  return (
+    <div style={{
+      padding: '20px 8px',
+      textAlign: 'center',
+      color: COLORS.textDim,
+      fontSize: '0.75rem',
+      lineHeight: 1.4
+    }}>
+      <Sparkles size={14} style={{ color: COLORS.hermes, marginBottom: 6 }} />
+      <div>Necesita más data</div>
+      <div style={{ fontSize: '0.68rem', marginTop: 2, opacity: 0.7 }}>(post-refactor 13-may)</div>
     </div>
   );
 }
