@@ -1,31 +1,35 @@
 /**
  * Hermes Agent — agente autónomo de foot traffic para la tienda física NJ.
  *
- * Redesign 12-may-2026: pasó de hybrid (photo bank + overlay sharp) a
- * 100% generativo con gpt-image-2 (OpenAI, lanzado 21-abr-2026). El text
- * overlay lo genera el mismo modelo dentro de la imagen — gpt-image-2 fue
- * el primer modelo en hacer text accurately, lo que elimina la dependencia
- * del overlay-composer.
+ * Redesign 14-may-2026 (post creative repetition feedback):
+ *   - gpt-image-2 ahora genera SOLO food porn limpio, sin texto en imagen
+ *     (forzado con negative prompts explícitos). Negative space upper 25%
+ *     + lower 15% reservado para overlay programático.
+ *   - 10 visual_concepts (THE DRIP, THE STICK, THE BITE, etc) rotando con
+ *     anti-repeat → garantiza variedad visual real entre creativos.
+ *   - overlay-composer.js (refactored) aplica typography editorial encima
+ *     de la imagen con fonts custom (Anton/DM Serif/Bebas Neue/Abril
+ *     Fatface/Oswald/Inter/Special Elite) embedded via @fontsource.
  *
  * Flujo del ciclo:
  *   1. Pre-checks (enabled, capacity, directive)
- *   2. Pick offer (free_pickle / big_dill_chamoy / mystery_pickle)
- *   3. Pick NJ scene del scene-bank (deli, diner, BBQ NJ, etc.)
- *   4. Claude genera image_prompt + headline + primary_text en 1 call
- *   5. gpt-image-2 genera la imagen completa con text overlay integrado
- *   6. Save HermesProposal status=pending
- *
- * Modos (config.hermes.mode):
- *   - manual_approval (default) — usuario aprueba en dashboard
- *   - auto — Hermes publica solo (Fase 2)
+ *   2. Pick offer + variant (anti-repeat)
+ *   3. Pick visual_concept (10 money shots, filtered por offer compatibility)
+ *   4. Pick typography combo (4 combos, anti-repeat)
+ *   5. Claude genera SOLO copy (headline + primary_text + tagline)
+ *   6. gpt-image-2 genera imagen LIMPIA con composition garantizada
+ *   7. overlay-composer aplica typography sobre la imagen
+ *   8. Save HermesProposal status=pending
  */
 
 const config = require('../../../config');
 const logger = require('../../utils/logger');
 const HermesProposal = require('../../db/models/HermesProposal');
 const offerRotator = require('../hermes/offer-rotator');
-const { generateCreativeBrief } = require('../hermes/copy-generator');
+const visualConcepts = require('../hermes/visual-concepts');
+const { generateCopy } = require('../hermes/copy-generator');
 const { generateImage } = require('../hermes/gpt-image');
+const { composeAd } = require('../hermes/overlay-composer');
 
 /**
  * Housekeeping — expira proposals stale (pending +N horas sin aprobación).
@@ -82,39 +86,45 @@ async function preChecks() {
 }
 
 /**
- * Genera un ad completo: offer + variant + POV + background + typography
- * + brief + imagen. Cada eje rota con anti-repeat sobre la última usada.
+ * Genera un ad completo: offer + variant + visual_concept + typography
+ * → Claude copy → gpt-image-2 food porn limpio → overlay typography.
+ * Cada eje rota con anti-repeat.
  */
 async function generateProposal(cycleId) {
   // 1. Offer + variant (anti-repeat 2-niveles)
   const { offer, variant } = await offerRotator.pickOfferAvoidingRepeat();
   logger.info(`[HERMES] Ciclo ${cycleId} — offer: ${offer.type}/${variant.id} ("${variant.title}")`);
 
-  // 2. POV + background + typography rotativos
-  const pov = await offerRotator.pickPOV();
-  const background = await offerRotator.pickBackground();
-  const typography = await offerRotator.pickTypography();
-  logger.info(`[HERMES] Rotations — POV:${pov.id} · BG:"${background.slice(0, 40)}..." · Typo:${typography.id}`);
+  // 2. Visual concept (uno de los 10 money shots, filtrado por offer compatibility)
+  const visualConcept = await visualConcepts.pickVisualConcept(offer.type);
 
-  // 3. Address info
+  // 3. Typography combo (anti-repeat sobre la última)
+  const typography = await offerRotator.pickTypography();
+  logger.info(`[HERMES] Rotations — Concept:${visualConcept.label} · Typo:${typography.id}`);
+
+  // 4. Address info
   const addressInfo = {
     full: config.hermes.warehouseAddress,
     short: config.hermes.addressShort
   };
 
-  // 4. Claude genera el creative brief (image_prompt 12-bloques + copy + tagline)
-  let brief;
+  // 5. Build image_prompt deterministic desde visual_concept (no Claude — para que
+  //    cada concept produzca shots consistentes con su DNA)
+  const imagePrompt = visualConcepts.buildImagePrompt(visualConcept, variant);
+
+  // 6. Claude genera SOLO el copy (headline + primary_text + tagline)
+  let copy;
   try {
-    brief = await generateCreativeBrief({ offer, variant, pov, background, typography, addressInfo });
+    copy = await generateCopy({ offer, variant, visualConcept, addressInfo });
   } catch (err) {
-    logger.error(`[HERMES] Brief generation failed: ${err.message}`);
+    logger.error(`[HERMES] Copy generation failed: ${err.message}`);
     return null;
   }
 
-  // 5. gpt-image-2 genera la imagen (medium quality ~30-60s)
+  // 7. gpt-image-2 genera imagen LIMPIA (sin texto rendered)
   let imageResult;
   try {
-    imageResult = await generateImage(brief.image_prompt, {
+    imageResult = await generateImage(imagePrompt, {
       size: '1024x1536',
       quality: 'medium'
     });
@@ -123,25 +133,42 @@ async function generateProposal(cycleId) {
     return null;
   }
 
-  // 6. Save HermesProposal con todos los rotations metadata para anti-repeat futuros
+  // 8. Overlay typography editorial sobre la imagen (negative space upper/lower)
+  let composedBase64;
+  try {
+    const baseBuffer = Buffer.from(imageResult.base64, 'base64');
+    const composedBuffer = await composeAd(baseBuffer, {
+      headline: copy.headline,
+      subhead: variant.hook,
+      tagline_with_arrow: copy.tagline_with_arrow,
+      brand_line: `JERSEY PICKLES · ${addressInfo.short.split('·')[0]?.trim() || 'NJ SHOP'}`,
+      typography_id: typography.id,
+      accent_color: variant.accent_color
+    });
+    composedBase64 = composedBuffer.toString('base64');
+  } catch (err) {
+    logger.error(`[HERMES] Overlay compose failed: ${err.message} — fallback a imagen sin overlay`);
+    composedBase64 = imageResult.base64;
+  }
+
+  // 9. Save HermesProposal
   const proposal = await HermesProposal.create({
     photo_asset_id: null,
-    composed_image_base64: imageResult.base64,
+    composed_image_base64: composedBase64,
     overlay_config: {
       offer_text: variant.title,
       brand_text: 'JERSEY PICKLES',
       address_text: addressInfo.short,
-      overlay_style: 'gpt-image-2-12-block-editorial',
-      generated_image_prompt: brief.image_prompt,
-      // Metadata de rotations para anti-repeat de próximos ciclos
+      overlay_style: 'gpt-image-clean-plus-svg-overlay',
+      generated_image_prompt: imagePrompt,
       variant_id: variant.id,
-      pov_id: pov.id,
-      background_color: background,
+      visual_concept_id: visualConcept.id,
       typography_id: typography.id,
-      tagline_with_arrow: brief.tagline_with_arrow
+      tagline_with_arrow: copy.tagline_with_arrow,
+      accent_color: variant.accent_color
     },
-    headline: brief.headline,
-    primary_text: brief.primary_text,
+    headline: copy.headline,
+    primary_text: copy.primary_text,
     cta_button: 'GET_DIRECTIONS',
     offer_type: offer.type,
     offer_details: {
@@ -153,7 +180,7 @@ async function generateProposal(cycleId) {
     cycle_id: cycleId
   });
 
-  logger.info(`[HERMES] Proposal ${proposal._id} creado — ${offer.type}/${variant.id} · POV:${pov.id} · Typo:${typography.id} · brief=${brief.elapsed_s}s · img=${imageResult.elapsed_s}s`);
+  logger.info(`[HERMES] Proposal ${proposal._id} creado — ${offer.type}/${variant.id} · ${visualConcept.label} · Typo:${typography.id} · copy=${copy.elapsed_s}s · img=${imageResult.elapsed_s}s`);
   return proposal;
 }
 

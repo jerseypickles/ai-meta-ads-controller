@@ -23,14 +23,25 @@ const hermesProposalSchema = new mongoose.Schema({
   composed_image_base64: { type: String, default: '' },  // El ad final listo para Meta
   composed_image_url: { type: String, default: '' },
 
-  // Overlay config snapshot — para audit y para regenerar si quieren
+  // Overlay config snapshot — para audit y para regenerar si quieren.
+  // Schema laxo (Mixed-friendly) — distintos flujos llenan distintos campos.
   overlay_config: {
-    offer_text: { type: String, default: '' },           // ej "FREE PICKLE ON YOUR 1ST VISIT"
-    brand_text: { type: String, default: '' },           // ej "JERSEY PICKLES NJ"
-    address_text: { type: String, default: '' },         // ej "123 Main St, Trenton NJ"
-    overlay_style: { type: String, default: 'bottom-strip' },  // bottom-strip, full-overlay, sticker
-    text_color: { type: String, default: '#FFFFFF' },
-    background_color: { type: String, default: '#000000' }
+    type: mongoose.Schema.Types.Mixed,
+    default: () => ({
+      offer_text: '',
+      brand_text: '',
+      address_text: '',
+      overlay_style: 'gpt-image-2-clean-plus-overlay',
+      text_color: '#FFFFFF',
+      background_color: '#000000',
+      // Rotación dimensions (anti-repeat keys):
+      variant_id: null,
+      pov_id: null,
+      typography_id: null,
+      visual_concept_id: null,
+      tagline_with_arrow: '',
+      generated_image_prompt: ''
+    })
   },
 
   // Generated copy (Claude in JP voice)

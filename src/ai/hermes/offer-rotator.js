@@ -472,6 +472,9 @@ function listOffers() {
   }));
 }
 
+// Re-export pickVisualConcept para conveniencia (vive en visual-concepts.js)
+const { pickVisualConcept, listConcepts } = require('./visual-concepts');
+
 module.exports = {
   OFFERS,
   BACKGROUND_PALETTE,
@@ -483,6 +486,8 @@ module.exports = {
   pickBackground,
   pickPOV,
   pickTypography,
+  pickVisualConcept,
+  listConcepts,
   getOffer,
   listOffers
 };
