@@ -19,8 +19,9 @@ const hermesProposalSchema = new mongoose.Schema({
   // backwards-compat con proposals antiguas que tenían foto base.
   photo_asset_id: { type: mongoose.Schema.Types.ObjectId, ref: 'HermesPhotoAsset', default: null, index: true },
 
-  // Composed image (foto base + text overlay)
-  composed_image_base64: { type: String, default: '' },  // El ad final listo para Meta
+  // Composed images (foto gpt-image-2 + typography overlay)
+  composed_image_base64: { type: String, default: '' },        // Feed 2:3 (1024x1536)
+  composed_image_story_base64: { type: String, default: '' },  // Story/Reel 9:16 (1080x1920)
   composed_image_url: { type: String, default: '' },
 
   // Overlay config snapshot — para audit y para regenerar si quieren.

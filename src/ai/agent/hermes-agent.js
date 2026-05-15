@@ -133,28 +133,42 @@ async function generateProposal(cycleId) {
     return null;
   }
 
-  // 8. Overlay typography editorial sobre la imagen (negative space upper/lower)
+  // 8. Overlay typography editorial — DOS composiciones desde 1 sola imagen:
+  //    Feed (2:3) + Story/Reel (9:16 con blurred-bg fill + safe zones IG).
+  //    gpt-image-2 no tiene 9:16 nativo, así que 1 generación → 2 composiciones
+  //    (mismo shot consistente entre placements, sin doble costo de generación).
+  const overlayCfg = {
+    headline: copy.headline,
+    subhead: variant.hook,
+    tagline_with_arrow: copy.tagline_with_arrow,
+    brand_line: `JERSEY PICKLES · ${addressInfo.short.split('·')[0]?.trim() || 'NJ SHOP'}`,
+    typography_id: typography.id,
+    accent_color: variant.accent_color
+  };
+  const baseBuffer = Buffer.from(imageResult.base64, 'base64');
+
   let composedBase64;
   try {
-    const baseBuffer = Buffer.from(imageResult.base64, 'base64');
-    const composedBuffer = await composeAd(baseBuffer, {
-      headline: copy.headline,
-      subhead: variant.hook,
-      tagline_with_arrow: copy.tagline_with_arrow,
-      brand_line: `JERSEY PICKLES · ${addressInfo.short.split('·')[0]?.trim() || 'NJ SHOP'}`,
-      typography_id: typography.id,
-      accent_color: variant.accent_color
-    });
-    composedBase64 = composedBuffer.toString('base64');
+    const feedBuffer = await composeAd(baseBuffer, { ...overlayCfg, placement: 'feed' });
+    composedBase64 = feedBuffer.toString('base64');
   } catch (err) {
-    logger.error(`[HERMES] Overlay compose failed: ${err.message} — fallback a imagen sin overlay`);
+    logger.error(`[HERMES] Feed compose failed: ${err.message} — fallback a imagen sin overlay`);
     composedBase64 = imageResult.base64;
+  }
+
+  let composedStoryBase64 = '';
+  try {
+    const storyBuffer = await composeAd(baseBuffer, { ...overlayCfg, placement: 'story' });
+    composedStoryBase64 = storyBuffer.toString('base64');
+  } catch (err) {
+    logger.error(`[HERMES] Story compose failed: ${err.message} — proposal queda sin versión story`);
   }
 
   // 9. Save HermesProposal
   const proposal = await HermesProposal.create({
     photo_asset_id: null,
     composed_image_base64: composedBase64,
+    composed_image_story_base64: composedStoryBase64,
     overlay_config: {
       offer_text: variant.title,
       brand_text: 'JERSEY PICKLES',

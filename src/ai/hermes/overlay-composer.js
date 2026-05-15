@@ -260,20 +260,217 @@ function fitTextToWidth(text, family, baseFontSize, availableWidth) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// MAIN — composeAd
+// TEXT LAYER BUILDER — SVG con typography para un canvas + zonas dadas
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Construye el SVG de texto completo (headline + subhead + tagline + brand
+ * + scrims) para un canvas de dimensiones dadas y con las zonas verticales
+ * pasadas. Compartido entre Feed y Story.
+ *
+ * @param {Object} o
+ * @param {number} o.w - ancho del canvas
+ * @param {number} o.h - alto del canvas
+ * @param {Object} o.combo - typography combo (TYPOGRAPHY_FONTS[id])
+ * @param {string} o.accentHex
+ * @param {string} o.headline
+ * @param {string} o.subhead
+ * @param {string} o.tagline
+ * @param {string} o.brand
+ * @param {Object} o.zones - { headlineCenterY, taglineY, brandY } en px
+ * @param {Object} o.scrim - { topH, botH } altura de los gradient scrims en px
+ * @returns {string} SVG completo
+ */
+function buildTextLayer(o) {
+  const { w, h, combo, accentHex, headline, subhead, tagline, brand, zones, scrim } = o;
+
+  const padLeft = Math.round(w * 0.06);
+  const availW = w - padLeft * 2;
+
+  const fHeadlineBase = Math.round(w * combo.headline.size_ratio);
+  const fSubhead = Math.round(w * combo.subhead.size_ratio);
+  const fTaglineBase = Math.round(w * combo.tagline.size_ratio);
+  const fBrand = Math.round(w * combo.brand.size_ratio);
+
+  const headlineFit = fitTextToWidth((headline || '').toUpperCase(), combo.headline.family, fHeadlineBase, availW);
+  const headlineLines = headlineFit.lines;
+  const fHeadline = headlineFit.fontSize;
+  const headlineLineH = Math.round(fHeadline * 0.98);
+
+  const taglineFit = fitTextToWidth((tagline || '').toUpperCase(), combo.tagline.family, fTaglineBase, availW);
+  const taglineLines = taglineFit.lines;
+  const fTagline = taglineFit.fontSize;
+
+  // Headline block centrado verticalmente en zones.headlineCenterY
+  const totalHeadlineH = headlineLineH * headlineLines.length;
+  const headlineFirstBaseline = zones.headlineCenterY - Math.round(totalHeadlineH / 2) + fHeadline;
+  const subheadY = headlineFirstBaseline + (headlineLines.length - 1) * headlineLineH + Math.round(fSubhead * 1.15);
+
+  const headlineSvg = headlineLines.map((line, i) => `
+    <text x="${padLeft}" y="${headlineFirstBaseline + headlineLineH * i}"
+          font-family="${fontFamilyChain(combo.headline.family)}"
+          font-size="${fHeadline}" font-weight="${combo.headline.weight}"
+          ${combo.headline.style ? `font-style="${combo.headline.style}"` : ''}
+          letter-spacing="${combo.headline.letter_spacing || 0}"
+          fill="white" stroke="rgba(0,0,0,0.6)" stroke-width="2" paint-order="stroke fill"
+    >${escapeXml(line)}</text>`).join('');
+
+  const subheadSvg = subhead ? `
+    <text x="${padLeft}" y="${subheadY}"
+          font-family="${fontFamilyChain(combo.subhead.family)}"
+          font-size="${fSubhead}" font-weight="${combo.subhead.weight}"
+          ${combo.subhead.style ? `font-style="${combo.subhead.style}"` : ''}
+          fill="${accentHex}" stroke="rgba(0,0,0,0.5)" stroke-width="1.5" paint-order="stroke fill"
+    >${escapeXml(subhead)}</text>` : '';
+
+  const taglineSvg = tagline ? taglineLines.map((line, i) => `
+    <text x="${padLeft}" y="${zones.taglineY + Math.round(fTagline * 0.98) * i}"
+          font-family="${fontFamilyChain(combo.tagline.family)}"
+          font-size="${fTagline}" font-weight="${combo.tagline.weight}"
+          letter-spacing="${combo.tagline.letter_spacing || 0}"
+          fill="${accentHex}" stroke="rgba(0,0,0,0.6)" stroke-width="2" paint-order="stroke fill"
+    >${escapeXml(line)}</text>`).join('') : '';
+
+  const brandSvg = `
+    <text x="${padLeft}" y="${zones.brandY}"
+          font-family="${fontFamilyChain(combo.brand.family)}"
+          font-size="${fBrand}" font-weight="${combo.brand.weight}"
+          letter-spacing="${combo.brand.letter_spacing || 0}"
+          fill="rgba(245, 230, 195, 0.88)" stroke="rgba(0,0,0,0.5)" stroke-width="1" paint-order="stroke fill"
+    >${escapeXml(brand)}</text>`;
+
+  const fontFaceCss = buildFontFaceCss(combo);
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style type="text/css"><![CDATA[
+${fontFaceCss}
+    ]]></style>
+    <linearGradient id="topShade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="rgba(0,0,0,0.55)" />
+      <stop offset="100%" stop-color="rgba(0,0,0,0)" />
+    </linearGradient>
+    <linearGradient id="botShade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="rgba(0,0,0,0)" />
+      <stop offset="100%" stop-color="rgba(0,0,0,0.65)" />
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="${w}" height="${scrim.topH}" fill="url(#topShade)" />
+  <rect x="0" y="${h - scrim.botH}" width="${w}" height="${scrim.botH}" fill="url(#botShade)" />
+  ${headlineSvg}
+  ${subheadSvg}
+  ${taglineSvg}
+  ${brandSvg}
+</svg>`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FEED — 2:3 portrait (1024x1536). Texto en zonas upper/lower.
+// ═══════════════════════════════════════════════════════════════
+
+async function composeFeed(baseImageBuffer, cfg) {
+  const meta = await sharp(baseImageBuffer).metadata();
+  const w = meta.width;
+  const h = meta.height;
+  if (!w || !h) throw new Error('No se pudieron leer dimensiones de la imagen base');
+
+  const svg = buildTextLayer({
+    w, h,
+    combo: cfg.combo,
+    accentHex: cfg.accentHex,
+    headline: cfg.headline,
+    subhead: cfg.subhead,
+    tagline: cfg.tagline,
+    brand: cfg.brand,
+    zones: {
+      headlineCenterY: Math.round(h * 0.125),
+      taglineY: Math.round(h * 0.915),
+      brandY: Math.round(h * 0.96)
+    },
+    scrim: {
+      topH: Math.round(h * 0.30),
+      botH: Math.round(h * 0.20)
+    }
+  });
+
+  return sharp(baseImageBuffer)
+    .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
+    .png()
+    .toBuffer();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// STORY / REEL — 9:16 (1080x1920). Blurred-bg fill + safe zones IG.
+// ═══════════════════════════════════════════════════════════════
+
+const STORY_W = 1080;
+const STORY_H = 1920;
+
+async function composeStory(baseImageBuffer, cfg) {
+  // 1. Background — la propia foto escalada a COVER 9:16, blur + oscurecida.
+  //    Evita barras sólidas feas; da un fill premium estilo Instagram Story.
+  const background = await sharp(baseImageBuffer)
+    .resize(STORY_W, STORY_H, { fit: 'cover' })
+    .blur(45)
+    .modulate({ brightness: 0.45 })
+    .toBuffer();
+
+  // 2. Foreground — la foto 2:3 nítida a width completo (1080), centrada.
+  const fg = await sharp(baseImageBuffer)
+    .resize(STORY_W, null, { fit: 'inside' })
+    .toBuffer();
+  const fgMeta = await sharp(fg).metadata();
+  const fgTop = Math.round((STORY_H - fgMeta.height) / 2);
+
+  // 3. Text layer — safe zones de Instagram Story/Reel:
+  //    top 14% reservado (perfil/close UI) · bottom 20% reservado (caption/
+  //    reply bar/CTA/action rail). Todo el texto crítico vive entre 14%-80%.
+  const svg = buildTextLayer({
+    w: STORY_W, h: STORY_H,
+    combo: cfg.combo,
+    accentHex: cfg.accentHex,
+    headline: cfg.headline,
+    subhead: cfg.subhead,
+    tagline: cfg.tagline,
+    brand: cfg.brand,
+    zones: {
+      headlineCenterY: Math.round(STORY_H * 0.22),  // 22% — bajo el UI superior
+      taglineY: Math.round(STORY_H * 0.74),          // 74% — sobre el UI inferior
+      brandY: Math.round(STORY_H * 0.785)            // 78.5% — antes del 80% safe
+    },
+    scrim: {
+      topH: Math.round(STORY_H * 0.32),
+      botH: Math.round(STORY_H * 0.30)
+    }
+  });
+
+  // 4. Componer: background blur → foto nítida centrada → text layer
+  return sharp(background)
+    .composite([
+      { input: fg, top: fgTop, left: 0 },
+      { input: Buffer.from(svg), top: 0, left: 0 }
+    ])
+    .png()
+    .toBuffer();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MAIN — composeAd dispatcher
 // ═══════════════════════════════════════════════════════════════
 
 /**
  * Aplica typography overlay sobre la imagen gpt-image-2.
  *
- * @param {Buffer} baseImageBuffer - PNG/JPEG buffer de gpt-image-2 (1024x1536 portrait)
+ * @param {Buffer} baseImageBuffer - PNG/JPEG buffer de gpt-image-2 (1024x1536 2:3)
  * @param {Object} overlayConfig
  * @param {string} overlayConfig.headline - "FREE CHAMOY PICKLE"
  * @param {string} overlayConfig.subhead - "on your 1st visit" (opcional)
  * @param {string} overlayConfig.tagline_with_arrow - "BIG DILL CHAMOY →"
  * @param {string} overlayConfig.brand_line - "JERSEY PICKLES · NJ SHOP"
- * @param {string} overlayConfig.typography_id - 'classic_editorial' | 'bold_display' | 'retro_diner' | 'punchy_modern'
- * @param {string} overlayConfig.accent_color - 'bright red' | 'deep red' | etc (mapped via ACCENT_COLOR_MAP)
+ * @param {string} overlayConfig.typography_id - combo de TYPOGRAPHY_FONTS
+ * @param {string} overlayConfig.accent_color - mapped via ACCENT_COLOR_MAP
+ * @param {string} [overlayConfig.placement] - 'feed' (2:3, default) | 'story' (9:16)
  * @returns {Promise<Buffer>} PNG buffer
  */
 async function composeAd(baseImageBuffer, overlayConfig) {
@@ -283,144 +480,27 @@ async function composeAd(baseImageBuffer, overlayConfig) {
     tagline_with_arrow = '',
     brand_line = 'JERSEY PICKLES · NJ SHOP',
     typography_id = 'bold_display',
-    accent_color = 'bright red'
+    accent_color = 'bright red',
+    placement = 'feed'
   } = overlayConfig;
 
   if (!headline) throw new Error('overlayConfig.headline es requerido');
 
-  const combo = TYPOGRAPHY_FONTS[typography_id] || TYPOGRAPHY_FONTS.bold_display;
-  const accentHex = resolveAccentColor(accent_color);
+  const cfg = {
+    combo: TYPOGRAPHY_FONTS[typography_id] || TYPOGRAPHY_FONTS.bold_display,
+    accentHex: resolveAccentColor(accent_color),
+    headline,
+    subhead,
+    tagline: tagline_with_arrow,
+    brand: brand_line
+  };
 
-  // 1. Dimensiones de la imagen base
-  const meta = await sharp(baseImageBuffer).metadata();
-  const w = meta.width;
-  const h = meta.height;
-  if (!w || !h) throw new Error('No se pudieron leer dimensiones de la imagen base');
+  const composed = placement === 'story'
+    ? await composeStory(baseImageBuffer, cfg)
+    : await composeFeed(baseImageBuffer, cfg);
 
-  // 2. Zonas
-  const upperZoneH = Math.round(h * 0.25);   // 0..25% — headline + subhead
-  const lowerZoneStart = Math.round(h * 0.85); // 85..100% — tagline + brand
-  const lowerZoneH = h - lowerZoneStart;
-
-  // 3. Padding y available width
-  const padLeft = Math.round(w * 0.06);
-  const padRight = Math.round(w * 0.06);
-  const availW = w - padLeft - padRight;
-
-  // 4. Font sizes baseline (basados en width)
-  const fHeadlineBase = Math.round(w * combo.headline.size_ratio);
-  const fSubhead  = Math.round(w * combo.subhead.size_ratio);
-  const fTaglineBase = Math.round(w * combo.tagline.size_ratio);
-  const fBrand    = Math.round(w * combo.brand.size_ratio);
-
-  // 5. Auto-fit headline + tagline al availW (wrap + shrink)
-  const headlineFit = fitTextToWidth(headline.toUpperCase(), combo.headline.family, fHeadlineBase, availW);
-  const headlineLines = headlineFit.lines;
-  const fHeadline = headlineFit.fontSize;
-  const headlineLineH = Math.round(fHeadline * 0.95);
-
-  const taglineFit = fitTextToWidth(tagline_with_arrow.toUpperCase(), combo.tagline.family, fTaglineBase, availW);
-  const taglineLines = taglineFit.lines;
-  const fTagline = taglineFit.fontSize;
-
-  const totalHeadlineH = headlineLineH * headlineLines.length;
-  const headlineBlockTop = Math.round((upperZoneH - totalHeadlineH - fSubhead - 12) / 2);
-  const subheadY = headlineBlockTop + totalHeadlineH + 12 + Math.round(fSubhead * 0.85);
-
-  const taglineY = lowerZoneStart + Math.round(lowerZoneH * 0.45);
-  const brandY = lowerZoneStart + Math.round(lowerZoneH * 0.85);
-
-  // 6. Generar text SVG elements
-  const headlineSvg = headlineLines.map((line, i) => `
-    <text x="${padLeft}" y="${headlineBlockTop + headlineLineH * (i + 1)}"
-          font-family="${fontFamilyChain(combo.headline.family)}"
-          font-size="${fHeadline}"
-          font-weight="${combo.headline.weight}"
-          ${combo.headline.style ? `font-style="${combo.headline.style}"` : ''}
-          letter-spacing="${combo.headline.letter_spacing || 0}"
-          fill="white"
-          stroke="rgba(0,0,0,0.6)"
-          stroke-width="2"
-          paint-order="stroke fill"
-    >${escapeXml(line)}</text>`).join('');
-
-  const subheadSvg = subhead ? `
-    <text x="${padLeft}" y="${subheadY}"
-          font-family="${fontFamilyChain(combo.subhead.family)}"
-          font-size="${fSubhead}"
-          font-weight="${combo.subhead.weight}"
-          ${combo.subhead.style ? `font-style="${combo.subhead.style}"` : ''}
-          fill="${accentHex}"
-          stroke="rgba(0,0,0,0.5)"
-          stroke-width="1.5"
-          paint-order="stroke fill"
-    >${escapeXml(subhead)}</text>` : '';
-
-  const taglineSvg = tagline_with_arrow ? taglineLines.map((line, i) => `
-    <text x="${padLeft}" y="${taglineY + Math.round(fTagline * 0.95) * i}"
-          font-family="${fontFamilyChain(combo.tagline.family)}"
-          font-size="${fTagline}"
-          font-weight="${combo.tagline.weight}"
-          letter-spacing="${combo.tagline.letter_spacing || 0}"
-          fill="${accentHex}"
-          stroke="rgba(0,0,0,0.6)"
-          stroke-width="2"
-          paint-order="stroke fill"
-    >${escapeXml(line)}</text>`).join('') : '';
-
-  const brandSvg = `
-    <text x="${padLeft}" y="${brandY}"
-          font-family="${fontFamilyChain(combo.brand.family)}"
-          font-size="${fBrand}"
-          font-weight="${combo.brand.weight}"
-          letter-spacing="${combo.brand.letter_spacing || 0}"
-          fill="rgba(245, 230, 195, 0.85)"
-          stroke="rgba(0,0,0,0.5)"
-          stroke-width="1"
-          paint-order="stroke fill"
-    >${escapeXml(brand_line)}</text>`;
-
-  // 7. Gradients sutiles para legibilidad (top + bottom)
-  const topGradH = upperZoneH + Math.round(h * 0.03);
-  const botGradH = h - lowerZoneStart + Math.round(h * 0.03);
-
-  const gradients = `
-    <linearGradient id="topShade" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="rgba(0,0,0,0.40)" />
-      <stop offset="100%" stop-color="rgba(0,0,0,0)" />
-    </linearGradient>
-    <linearGradient id="botShade" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="rgba(0,0,0,0)" />
-      <stop offset="100%" stop-color="rgba(0,0,0,0.55)" />
-    </linearGradient>`;
-
-  const fontFaceCss = buildFontFaceCss(combo);
-
-  const svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <style type="text/css"><![CDATA[
-${fontFaceCss}
-    ]]></style>
-    ${gradients}
-  </defs>
-  <rect x="0" y="0" width="${w}" height="${topGradH}" fill="url(#topShade)" />
-  <rect x="0" y="${h - botGradH}" width="${w}" height="${botGradH}" fill="url(#botShade)" />
-  ${headlineSvg}
-  ${subheadSvg}
-  ${taglineSvg}
-  ${brandSvg}
-</svg>`;
-
-  const svgBuffer = Buffer.from(svg);
-
-  // 8. Composite SVG sobre la imagen base
-  const composed = await sharp(baseImageBuffer)
-    .composite([{ input: svgBuffer, top: 0, left: 0 }])
-    .png()
-    .toBuffer();
-
-  logger.info(`[HERMES-COMPOSE] Composed overlay ${w}x${h} — typo:${typography_id} accent:${accent_color} headline:"${headline.slice(0, 30)}" tagline:"${tagline_with_arrow}"`);
+  const dims = placement === 'story' ? `${STORY_W}x${STORY_H}` : '2:3';
+  logger.info(`[HERMES-COMPOSE] Composed ${placement} (${dims}) — typo:${typography_id} accent:${accent_color} headline:"${headline.slice(0, 30)}"`);
 
   return composed;
 }

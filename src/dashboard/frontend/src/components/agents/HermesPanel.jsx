@@ -375,12 +375,31 @@ function ProposalsTab({ onToast }) {
 
 function ProposalCard({ p, onApprove, onReject, onPublish }) {
   const meta = OFFER_META[p.offer_type] || {};
+  const [view, setView] = useState('feed');  // 'feed' (2:3) | 'story' (9:16)
+  const token = localStorage.getItem('auth_token') || '';
+  const imgSrc = view === 'story'
+    ? `${api.defaults.baseURL}/api/hermes/proposals/${p._id}/image-story?token=${token}`
+    : `${api.defaults.baseURL}/api/hermes/proposals/${p._id}/image?token=${token}`;
+
+  const toggleBtn = (id, label) => (
+    <button
+      onClick={() => setView(id)}
+      style={{
+        padding: '3px 9px', fontSize: '0.62rem', fontWeight: 700,
+        letterSpacing: '0.04em', textTransform: 'uppercase', cursor: 'pointer',
+        border: 'none', borderRadius: 5,
+        background: view === id ? meta.color || COLORS.info : 'rgba(0,0,0,0.55)',
+        color: view === id ? '#000' : '#fff'
+      }}
+    >{label}</button>
+  );
+
   return (
     <GlassCard padding={0} hover accent={meta.color} style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
       <div style={{ position: 'relative', background: '#000' }}>
         <img
-          src={`${api.defaults.baseURL}/api/hermes/proposals/${p._id}/image?token=${localStorage.getItem('auth_token') || ''}`}
-          alt="composed ad"
+          src={imgSrc}
+          alt={`composed ad ${view}`}
           style={{ width: '100%', display: 'block' }}
         />
         <div style={{ position: 'absolute', top: 10, left: 10 }}>
@@ -388,6 +407,10 @@ function ProposalCard({ p, onApprove, onReject, onPublish }) {
         </div>
         <div style={{ position: 'absolute', top: 10, right: 10 }}>
           <StatusBadge status={p.status} />
+        </div>
+        <div style={{ position: 'absolute', bottom: 10, left: 10, display: 'flex', gap: 5 }}>
+          {toggleBtn('feed', 'Feed 2:3')}
+          {toggleBtn('story', 'Story 9:16')}
         </div>
       </div>
       <div style={{ padding: 14, flex: 1, display: 'flex', flexDirection: 'column' }}>

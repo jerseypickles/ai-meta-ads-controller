@@ -157,7 +157,7 @@ router.get('/proposals', async (req, res) => {
     // incluirla inline (raro, casi nunca necesario).
     const select = include_image === 'true'
       ? undefined
-      : '-composed_image_base64 -overlay_config.generated_image_prompt';
+      : '-composed_image_base64 -composed_image_story_base64 -overlay_config.generated_image_prompt';
 
     let q = HermesProposal.find(query)
       .sort({ generated_at: -1 })
@@ -174,7 +174,7 @@ router.get('/proposals', async (req, res) => {
 });
 
 /**
- * GET /api/hermes/proposals/:id/image — preview de la composed image
+ * GET /api/hermes/proposals/:id/image — preview del creative Feed (2:3)
  */
 router.get('/proposals/:id/image', async (req, res) => {
   try {
@@ -184,6 +184,26 @@ router.get('/proposals/:id/image', async (req, res) => {
 
     res.set('Content-Type', 'image/png');
     res.send(Buffer.from(proposal.composed_image_base64, 'base64'));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/hermes/proposals/:id/image-story — preview del creative Story/Reel (9:16)
+ * Fallback al Feed image si el proposal es pre-refactor (sin story version).
+ */
+router.get('/proposals/:id/image-story', async (req, res) => {
+  try {
+    const proposal = await HermesProposal.findById(req.params.id)
+      .select('composed_image_story_base64 composed_image_base64').lean();
+    if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+
+    const data = proposal.composed_image_story_base64 || proposal.composed_image_base64;
+    if (!data) return res.status(404).json({ error: 'No image data' });
+
+    res.set('Content-Type', 'image/png');
+    res.send(Buffer.from(data, 'base64'));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
