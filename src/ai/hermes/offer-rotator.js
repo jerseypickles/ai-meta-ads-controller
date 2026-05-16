@@ -6,22 +6,25 @@
  * foot traffic para cold viewers — son ofertas de loyalty / repeat, no de
  * acquisition para primera visita.
  *
- * NUEVA REGLA: TODAS las ofertas deben ser "FREE [PRODUCT] on your 1st visit"
- * o equivalente directo (bring your jar/cup → free refill 1st visit). Nada
- * de descuentos %, nada de bundles, nada de mystery, nada de "every Sunday".
+ * NUEVA REGLA: TODAS las ofertas son "FREE [PRODUCT] on your 1st visit".
+ * Nada de descuentos %, bundles, mystery, "every Sunday".
  *
  * El único trigger que vale para cold acquisition foot traffic es:
  *   "If I drive there RIGHT NOW, I get [free X]"
  *
- * Pool actual (9 ofertas, todas free + 1st visit):
+ * REGLA VISUAL (16-may-2026): el producto SIEMPRE se muestra SOLO — pickle
+ * u oliva con chamoy/tajín/relleno chorreando, food porn macro. NUNCA en
+ * frasco ni envase de retail. Por eso se eliminaron bring_your_jar y
+ * bring_your_cup (su visual inevitablemente era un envase).
+ * Todo el copy en INGLÉS (mercado US), sin versiones en español.
+ *
+ * Pool actual (7 ofertas, todas free + 1st visit):
  *   - FREE CHAMOY PICKLE       (cultural FOMO Mexicano, drip visceral)
  *   - FREE TAJÍN PICKLE        (cultural FOMO chili-lime)
  *   - FREE OLIVE FLIGHT        (prueba TODAS las olivas stuffed — 5 variedades)
  *   - FREE STUFFED OLIVE       (single olive de discovery)
  *   - FREE PICKLE FLIGHT       (prueba 5 sabores de pickle free)
  *   - FREE BIG DILL            (bestseller iconico, on us)
- *   - BRING YOUR JAR           (free refill 1st visit)
- *   - BRING YOUR CUP           (free fill 1st visit — entry low-commitment)
  *   - FREE PICKLE JUICE SHOT   (shot brine on us)
  */
 
@@ -34,7 +37,7 @@ const OFFERS = {
 
   free_chamoy: {
     type: 'free_chamoy',
-    weight: 0.18,
+    weight: 0.21,
     short_label: 'Free Chamoy',
     group: 'free_1st_visit',
     description: 'Chamoy pickle on 1st visit — cultural FOMO Mexicano + drip visceral',
@@ -59,7 +62,7 @@ const OFFERS = {
 
   free_tajin: {
     type: 'free_tajin',
-    weight: 0.13,
+    weight: 0.15,
     short_label: 'Free Tajín',
     group: 'free_1st_visit',
     description: 'Tajín-crusted pickle on 1st visit — chili-lime FOMO',
@@ -84,7 +87,7 @@ const OFFERS = {
 
   free_olive_flight: {
     type: 'free_olive_flight',
-    weight: 0.15,
+    weight: 0.17,
     short_label: 'Free Olive Flight',
     group: 'free_1st_visit',
     description: 'TODAS las olivas stuffed prueba free on 1st visit — discovery del olive bar entero',
@@ -109,7 +112,7 @@ const OFFERS = {
 
   free_olive: {
     type: 'free_olive',
-    weight: 0.10,
+    weight: 0.12,
     short_label: 'Free Olive',
     group: 'free_1st_visit',
     description: 'Single stuffed olive on 1st visit — premium FOMO',
@@ -172,7 +175,7 @@ const OFFERS = {
 
   free_pickle_flight: {
     type: 'free_pickle_flight',
-    weight: 0.12,
+    weight: 0.14,
     short_label: 'Free Pickle Flight',
     group: 'free_1st_visit',
     description: 'Prueba 5 sabores de pickle free on 1st visit',
@@ -195,7 +198,7 @@ const OFFERS = {
 
   free_big_dill: {
     type: 'free_big_dill',
-    weight: 0.11,
+    weight: 0.13,
     short_label: 'Free Big Dill',
     group: 'free_1st_visit',
     description: 'Big Dill bestseller free on 1st visit — brand icon',
@@ -217,68 +220,9 @@ const OFFERS = {
     ]
   },
 
-  bring_your_jar: {
-    type: 'bring_your_jar',
-    weight: 0.08,
-    short_label: 'Bring Your Jar',
-    group: 'free_1st_visit',
-    description: 'Trae tu frasco — free refill on 1st visit',
-    variants: [
-      {
-        id: 'refill_jar',
-        title: 'BRING YOUR JAR',
-        hook: 'free refill on your 1st visit',
-        product_focus: 'fresh pickles tumbling into an empty glass jar',
-        treatment_keywords: [
-          'a clean empty glass jar mid-refill with fresh pickles tumbling in from above',
-          'brine splashing in slow motion',
-          'pickles glossy and abundant',
-          'overhead three-quarter angle showing the abundance entering the jar'
-        ],
-        accent_color: 'forest green'
-      },
-      {
-        id: 'trae_frasco',
-        title: 'TRAE TU FRASCO',
-        hook: 'te lo rellenamos gratis · 1ra visita',
-        product_focus: 'jar refill — Spanish-first version',
-        treatment_keywords: [
-          'fresh pickles being poured into a glass jar',
-          'brine cascade catching light',
-          'abundant pickle quantity visible'
-        ],
-        accent_color: 'bright red',
-        cultural_hook: 'bilingual NJ Hispanic market'
-      }
-    ]
-  },
-
-  bring_your_cup: {
-    type: 'bring_your_cup',
-    weight: 0.07,
-    short_label: 'Bring Your Cup',
-    group: 'free_1st_visit',
-    description: 'Trae tu vaso — entry low-commitment, free fill on 1st visit',
-    variants: [
-      {
-        id: 'fill_cup',
-        title: 'BRING YOUR CUP',
-        hook: 'we fill it free · 1st visit',
-        product_focus: 'paper or glass cup being filled with pickle chips',
-        treatment_keywords: [
-          'a kraft paper takeaway cup or clear plastic cup being filled with bright green pickle chips and brine',
-          'cup held by a hand from below',
-          'chips overflowing slightly suggesting abundance',
-          'fresh brine droplets visible around the rim'
-        ],
-        accent_color: 'electric green'
-      }
-    ]
-  },
-
   free_pickle_juice: {
     type: 'free_pickle_juice',
-    weight: 0.06,
+    weight: 0.08,
     short_label: 'Free Pickle Juice',
     group: 'free_1st_visit',
     description: 'Pickle juice shot free on 1st visit — low commitment entry',
@@ -286,7 +230,7 @@ const OFFERS = {
       {
         id: 'pickle_shot',
         title: 'FREE PICKLE JUICE',
-        hook: 'shot on us · 1st visit',
+        hook: 'shot on us, 1st visit',
         product_focus: 'shot glass of pickle brine',
         treatment_keywords: [
           'a small shot glass filled with bright cloudy yellow-green pickle brine',
@@ -339,41 +283,14 @@ const POV_TEMPLATES = [
 ];
 // REMOVED anti-pattern: side_profile (museum-quality minimalist = curiosity not craving)
 
-// ─── Typography combos — solo A-tier punchy (anti-patterns removed) ────────
+// ─── Typography combos — TODOS editoriales/magazine (16-may-2026) ──────────
+// Los IDs deben matchear las keys de TYPOGRAPHY_FONTS en overlay-composer.js.
+// Sacados los combos sans-display (Anton) — no se ven "magazine".
 const TYPOGRAPHY_COMBOS = [
-  {
-    id: 'classic_editorial',
-    headline: 'very large white serif typography in Bodoni style',
-    subhead: 'smaller flowing italic script',
-    tagline: 'bold sans-serif uppercase',
-    brand_line: 'tiny small-caps'
-  },
-  {
-    id: 'bold_display',
-    headline: 'extremely heavy slab-serif (Rockwell Black) typography',
-    subhead: 'bold italic complement',
-    tagline: 'thick sans-serif',
-    brand_line: 'all-caps tracked sans'
-  },
-  {
-    id: 'retro_diner',
-    headline: 'hand-painted bold serif with subtle distress texture',
-    subhead: 'flowing 1950s diner script',
-    tagline: 'condensed retro display font',
-    brand_line: 'rounded vintage sans'
-  },
-  {
-    id: 'punchy_modern',
-    headline: 'extra-bold sans-serif (Futura Black) all-caps with tight tracking',
-    subhead: 'condensed italic',
-    tagline: 'monospace caps',
-    brand_line: 'small-caps tracked'
-  }
+  { id: 'editorial_vogue',   label: 'Playfair Display Black — didone alto contraste, portada Vogue' },
+  { id: 'editorial_classic', label: 'DM Serif Display — editorial cálido Bon Appétit' },
+  { id: 'editorial_fatface', label: 'Abril Fatface — display serif retro deli/grocer' }
 ];
-// REMOVED anti-patterns:
-//   - high_fashion (Didot ultra-thin = curiosity, slow read)
-//   - modern_minimal (Helvetica Light + spacious = negative-space dominant)
-//   - urban_grunge (stencil grunge = brand confusion in 0.5s)
 
 /**
  * Weighted random pick básico de offer (sin anti-repeat).

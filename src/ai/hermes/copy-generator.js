@@ -59,6 +59,15 @@ ANTI-PATTERNS PROHIBIDOS:
   ✗ Abstract invitations sin oferta ("Visit us", "Taste first")
   ✗ "Delicious", "premium", "award-winning" (vago corporativo)
   ✗ Headlines ambiguas o demasiado conceptuales
+  ✗ CUALQUIER palabra en español — el copy SIEMPRE 100% en inglés
+
+═══════════════════════════════════════════════════════════════════════
+IDIOMA — CRÍTICO
+═══════════════════════════════════════════════════════════════════════
+
+TODO el copy (headline + primary_text + tagline) va 100% EN INGLÉS.
+Mercado US. NUNCA generes texto en español, ni mezclado, ni una palabra.
+Si la variant trae un hook en español, traducílo a inglés.
 
 ═══════════════════════════════════════════════════════════════════════
 VOZ JERSEY PICKLES
@@ -70,7 +79,7 @@ VOZ JERSEY PICKLES
 - Casual con contracciones
 - Termina invitando a visita física
 
-EJEMPLOS DE TAGLINES (inventá similares):
+EJEMPLOS DE TAGLINES (inventá similares, siempre en inglés):
 - "BIG DILL CHAMOY →"
 - "OLIVE ME →"
 - "BRINE TIME →"
@@ -81,7 +90,6 @@ EJEMPLOS DE TAGLINES (inventá similares):
 - "FRESH BRINE FRIDAYS →"
 - "CRUNCH HOUR →"
 - "DELI THERAPY →"
-- "TRAE TU FRASCO →"
 - "JERSEY OLIVE CLUB →"
 - "STUFFED & ROLLING →"
 

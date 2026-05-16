@@ -40,17 +40,16 @@ const logger = require('../../utils/logger');
 // ═══════════════════════════════════════════════════════════════
 
 const FONT_FILES = {
-  anton:                'anton/files/anton-latin-400-normal.woff2',
-  bebas_neue:           'bebas-neue/files/bebas-neue-latin-400-normal.woff2',
-  dm_serif_display:     'dm-serif-display/files/dm-serif-display-latin-400-normal.woff2',
-  dm_serif_italic:      'dm-serif-display/files/dm-serif-display-latin-400-italic.woff2',
-  playfair_display:     'playfair-display/files/playfair-display-latin-400-normal.woff2',
-  playfair_display_900: 'playfair-display/files/playfair-display-latin-900-normal.woff2',
-  abril_fatface:        'abril-fatface/files/abril-fatface-latin-400-normal.woff2',
-  oswald:               'oswald/files/oswald-latin-700-normal.woff2',
-  inter:                'inter/files/inter-latin-400-normal.woff2',
-  inter_900:            'inter/files/inter-latin-900-normal.woff2',
-  special_elite:        'special-elite/files/special-elite-latin-400-normal.woff2'
+  bebas_neue:             'bebas-neue/files/bebas-neue-latin-400-normal.woff2',
+  dm_serif_display:       'dm-serif-display/files/dm-serif-display-latin-400-normal.woff2',
+  dm_serif_italic:        'dm-serif-display/files/dm-serif-display-latin-400-italic.woff2',
+  playfair_display:       'playfair-display/files/playfair-display-latin-400-normal.woff2',
+  playfair_display_italic:'playfair-display/files/playfair-display-latin-400-italic.woff2',
+  playfair_display_900:   'playfair-display/files/playfair-display-latin-900-normal.woff2',
+  abril_fatface:          'abril-fatface/files/abril-fatface-latin-400-normal.woff2',
+  oswald:                 'oswald/files/oswald-latin-700-normal.woff2',
+  inter:                  'inter/files/inter-latin-400-normal.woff2',
+  special_elite:          'special-elite/files/special-elite-latin-400-normal.woff2'
 };
 
 const fontCache = new Map();
@@ -79,33 +78,36 @@ function loadFontBase64(fontKey) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// TYPOGRAPHY COMBOS — mapeo de IDs (del rotator) a fonts reales
+// TYPOGRAPHY COMBOS — TODOS editoriales/magazine (14-may-2026).
+//
+// Sacados los combos sans-serif display (Anton): no se ven "magazine".
+// El look editorial Bon Appétit / Vogue viene de SERIF de display de alto
+// contraste (Playfair Display 900, DM Serif Display, Abril Fatface) +
+// subhead en serif ITALIC + una rule line accent. El CTA (tagline) sí
+// puede ser sans condensed — funciona como kicker editorial.
 // ═══════════════════════════════════════════════════════════════
 
 const TYPOGRAPHY_FONTS = {
-  classic_editorial: {
-    headline: { font_key: 'dm_serif_display', family: 'DM Serif Display', weight: 400, size_ratio: 0.085, letter_spacing: 0 },
-    subhead:  { font_key: 'dm_serif_italic',  family: 'DM Serif Display', weight: 400, style: 'italic', size_ratio: 0.038, letter_spacing: 0 },
-    tagline:  { font_key: 'bebas_neue',       family: 'Bebas Neue',       weight: 400, size_ratio: 0.045, letter_spacing: 2 },
-    brand:    { font_key: 'inter',            family: 'Inter',            weight: 400, size_ratio: 0.022, letter_spacing: 3 }
+  // Vogue/Harper's — Playfair Display Black, didone altísimo contraste
+  editorial_vogue: {
+    headline: { font_key: 'playfair_display_900',    family: 'Playfair Display', weight: 900, size_ratio: 0.090, letter_spacing: -1 },
+    subhead:  { font_key: 'playfair_display_italic', family: 'Playfair Display', weight: 400, style: 'italic', size_ratio: 0.041, letter_spacing: 0 },
+    tagline:  { font_key: 'bebas_neue',              family: 'Bebas Neue',       weight: 400, size_ratio: 0.046, letter_spacing: 3 },
+    brand:    { font_key: 'inter',                   family: 'Inter',            weight: 400, size_ratio: 0.021, letter_spacing: 3 }
   },
-  bold_display: {
-    headline: { font_key: 'anton',         family: 'Anton',  weight: 400, size_ratio: 0.105, letter_spacing: -1 },
-    subhead:  { font_key: 'inter',         family: 'Inter',  weight: 400, size_ratio: 0.035, letter_spacing: 1 },
-    tagline:  { font_key: 'anton',         family: 'Anton',  weight: 400, size_ratio: 0.048, letter_spacing: 1 },
-    brand:    { font_key: 'inter_900',     family: 'Inter',  weight: 900, size_ratio: 0.022, letter_spacing: 3 }
+  // Bon Appétit — DM Serif Display, editorial cálido de food magazine
+  editorial_classic: {
+    headline: { font_key: 'dm_serif_display', family: 'DM Serif Display', weight: 400, size_ratio: 0.092, letter_spacing: 0 },
+    subhead:  { font_key: 'dm_serif_italic',  family: 'DM Serif Display', weight: 400, style: 'italic', size_ratio: 0.041, letter_spacing: 0 },
+    tagline:  { font_key: 'oswald',           family: 'Oswald',           weight: 700, size_ratio: 0.044, letter_spacing: 3 },
+    brand:    { font_key: 'inter',            family: 'Inter',            weight: 400, size_ratio: 0.021, letter_spacing: 3 }
   },
-  retro_diner: {
-    headline: { font_key: 'abril_fatface',   family: 'Abril Fatface',   weight: 400, size_ratio: 0.092, letter_spacing: 0 },
-    subhead:  { font_key: 'dm_serif_italic', family: 'DM Serif Display',weight: 400, style: 'italic', size_ratio: 0.035, letter_spacing: 0 },
-    tagline:  { font_key: 'bebas_neue',      family: 'Bebas Neue',      weight: 400, size_ratio: 0.045, letter_spacing: 2 },
-    brand:    { font_key: 'special_elite',   family: 'Special Elite',   weight: 400, size_ratio: 0.022, letter_spacing: 2 }
-  },
-  punchy_modern: {
-    headline: { font_key: 'anton',     family: 'Anton',  weight: 400, size_ratio: 0.110, letter_spacing: -2 },
-    subhead:  { font_key: 'inter',     family: 'Inter',  weight: 400, size_ratio: 0.035, letter_spacing: 1 },
-    tagline:  { font_key: 'oswald',    family: 'Oswald', weight: 700, size_ratio: 0.044, letter_spacing: 3 },
-    brand:    { font_key: 'inter_900', family: 'Inter',  weight: 900, size_ratio: 0.022, letter_spacing: 3 }
+  // Retro grocer — Abril Fatface, display serif dramático estilo deli vintage
+  editorial_fatface: {
+    headline: { font_key: 'abril_fatface',           family: 'Abril Fatface',    weight: 400, size_ratio: 0.088, letter_spacing: 0 },
+    subhead:  { font_key: 'playfair_display_italic', family: 'Playfair Display', weight: 400, style: 'italic', size_ratio: 0.041, letter_spacing: 0 },
+    tagline:  { font_key: 'bebas_neue',              family: 'Bebas Neue',       weight: 400, size_ratio: 0.046, letter_spacing: 3 },
+    brand:    { font_key: 'special_elite',           family: 'Special Elite',    weight: 400, size_ratio: 0.021, letter_spacing: 2 }
   }
 };
 
@@ -264,9 +266,10 @@ function fitTextToWidth(text, family, baseFontSize, availableWidth) {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * Construye el SVG de texto completo (headline + subhead + tagline + brand
- * + scrims) para un canvas de dimensiones dadas y con las zonas verticales
- * pasadas. Compartido entre Feed y Story.
+ * Construye el SVG de texto completo con look EDITORIAL/MAGAZINE:
+ * headline serif display → thin rule line accent → subhead italic, todo
+ * top-anchored desde zones.headlineTop. Tagline + brand abajo.
+ * Compartido entre Feed y Story.
  *
  * @param {Object} o
  * @param {number} o.w - ancho del canvas
@@ -277,14 +280,14 @@ function fitTextToWidth(text, family, baseFontSize, availableWidth) {
  * @param {string} o.subhead
  * @param {string} o.tagline
  * @param {string} o.brand
- * @param {Object} o.zones - { headlineCenterY, taglineY, brandY } en px
+ * @param {Object} o.zones - { headlineTop, taglineY, brandY } en px
  * @param {Object} o.scrim - { topH, botH } altura de los gradient scrims en px
  * @returns {string} SVG completo
  */
 function buildTextLayer(o) {
   const { w, h, combo, accentHex, headline, subhead, tagline, brand, zones, scrim } = o;
 
-  const padLeft = Math.round(w * 0.06);
+  const padLeft = Math.round(w * 0.065);
   const availW = w - padLeft * 2;
 
   const fHeadlineBase = Math.round(w * combo.headline.size_ratio);
@@ -295,36 +298,44 @@ function buildTextLayer(o) {
   const headlineFit = fitTextToWidth((headline || '').toUpperCase(), combo.headline.family, fHeadlineBase, availW);
   const headlineLines = headlineFit.lines;
   const fHeadline = headlineFit.fontSize;
-  const headlineLineH = Math.round(fHeadline * 0.98);
+  const headlineLineH = Math.round(fHeadline * 1.04);
 
   const taglineFit = fitTextToWidth((tagline || '').toUpperCase(), combo.tagline.family, fTaglineBase, availW);
   const taglineLines = taglineFit.lines;
   const fTagline = taglineFit.fontSize;
 
-  // Headline block centrado verticalmente en zones.headlineCenterY
-  const totalHeadlineH = headlineLineH * headlineLines.length;
-  const headlineFirstBaseline = zones.headlineCenterY - Math.round(totalHeadlineH / 2) + fHeadline;
-  const subheadY = headlineFirstBaseline + (headlineLines.length - 1) * headlineLineH + Math.round(fSubhead * 1.15);
-
+  // ── Bloque editorial top-anchored: headline → rule line → subhead ──
+  const headlineFirstBaseline = zones.headlineTop + fHeadline;
   const headlineSvg = headlineLines.map((line, i) => `
     <text x="${padLeft}" y="${headlineFirstBaseline + headlineLineH * i}"
           font-family="${fontFamilyChain(combo.headline.family)}"
           font-size="${fHeadline}" font-weight="${combo.headline.weight}"
           ${combo.headline.style ? `font-style="${combo.headline.style}"` : ''}
           letter-spacing="${combo.headline.letter_spacing || 0}"
-          fill="white" stroke="rgba(0,0,0,0.6)" stroke-width="2" paint-order="stroke fill"
+          fill="white" stroke="rgba(0,0,0,0.55)" stroke-width="2" paint-order="stroke fill"
     >${escapeXml(line)}</text>`).join('');
 
+  const headlineBottom = headlineFirstBaseline + headlineLineH * (headlineLines.length - 1);
+
+  // Rule line accent — toque editorial clásico de revista
+  const ruleY = headlineBottom + Math.round(fHeadline * 0.40);
+  const ruleW = Math.round(w * 0.135);
+  const ruleH = Math.max(3, Math.round(w * 0.0055));
+  const ruleSvg = `<rect x="${padLeft}" y="${ruleY}" width="${ruleW}" height="${ruleH}" fill="${accentHex}" />`;
+
+  // Subhead italic — debajo de la rule
+  const subheadY = ruleY + ruleH + Math.round(fSubhead * 1.25);
   const subheadSvg = subhead ? `
     <text x="${padLeft}" y="${subheadY}"
           font-family="${fontFamilyChain(combo.subhead.family)}"
           font-size="${fSubhead}" font-weight="${combo.subhead.weight}"
           ${combo.subhead.style ? `font-style="${combo.subhead.style}"` : ''}
-          fill="${accentHex}" stroke="rgba(0,0,0,0.5)" stroke-width="1.5" paint-order="stroke fill"
+          fill="rgba(245, 230, 195, 0.95)" stroke="rgba(0,0,0,0.5)" stroke-width="1.2" paint-order="stroke fill"
     >${escapeXml(subhead)}</text>` : '';
 
+  // ── Bloque inferior: tagline (CTA kicker) + brand line ──
   const taglineSvg = tagline ? taglineLines.map((line, i) => `
-    <text x="${padLeft}" y="${zones.taglineY + Math.round(fTagline * 0.98) * i}"
+    <text x="${padLeft}" y="${zones.taglineY + Math.round(fTagline * 1.05) * i}"
           font-family="${fontFamilyChain(combo.tagline.family)}"
           font-size="${fTagline}" font-weight="${combo.tagline.weight}"
           letter-spacing="${combo.tagline.letter_spacing || 0}"
@@ -336,7 +347,7 @@ function buildTextLayer(o) {
           font-family="${fontFamilyChain(combo.brand.family)}"
           font-size="${fBrand}" font-weight="${combo.brand.weight}"
           letter-spacing="${combo.brand.letter_spacing || 0}"
-          fill="rgba(245, 230, 195, 0.88)" stroke="rgba(0,0,0,0.5)" stroke-width="1" paint-order="stroke fill"
+          fill="rgba(245, 230, 195, 0.85)" stroke="rgba(0,0,0,0.5)" stroke-width="1" paint-order="stroke fill"
     >${escapeXml(brand)}</text>`;
 
   const fontFaceCss = buildFontFaceCss(combo);
@@ -348,17 +359,18 @@ function buildTextLayer(o) {
 ${fontFaceCss}
     ]]></style>
     <linearGradient id="topShade" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="rgba(0,0,0,0.55)" />
+      <stop offset="0%" stop-color="rgba(0,0,0,0.58)" />
       <stop offset="100%" stop-color="rgba(0,0,0,0)" />
     </linearGradient>
     <linearGradient id="botShade" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="rgba(0,0,0,0)" />
-      <stop offset="100%" stop-color="rgba(0,0,0,0.65)" />
+      <stop offset="100%" stop-color="rgba(0,0,0,0.68)" />
     </linearGradient>
   </defs>
   <rect x="0" y="0" width="${w}" height="${scrim.topH}" fill="url(#topShade)" />
   <rect x="0" y="${h - scrim.botH}" width="${w}" height="${scrim.botH}" fill="url(#botShade)" />
   ${headlineSvg}
+  ${ruleSvg}
   ${subheadSvg}
   ${taglineSvg}
   ${brandSvg}
@@ -384,12 +396,12 @@ async function composeFeed(baseImageBuffer, cfg) {
     tagline: cfg.tagline,
     brand: cfg.brand,
     zones: {
-      headlineCenterY: Math.round(h * 0.125),
+      headlineTop: Math.round(h * 0.05),
       taglineY: Math.round(h * 0.915),
-      brandY: Math.round(h * 0.96)
+      brandY: Math.round(h * 0.955)
     },
     scrim: {
-      topH: Math.round(h * 0.30),
+      topH: Math.round(h * 0.32),
       botH: Math.round(h * 0.20)
     }
   });
@@ -435,12 +447,12 @@ async function composeStory(baseImageBuffer, cfg) {
     tagline: cfg.tagline,
     brand: cfg.brand,
     zones: {
-      headlineCenterY: Math.round(STORY_H * 0.22),  // 22% — bajo el UI superior
-      taglineY: Math.round(STORY_H * 0.74),          // 74% — sobre el UI inferior
-      brandY: Math.round(STORY_H * 0.785)            // 78.5% — antes del 80% safe
+      headlineTop: Math.round(STORY_H * 0.16),   // 16% — bajo el UI superior (14%)
+      taglineY: Math.round(STORY_H * 0.74),       // 74% — sobre el UI inferior
+      brandY: Math.round(STORY_H * 0.785)         // 78.5% — antes del 80% safe
     },
     scrim: {
-      topH: Math.round(STORY_H * 0.32),
+      topH: Math.round(STORY_H * 0.36),
       botH: Math.round(STORY_H * 0.30)
     }
   });
