@@ -580,4 +580,132 @@ router.get('/lookup-ids', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+// REFERENCES — imágenes que Hermes pasa a gpt-image-2 como ancla visual
+// ═══════════════════════════════════════════════════════════════════════
+
+const HermesReference = require('../../db/models/HermesReference');
+
+const VALID_OFFER_MATCH = [
+  'any', 'free_chamoy', 'free_tajin', 'free_olive_flight', 'free_olive',
+  'free_pickle_flight', 'free_big_dill', 'free_pickle_juice'
+];
+
+/**
+ * POST /api/hermes/references/upload — sube imagen de referencia
+ * Form fields: image (file), offer_match (CSV), purpose, notes
+ */
+router.post('/references/upload', photoUpload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No image file uploaded' });
+
+    const { offer_match = 'any', purpose = 'product', notes = '' } = req.body;
+
+    // Normalizar a PNG para input consistente a gpt-image-2
+    const pngBuffer = await sharp(req.file.buffer).png().toBuffer();
+    const meta = await sharp(pngBuffer).metadata();
+
+    const matchList = offer_match
+      .split(',')
+      .map(s => s.trim())
+      .filter(s => VALID_OFFER_MATCH.includes(s));
+
+    const reference = await HermesReference.create({
+      filename: req.file.originalname,
+      image_base64: pngBuffer.toString('base64'),
+      mime_type: 'image/png',
+      width: meta.width || 0,
+      height: meta.height || 0,
+      offer_match: matchList.length ? matchList : ['any'],
+      purpose: ['product', 'style', 'color'].includes(purpose) ? purpose : 'product',
+      notes,
+      uploaded_by: req.user?.username || 'user'
+    });
+
+    logger.info(`[HERMES-API] Reference uploaded: ${reference.filename} (${meta.width}x${meta.height}) — match: ${reference.offer_match.join(',')} purpose: ${reference.purpose}`);
+
+    const { image_base64, ...lite } = reference.toObject();
+    res.json({ reference: lite });
+  } catch (err) {
+    logger.error(`[HERMES-API] references/upload failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/hermes/references — lista referencias (sin base64)
+ */
+router.get('/references', async (req, res) => {
+  try {
+    const { active } = req.query;
+    const query = {};
+    if (active !== undefined) query.active = active === 'true';
+
+    const references = await HermesReference.find(query)
+      .select('-image_base64')
+      .sort({ uploaded_at: -1 })
+      .lean();
+
+    res.json({ references, count: references.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/hermes/references/:id/image — preview de la referencia
+ */
+router.get('/references/:id/image', async (req, res) => {
+  try {
+    const ref = await HermesReference.findById(req.params.id).select('image_base64 mime_type').lean();
+    if (!ref || !ref.image_base64) return res.status(404).json({ error: 'Reference not found' });
+
+    res.set('Content-Type', ref.mime_type || 'image/png');
+    res.send(Buffer.from(ref.image_base64, 'base64'));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * PATCH /api/hermes/references/:id — actualiza offer_match / purpose / active / notes
+ */
+router.patch('/references/:id', async (req, res) => {
+  try {
+    const update = {};
+    if (req.body.active !== undefined) update.active = req.body.active;
+    if (req.body.notes !== undefined) update.notes = req.body.notes;
+    if (req.body.purpose && ['product', 'style', 'color'].includes(req.body.purpose)) {
+      update.purpose = req.body.purpose;
+    }
+    if (req.body.offer_match !== undefined) {
+      const list = (Array.isArray(req.body.offer_match) ? req.body.offer_match : String(req.body.offer_match).split(','))
+        .map(s => s.trim())
+        .filter(s => VALID_OFFER_MATCH.includes(s));
+      update.offer_match = list.length ? list : ['any'];
+    }
+
+    const reference = await HermesReference.findByIdAndUpdate(req.params.id, update, { new: true })
+      .select('-image_base64')
+      .lean();
+    if (!reference) return res.status(404).json({ error: 'Reference not found' });
+    res.json({ reference });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * DELETE /api/hermes/references/:id — elimina la referencia
+ */
+router.delete('/references/:id', async (req, res) => {
+  try {
+    const ref = await HermesReference.findByIdAndDelete(req.params.id).lean();
+    if (!ref) return res.status(404).json({ error: 'Reference not found' });
+    res.json({ deleted: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

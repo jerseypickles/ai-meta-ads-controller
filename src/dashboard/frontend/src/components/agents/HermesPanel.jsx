@@ -923,6 +923,157 @@ function VisitsTab({ onToast }) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// REFERENCES TAB — imágenes que gpt-image-2 usa como ancla visual
+// ═══════════════════════════════════════════════════════════════════════
+
+const REF_OFFER_OPTIONS = [
+  { value: 'any', label: 'Todas las ofertas' },
+  { value: 'free_chamoy', label: 'Free Chamoy Pickle' },
+  { value: 'free_tajin', label: 'Free Tajín Pickle' },
+  { value: 'free_olive_flight', label: 'Free Olive Flight' },
+  { value: 'free_olive', label: 'Free Stuffed Olive' },
+  { value: 'free_pickle_flight', label: 'Free Pickle Flight' },
+  { value: 'free_big_dill', label: 'Free Big Dill' },
+  { value: 'free_pickle_juice', label: 'Free Pickle Juice' }
+];
+const REF_PURPOSE_LABEL = { product: 'Producto', style: 'Estilo', color: 'Color' };
+
+function ReferencesTab({ onToast }) {
+  const [refs, setRefs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [file, setFile] = useState(null);
+  const [offerMatch, setOfferMatch] = useState('any');
+  const [purpose, setPurpose] = useState('product');
+  const [notes, setNotes] = useState('');
+  const fileInputRef = useRef(null);
+
+  async function fetchRefs() {
+    setLoading(true);
+    try {
+      const { data } = await api.get('/api/hermes/references');
+      setRefs(data.references || []);
+    } catch (err) {
+      onToast(err.response?.data?.error || err.message, 'error');
+    } finally { setLoading(false); }
+  }
+  useEffect(() => { fetchRefs(); }, []);
+
+  async function upload(e) {
+    e.preventDefault();
+    if (!file) { onToast('Elegí una imagen primero', 'error'); return; }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('image', file);
+      fd.append('offer_match', offerMatch);
+      fd.append('purpose', purpose);
+      fd.append('notes', notes);
+      await api.post('/api/hermes/references/upload', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      setFile(null); setNotes(''); setOfferMatch('any'); setPurpose('product');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      fetchRefs();
+      onToast('Referencia subida', 'success');
+    } catch (err) {
+      onToast(err.response?.data?.error || err.message, 'error');
+    } finally { setUploading(false); }
+  }
+
+  async function toggleActive(ref) {
+    try {
+      await api.patch(`/api/hermes/references/${ref._id}`, { active: !ref.active });
+      fetchRefs();
+    } catch (err) { onToast(err.response?.data?.error || err.message, 'error'); }
+  }
+
+  async function remove(ref) {
+    try {
+      await api.delete(`/api/hermes/references/${ref._id}`);
+      fetchRefs();
+      onToast('Referencia eliminada', 'success');
+    } catch (err) { onToast(err.response?.data?.error || err.message, 'error'); }
+  }
+
+  const token = localStorage.getItem('auth_token') || '';
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '380px 1fr', gap: 18 }}>
+      {/* Upload form */}
+      <GlassCard padding={20}>
+        <SectionTitle icon={Camera}>Subir referencia</SectionTitle>
+        <form onSubmit={upload} style={{ display: 'grid', gap: 12, marginTop: 4 }}>
+          <Field label="Imagen (producto real / estilo / color)">
+            <input ref={fileInputRef} type="file" accept="image/*"
+              onChange={e => setFile(e.target.files[0] || null)} style={inputStyle} />
+          </Field>
+          <Field label="¿Para qué oferta aplica?">
+            <select value={offerMatch} onChange={e => setOfferMatch(e.target.value)} style={selectStyle}>
+              {REF_OFFER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </Field>
+          <Field label="Propósito">
+            <select value={purpose} onChange={e => setPurpose(e.target.value)} style={selectStyle}>
+              <option value="product">Producto — el pickle/oliva real</option>
+              <option value="style">Estilo visual</option>
+              <option value="color">Paleta de color</option>
+            </select>
+          </Field>
+          <Field label="Notas (opcional)">
+            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows="2" style={inputStyle} />
+          </Field>
+          <Button onClick={null} fullWidth loading={uploading} icon={Plus}>
+            {uploading ? 'Subiendo...' : 'Subir referencia'}
+          </Button>
+        </form>
+        <p style={{ fontSize: '0.72rem', color: COLORS.textDim, marginTop: 14, lineHeight: 1.55 }}>
+          gpt-image-2 usa estas imágenes como ancla visual al generar. Subí fotos
+          del producto real de Jersey Pickles para que los creativos lo muestren
+          fiel — no uno inventado.
+        </p>
+      </GlassCard>
+
+      {/* Grid */}
+      <div>
+        {loading ? (
+          <SkeletonGrid count={4} />
+        ) : refs.length === 0 ? (
+          <EmptyState icon={ImageIcon} title="Sin referencias"
+            message="Subí fotos del producto real para que gpt-image-2 genere creativos fieles a tu marca." />
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 14 }}>
+            {refs.map(ref => (
+              <GlassCard key={ref._id} padding={0}
+                style={{ overflow: 'hidden', opacity: ref.active ? 1 : 0.45 }}>
+                <img
+                  src={`${api.defaults.baseURL}/api/hermes/references/${ref._id}/image?token=${token}`}
+                  alt={ref.filename}
+                  style={{ width: '100%', display: 'block', aspectRatio: '1', objectFit: 'cover' }}
+                />
+                <div style={{ padding: 10 }}>
+                  <div style={{ fontSize: '0.68rem', color: COLORS.textMuted, marginBottom: 8, lineHeight: 1.4 }}>
+                    <strong style={{ color: COLORS.text }}>{REF_PURPOSE_LABEL[ref.purpose] || ref.purpose}</strong>
+                    {' · '}{(ref.offer_match || []).join(', ')}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <Button size="sm" variant={ref.active ? 'success' : 'secondary'}
+                      onClick={() => toggleActive(ref)} fullWidth>
+                      {ref.active ? 'Activa' : 'Inactiva'}
+                    </Button>
+                    <Button size="sm" variant="danger" icon={Trash2} onClick={() => remove(ref)} />
+                  </div>
+                </div>
+              </GlassCard>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const inputStyle = {
   background: COLORS.surface,
   border: `1px solid ${COLORS.border}`,
@@ -1009,6 +1160,7 @@ export default function HermesPanel() {
 
   const tabs = [
     { id: 'proposals', label: 'Proposals', icon: FileText, badge: pendingCount > 0 ? pendingCount : null },
+    { id: 'references', label: 'Referencias', icon: ImageIcon, badge: null },
     { id: 'performance', label: 'Performance', icon: BarChart3, badge: liveCount > 0 ? liveCount : null },
     { id: 'visits', label: 'Store Visits', icon: DoorOpen, badge: visitsCount > 0 ? visitsCount : null }
   ];
@@ -1138,6 +1290,7 @@ export default function HermesPanel() {
           transition={{ duration: 0.2 }}
         >
           {tab === 'proposals' && <ProposalsTab onToast={showToast} />}
+          {tab === 'references' && <ReferencesTab onToast={showToast} />}
           {tab === 'performance' && <PerformanceTab onToast={showToast} />}
           {tab === 'visits' && <VisitsTab onToast={showToast} />}
         </motion.div>

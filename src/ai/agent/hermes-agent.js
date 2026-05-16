@@ -110,7 +110,36 @@ async function generateProposal(cycleId) {
 
   // 5. Build image_prompt deterministic desde visual_concept (no Claude — para que
   //    cada concept produzca shots consistentes con su DNA)
-  const imagePrompt = visualConcepts.buildImagePrompt(visualConcept, variant);
+  let imagePrompt = visualConcepts.buildImagePrompt(visualConcept, variant);
+
+  // 5b. Cargar imágenes de referencia activas que matcheen el offer del ciclo.
+  //     Si las hay, gpt-image-2 las usa como ancla visual (images.edit) → el
+  //     creativo muestra el producto REAL de Jersey Pickles, no uno inventado.
+  let referenceImages = [];
+  try {
+    const HermesReference = require('../../db/models/HermesReference');
+    const refs = await HermesReference.find({
+      active: true,
+      offer_match: { $in: [offer.type, 'any'] }
+    }).sort({ uploaded_at: -1 }).limit(4).lean();
+
+    referenceImages = refs.map(r => ({
+      buffer: Buffer.from(r.image_base64, 'base64'),
+      filename: r.filename || 'ref.png',
+      mime_type: r.mime_type || 'image/png'
+    }));
+
+    if (referenceImages.length > 0) {
+      logger.info(`[HERMES] ${referenceImages.length} referencia(s) activas para ${offer.type}`);
+      // Prefijo: instruye a gpt-image-2 a anclar a las referencias manteniendo
+      // el producto real, mientras compone el shot del visual concept.
+      imagePrompt = `Using the provided reference image(s) as the visual anchor for the real Jersey Pickles product — match its exact look, color, texture and packaging-free presentation — generate a NEW photograph:
+
+${imagePrompt}`;
+    }
+  } catch (err) {
+    logger.warn(`[HERMES] No se pudieron cargar referencias: ${err.message} — sigue sin referencias`);
+  }
 
   // 6. Claude genera SOLO el copy (headline + primary_text + tagline)
   let copy;
@@ -121,12 +150,14 @@ async function generateProposal(cycleId) {
     return null;
   }
 
-  // 7. gpt-image-2 genera imagen LIMPIA (sin texto rendered)
+  // 7. gpt-image-2 genera imagen LIMPIA (sin texto rendered). Con referencias
+  //    activas usa images.edit; sin ellas, images.generate.
   let imageResult;
   try {
     imageResult = await generateImage(imagePrompt, {
       size: '1024x1536',
-      quality: 'medium'
+      quality: 'medium',
+      referenceImages
     });
   } catch (err) {
     logger.error(`[HERMES] Image generation failed: ${err.message}`);
@@ -175,6 +206,7 @@ async function generateProposal(cycleId) {
       address_text: addressInfo.short,
       overlay_style: 'gpt-image-clean-plus-svg-overlay',
       generated_image_prompt: imagePrompt,
+      used_references: imageResult.used_references || 0,
       variant_id: variant.id,
       visual_concept_id: visualConcept.id,
       typography_id: typography.id,

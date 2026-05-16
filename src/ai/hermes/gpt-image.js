@@ -20,6 +20,7 @@
  */
 
 const OpenAI = require('openai');
+const { toFile } = require('openai');
 const config = require('../../../config');
 const logger = require('../../utils/logger');
 
@@ -40,31 +41,59 @@ const DEFAULT_QUALITY = 'medium';
 /**
  * Genera una imagen con gpt-image-2.
  *
- * @param {string} prompt - Prompt visual detallado en inglés (gpt-image-2 entiende mejor inglés)
+ * Si se pasan `options.referenceImages`, usa images.edit (multi-image input):
+ * gpt-image-2 ancla la generación a esas referencias visuales. Esto mejora
+ * mucho la fidelidad — el creativo muestra el producto REAL de Jersey Pickles
+ * en vez de uno inventado. Sin referencias, usa images.generate normal.
+ *
+ * @param {string} prompt - Prompt visual detallado en inglés
  * @param {Object} options
  * @param {string} [options.size] - '1024x1024' | '1024x1536' | '1536x1024'
  * @param {string} [options.quality] - 'low' | 'medium' | 'high'
- * @param {AbortSignal} [options.signal] - para cancelar
- * @returns {Promise<{base64: string, model: string, size: string, elapsed_s: number}>}
+ * @param {Array<{buffer:Buffer, filename?:string, mime_type?:string}>} [options.referenceImages]
+ *        - imágenes de referencia para images.edit (máx ~4 recomendado)
+ * @returns {Promise<{base64, model, size, elapsed_s, used_references}>}
  */
 async function generateImage(prompt, options = {}) {
   const size = options.size || DEFAULT_SIZE;
   const quality = options.quality || DEFAULT_QUALITY;
+  const refs = (options.referenceImages || []).slice(0, 4);  // cap 4 refs
   const maxRetries = 3;
 
   const startTime = Date.now();
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      logger.info(`[GPT-IMAGE] Generating ${size} ${quality} quality (attempt ${attempt}/${maxRetries})...`);
+      const mode = refs.length > 0 ? `edit (${refs.length} refs)` : 'generate';
+      logger.info(`[GPT-IMAGE] ${mode} ${size} ${quality} quality (attempt ${attempt}/${maxRetries})...`);
 
-      const result = await openai.images.generate({
-        model: MODEL,
-        prompt,
-        size,
-        quality,
-        n: 1
-      });
+      let result;
+      if (refs.length > 0) {
+        // images.edit — gpt-image-2 ancla a las referencias visuales
+        const imageFiles = await Promise.all(
+          refs.map((r, i) => toFile(
+            r.buffer,
+            r.filename || `ref${i}.png`,
+            { type: r.mime_type || 'image/png' }
+          ))
+        );
+        result = await openai.images.edit({
+          model: MODEL,
+          image: imageFiles,
+          prompt,
+          size,
+          quality,
+          n: 1
+        });
+      } else {
+        result = await openai.images.generate({
+          model: MODEL,
+          prompt,
+          size,
+          quality,
+          n: 1
+        });
+      }
 
       const b64 = result?.data?.[0]?.b64_json;
       if (!b64) {
@@ -72,14 +101,15 @@ async function generateImage(prompt, options = {}) {
       }
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      logger.info(`[GPT-IMAGE] Generated ${size} in ${elapsed}s (attempt ${attempt})`);
+      logger.info(`[GPT-IMAGE] Generated ${size} in ${elapsed}s (attempt ${attempt}, ${refs.length} refs)`);
 
       return {
         base64: b64,
         model: MODEL,
         size,
         quality,
-        elapsed_s: parseFloat(elapsed)
+        elapsed_s: parseFloat(elapsed),
+        used_references: refs.length
       };
     } catch (err) {
       const status = err.status || err.response?.status;
