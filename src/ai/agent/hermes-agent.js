@@ -28,7 +28,7 @@ const HermesProposal = require('../../db/models/HermesProposal');
 const offerRotator = require('../hermes/offer-rotator');
 const visualConcepts = require('../hermes/visual-concepts');
 const { generateCopy } = require('../hermes/copy-generator');
-const { generateImage } = require('../hermes/gpt-image');
+const { generateImage } = require('../creative/gpt-image');
 const { composeAd } = require('../hermes/overlay-composer');
 
 /**

@@ -19,7 +19,7 @@ const logger = require('../../utils/logger');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { generateImageWithGemini } = require('./gemini-image');
+const { generateCreativeImage } = require('./image-engine');
 
 const GENERATED_DIR = path.join(config.system.uploadsDir, 'generated');
 
@@ -63,7 +63,7 @@ async function generateImage(prompt, format, productImagePath, maxRetries = 3) {
   const aspectRatio = getAspectRatio(format);
   const startTime = Date.now();
 
-  const result = await generateImageWithGemini(prompt, {
+  const result = await generateCreativeImage(prompt, {
     productImagePath,
     aspectRatio,
     imageSize: '2K',
@@ -82,7 +82,7 @@ async function generateImage(prompt, format, productImagePath, maxRetries = 3) {
   fs.writeFileSync(filePath, buffer);
 
   return {
-    engine: 'gemini',
+    engine: result.engine || 'gemini',
     model: result.model,
     filename,
     file_path: filePath,

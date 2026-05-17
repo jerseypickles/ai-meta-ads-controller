@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const config = require('../../../config');
 const logger = require('../../utils/logger');
-const { generateImageWithGemini } = require('../creative/gemini-image');
+const { generateCreativeImage } = require('../creative/image-engine');
 const BrainMemory = require('../../db/models/BrainMemory');
 const BrainInsight = require('../../db/models/BrainInsight');
 const ProductBank = require('../../db/models/ProductBank');
@@ -128,13 +128,12 @@ function buildImagePrompt(productName, scene, refTypes, style, isCombo = false, 
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// GEMINI IMAGE GENERATION (wrapper del helper compartido)
+// IMAGE GENERATION (dispatcher motor — Gemini o gpt-image-2)
 // ═══════════════════════════════════════════════════════════════════════════════
-// Refactor 2026-04-24: la lógica inline se mudó a src/ai/creative/gemini-image.js
-// para compartirla con el UI del dashboard (image-generator.js). Retorna base64
-// directo para mantener el contrato histórico con los callers del cron.
+// El motor activo lo decide image-engine.js según APOLLO_IMAGE_ENGINE.
+// Retorna base64 directo para mantener el contrato histórico con los callers.
 async function generateImage(prompt, referenceImages) {
-  const result = await generateImageWithGemini(prompt, {
+  const result = await generateCreativeImage(prompt, {
     referenceImages,
     aspectRatio: '9:16',
     imageSize: '2K'

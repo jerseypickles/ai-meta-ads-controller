@@ -106,6 +106,11 @@ module.exports = {
   },
 
   imageGen: {
+    // Motor de generación de imágenes de Apollo. 'gemini' | 'gpt-image-2'.
+    // Default 'gemini' (histórico). Setear APOLLO_IMAGE_ENGINE=gpt-image-2 en
+    // Render para que Apollo genere con OpenAI gpt-image-2 (usa OPENAI_API_KEY,
+    // que ya está configurada — la misma que usa Hermes).
+    apolloEngine: process.env.APOLLO_IMAGE_ENGINE || 'gemini',
     openai: {
       apiKey: process.env.OPENAI_API_KEY,
       model: 'gpt-image-1.5'
