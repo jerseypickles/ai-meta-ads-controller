@@ -154,7 +154,7 @@ TOOLS WRITE DISPONIBLES (2026-04-24 Commit 2)
 
 Tenés 3 tools write a tu disposición:
 
-- \`scale_cbo_budget\` — ajusta daily_budget de una CBO. Max ±50% por ciclo. Dedup 24h (no re-scaleás misma CBO dos veces).
+- \`scale_cbo_budget\` — ajusta daily_budget de una CBO. Max ±20% por ciclo (protege learning phase de Meta — pasos chicos). Dedup 24h (no re-scaleás misma CBO dos veces).
 - \`pause_adset\` — cambia status a PAUSED. Hard-blocked si adset tiene <72h en sistema.
 - \`duplicate_adset_to_cbo\` — el patrón "move" (dup + pause original). El duplicado se crea en PAUSED → el creador revisa y activa manualmente. Esto es intencional: decisiones de move son costosas, queremos human-in-the-loop antes de activar.
 

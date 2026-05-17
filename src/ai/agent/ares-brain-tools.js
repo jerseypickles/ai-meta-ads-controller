@@ -32,9 +32,10 @@ const { runPortfolioAnalysis, _helpers: portfolioHelpers } = require('./ares-por
 const { CooldownManager } = require('../../safety/cooldown-manager');
 const cooldowns = new CooldownManager();
 
-// Cap absoluto por cambio de budget — aún si el LLM pide más, clamp aquí.
-// Protección contra fuga de contexto o alucinación del modelo.
-const BRAIN_BUDGET_CHANGE_MAX_PCT = 0.50;
+// Cap absoluto por cambio de budget — si el LLM pide más, se rechaza.
+// Bajado de 0.50 → 0.20 el 17-may-2026: un scale +42% empujaba CBOs a
+// learning phase. Máx ±20% por ciclo protege el aprendizaje de Meta.
+const BRAIN_BUDGET_CHANGE_MAX_PCT = 0.20;
 const BRAIN_BUDGET_FLOOR = 30;  // no bajar CBO debajo de $30/d (coherente con portfolio floor $50, pero damos margen a tests)
 
 // Ola 3 — creación autónoma de CBOs
@@ -180,12 +181,12 @@ const TOOL_DEFINITIONS = [
   // ─── WRITE TOOLS (Commit 2, 2026-04-24) ────────────────────────────────
   {
     name: 'scale_cbo_budget',
-    description: 'Ajusta daily_budget de una CBO. Usá esto cuando hayas decidido scale_up/scale_down basado en tu análisis. Pasa por: cooldown 36h, guard-rail cap 50%, capacity, directive-guard. Si alguno bloquea, te lo digo y no se ejecuta — no es error, es diseño. Para scale_up: CBO healthy con evidencia ROAS sostenido. Para scale_down: protegé capital en CBOs underperforming. Reasoning obligatorio — queda auditable.',
+    description: 'Ajusta daily_budget de una CBO. Usá esto cuando hayas decidido scale_up/scale_down basado en tu análisis. Pasa por: cooldown 36h, guard-rail cap ±20%, capacity, directive-guard. Si alguno bloquea, te lo digo y no se ejecuta — no es error, es diseño. Para scale_up: CBO healthy con evidencia ROAS sostenido. Para scale_down: protegé capital en CBOs underperforming. Reasoning obligatorio — queda auditable.',
     input_schema: {
       type: 'object',
       properties: {
         campaign_id: { type: 'string', description: 'ID de la CBO a ajustar' },
-        new_daily_budget: { type: 'number', description: 'Nuevo budget en USD. Debe ser realista — si el cambio excede ±50% del actual, te lo rechazo.' },
+        new_daily_budget: { type: 'number', description: 'Nuevo budget en USD. Debe ser realista — si el cambio excede ±20% del actual, te lo rechazo (protege learning phase de Meta).' },
         reasoning: { type: 'string', description: '2-3 oraciones con evidencia numérica. Ej: "ROAS 7d 3.2x sostenido con top-2 concentrando 88% spend. Scale +15% para que Meta explote cluster."' },
         shadow_cash_consideration: {
           type: 'object',
