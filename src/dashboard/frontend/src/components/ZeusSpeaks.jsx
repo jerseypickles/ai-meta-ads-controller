@@ -124,70 +124,13 @@ export default function ZeusSpeaks() {
   }, []);
 
   async function startGreeting() {
-    try {
-      const check = await api.post('/api/zeus/greeting/check');
-      const checkMode = check.data?.mode || 'greeting_full';
-
-      if (checkMode === 'none') {
-        const prevConv = localStorage.getItem(LS_CONV_KEY);
-        if (prevConv) setConversationId(prevConv);
-        setMode('collapsed');
-        return;
-      }
-
-      setMode('greeting');
-      setStreaming(true);
-      setStreamingText('');
-      setToolActivity([]);
-
-      const prevConv = localStorage.getItem(LS_CONV_KEY);
-      const greetingPath = prevConv
-        ? `/api/zeus/greeting/stream?conversation_id=${encodeURIComponent(prevConv)}`
-        : '/api/zeus/greeting/stream';
-
-      const es = streamSSE(greetingPath, {
-        start: (data) => {
-          if (!data.conversation_id) return;
-          const currentLS = localStorage.getItem(LS_CONV_KEY);
-          // Si el server devuelve una conv_id distinta a la que pasamos, avisamos
-          // en consola — antes esto sobreescribía silenciosamente y perdíamos historial.
-          if (currentLS && currentLS !== data.conversation_id) {
-            console.warn(`[ZEUS] greeting devolvió conv distinta: ${currentLS} → ${data.conversation_id}. Conservo la del cliente.`);
-            setConversationId(currentLS);
-            return;
-          }
-          setConversationId(data.conversation_id);
-          localStorage.setItem(LS_CONV_KEY, data.conversation_id);
-        },
-        thinking: () => {
-          // Ya se muestra el orb pulsando; no cambiamos mode
-        },
-        text_delta: (data) => {
-          setStreamingText(prev => prev + (data.text || ''));
-        },
-        tool_use_start: (data) => {
-          setToolActivity(prev => [...prev, { tool: data.tool, status: 'running', at: Date.now() }]);
-        },
-        tool_use_result: (data) => {
-          setToolActivity(prev => prev.map(t =>
-            t.tool === data.tool && t.status === 'running' ? { ...t, status: 'done', summary: data.summary } : t
-          ));
-        },
-        followups: () => { /* saludo típicamente no usa followups */ },
-        error: () => {
-          setStreaming(false);
-          setMode('error');
-        },
-        end: () => {
-          setStreaming(false);
-          es.close();
-        }
-      });
-      esRef.current = es;
-    } catch (err) {
-      console.error('Zeus greeting error:', err);
-      setMode('error');
-    }
+    // Greeting de bienvenida deshabilitado (17-may-2026): el saludo generado
+    // por Claude en cada apertura del drawer gastaba tokens sin aportar valor.
+    // El drawer ahora abre directo en estado colapsado, conservando la
+    // conversación previa si existe. El chat sigue 100% funcional on-demand.
+    const prevConv = localStorage.getItem(LS_CONV_KEY);
+    if (prevConv) setConversationId(prevConv);
+    setMode('collapsed');
   }
 
   const hasConv = !!conversationId;
