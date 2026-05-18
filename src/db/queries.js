@@ -7,10 +7,38 @@ const StrategicDirective = require('./models/StrategicDirective');
 
 // ═══ METRIC SNAPSHOTS ═══
 
-async function getLatestSnapshots(entityType = null) {
+/**
+ * Devuelve el snapshot más reciente de cada entidad — solo entidades VIVAS.
+ *
+ * Filtro de frescura (17-may-2026): una entidad borrada/archivada en Meta
+ * deja de ser reportada por la API → el data collector deja de escribirle
+ * snapshots → su último snapshot queda con status ACTIVE/PAUSED de cuando
+ * existía. El filtro `$nin: ['DELETED','ARCHIVED']` NO la captura (nadie
+ * escribe un snapshot DELETED). Resultado: entidades zombie aparecían como
+ * vivas y contaminaban todos los queries.
+ *
+ * El fix: descartar entidades cuyo último snapshot sea más viejo que
+ * `freshnessHours` respecto al CICLO DE COLLECTION MÁS RECIENTE (no a "ahora").
+ * Relativo a propósito — si el collector estuvo caído, el punto de referencia
+ * baja para todos por igual y el sistema NO se queda ciego; solo descarta
+ * zombies genuinos. Los adsets PAUSED reales siguen visibles (Meta los
+ * reporta → tienen snapshots frescos).
+ *
+ * @param {string|null} entityType - 'adset' | 'ad' | 'campaign' | null (todos)
+ * @param {object} [options]
+ * @param {number} [options.freshnessHours=3] - ventana de frescura. 0 = sin filtro.
+ */
+async function getLatestSnapshots(entityType = null, options = {}) {
   const match = entityType ? { entity_type: entityType } : {};
+  const freshnessHours = options.freshnessHours != null ? options.freshnessHours : 3;
 
-  return MetricSnapshot.aggregate([
+  // Snapshot más reciente del scope = el último ciclo de collection
+  const newest = await MetricSnapshot.findOne(match)
+    .sort({ snapshot_at: -1 })
+    .select('snapshot_at')
+    .lean();
+
+  const pipeline = [
     { $match: match },
     { $sort: { entity_id: 1, snapshot_at: -1 } },
     {
@@ -20,9 +48,18 @@ async function getLatestSnapshots(entityType = null) {
       }
     },
     { $replaceRoot: { newRoot: '$doc' } },
-    { $match: { status: { $nin: ['DELETED', 'ARCHIVED'] } } },
-    { $sort: { entity_type: 1, entity_name: 1 } }
-  ]);
+    { $match: { status: { $nin: ['DELETED', 'ARCHIVED'] } } }
+  ];
+
+  // Filtro de frescura relativo al ciclo más reciente — descarta zombies
+  if (newest?.snapshot_at && freshnessHours > 0) {
+    const cutoff = new Date(new Date(newest.snapshot_at).getTime() - freshnessHours * 3600000);
+    pipeline.push({ $match: { snapshot_at: { $gte: cutoff } } });
+  }
+
+  pipeline.push({ $sort: { entity_type: 1, entity_name: 1 } });
+
+  return MetricSnapshot.aggregate(pipeline);
 }
 
 async function getSnapshotHistory(entityId, days = 30) {
