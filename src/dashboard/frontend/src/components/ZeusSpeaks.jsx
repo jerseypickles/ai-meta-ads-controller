@@ -166,44 +166,10 @@ export default function ZeusSpeaks() {
           />
         )}
 
-        {mode === 'collapsed' && (
-          <motion.div
-            key="collapsed"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="zeus-speaks-banner"
-          >
-            <div className="zeus-orb-mini" />
-            <span className="zeus-banner-text">
-              Zeus está aquí · {hasConv ? 'continuar conversación' : 'listo para hablar'}
-            </span>
-            <button
-              className="zeus-banner-action zeus-banner-primary"
-              onClick={() => setDrawerOpen(true)}
-              title="Abrir chat con Zeus"
-            >
-              💬 Abrir chat
-            </button>
-            <button
-              className="zeus-banner-action zeus-banner-subtle"
-              onClick={async () => {
-                try {
-                  await api.post('/api/zeus/greeting/seen', { reset: true }).catch(() => {});
-                  localStorage.removeItem(LS_CONV_KEY);
-                  localStorage.removeItem(LS_MESSAGES_CACHE_KEY);
-                  setConversationId(null);
-                  setStreamingText('');
-                  setMode('loading');
-                  setTimeout(startGreeting, 100);
-                } catch (err) { console.error(err); }
-              }}
-              title="Que me salude de nuevo"
-            >
-              🔄
-            </button>
-          </motion.div>
-        )}
+        {/* Banner 'collapsed' eliminado (18-may-2026) — gastaba espacio
+            horizontal y era redundante con el FAB flotante, que ya abre el
+            chat e indica unreads con su badge. En modo collapsed no se
+            renderiza nada salvo el FAB. */}
 
         {mode === 'error' && (
           <motion.div
@@ -223,29 +189,8 @@ export default function ZeusSpeaks() {
         )}
       </AnimatePresence>
 
-      {/* Notificación Zeus — card discreta top-right cuando hay proactive sin leer */}
-      <AnimatePresence>
-        {unreadPreview && unreadCount > 0 && !drawerOpen && (
-          <motion.button
-            initial={{ opacity: 0, x: 20, scale: 0.95 }}
-            animate={{ opacity: 1, x: 0, scale: 1 }}
-            exit={{ opacity: 0, x: 20, scale: 0.95 }}
-            transition={{ type: 'spring', damping: 24, stiffness: 300 }}
-            onClick={() => setDrawerOpen(true)}
-            className="zeus-notif-card"
-          >
-            <div className="zeus-notif-top">
-              <span className="zeus-notif-avatar">⚡</span>
-              <span className="zeus-notif-label">Zeus</span>
-              <span className="zeus-notif-time">{formatTimeAgo(unreadPreview.created_at)}</span>
-              {unreadCount > 1 && (
-                <span className="zeus-notif-count">+{unreadCount - 1}</span>
-              )}
-            </div>
-            <div className="zeus-notif-preview">{unreadPreview.preview}</div>
-          </motion.button>
-        )}
-      </AnimatePresence>
+      {/* Notif card eliminada (18-may-2026) — aburría. El unread se sigue
+          señalando con el badge del FAB, sin la card grande top-right. */}
 
       {/* Floating action button */}
       {!drawerOpen && mode !== 'loading' && (
