@@ -819,7 +819,10 @@ async function runTestingAgent() {
   const launchResult = launchBlocked ? { launched: 0, results: [], blocked: true } : await launchTests();
   // Normaliza a número — launchTests() retorna number, el path bloqueado retorna objeto
   const launchedCount = typeof launchResult === 'number' ? launchResult : (launchResult?.launched ?? 0);
-  const launchedSuffix = launchBlocked ? ' (blocked por directiva Zeus)' : '';
+  // blockReason ya trae la causa real ('stance: X' | 'platform: X' | 'directive: X').
+  // Antes el suffix decía siempre "directiva Zeus" — engañoso cuando el bloqueo
+  // era el stance o la plataforma.
+  const launchedSuffix = launchBlocked ? ` (launches blocked — ${blockReason})` : '';
 
   // Fase 2: Monitorear tests activos
   const { monitored, graduated, killed, expired } = await monitorTests();
