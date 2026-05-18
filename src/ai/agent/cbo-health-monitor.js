@@ -21,6 +21,46 @@ const logger = require('../../utils/logger');
 
 // Threshold configurable — empezamos en 30% del proporcional, afinar con data real
 const STARVED_THRESHOLD_PCT = 0.3;
+
+// ─── Ciclo de vida del CBO (lifecycle_phase) — umbrales ───────────────────
+// La fase se deriva de la concentración (no de la edad — created_time es
+// poco confiable en MetricSnapshot). La concentración ES el mejor proxy de
+// "en qué etapa está el CBO".
+const PHASE_EXPLORING_MAX = 0.40;   // top-1 < 40% → Meta todavía explorando
+const PHASE_MATURE_MIN = 0.65;      // top-1 > 65% → Meta ya eligió
+const PHASE_MATURE_TOP3 = 0.85;     // o top-3 combinado > 85% (cluster maduro)
+const PHASE_DECLINE_ROAS_DROP = 0.75; // favorito ROAS 3d < 75% del 7d = caída real
+const PHASE_DECLINE_FREQ = 2.5;       // + frequency alta = creative fatigue
+
+/**
+ * Clasifica un CBO en su fase del ciclo de vida según concentración + salud
+ * del favorito. Usado por cbo-health-monitor (para persistir) y por Ares
+ * (portfolio + brain) para gatear qué acciones son válidas.
+ *
+ * @param {object} m
+ * @param {number} m.concentration_index_3d - share del top-1 adset (0-1)
+ * @param {number} m.top3_share_3d - share combinado del top-3 (0-1)
+ * @param {number} m.favorite_roas_3d
+ * @param {number} m.favorite_roas_7d
+ * @param {number} m.favorite_freq
+ * @returns {'exploring'|'concentrating'|'mature'|'declining'}
+ */
+function classifyCBOPhase(m) {
+  const conc = m.concentration_index_3d || 0;
+  const top3 = m.top3_share_3d || 0;
+  const isConcentrated = conc > PHASE_MATURE_MIN || top3 > PHASE_MATURE_TOP3;
+
+  // Declive: el CBO ya concentró PERO su favorito se está fatigando
+  const favoriteFatigued =
+    (m.favorite_roas_7d || 0) > 0 &&
+    (m.favorite_roas_3d || 0) < (m.favorite_roas_7d || 0) * PHASE_DECLINE_ROAS_DROP &&
+    (m.favorite_freq || 0) > PHASE_DECLINE_FREQ;
+
+  if (isConcentrated && favoriteFatigued) return 'declining';
+  if (isConcentrated) return 'mature';
+  if (conc >= PHASE_EXPLORING_MAX) return 'concentrating';
+  return 'exploring';
+}
 // Concentración sostenida
 const CONCENTRATION_THRESHOLD = 0.8;
 // Edad mínima para considerar "true starved" (por debajo siguen en learning natural de Meta)
@@ -185,6 +225,9 @@ async function analyzeCBO(campaignSnapshot) {
     const topSpender = spendBy3d[0];
     const concentration_index_3d = w3.spend > 0 ? topSpender.spend_3d / w3.spend : 0;
     const concentration_index_1d = w1.spend > 0 ? (topSpender.spend_1d / w1.spend) : 0;
+    // Share combinado del top-3 — Meta suele elegir 2-3 ganadores, no solo 1
+    const top3Spend = spendBy3d.slice(0, 3).reduce((s, a) => s + a.spend_3d, 0);
+    const top3_share_3d = w3.spend > 0 ? top3Spend / w3.spend : 0;
 
     // Sustained 3d — usamos los últimos 3 snapshots diarios para chequear que
     // el favorito haya mantenido >80% cada día. Si tenemos <3 días de history,
@@ -226,6 +269,15 @@ async function analyzeCBO(campaignSnapshot) {
     // Favorite declining
     const favorite_declining = topSpender.roas_7d > 0 && topSpender.roas_3d < topSpender.roas_7d;
 
+    // Fase del ciclo de vida — guía qué acciones de Ares son válidas
+    const lifecycle_phase = classifyCBOPhase({
+      concentration_index_3d,
+      top3_share_3d,
+      favorite_roas_3d: topSpender.roas_3d,
+      favorite_roas_7d: topSpender.roas_7d,
+      favorite_freq: topSpender.freq
+    });
+
     const snap = await CBOHealthSnapshot.create({
       campaign_id, campaign_name,
       snapshot_at: new Date(),
@@ -239,6 +291,8 @@ async function analyzeCBO(campaignSnapshot) {
       concentration_index_1d,
       concentration_index_3d,
       concentration_sustained_3d,
+      top3_share_3d,
+      lifecycle_phase,
       favorite_adset_id: topSpender.id,
       favorite_adset_name: topSpender.name,
       favorite_since: since,
@@ -417,5 +471,6 @@ module.exports = {
   isCBO,
   analyzeCBO,
   analyzeAllCBOs,
-  runCBOHealthMonitor
+  runCBOHealthMonitor,
+  classifyCBOPhase
 };

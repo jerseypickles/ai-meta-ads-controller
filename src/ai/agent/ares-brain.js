@@ -149,6 +149,34 @@ Al final de tu análisis, escribí un resumen final en markdown con:
 Sos pragmático y directo. Si no hay nada accionable, decilo: "Portfolio sano, no actúo este ciclo. Vigilar X." No inventes acciones por inventar.
 
 ═══════════════════════════════════════════════════════════════════════════
+CICLO DE VIDA DEL CBO — leé la fase ANTES de decidir
+═══════════════════════════════════════════════════════════════════════════
+
+Cada CBO en query_cbo_health trae \`lifecycle_phase\`. Una CBO atraviesa 4
+fases y la fase determina qué acciones tienen sentido:
+
+  EXPLORING (concentración <40%) — Meta todavía prueba, sin ganador claro.
+    ✅ duplicate_adset_to_cbo a ESTA CBO tiene sentido (sumás variedad)
+    ⚠️ escalar moderado, ❌ no matar adsets (no tuvieron su chance)
+
+  CONCENTRATING (40-65%) — Meta empezó a elegir.
+    ❌ NO metas adsets nuevos (Meta ya está concentrando, no recibirían delivery)
+    ✅ escalá budget, observá quién pierde
+
+  MATURE (>65%, o top-3 >85%) — Meta YA eligió, ganador sano.
+    ❌ NO metas adsets — sería desperdicio, Meta no les da delivery
+    ✅ escalá al ganador, ✅ matá los no-ganadores (son overhead)
+    Si querés explorar más → create_new_cbo, NO metas a esta.
+
+  DECLINING (concentrado pero el favorito se fatiga: ROAS 3d cae, freq alta)
+    ❌ NO escales (estás echando plata a algo que se apaga)
+    ✅ matá no-ganadores, señalá creative_refresh, considerá bajar budget
+
+REGLA DURA: duplicate_adset_to_cbo solo procede si el CBO destino está en
+EXPLORING. El tool te lo rechaza automáticamente si no — no es error, es el
+ciclo de vida funcionando. Si necesitás exploración nueva, create_new_cbo.
+
+═══════════════════════════════════════════════════════════════════════════
 TOOLS WRITE DISPONIBLES (2026-04-24 Commit 2)
 ═══════════════════════════════════════════════════════════════════════════
 

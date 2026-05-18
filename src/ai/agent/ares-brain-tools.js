@@ -88,7 +88,7 @@ function withShadow(baseMetadata, shadow) {
 const TOOL_DEFINITIONS = [
   {
     name: 'query_cbo_health',
-    description: 'Consulta el estado de salud de TODAS las CBOs activas. Retorna por cada CBO: daily_budget, active_adsets_count, ROAS 1d/3d/7d, spend por ventana, concentration (top-1/2/3), favorito y tenure, starved_count, collapse_detected, budget_pulse. Usá esto PRIMERO para ver el estado del portfolio.',
+    description: 'Consulta el estado de salud de TODAS las CBOs activas. Retorna por cada CBO: daily_budget, active_adsets_count, ROAS 1d/3d/7d, spend por ventana, concentration (top-1 y top-3), lifecycle_phase, favorito y tenure, starved_count, collapse_detected, budget_pulse. Usá esto PRIMERO para ver el estado del portfolio. El campo lifecycle_phase es CRÍTICO — determina qué acciones son válidas (ver reglas de fase en el system prompt).',
     input_schema: { type: 'object', properties: {}, required: [] }
   },
   {
@@ -297,6 +297,8 @@ async function handleQueryCBOHealth() {
       spend_7d: Math.round(s.cbo_spend_7d),
       revenue_7d: Math.round(s.cbo_revenue_7d),
       concentration_3d: +s.concentration_index_3d.toFixed(2),
+      top3_share_3d: +(s.top3_share_3d || 0).toFixed(2),
+      lifecycle_phase: s.lifecycle_phase || 'exploring',
       favorite: s.favorite_adset_name,
       favorite_tenure_days: s.favorite_tenure_days,
       favorite_roas_3d: +s.favorite_roas_3d.toFixed(2),
@@ -1073,6 +1075,21 @@ async function handleDuplicateAdsetToCBO({ source_adset_id, target_campaign_id, 
   if (!targetSnap) return { error: `target campaign ${target_campaign_id} no encontrada` };
   if (targetSnap.status !== 'ACTIVE') return { rejected: true, reason: `target campaign en estado ${targetSnap.status}` };
   if (!(targetSnap.daily_budget > 0)) return { rejected: true, reason: 'target no es CBO (sin daily_budget)' };
+
+  // Gate de ciclo de vida: solo meter adsets a CBOs en fase 'exploring'.
+  // Un CBO que ya concentró el budget (concentrating/mature/declining) no le
+  // va a dar delivery a un adset nuevo — Meta ya eligió sus ganadores. Meter
+  // un adset ahí es desperdicio.
+  const CBOHealthSnapshot = require('../../db/models/CBOHealthSnapshot');
+  const targetHealth = await CBOHealthSnapshot.findOne({ campaign_id: target_campaign_id })
+    .sort({ snapshot_at: -1 }).lean();
+  if (targetHealth && targetHealth.lifecycle_phase && targetHealth.lifecycle_phase !== 'exploring') {
+    const conc = Math.round((targetHealth.concentration_index_3d || 0) * 100);
+    return {
+      rejected: true,
+      reason: `CBO destino en fase "${targetHealth.lifecycle_phase}" — ya concentró ${conc}% del budget en "${targetHealth.favorite_adset_name || 'su favorito'}". Meta ya eligió sus ganadores; un adset nuevo acá no recibiría delivery. Duplicá solo a CBOs en fase "exploring" (concentración <40%), o usá create_new_cbo para abrir exploración fresca.`
+    };
+  }
 
   // Gate: duplicate_adset action
   const gate = await portfolioHelpers.validateSafetyGates({

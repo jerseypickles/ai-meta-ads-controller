@@ -48,6 +48,21 @@ const cboHealthSnapshotSchema = new mongoose.Schema({
   concentration_index_3d: { type: Number, default: 0 },
   // Flag compuesto — sostenido >80% durante los 3 días
   concentration_sustained_3d: { type: Boolean, default: false },
+  // Share combinado de los top-3 adsets (Meta suele elegir 2-3 ganadores)
+  top3_share_3d: { type: Number, default: 0 },  // 0-1
+
+  // Fase del ciclo de vida del CBO — derivada de concentración + salud del
+  // favorito. Guía qué acciones de Ares son válidas (ver classifyCBOPhase):
+  //   exploring     — Meta todavía probando, sin ganador. Meter adsets OK.
+  //   concentrating — Meta empezando a elegir. NO meter adsets nuevos.
+  //   mature        — Meta ya eligió, ganador sano. NO meter adsets, escalar.
+  //   declining     — ganador fatigándose. NO escalar, creative refresh.
+  lifecycle_phase: {
+    type: String,
+    enum: ['exploring', 'concentrating', 'mature', 'declining'],
+    default: 'exploring',
+    index: true
+  },
 
   // Favorito (top adset por spend 3d)
   favorite_adset_id: { type: String, default: null },
