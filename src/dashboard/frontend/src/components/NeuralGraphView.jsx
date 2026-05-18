@@ -376,41 +376,29 @@ export default function NeuralGraphView({ onAgentClick }) {
     }
   }, [graphData.nodes.length]);
 
-  // Bloom postprocessing + cámara orbital con auto-rotación sutil
+  // Cámara orbital con auto-rotación sutil (sin bloom postprocessing —
+  // el glow de los nodos lo dan los sprites additive, no un pass global
+  // que lavaba el render entero a blanco)
   useEffect(() => {
     const fg = fgRef.current;
     if (!fg) return;
-    let cancelled = false;
-    const setup = async () => {
-      try {
-        const { UnrealBloomPass } = await import('three/examples/jsm/postprocessing/UnrealBloomPass.js');
-        if (cancelled) return;
-        const composer = fg.postProcessingComposer?.();
-        if (composer && !composer.__bloomAdded) {
-          const bloom = new UnrealBloomPass(new THREE.Vector2(dims.width, dims.height), 1.05, 0.7, 0.08);
-          composer.addPass(bloom);
-          composer.__bloomAdded = true;
-        }
-      } catch (err) {
-        console.warn('[NeuralGraphView] bloom pass skipped:', err);
-      }
+    const id = setTimeout(() => {
       try {
         const ctrl = fg.controls?.();
         if (ctrl) {
           ctrl.autoRotate = true;
-          ctrl.autoRotateSpeed = 0.32;
+          ctrl.autoRotateSpeed = 0.3;
         }
       } catch (_) {}
-    };
-    const id = setTimeout(setup, 500);
-    return () => { cancelled = true; clearTimeout(id); };
-  }, [dims.width, dims.height]);
+    }, 500);
+    return () => clearTimeout(id);
+  }, []);
 
   // Auto-encuadre cuando la simulación converge
   const handleEngineStop = useCallback(() => {
     if (!hasInitialZoom && fgRef.current) {
       try {
-        fgRef.current.zoomToFit(800, 90);
+        fgRef.current.zoomToFit(700, 55);
         setHasInitialZoom(true);
       } catch (_) {}
     }
@@ -432,7 +420,7 @@ export default function NeuralGraphView({ onAgentClick }) {
       mat = new THREE.MeshLambertMaterial({
         color,
         emissive: new THREE.Color(color),
-        emissiveIntensity: node.tier === 0 ? 0.95 : node.tier === 1 ? 0.7 : 0.5
+        emissiveIntensity: node.tier === 0 ? 0.5 : node.tier === 1 ? 0.4 : 0.32
       });
     }
     const sphere = new THREE.Mesh(geo, mat);
@@ -443,12 +431,12 @@ export default function NeuralGraphView({ onAgentClick }) {
       map: glowTexture(),
       color,
       transparent: true,
-      opacity: planned ? 0.22 : (node.tier === 0 ? 0.65 : node.tier === 1 ? 0.5 : 0.35),
+      opacity: planned ? 0.16 : (node.tier === 0 ? 0.5 : node.tier === 1 ? 0.4 : 0.28),
       blending: THREE.AdditiveBlending,
       depthWrite: false
     });
     const glow = new THREE.Sprite(glowMat);
-    const gs = size * (node.tier === 0 ? 6 : node.tier === 1 ? 5 : 4);
+    const gs = size * (node.tier === 0 ? 4.6 : node.tier === 1 ? 4 : 3.2);
     glow.scale.set(gs, gs, 1);
     glow.raycast = () => {};
     group.add(glow);
@@ -574,8 +562,8 @@ function glowTexture() {
   c.width = c.height = 128;
   const ctx = c.getContext('2d');
   const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
-  g.addColorStop(0, 'rgba(255,255,255,1)');
-  g.addColorStop(0.22, 'rgba(255,255,255,0.55)');
+  g.addColorStop(0, 'rgba(255,255,255,0.8)');
+  g.addColorStop(0.18, 'rgba(255,255,255,0.3)');
   g.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, 128, 128);
