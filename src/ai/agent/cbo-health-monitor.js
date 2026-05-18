@@ -61,6 +61,64 @@ function classifyCBOPhase(m) {
   if (conc >= PHASE_EXPLORING_MAX) return 'concentrating';
   return 'exploring';
 }
+
+// ─── Renovación del portfolio ─────────────────────────────────────────────
+// El portfolio necesita SIEMPRE capacidad de exploración: si todos los CBOs
+// maduran, no hay pipeline de winners nuevos para cuando los actuales decaen.
+const TARGET_EXPLORING_CBOS = 2;          // CBOs en 'exploring' a mantener
+const NEW_EXPLORATION_CBO_BUDGET = 300;   // budget de arranque de un CBO nuevo ($/d)
+const PORTFOLIO_BUDGET_CEILING = 3500;    // techo holgado de daily_budget total
+
+/**
+ * Evalúa si el portfolio necesita abrir exploración nueva. Trigger del
+ * "ciclo de renovación": cuando los CBOs maduran sin reemplazo, el pipeline
+ * de descubrimiento se seca. Ares debe crear CBOs de exploración para que
+ * el portfolio se renueve solo.
+ *
+ * @returns {Promise<object>} estado de exploración del portfolio
+ */
+async function assessPortfolioExploration() {
+  const since = new Date(Date.now() - 3 * 3600000);
+  const snaps = await CBOHealthSnapshot.aggregate([
+    { $match: { snapshot_at: { $gte: since } } },
+    { $sort: { campaign_id: 1, snapshot_at: -1 } },
+    { $group: { _id: '$campaign_id', doc: { $first: '$$ROOT' } } },
+    { $replaceRoot: { newRoot: '$doc' } }
+  ]);
+
+  const byPhase = { exploring: 0, concentrating: 0, mature: 0, declining: 0 };
+  let totalBudget = 0;
+  for (const s of snaps) {
+    byPhase[s.lifecycle_phase || 'exploring'] = (byPhase[s.lifecycle_phase || 'exploring'] || 0) + 1;
+    totalBudget += s.daily_budget || 0;
+  }
+
+  const exploringCount = byPhase.exploring;
+  const slotsOpen = Math.max(0, TARGET_EXPLORING_CBOS - exploringCount);
+  const budgetHeadroom = (totalBudget + NEW_EXPLORATION_CBO_BUDGET) <= PORTFOLIO_BUDGET_CEILING;
+  const needsExploration = slotsOpen > 0 && budgetHeadroom;
+
+  let reason;
+  if (slotsOpen === 0) {
+    reason = `Pipeline OK — ${exploringCount} CBO(s) explorando (target ${TARGET_EXPLORING_CBOS}).`;
+  } else if (!budgetHeadroom) {
+    reason = `${slotsOpen} slot(s) de exploración libre(s), pero sin budget headroom (total $${Math.round(totalBudget)}/d vs techo $${PORTFOLIO_BUDGET_CEILING}). Esperar a que suba el techo o que un CBO baje budget.`;
+  } else {
+    reason = `${slotsOpen} slot(s) de exploración libre(s) + budget headroom — crear ${slotsOpen} CBO(s) nuevo(s) de exploración (~$${NEW_EXPLORATION_CBO_BUDGET}/d) sembrado(s) con graduates de Prometheus / winners diversos.`;
+  }
+
+  return {
+    needs_exploration: needsExploration,
+    exploring_count: exploringCount,
+    target_exploring: TARGET_EXPLORING_CBOS,
+    slots_open: slotsOpen,
+    phase_breakdown: byPhase,
+    total_cbo_budget: Math.round(totalBudget),
+    budget_headroom: budgetHeadroom,
+    suggested_new_cbo_budget: NEW_EXPLORATION_CBO_BUDGET,
+    reason
+  };
+}
 // Concentración sostenida
 const CONCENTRATION_THRESHOLD = 0.8;
 // Edad mínima para considerar "true starved" (por debajo siguen en learning natural de Meta)
@@ -472,5 +530,6 @@ module.exports = {
   analyzeCBO,
   analyzeAllCBOs,
   runCBOHealthMonitor,
-  classifyCBOPhase
+  classifyCBOPhase,
+  assessPortfolioExploration
 };

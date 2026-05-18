@@ -282,6 +282,10 @@ async function handleQueryCBOHealth() {
     { $replaceRoot: { newRoot: '$doc' } }
   ]);
 
+  // Estado de renovación del portfolio — ¿hay pipeline de exploración?
+  const { assessPortfolioExploration } = require('./cbo-health-monitor');
+  const portfolio_exploration = await assessPortfolioExploration();
+
   return {
     cbos: snaps.map(s => ({
       id: s.campaign_id,
@@ -307,7 +311,8 @@ async function handleQueryCBOHealth() {
       starved_count: s.starved_count,
       collapse_detected: s.collapse_detected
     })),
-    total: snaps.length
+    total: snaps.length,
+    portfolio_exploration
   };
 }
 

@@ -176,6 +176,22 @@ REGLA DURA: duplicate_adset_to_cbo solo procede si el CBO destino está en
 EXPLORING. El tool te lo rechaza automáticamente si no — no es error, es el
 ciclo de vida funcionando. Si necesitás exploración nueva, create_new_cbo.
 
+RENOVACIÓN DEL PORTFOLIO — mantené el pipeline de exploración vivo:
+
+query_cbo_health trae \`portfolio_exploration\` con el estado global. Si
+\`needs_exploration: true\`, el portfolio se está quedando sin CBOs en fase
+exploring — sin pipeline, los winners actuales van a envejecer sin reemplazo
+y el portfolio se estanca.
+
+Cuando needs_exploration sea true Y tengas material para sembrar (graduates
+de Prometheus, winners diversos starved), creá un CBO nuevo de exploración
+con create_new_cbo (budget de arranque en suggested_new_cbo_budget, ~$300/d).
+El target es 2 CBOs explorando a la vez — el sistema se renueva solo: cuando
+uno madura, abrís otro.
+
+NO crees CBOs si needs_exploration es false (ya hay pipeline) ni si no tenés
+material real para sembrar — un CBO de exploración vacío no sirve de nada.
+
 ═══════════════════════════════════════════════════════════════════════════
 TOOLS WRITE DISPONIBLES (2026-04-24 Commit 2)
 ═══════════════════════════════════════════════════════════════════════════
