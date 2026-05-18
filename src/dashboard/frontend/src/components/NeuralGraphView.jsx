@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import ForceGraph2D from 'react-force-graph-2d';
+import ForceGraph3D from 'react-force-graph-3d';
+import * as THREE from 'three';
 import api from '../api';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// NEURAL GRAPH VIEW — Obsidian vault style
-// Canvas rendering via D3 force simulation. Nodes con glow radial,
-// particles flowing por edges activos, hover highlight de neighbors.
+// NEURAL GRAPH VIEW — 3D deep-space style
+// Three.js force simulation. Nodos = esferas con glow emisivo + bloom,
+// links 3D con partículas de flujo, cámara orbital con auto-rotación sutil.
 // ═══════════════════════════════════════════════════════════════════════════
 
 const AGENT_COLORS = {
@@ -44,8 +45,6 @@ export default function NeuralGraphView({ onAgentClick }) {
   const [demeter, setDemeter] = useState(null);
   const [hermes, setHermes] = useState(null);
   const [hoverNode, setHoverNode] = useState(null);
-  const [hoverLinks, setHoverLinks] = useState(new Set());
-  const [hoverNeighbors, setHoverNeighbors] = useState(new Set());
   const [dims, setDims] = useState({ width: 800, height: 600 });
   const [hasInitialZoom, setHasInitialZoom] = useState(false);
 
@@ -126,7 +125,6 @@ export default function NeuralGraphView({ onAgentClick }) {
     const apolloPool = s.apollo?.ready_pool || 0;
     const prometheusTests = s.prometheus?.active_tests || 0;
     const aresOps = s.agents?.ares_agent?.actions || 0;
-    const activeCBOs = s.ares?.active_cbos || s.account?.active_cbos || 3;
 
     const nodes = [
       // Tier 0 — Zeus core
@@ -343,280 +341,138 @@ export default function NeuralGraphView({ onAgentClick }) {
       links.push({ source: f.parent, target: f.id, kind: 'satellite', planned: true });
     });
 
-    // Index neighbors para highlight
+    // Index neighbors para tooltip
     const neighborIndex = {};
-    const linksIndex = {};
     links.forEach(l => {
-      const s = typeof l.source === 'object' ? l.source.id : l.source;
+      const s2 = typeof l.source === 'object' ? l.source.id : l.source;
       const t = typeof l.target === 'object' ? l.target.id : l.target;
-      neighborIndex[s] = neighborIndex[s] || new Set();
+      neighborIndex[s2] = neighborIndex[s2] || new Set();
       neighborIndex[t] = neighborIndex[t] || new Set();
-      neighborIndex[s].add(t);
-      neighborIndex[t].add(s);
-      linksIndex[s] = linksIndex[s] || new Set();
-      linksIndex[t] = linksIndex[t] || new Set();
-      linksIndex[s].add(l);
-      linksIndex[t].add(l);
+      neighborIndex[s2].add(t);
+      neighborIndex[t].add(s2);
     });
-    // Arrays no Sets — Sets pueden romper cuando react-force-graph
-    // hace operaciones internas sobre los nodes (copy, serialize)
     nodes.forEach(n => {
       n.neighbors = Array.from(neighborIndex[n.id] || []);
-      n.linkset = Array.from(linksIndex[n.id] || []);
     });
 
     return { nodes, links };
-  }, [status, demeter]);
+  }, [status, demeter, hermes]);
 
-  // Configurar physics forces vía ref (API de react-force-graph)
-  // NO es una prop del componente — debe llamarse post-mount
+  // Configurar physics forces vía ref (API de react-force-graph) — post-mount
   useEffect(() => {
     if (!fgRef.current || graphData.nodes.length === 0) return;
     try {
       const fg = fgRef.current;
       fg.d3Force('charge')?.strength((n) =>
-        n.tier === 0 ? -900 : n.tier === 1 ? -600 : -120
+        n.tier === 0 ? -1400 : n.tier === 1 ? -900 : -180
       );
       fg.d3Force('link')?.distance((l) => {
-        if (l.kind === 'primary') return 180;
-        if (l.kind === 'workflow') return 200;
-        return 45;
+        if (l.kind === 'primary') return 190;
+        if (l.kind === 'workflow') return 210;
+        return 50;
       });
     } catch (err) {
       console.warn('[NeuralGraphView] d3Force config failed:', err);
     }
   }, [graphData.nodes.length]);
 
-  // Auto-zoom via onEngineStop — corre cuando la simulación converge
+  // Bloom postprocessing + cámara orbital con auto-rotación sutil
+  useEffect(() => {
+    const fg = fgRef.current;
+    if (!fg) return;
+    let cancelled = false;
+    const setup = async () => {
+      try {
+        const { UnrealBloomPass } = await import('three/examples/jsm/postprocessing/UnrealBloomPass.js');
+        if (cancelled) return;
+        const composer = fg.postProcessingComposer?.();
+        if (composer && !composer.__bloomAdded) {
+          const bloom = new UnrealBloomPass(new THREE.Vector2(dims.width, dims.height), 1.05, 0.7, 0.08);
+          composer.addPass(bloom);
+          composer.__bloomAdded = true;
+        }
+      } catch (err) {
+        console.warn('[NeuralGraphView] bloom pass skipped:', err);
+      }
+      try {
+        const ctrl = fg.controls?.();
+        if (ctrl) {
+          ctrl.autoRotate = true;
+          ctrl.autoRotateSpeed = 0.32;
+        }
+      } catch (_) {}
+    };
+    const id = setTimeout(setup, 500);
+    return () => { cancelled = true; clearTimeout(id); };
+  }, [dims.width, dims.height]);
+
+  // Auto-encuadre cuando la simulación converge
   const handleEngineStop = useCallback(() => {
     if (!hasInitialZoom && fgRef.current) {
       try {
-        fgRef.current.zoomToFit(400, 120);  // más padding (120 vs 60)
+        fgRef.current.zoomToFit(800, 90);
         setHasInitialZoom(true);
       } catch (_) {}
     }
   }, [hasInitialZoom]);
 
-  // ─── Custom node rendering con glow radial ──────────────────────────────
-  const drawNode = useCallback((node, ctx, globalScale) => {
-    // Guard: al inicio antes que la simulación asigne posiciones,
-    // x/y pueden ser undefined o NaN
-    if (!node || typeof node.x !== 'number' || typeof node.y !== 'number' ||
-        !isFinite(node.x) || !isFinite(node.y)) return;
+  // ─── 3D node object — esfera emisiva + glow + label sprite ──────────────
+  const buildNodeObject = useCallback((node) => {
+    const group = new THREE.Group();
+    const color = node.color || '#94a3b8';
+    const size = node.size || 6;
+    const planned = node.planned;
 
-    const { x, y, size = 8, color = '#94a3b8', icon, label, sub, status, tier = 2, planned } = node;
-    const isHover = hoverNode === node || hoverNeighbors.has(node.id);
-    const isFaded = hoverNode && !isHover;
-    // Planned nodes SIEMPRE a 45% opacidad (más atenuados aún si están faded)
-    const opacity = planned ? (isFaded ? 0.18 : 0.5) : (isFaded ? 0.25 : 1);
-
-    // Glow radial — para planned es más tenue
-    const glowR = size * 3;
-    const gradient = ctx.createRadialGradient(x, y, 0, x, y, glowR);
-    const baseAlphaRaw = isHover ? 0.55 : (tier === 0 ? 0.45 : (tier === 1 ? 0.35 : 0.18));
-    const baseAlpha = planned ? baseAlphaRaw * 0.35 : baseAlphaRaw;
-    gradient.addColorStop(0, hexToRgba(color, baseAlpha * opacity));
-    gradient.addColorStop(0.5, hexToRgba(color, baseAlpha * 0.4 * opacity));
-    gradient.addColorStop(1, hexToRgba(color, 0));
-    ctx.beginPath();
-    ctx.arc(x, y, glowR, 0, 2 * Math.PI);
-    ctx.fillStyle = gradient;
-    ctx.fill();
-
-    // Core — planned es hueco con dashed outline (estilo wireframe)
+    // Core sphere
+    const geo = new THREE.SphereGeometry(size, planned ? 14 : 28, planned ? 14 : 28);
+    let mat;
     if (planned) {
-      ctx.beginPath();
-      ctx.arc(x, y, size, 0, 2 * Math.PI);
-      ctx.fillStyle = hexToRgba(color, 0.08 * opacity);  // fill tenue
-      ctx.fill();
-      ctx.setLineDash([3, 3]);
-      ctx.strokeStyle = hexToRgba(color, 0.7 * opacity);
-      ctx.lineWidth = 1.2;
-      ctx.stroke();
-      ctx.setLineDash([]);
+      mat = new THREE.MeshBasicMaterial({ color, wireframe: true, transparent: true, opacity: 0.42 });
     } else {
-      // Normal: gradient fill sólido
-      ctx.beginPath();
-      ctx.arc(x, y, size, 0, 2 * Math.PI);
-      const coreGrad = ctx.createRadialGradient(x - size * 0.3, y - size * 0.3, 0, x, y, size);
-      coreGrad.addColorStop(0, hexToRgba(lightenColor(color, 30), opacity));
-      coreGrad.addColorStop(1, hexToRgba(color, opacity));
-      ctx.fillStyle = coreGrad;
-      ctx.fill();
+      mat = new THREE.MeshLambertMaterial({
+        color,
+        emissive: new THREE.Color(color),
+        emissiveIntensity: node.tier === 0 ? 0.95 : node.tier === 1 ? 0.7 : 0.5
+      });
+    }
+    const sphere = new THREE.Mesh(geo, mat);
+    group.add(sphere);
 
-      const border = isHover
-        ? '#ffffff'
-        : status === 'running'
-          ? lightenColor(color, 40)
-          : status === 'paused'
-            ? hexToRgba(color, 0.4 * opacity)
-            : hexToRgba(color, 0.7 * opacity);
-      ctx.strokeStyle = border;
-      ctx.lineWidth = isHover ? 2.5 : (tier === 0 ? 2 : 1.2);
-      ctx.stroke();
+    // Glow halo (sprite con textura radial, additive)
+    const glowMat = new THREE.SpriteMaterial({
+      map: glowTexture(),
+      color,
+      transparent: true,
+      opacity: planned ? 0.22 : (node.tier === 0 ? 0.65 : node.tier === 1 ? 0.5 : 0.35),
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const glow = new THREE.Sprite(glowMat);
+    const gs = size * (node.tier === 0 ? 6 : node.tier === 1 ? 5 : 4);
+    glow.scale.set(gs, gs, 1);
+    glow.raycast = () => {};
+    group.add(glow);
+
+    // Icon — sprite siempre de frente, sobre la esfera
+    if (node.icon) {
+      const icon = makeIconSprite(node.icon);
+      const is = size * 1.5;
+      icon.scale.set(is, is, 1);
+      group.add(icon);
     }
 
-    // Icon/emoji dentro del nodo
-    if (icon) {
-      const fontSize = tier === 0 ? 16 : tier === 1 ? 13 : 8;
-      ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, system-ui, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = `rgba(255,255,255,${opacity})`;
-      ctx.fillText(icon, x, y);
+    // Label — tier 0/1 siempre, tier 2 solo si tiene label real
+    if (node.label && (node.tier < 2 || node.label.trim())) {
+      const label = makeLabelSprite(node);
+      label.position.set(0, -(size + (node.tier === 0 ? 16 : node.tier === 1 ? 13 : 9)), 0);
+      group.add(label);
     }
 
-    // Label debajo (solo tier 0 y 1 siempre, tier 2 solo en hover)
-    if (label && (tier < 2 || isHover)) {
-      const lblSize = Math.max(tier === 0 ? 13 : tier === 1 ? 11 : 9, 8 / globalScale * (tier === 0 ? 13 : 11));
-      const fixedSize = tier === 0 ? 13 : tier === 1 ? 11 : 9;
-      ctx.font = `${tier === 0 ? 'bold ' : ''}${fixedSize}px -apple-system, BlinkMacSystemFont, system-ui, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      ctx.fillStyle = `rgba(226, 232, 240, ${opacity})`;
-      ctx.fillText(label, x, y + size + 4);
-
-      if (sub) {
-        ctx.font = `${Math.max(fixedSize - 3, 7)}px -apple-system, BlinkMacSystemFont, system-ui, sans-serif`;
-        ctx.fillStyle = `rgba(148, 163, 184, ${opacity})`;
-        ctx.fillText(sub, x, y + size + 4 + fixedSize + 2);
-      }
-
-      // Metric badge (solo tier 1 core agents)
-      if (tier === 1 && node.metric !== undefined) {
-        const metricY = y + size + 4 + fixedSize + (sub ? 18 : 2);
-        ctx.font = `bold 11px JetBrains Mono, ui-monospace, monospace`;
-        ctx.fillStyle = hexToRgba(color, opacity);
-        ctx.fillText(node.metric, x, metricY);
-        if (node.metricLabel) {
-          ctx.font = `7px -apple-system, system-ui, sans-serif`;
-          ctx.fillStyle = `rgba(100, 116, 139, ${opacity})`;
-          ctx.fillText(node.metricLabel.toUpperCase(), x, metricY + 12);
-        }
-      }
-
-      // Status dot pequeño (running/idle/paused) para core. Planned = dashed
-      if (tier <= 1 && status) {
-        const statusColor = status === 'running' ? '#34d399'
-          : status === 'paused' ? '#fbbf24'
-          : status === 'planned' ? hexToRgba(color, 0.8)
-          : '#64748b';
-        ctx.beginPath();
-        ctx.arc(x + size - 2, y - size + 2, 2.5, 0, 2 * Math.PI);
-        ctx.fillStyle = statusColor;
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(15, 23, 42, 0.8)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-      }
-
-      // Badge "soon" debajo de planned agents (tier 1 solamente)
-      if (planned && tier === 1) {
-        const badgeY = y + size + 4 + 11 + (sub ? 12 : 0) + 8;
-        const badgeText = 'SOON';
-        ctx.font = `bold 7px JetBrains Mono, ui-monospace, monospace`;
-        const bw = ctx.measureText(badgeText).width + 8;
-        const bh = 10;
-        ctx.fillStyle = hexToRgba(color, 0.15 * opacity);
-        ctx.strokeStyle = hexToRgba(color, 0.5 * opacity);
-        ctx.lineWidth = 0.8;
-        roundRect(ctx, x - bw / 2, badgeY, bw, bh, 3);
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = hexToRgba(color, opacity);
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(badgeText, x, badgeY + bh / 2 + 0.5);
-      }
-    }
-  }, [hoverNode, hoverNeighbors]);
-
-  // Pointer area igual al glow expandido — click tolerance mayor
-  const drawPointerArea = useCallback((node, color, ctx) => {
-    const { x, y, size = 8 } = node;
-    ctx.beginPath();
-    ctx.arc(x, y, size + 6, 0, 2 * Math.PI);
-    ctx.fillStyle = color;
-    ctx.fill();
+    return group;
   }, []);
 
-  // Link rendering
-  const linkColor = useCallback((link) => {
-    const src = typeof link.source === 'object' ? link.source : null;
-    const tgt = typeof link.target === 'object' ? link.target : null;
-    if (!src || !tgt) return 'rgba(148, 163, 184, 0.2)';
-
-    const isHover = hoverLinks.has(link);
-    const isFaded = hoverNode && !isHover && !(
-      (hoverNeighbors.has(src.id) && hoverNeighbors.has(tgt.id)) ||
-      src === hoverNode || tgt === hoverNode
-    );
-
-    const baseColor = src.color || '#94a3b8';
-    if (isFaded) return hexToRgba(baseColor, 0.08);
-    if (isHover) return hexToRgba(baseColor, 0.9);
-
-    // Planned links — más tenues siempre
-    if (link.planned) {
-      const plannedAlpha = link.kind === 'primary' ? 0.22 : 0.15;
-      return hexToRgba(baseColor, plannedAlpha);
-    }
-    const kindAlpha = link.kind === 'primary' ? 0.5 : link.kind === 'workflow' ? 0.3 : 0.15;
-    return hexToRgba(baseColor, kindAlpha);
-  }, [hoverLinks, hoverNode, hoverNeighbors]);
-
-  // Render custom para links — nos permite dashed en planned
-  const drawLink = useCallback((link, ctx) => {
-    const src = typeof link.source === 'object' ? link.source : null;
-    const tgt = typeof link.target === 'object' ? link.target : null;
-    if (!src || !tgt || typeof src.x !== 'number' || typeof tgt.x !== 'number') return;
-
-    const color = linkColor(link);
-    const width = hoverLinks.has(link) ? 2.5
-      : link.planned ? 0.8
-      : link.kind === 'primary' ? 1.2
-      : link.kind === 'workflow' ? 0.8
-      : 0.5;
-
-    ctx.strokeStyle = color;
-    ctx.lineWidth = width;
-    if (link.planned) ctx.setLineDash([4, 4]);
-
-    if (link.kind === 'workflow') {
-      // Curvar links workflow levemente
-      const mx = (src.x + tgt.x) / 2;
-      const my = (src.y + tgt.y) / 2;
-      const dx = tgt.x - src.x;
-      const dy = tgt.y - src.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      const nx = -dy / dist;
-      const ny = dx / dist;
-      const cx = mx + nx * dist * 0.18;
-      const cy = my + ny * dist * 0.18;
-      ctx.beginPath();
-      ctx.moveTo(src.x, src.y);
-      ctx.quadraticCurveTo(cx, cy, tgt.x, tgt.y);
-      ctx.stroke();
-    } else {
-      ctx.beginPath();
-      ctx.moveTo(src.x, src.y);
-      ctx.lineTo(tgt.x, tgt.y);
-      ctx.stroke();
-    }
-    if (link.planned) ctx.setLineDash([]);
-  }, [linkColor, hoverLinks]);
-
   const handleHover = useCallback((node) => {
-    const neighbors = new Set();
-    const links = new Set();
-    if (node) {
-      neighbors.add(node.id);
-      node.neighbors?.forEach(n => neighbors.add(n));
-      node.linkset?.forEach(l => links.add(l));
-    }
     setHoverNode(node || null);
-    setHoverNeighbors(neighbors);
-    setHoverLinks(links);
   }, []);
 
   const handleClick = useCallback((node) => {
@@ -627,41 +483,46 @@ export default function NeuralGraphView({ onAgentClick }) {
   }, [onAgentClick]);
 
   return (
-    <div ref={containerRef} className="neural-graph-canvas" style={{ position: 'relative', width: '100%', height: '100%', background: 'radial-gradient(ellipse at center, #0b1120 0%, #050816 70%)' }}>
-      <ForceGraph2D
+    <div ref={containerRef} className="neural-graph-canvas" style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <ForceGraph3D
         ref={fgRef}
         graphData={graphData}
         width={dims.width}
         height={dims.height}
-        backgroundColor="rgba(0,0,0,0)"
-        nodeCanvasObject={drawNode}
-        nodePointerAreaPaint={drawPointerArea}
-        nodeRelSize={1}
-        linkCanvasObjectMode={() => 'replace'}
-        linkCanvasObject={drawLink}
-        linkDirectionalParticles={(link) => (link.active && !link.planned) ? 3 : 0}
-        linkDirectionalParticleSpeed={() => 0.008}
-        linkDirectionalParticleWidth={(link) => hoverLinks.has(link) ? 3 : 2}
+        backgroundColor="#04060f"
+        showNavInfo={false}
+        controlType="orbit"
+        nodeThreeObject={buildNodeObject}
+        nodeThreeObjectExtend={false}
+        linkColor={(link) => {
+          const src = typeof link.source === 'object' ? link.source : null;
+          const base = src?.color || '#94a3b8';
+          if (link.planned) return hexToRgba(base, 0.16);
+          const alpha = link.kind === 'primary' ? 0.5 : link.kind === 'workflow' ? 0.32 : 0.16;
+          return hexToRgba(base, alpha);
+        }}
+        linkWidth={(link) => link.planned ? 0 : link.kind === 'primary' ? 1.1 : link.kind === 'workflow' ? 0.6 : 0}
+        linkOpacity={0.55}
+        linkResolution={4}
+        linkDirectionalParticles={(link) => (link.active && !link.planned) ? 4 : 0}
+        linkDirectionalParticleSpeed={() => 0.006}
+        linkDirectionalParticleWidth={2.2}
         linkDirectionalParticleColor={(link) => {
           const src = typeof link.source === 'object' ? link.source : null;
           return src?.color || '#60a5fa';
         }}
         onNodeHover={handleHover}
         onNodeClick={handleClick}
-        cooldownTicks={120}
-        d3AlphaDecay={0.025}
-        d3VelocityDecay={0.35}
         onEngineStop={handleEngineStop}
+        cooldownTicks={140}
+        d3AlphaDecay={0.022}
+        d3VelocityDecay={0.38}
         enableNodeDrag
-        enableZoomInteraction
-        enablePanInteraction
-        minZoom={0.5}
-        maxZoom={4}
       />
 
-      {/* HUD overlay — hint + stats live */}
+      {/* HUD overlay — hint + tooltip */}
       <div style={{ position: 'absolute', bottom: 12, left: 16, pointerEvents: 'none', fontSize: '0.68rem', color: 'rgba(148, 163, 184, 0.55)', fontFamily: 'JetBrains Mono, monospace', letterSpacing: '0.05em' }}>
-        drag · zoom · hover · click
+        orbita · zoom · hover · click
       </div>
       {hoverNode && (
         <div style={{
@@ -703,7 +564,86 @@ export default function NeuralGraphView({ onAgentClick }) {
   );
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────
+// ─── Three.js helpers ───────────────────────────────────────────────────────
+
+// Textura radial reutilizable para el glow de los nodos
+let _glowTex = null;
+function glowTexture() {
+  if (_glowTex) return _glowTex;
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.22, 'rgba(255,255,255,0.55)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  _glowTex = new THREE.CanvasTexture(c);
+  return _glowTex;
+}
+
+function makeIconSprite(icon) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.font = '84px -apple-system, BlinkMacSystemFont, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(icon, 64, 70);
+  const tex = new THREE.CanvasTexture(c);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.renderOrder = 12;
+  sprite.raycast = () => {};
+  return sprite;
+}
+
+function makeLabelSprite(node) {
+  const W = 512, H = 256;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  ctx.textAlign = 'center';
+
+  const labelSize = node.tier === 0 ? 60 : node.tier === 1 ? 50 : 40;
+  ctx.font = `bold ${labelSize}px -apple-system, BlinkMacSystemFont, system-ui, sans-serif`;
+  ctx.fillStyle = '#e2e8f0';
+  ctx.shadowColor = 'rgba(0,0,0,0.9)';
+  ctx.shadowBlur = 8;
+  ctx.fillText(node.label, W / 2, labelSize + 6);
+
+  let y = labelSize + 14;
+  if (node.sub) {
+    const subSize = Math.max(labelSize - 16, 26);
+    y += subSize + 6;
+    ctx.font = `${subSize}px -apple-system, BlinkMacSystemFont, system-ui, sans-serif`;
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText(node.sub, W / 2, y);
+  }
+
+  if (node.tier === 1 && node.metric !== undefined) {
+    y += 50;
+    ctx.font = 'bold 44px JetBrains Mono, ui-monospace, monospace';
+    ctx.fillStyle = node.color || '#e2e8f0';
+    ctx.fillText(node.metric, W / 2, y);
+    if (node.metricLabel) {
+      y += 30;
+      ctx.font = '24px -apple-system, BlinkMacSystemFont, system-ui, sans-serif';
+      ctx.fillStyle = '#64748b';
+      ctx.fillText(node.metricLabel.toUpperCase(), W / 2, y);
+    }
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.renderOrder = 11;
+  sprite.raycast = () => {};
+  const scale = node.tier === 0 ? 64 : node.tier === 1 ? 56 : 40;
+  sprite.scale.set(scale, scale * (H / W), 1);
+  return sprite;
+}
 
 function hexToRgba(hex, alpha = 1) {
   if (!hex) return `rgba(148, 163, 184, ${alpha})`;
@@ -714,27 +654,4 @@ function hexToRgba(hex, alpha = 1) {
   const g = (bigint >> 8) & 255;
   const b = bigint & 255;
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
-  ctx.closePath();
-}
-
-function lightenColor(hex, amount = 20) {
-  const h = hex.replace('#', '');
-  const bigint = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
-  const r = Math.min(255, ((bigint >> 16) & 255) + amount);
-  const g = Math.min(255, ((bigint >> 8) & 255) + amount);
-  const b = Math.min(255, (bigint & 255) + amount);
-  return `#${[r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')}`;
 }
