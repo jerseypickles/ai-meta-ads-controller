@@ -1508,8 +1508,8 @@ async function handleCreateNewCBO({ name, daily_budget, objective, seed_adset_id
 
 async function handleQueryAccountCaps() {
   try {
-    const { getCapStatus } = require('../zeus/portfolio-capacity');
-    const caps = await getCapStatus();
+    const { assessCapacity } = require('../zeus/portfolio-capacity');
+    const caps = await assessCapacity();
     return { caps };
   } catch (err) {
     return { error: 'portfolio-capacity module not available', message: err.message };
