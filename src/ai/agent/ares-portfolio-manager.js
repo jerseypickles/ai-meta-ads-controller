@@ -263,8 +263,27 @@ async function getAdsetsWithMetrics(campaign_id) {
  * Detector 1 → EJECUTOR: starved_winner_rescue
  * Duplica adsets starved con ROAS alto a CBO 3 (Rescate).
  */
+/**
+ * Chequea si un campaign_id es el CBO rescate (env o persistido). NO crea
+ * uno — solo lee lo ya conocido. Usado para excluir el CBO rescate del
+ * detector starved_rescue y así evitar que los clones que ya viven adentro
+ * se rescaten a sí mismos en loop.
+ */
+async function isRescueCbo(campaignId) {
+  if (RESCUE_CBO_ID && campaignId === RESCUE_CBO_ID) return true;
+  try {
+    const SystemConfig = require('../../db/models/SystemConfig');
+    const stored = await SystemConfig.get(RESCUE_CBO_CONFIG_KEY);
+    if (stored?.campaign_id && stored.campaign_id === campaignId) return true;
+  } catch (_) { /* fail-open */ }
+  return false;
+}
+
 async function executeStarvedRescue(cboSnapshot, adsets, getRescueCbo) {
   const executed = [];
+  // No rescatar adsets que ya viven DENTRO del CBO rescate — sería un loop
+  // sobre sí mismo (rescatar clones del rescate hacia el mismo rescate).
+  if (await isRescueCbo(cboSnapshot.campaign_id)) return executed;
   for (const a of adsets) {
     if (a.spend_share_7d >= STARVED_WINNER_SHARE_MAX) continue;
     if (a.roas_7d < STARVED_WINNER_ROAS_MIN) continue;
@@ -307,6 +326,20 @@ async function executeStarvedRescue(cboSnapshot, adsets, getRescueCbo) {
 
       if (result.success && result.new_adset_id) {
         await cooldowns.setCooldown(a.id, 'adset', 'duplicate_adset', 'ares_portfolio');
+
+        // Pausar el adset ORIGINAL — el rescate es un TRASLADO, no un
+        // duplicado. Si el original queda activo en su CBO saturado sigue
+        // recibiendo <3% del budget → se re-detectaría como famélico cada
+        // 72h y se acumularían clones. Pausándolo, el winner vive solo en
+        // el rescate, con espacio, y deja de ser re-detectado.
+        let originalPaused = false;
+        try {
+          await meta.updateStatus(a.id, 'PAUSED');
+          originalPaused = true;
+        } catch (pauseErr) {
+          logger.warn(`[ARES-PORTFOLIO] rescate: no se pudo pausar el original "${a.name}": ${pauseErr.message} — clon ya creado, winner queda en ambos CBOs`);
+        }
+
         await logAction({
           entity_type: 'adset',
           entity_id: a.id,
@@ -322,6 +355,7 @@ async function executeStarvedRescue(cboSnapshot, adsets, getRescueCbo) {
             new_adset_id: result.new_adset_id,
             rescue_cbo_id: rescueCboId,
             new_adset_status: 'ACTIVE',
+            original_paused: originalPaused,
             used_fallback_relink: !!result.used_fallback_relink,
             source_cbo: cboSnapshot.campaign_name
           },
@@ -335,14 +369,14 @@ async function executeStarvedRescue(cboSnapshot, adsets, getRescueCbo) {
             await ZeusChatMessage.create({
               conversation_id: lastMsg.conversation_id,
               role: 'assistant',
-              content: `🟢 **Ares Rescue ACTIVE**: "${a.name}" → CBO rescate (\`${result.new_adset_id}\`)\n\nROAS source ${a.roas_7d.toFixed(2)}x, ${a.purchases_7d} compras, solo ${(a.spend_share_7d*100).toFixed(1)}% spend share. Adset duplicado y activado. Si querés frenar, pausar manual en Meta UI.`,
+              content: `🟢 **Ares Rescue**: "${a.name}" → CBO rescate (\`${result.new_adset_id}\`)\n\nROAS source ${a.roas_7d.toFixed(2)}x, ${a.purchases_7d} compras, solo ${(a.spend_share_7d*100).toFixed(1)}% spend share. Clon ACTIVE en el rescate; original ${originalPaused ? 'pausado en su CBO' : '⚠ sigue activo (no se pudo pausar)'}. Si querés frenar, pausar manual en Meta UI.`,
               proactive: true,
               context_snapshot: { source: 'ares_rescue', new_adset_id: result.new_adset_id }
             });
           }
         } catch (_) { /* non-critical */ }
         executed.push({ kind: 'starved_winner_rescue', adset: a.name, new_id: result.new_adset_id });
-        logger.info(`[ARES-PORTFOLIO] ✓ rescued "${a.name}" (ROAS ${a.roas_7d.toFixed(2)}x) → CBO rescate (PAUSED)`);
+        logger.info(`[ARES-PORTFOLIO] ✓ rescued "${a.name}" (ROAS ${a.roas_7d.toFixed(2)}x) → CBO rescate · clon ACTIVE, original ${originalPaused ? 'PAUSED' : 'sigue activo'}`);
       }
     } catch (err) {
       await logAction({
