@@ -198,30 +198,30 @@ async function findDuplicationCandidates() {
 }
 
 /**
- * Duplicar un ad set ganador a la campana ABO de Ares.
- * Cada clon tiene su propio budget ($30/dia).
+ * Duplicar un ad set ganador a la campana CBO de Ares.
  *
- * Fase 2 gate compuesto (2026-04-23): antes de duplicar, chequea el health
- * snapshot de la CBO destino. Si está saturada (conc >70% + favorito sano +
- * no declining) → SKIP duplicación. Meta no distribuiría al clon, sería
- * tirar plata. Requiere un BrainRecommendation de refresh del favorito
- * primero (ver ares-portfolio-manager.js).
+ * Gate de fase (2026-05-19): antes de duplicar, chequea la lifecycle_phase del
+ * CBO destino en su health snapshot. Solo procede si está en 'exploring'. Un
+ * CBO en concentrating/mature/declining ya concentró el budget — Meta no le
+ * daría delivery a un clon nuevo y terminaría starved. Mismo criterio que usa
+ * el Ares Brain (ares-brain-tools:duplicate_to_cbo). Reemplaza al gate viejo
+ * shouldBlockDuplicationToCBO, que solo atrapaba saturación franca (≥70%).
  */
 async function duplicateWinner(candidate, aresCampaignId) {
-  // Gate compuesto — consulta último snapshot de la CBO destino
+  // Gate de fase — consulta último snapshot de la CBO destino
   try {
     const CBOHealthSnapshot = require('../../db/models/CBOHealthSnapshot');
-    const { shouldBlockDuplicationToCBO } = require('./ares-portfolio-manager');
     const latestSnap = await CBOHealthSnapshot.findOne({ campaign_id: aresCampaignId })
       .sort({ snapshot_at: -1 }).lean();
     if (latestSnap && !latestSnap.is_zombie) {
-      const gate = shouldBlockDuplicationToCBO(latestSnap);
-      if (gate.block) {
-        logger.warn(`[ARES] SKIP duplicación "${candidate.entity_name}" → CBO ${aresCampaignId}: ${gate.reason} — ${gate.detail}`);
+      const phase = latestSnap.lifecycle_phase;
+      if (phase && phase !== 'exploring') {
+        const conc = Math.round((latestSnap.concentration_index_3d || 0) * 100);
+        logger.warn(`[ARES] SKIP duplicación "${candidate.entity_name}" → CBO ${aresCampaignId}: fase "${phase}" (concentración ${conc}%) — Meta ya está eligiendo ganadores, un adset nuevo acá no recibiría delivery. Solo se duplica a CBOs en 'exploring'.`);
         return {
           skipped: true,
-          reason: gate.reason,
-          detail: gate.detail,
+          reason: 'cbo_phase_not_exploring',
+          detail: `CBO destino en fase "${phase}" (concentración ${conc}%). Solo se duplica a CBOs en 'exploring'.`,
           cbo_campaign_id: aresCampaignId,
           candidate_name: candidate.entity_name
         };
@@ -229,7 +229,7 @@ async function duplicateWinner(candidate, aresCampaignId) {
     }
   } catch (err) {
     // Fail-open: si el gate falla, proceder con la duplicación (modo legacy)
-    logger.warn(`[ARES] gate check falló (fail-open): ${err.message}`);
+    logger.warn(`[ARES] gate de fase falló (fail-open): ${err.message}`);
   }
 
   const { getMetaClient } = require('../../meta/client');
