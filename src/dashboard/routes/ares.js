@@ -190,9 +190,20 @@ router.get('/cbo-health', async (req, res) => {
       });
     }
 
+    // Pipeline de exploración del portfolio — cuántos CBOs explorando vs target,
+    // si Ares debería abrir uno nuevo. Mismo assessment que consume el Ares Brain.
+    let portfolio_exploration = null;
+    try {
+      const { assessPortfolioExploration } = require('../../ai/agent/cbo-health-monitor');
+      portfolio_exploration = await assessPortfolioExploration();
+    } catch (e) {
+      logger.warn(`[ARES-API] assessPortfolioExploration falló: ${e.message}`);
+    }
+
     res.json({
       snapshots: latest,
       history_by_campaign: byCampaign,
+      portfolio_exploration,
       summary: {
         total: latest.length,
         zombies: latest.filter(s => s.is_zombie).length,

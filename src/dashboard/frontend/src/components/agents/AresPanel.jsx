@@ -795,6 +795,9 @@ function CBOHealthSection({ health }) {
         <HealthSummaryCard label="Saturando" value={summary.saturating} color="#fbbf24" warn={summary.saturating > 0} />
       </div>
 
+      {/* Pipeline de exploración del portfolio */}
+      <ExplorationPipeline exp={health.portfolio_exploration} />
+
       {/* Cards por CBO */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {snapshots.map(s => (
@@ -819,6 +822,106 @@ function HealthSummaryCard({ label, value, color, warn }) {
       </div>
       <div style={{ fontSize: '0.56rem', color: 'var(--bos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: 4 }}>
         {label}
+      </div>
+    </div>
+  );
+}
+
+// Fase del ciclo de vida del CBO — derivada de concentración + salud del favorito.
+// Define qué acciones de Ares son válidas (ver classifyCBOPhase en el backend).
+const PHASE_META = {
+  exploring:     { label: 'EXPLORANDO',   color: '#38bdf8', icon: '🔍', desc: 'Meta probando — meter adsets OK' },
+  concentrating: { label: 'CONCENTRANDO', color: '#fbbf24', icon: '🎯', desc: 'Meta empezando a elegir — no meter adsets' },
+  mature:        { label: 'MADURA',       color: '#10b981', icon: '👑', desc: 'Ganador definido — escalar, no meter adsets' },
+  declining:     { label: 'DECLINANDO',   color: '#ef4444', icon: '📉', desc: 'Ganador fatigándose — refresh creativo' }
+};
+
+function PhaseBadge({ phase }) {
+  const ph = PHASE_META[phase] || PHASE_META.exploring;
+  return (
+    <span
+      title={ph.desc}
+      style={{
+        fontSize: '0.55rem',
+        padding: '2px 8px',
+        borderRadius: 4,
+        background: `${ph.color}18`,
+        color: ph.color,
+        border: `1px solid ${ph.color}40`,
+        fontWeight: 700,
+        textTransform: 'uppercase',
+        letterSpacing: '0.1em',
+        whiteSpace: 'nowrap'
+      }}
+    >
+      {ph.icon} {ph.label}
+    </span>
+  );
+}
+
+// Pipeline de exploración del portfolio — cuántos CBOs explorando vs target.
+// Si needs_exploration, Ares debería abrir un CBO nuevo de exploración.
+function ExplorationPipeline({ exp }) {
+  if (!exp) return null;
+  const needs = exp.needs_exploration;
+  const accent = needs ? '#38bdf8' : '#10b981';
+  const breakdown = exp.phase_breakdown || {};
+
+  return (
+    <div style={{
+      background: `${accent}0d`,
+      border: `1px solid ${accent}33`,
+      borderLeft: `3px solid ${accent}`,
+      borderRadius: 10,
+      padding: 14,
+      marginBottom: 14
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        <span style={{
+          fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.12em',
+          color: 'var(--bos-text-muted)', fontWeight: 700
+        }}>
+          Pipeline de exploración
+        </span>
+        <span style={{
+          fontSize: '0.6rem', fontFamily: 'JetBrains Mono, monospace', fontWeight: 700,
+          color: accent
+        }}>
+          {exp.exploring_count} / {exp.target_exploring} explorando
+        </span>
+        <span style={{
+          fontSize: '0.52rem', padding: '2px 8px', borderRadius: 4, fontWeight: 700,
+          textTransform: 'uppercase', letterSpacing: '0.1em',
+          background: `${accent}22`, color: accent
+        }}>
+          {needs ? '⊕ abrir CBO nuevo' : '✓ pipeline OK'}
+        </span>
+      </div>
+
+      {/* Breakdown por fase */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+        {['exploring', 'concentrating', 'mature', 'declining'].map(p => {
+          const ph = PHASE_META[p];
+          const n = breakdown[p] || 0;
+          return (
+            <span key={p} style={{
+              fontSize: '0.6rem', fontFamily: 'JetBrains Mono, monospace',
+              padding: '2px 8px', borderRadius: 4,
+              background: n > 0 ? `${ph.color}18` : 'rgba(255,255,255,0.03)',
+              color: n > 0 ? ph.color : 'var(--bos-text-dim)',
+              border: `1px solid ${n > 0 ? ph.color + '33' : 'rgba(255,255,255,0.05)'}`
+            }}>
+              {ph.icon} {n} {ph.label.toLowerCase()}
+            </span>
+          );
+        })}
+      </div>
+
+      <div style={{ fontSize: '0.68rem', color: 'var(--bos-text-muted)', lineHeight: 1.5 }}>
+        {exp.reason}
+      </div>
+      <div style={{ fontSize: '0.6rem', color: 'var(--bos-text-dim)', marginTop: 6, fontFamily: 'JetBrains Mono, monospace' }}>
+        budget CBOs ${exp.total_cbo_budget}/d · headroom {exp.budget_headroom ? 'sí' : 'no'} · nuevo CBO ~${exp.suggested_new_cbo_budget}/d
       </div>
     </div>
   );
@@ -865,6 +968,7 @@ function CBOHealthCard({ snap, history }) {
         }}>
           {sem.icon} {sem.label}
         </span>
+        {!snap.is_zombie && <PhaseBadge phase={snap.lifecycle_phase} />}
         <div style={{ flex: 1, minWidth: 0, fontSize: '0.82rem', color: 'var(--bos-text)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {snap.campaign_name}
         </div>
