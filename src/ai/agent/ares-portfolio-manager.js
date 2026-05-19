@@ -105,6 +105,12 @@ const DEDUP_WINDOW_HOURS = 24;             // no repetir misma action+entity <24
 // CBO 3 ID — hardcoded a la CBO de rescate. Se infiere del snapshot si no
 // está configurada, o ENV override.
 const RESCUE_CBO_ID = process.env.ARES_RESCUE_CBO_ID || null;
+// Auto-creación del CBO rescate — si no hay ARES_RESCUE_CBO_ID ni uno
+// persistido, el detector crea uno la primera vez que lo necesita. Se crea
+// una sola vez en la vida del sistema; su ID queda guardado en SystemConfig.
+const RESCUE_CBO_BUDGET = 100;                                  // $/d del CBO rescate
+const RESCUE_CBO_CONFIG_KEY = 'ares_rescue_cbo';                // SystemConfig: ID persistido
+const RESCUE_CBO_COOLDOWN_KEY = 'ares_rescue_cbo_last_attempt'; // anti-loop si la creación falla
 
 // Feature flag — permite desactivar la ejecución desde env sin tocar código
 const AUTONOMOUS_ENABLED = process.env.ARES_PORTFOLIO_AUTONOMOUS !== 'false';
@@ -257,7 +263,7 @@ async function getAdsetsWithMetrics(campaign_id) {
  * Detector 1 → EJECUTOR: starved_winner_rescue
  * Duplica adsets starved con ROAS alto a CBO 3 (Rescate).
  */
-async function executeStarvedRescue(cboSnapshot, adsets, rescueCboId) {
+async function executeStarvedRescue(cboSnapshot, adsets, getRescueCbo) {
   const executed = [];
   for (const a of adsets) {
     if (a.spend_share_7d >= STARVED_WINNER_SHARE_MAX) continue;
@@ -272,8 +278,12 @@ async function executeStarvedRescue(cboSnapshot, adsets, rescueCboId) {
       continue;
     }
 
+    // Resolver el CBO rescate de forma lazy — recién acá, con un winner
+    // famélico real que ya pasó todos los gates. Memoizado: el CBO rescate
+    // se crea como máximo una vez por ciclo (y una vez en la vida del sistema).
+    const rescueCboId = await getRescueCbo();
     if (!rescueCboId) {
-      logger.warn(`[ARES-PORTFOLIO] rescue CBO no configurada — skip ${a.name}`);
+      logger.warn(`[ARES-PORTFOLIO] sin CBO rescate disponible (auto-creación falló o en cooldown) — skip ${a.name}`);
       continue;
     }
 
@@ -765,7 +775,7 @@ async function executeMassZombieKill(cboSnapshot, adsets) {
  * Cada uno corre autónomo con su propio gate + cooldown.
  * Retorna array de acciones ejecutadas exitosamente.
  */
-async function executePortfolioActionsForCBO(cboSnapshot, rescueCboId, remainingBudget) {
+async function executePortfolioActionsForCBO(cboSnapshot, getRescueCbo, remainingBudget) {
   if (cboSnapshot.is_zombie) return { executed: [], skipped: 'zombie' };
 
   const adsets = await getAdsetsWithMetrics(cboSnapshot.campaign_id);
@@ -777,7 +787,7 @@ async function executePortfolioActionsForCBO(cboSnapshot, rescueCboId, remaining
   // después scale actions CBO-level. Así si se llena el cap, al menos
   // tocamos las acciones de menor riesgo primero.
   const runners = [
-    () => executeStarvedRescue(cboSnapshot, adsets, rescueCboId),
+    () => executeStarvedRescue(cboSnapshot, adsets, getRescueCbo),
     () => executeKill(cboSnapshot, adsets),
     () => executeMassZombieKill(cboSnapshot, adsets),         // Ola 1.3
     () => executeClusterSaturation(cboSnapshot, adsets),      // Ola 1.2 — más específico que saturated_winner, va primero
@@ -818,17 +828,100 @@ function shouldBlockDuplicationToCBO(cboSnapshot) {
 }
 
 /**
- * Determina el campaign_id de la CBO de rescate — la que tenga budget_pulse
- * más alto dentro de los CBOHealthSnapshots (señal de CBO saludable con
- * capacidad). Fallback a env ARES_RESCUE_CBO_ID.
+ * Resuelve el campaign_id del CBO rescate, creándolo si hace falta:
+ *   1. env ARES_RESCUE_CBO_ID (override explícito del creador)
+ *   2. CBO rescate auto-creado en un ciclo previo (persistido en SystemConfig)
+ *   3. crea uno nuevo dedicado (createRescueCbo)
+ * Devuelve null solo si la creación falla o está en cooldown anti-loop.
  */
-async function inferRescueCbo(latestSnaps) {
+async function resolveOrCreateRescueCbo() {
   if (RESCUE_CBO_ID) return RESCUE_CBO_ID;
-  // Elegir la CBO con budget_pulse más saludable que NO esté saturada.
-  const candidates = latestSnaps
-    .filter(s => !s.is_zombie && s.budget_pulse > 20 && s.active_adsets_count < 20)
-    .sort((a, b) => b.cbo_roas_7d - a.cbo_roas_7d);
-  return candidates[0]?.campaign_id || null;
+  try {
+    const SystemConfig = require('../../db/models/SystemConfig');
+    const stored = await SystemConfig.get(RESCUE_CBO_CONFIG_KEY);
+    if (stored?.campaign_id) return stored.campaign_id;
+  } catch (err) {
+    logger.warn(`[ARES-PORTFOLIO] lectura de CBO rescate persistido falló: ${err.message}`);
+  }
+  return await createRescueCbo();
+}
+
+/**
+ * Crea el CBO rescate dedicado vía Meta API. Persiste su ID para que nunca
+ * se cree un segundo. Loguea en ActionLog + emite SafetyEvent para que el
+ * creador se entere. Cooldown anti-loop de 24h si un intento falla.
+ */
+async function createRescueCbo() {
+  const SystemConfig = require('../../db/models/SystemConfig');
+
+  // Cooldown anti-loop: si hubo un intento reciente, no reintentar
+  try {
+    const lastAttempt = await SystemConfig.get(RESCUE_CBO_COOLDOWN_KEY);
+    if (lastAttempt?.at) {
+      const hoursSince = (Date.now() - new Date(lastAttempt.at).getTime()) / 3600000;
+      if (hoursSince < 24) {
+        logger.warn(`[ARES-PORTFOLIO] CBO rescate: intento reciente hace ${hoursSince.toFixed(1)}h — cooldown 24h, skip`);
+        return null;
+      }
+    }
+  } catch (_) { /* fail-open */ }
+
+  try {
+    const { getMetaClient } = require('../../meta/client');
+    const meta = getMetaClient();
+    const name = `[Ares-Rescue] Winners Famélicos ${new Date().toISOString().slice(0, 10)}`;
+
+    // Marcar el intento ANTES de crear — si createCampaign falla a mitad,
+    // el cooldown evita un loop de creaciones.
+    await SystemConfig.set(RESCUE_CBO_COOLDOWN_KEY, { at: new Date().toISOString() });
+
+    const result = await meta.createCampaign({
+      name,
+      objective: 'OUTCOME_SALES',
+      status: 'ACTIVE',
+      daily_budget: RESCUE_CBO_BUDGET
+    });
+    if (!result?.campaign_id) throw new Error('createCampaign no devolvió campaign_id');
+
+    // Persistir el ID — futuros ciclos lo reusan, nunca se crea un segundo.
+    await SystemConfig.set(RESCUE_CBO_CONFIG_KEY, {
+      campaign_id: result.campaign_id,
+      name,
+      created_at: new Date().toISOString()
+    });
+
+    await logAction({
+      entity_type: 'campaign',
+      entity_id: result.campaign_id,
+      entity_name: name,
+      action: 'create_campaign',
+      after_value: RESCUE_CBO_BUDGET,
+      reasoning: `CBO rescate auto-creada — destino dedicado para duplicar winners famélicos (ROAS alto pero <3% del budget de su CBO) detectados en CBOs saturados. Budget $${RESCUE_CBO_BUDGET}/d.`,
+      metadata: { detector: 'starved_winner_rescue', auto_created: true },
+      success: true
+    });
+
+    try {
+      const SafetyEvent = require('../../db/models/SafetyEvent');
+      await SafetyEvent.create({
+        event_type: 'autonomous_cbo_created',
+        severity: 'warning',
+        entity_id: result.campaign_id,
+        entity_name: name,
+        description: `Ares Portfolio auto-creó el CBO rescate "${name}" ($${RESCUE_CBO_BUDGET}/d) — destino para winners famélicos.`,
+        details: { campaign_id: result.campaign_id, daily_budget: RESCUE_CBO_BUDGET, source: 'starved_winner_rescue' },
+        created_at: new Date()
+      });
+    } catch (e) {
+      logger.warn(`[ARES-PORTFOLIO] SafetyEvent del CBO rescate falló: ${e.message}`);
+    }
+
+    logger.info(`[ARES-PORTFOLIO] ✓✓ CBO rescate auto-creada "${name}" id=${result.campaign_id} budget=$${RESCUE_CBO_BUDGET}/d`);
+    return result.campaign_id;
+  } catch (err) {
+    logger.error(`[ARES-PORTFOLIO] creación del CBO rescate falló: ${err.message}`);
+    return null;
+  }
 }
 
 /**
@@ -865,8 +958,15 @@ async function runPortfolioAnalysis() {
     return { analyzed: 0, executed: 0 };
   }
 
-  const rescueCboId = await inferRescueCbo(latestSnaps);
-  logger.info(`[ARES-PORTFOLIO] rescue CBO: ${rescueCboId || 'none'}`);
+  // Resolver lazy + memoizado del CBO rescate. NO se resuelve/crea upfront —
+  // solo si algún detector starved_winner_rescue realmente lo necesita este
+  // ciclo (evita crear un CBO rescate vacío sin un winner que rescatar).
+  let _rescueResolved;
+  const getRescueCbo = async () => {
+    if (_rescueResolved !== undefined) return _rescueResolved;
+    _rescueResolved = await resolveOrCreateRescueCbo();
+    return _rescueResolved;
+  };
 
   const allExecuted = [];
   const byDetector = {};
@@ -877,7 +977,7 @@ async function runPortfolioAnalysis() {
       logger.info(`[ARES-PORTFOLIO] cap MAX_ACTIONS_PER_CYCLE=${MAX_ACTIONS_PER_CYCLE} alcanzado, stop`);
       break;
     }
-    const { executed } = await executePortfolioActionsForCBO(snap, rescueCboId, remaining);
+    const { executed } = await executePortfolioActionsForCBO(snap, getRescueCbo, remaining);
     allExecuted.push(...executed);
     for (const e of executed) {
       byDetector[e.kind] = (byDetector[e.kind] || 0) + 1;
@@ -914,7 +1014,8 @@ module.exports = {
   _helpers: {
     validateSafetyGates,
     alreadyActedOn,
-    inferRescueCbo,
+    resolveOrCreateRescueCbo,
+    createRescueCbo,
     logAction
   }
 };
