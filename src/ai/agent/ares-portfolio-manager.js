@@ -92,6 +92,13 @@ const ZOMBIE_SHARE_MAX = 0.01;            // <1% del spend 3d
 const ZOMBIE_SPEND_CUMUL_MIN = 30;        // ≥$30 gastados en 7d (subido de $20 porque removimos age gate)
 const ZOMBIE_MAX_PAUSES_PER_CBO = 10;     // cap pauses por CBO por ciclo
 
+// Stale adsets — Meta nunca les dio delivery real. No los toca el
+// underperformer_kill (exige $50) ni el mass_zombie_kill (exige $30 + CBO
+// saturado). Quedan ACTIVE en silencio ocupando slot del cap 200.
+const STALE_SPEND_MAX = 5;                // spend 7d <$5 = casi cero delivery
+const STALE_AGE_DAYS_MIN = 7;             // ≥7d = ya pasó learning fresh
+const STALE_MAX_PAUSES_PER_CBO = 10;      // cap por CBO por ciclo
+
 // CBO starvation (Fase 1 original) — pulse bajo + muchos adsets
 const CBO_STARVATION_PULSE_MAX = 20;      // budget/adset <$20
 const CBO_STARVATION_ADSETS_MIN = 8;      // ≥8 adsets activos
@@ -805,7 +812,68 @@ async function executeMassZombieKill(cboSnapshot, adsets) {
 }
 
 /**
- * Ejecuta los 7 detectores sobre UNA CBO (4 originales + 3 nuevos de Ola 1).
+ * Detector 8 → EJECUTOR: stale_adset_kill
+ * Pausa adsets que llevan ≥7d activos pero Meta nunca les dio delivery
+ * (spend 7d <$5). Quedan en silencio ocupando slot del cap 200 sin
+ * retornar nada. Pausarlos no afecta delivery (no gastaban) — limpia el
+ * portfolio y libera slots para nuevos rescues / tests.
+ */
+async function executeStaleAdsetKill(cboSnapshot, adsets) {
+  const stale = adsets.filter(a => {
+    if (a.learning_stage === 'LEARNING') return false;
+    if (!a.age_days || a.age_days < STALE_AGE_DAYS_MIN) return false;
+    if ((a.spend_7d || 0) >= STALE_SPEND_MAX) return false;
+    if (a.purchases_7d > 0) return false;
+    return true;
+  }).slice(0, STALE_MAX_PAUSES_PER_CBO);
+
+  if (stale.length === 0) return [];
+
+  const executed = [];
+  for (const a of stale) {
+    if (await alreadyActedOn(a.id, 'pause')) continue;
+    const gate = await validateSafetyGates({ entity_id: a.id, action_type: 'pause' });
+    if (!gate.allowed) {
+      logger.info(`[ARES-PORTFOLIO] SKIP stale ${a.name}: ${gate.reason}`);
+      continue;
+    }
+
+    const reasoning = `Adset stale: $${(a.spend_7d || 0).toFixed(2)} spend 7d, 0 compras, ${a.age_days}d edad — Meta nunca le dio delivery real. Ocupa slot del cap 200 sin retornar. Pause libera el slot, no afecta delivery (no gastaba).`;
+
+    try {
+      const { getMetaClient } = require('../../meta/client');
+      const meta = getMetaClient();
+      await meta.updateStatus(a.id, 'PAUSED');
+      await cooldowns.setCooldown(a.id, 'adset', 'pause', 'ares_portfolio');
+      await logAction({
+        entity_type: 'adset', entity_id: a.id, entity_name: a.name,
+        action: 'pause',
+        before_value: 'ACTIVE', after_value: 'PAUSED',
+        reasoning,
+        metadata: {
+          detector: 'stale_adset_kill',
+          spend_7d: +(a.spend_7d || 0).toFixed(2),
+          age_days: a.age_days,
+          parent_cbo: cboSnapshot.campaign_name
+        },
+        success: true
+      });
+      executed.push({ kind: 'stale_adset_kill', adset: a.name });
+      logger.info(`[ARES-PORTFOLIO] ✓ stale paused "${a.name}" ($${(a.spend_7d || 0).toFixed(2)} 7d/0 conv/${a.age_days}d)`);
+    } catch (err) {
+      await logAction({
+        entity_type: 'adset', entity_id: a.id, entity_name: a.name,
+        action: 'pause', reasoning, success: false, error: err.message,
+        metadata: { detector: 'stale_adset_kill' }
+      });
+      logger.error(`[ARES-PORTFOLIO] stale kill falló para ${a.name}: ${err.message}`);
+    }
+  }
+  return executed;
+}
+
+/**
+ * Ejecuta los 8 detectores sobre UNA CBO (4 originales + 3 Ola 1 + stale).
  * Cada uno corre autónomo con su propio gate + cooldown.
  * Retorna array de acciones ejecutadas exitosamente.
  */
@@ -824,6 +892,7 @@ async function executePortfolioActionsForCBO(cboSnapshot, getRescueCbo, remainin
     () => executeStarvedRescue(cboSnapshot, adsets, getRescueCbo),
     () => executeKill(cboSnapshot, adsets),
     () => executeMassZombieKill(cboSnapshot, adsets),         // Ola 1.3
+    () => executeStaleAdsetKill(cboSnapshot, adsets),         // limpia adsets con 0 delivery
     () => executeClusterSaturation(cboSnapshot, adsets),      // Ola 1.2 — más específico que saturated_winner, va primero
     () => executeSaturatedWinner(cboSnapshot, adsets),        // single-favorite legacy fallback
     () => executeCBOStarvation(cboSnapshot),
@@ -1043,7 +1112,8 @@ module.exports = {
     executeCBOStarvation,
     executeClusterSaturation,     // Ola 1.2
     executeCBOUnderperforming,    // Ola 1.1
-    executeMassZombieKill         // Ola 1.3
+    executeMassZombieKill,        // Ola 1.3
+    executeStaleAdsetKill         // adsets con 0 delivery
   },
   _helpers: {
     validateSafetyGates,
