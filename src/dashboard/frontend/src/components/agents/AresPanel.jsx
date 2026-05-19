@@ -1185,11 +1185,17 @@ function ActionsSummaryCard({ label, value, color, warn }) {
 function ActionTimelineItem({ action }) {
   const detector = DETECTOR_LABELS[action.detector] || null;
   const icon = ACTION_ICONS_PORTFOLIO[action.action] || '·';
-  const bgColor = !action.success ? 'rgba(239, 68, 68, 0.08)' :
+  // Una acción frenada por un gate de seguridad (cooldown, capacity, directiva)
+  // NO falló — fue bloqueada a propósito. Se distingue de un error real.
+  const isBlocked = !action.success && typeof action.error === 'string' &&
+                    action.error.startsWith('gate_blocked:');
+  const bgColor = isBlocked ? 'rgba(251, 191, 36, 0.07)' :
+                   !action.success ? 'rgba(239, 68, 68, 0.08)' :
                    action.is_brain ? 'rgba(167, 139, 250, 0.08)' :
                    action.is_portfolio ? 'rgba(16, 185, 129, 0.06)' :
                    'rgba(17, 21, 51, 0.5)';
-  const borderColor = !action.success ? '#ef4444' :
+  const borderColor = isBlocked ? '#fbbf24' :
+                       !action.success ? '#ef4444' :
                        action.is_brain ? '#a78bfa' :
                        detector?.color || '#6b7280';
 
@@ -1214,7 +1220,11 @@ function ActionTimelineItem({ action }) {
         <span style={{ fontSize: '0.68rem', color: 'var(--bos-text)', fontFamily: 'JetBrains Mono, monospace', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {action.entity_name}
         </span>
-        {!action.success && (
+        {isBlocked ? (
+          <span style={{ fontSize: '0.56rem', color: '#fbbf24', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            blocked
+          </span>
+        ) : !action.success && (
           <span style={{ fontSize: '0.56rem', color: '#ef4444', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
             failed
           </span>
@@ -1253,14 +1263,15 @@ function ActionTimelineItem({ action }) {
         </div>
       )}
 
-      {/* Error si falló */}
+      {/* Error si falló — o motivo del bloqueo si fue frenada por un gate */}
       {!action.success && action.error && (
         <div style={{
-          fontSize: '0.64rem', color: '#ef4444', marginTop: 4,
-          padding: '4px 8px', background: 'rgba(239, 68, 68, 0.08)',
+          fontSize: '0.64rem', color: isBlocked ? '#fbbf24' : '#ef4444', marginTop: 4,
+          padding: '4px 8px',
+          background: isBlocked ? 'rgba(251, 191, 36, 0.08)' : 'rgba(239, 68, 68, 0.08)',
           borderRadius: 4, fontFamily: 'JetBrains Mono, monospace'
         }}>
-          {action.error.substring(0, 200)}
+          {(isBlocked ? action.error.replace(/^gate_blocked:\s*/, '🔒 ') : action.error).substring(0, 200)}
         </div>
       )}
     </div>
