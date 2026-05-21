@@ -927,6 +927,26 @@ async function jobHermesComments() {
 }
 
 /**
+ * Job: Hermes Budget Scaler — 2x/día.
+ * Escala el budget del CBO de foot traffic por congruencia (CTR/CPC/freq),
+ * sin techo de negocio. Live solo si HERMES_BUDGET_SCALER=true. Respeta
+ * cooldown 48h interno. Hermes NO tiene ROAS, por eso gatea con señales de
+ * plataforma, no con ROAS.
+ */
+async function jobHermesBudgetScaler() {
+  if (!config.hermes?.enabled) return;
+  try {
+    const { runHermesBudgetScaler } = require('./ai/agent/hermes-budget-scaler');
+    const r = await runHermesBudgetScaler();
+    if (r?.decision && r.decision !== 'hold') {
+      logger.info(`[CRON] Hermes Scaler: ${r.decision} $${r.from}→$${r.to}/d (CTR ${r.ctr}% freq ${r.freq})`);
+    }
+  } catch (error) {
+    logger.error('[CRON] Error en Hermes Budget Scaler:', error);
+  }
+}
+
+/**
  * Job: AI Ops Metrics Refresh — 24/7 con frecuencia adaptativa.
  * Horas activas: cada 15 min (Meta refresca insights cada ~15 min).
  * Fuera de horas: cada 30 min (mantener datos razonablemente frescos).
@@ -1448,6 +1468,14 @@ function initCronJobs() {
     name: 'hermes-comments'
   });
   logger.info(`  [*] Hermes Comment Intelligence — cada 3h ${config.hermes?.commentAutoReply ? '(auto-reply ON)' : '(auto-reply OFF — todo a cola)'}`);
+
+  // Hermes Budget Scaler — 2x/día (7am, 7pm ET). Escala el CBO por congruencia
+  // (CTR/CPC/freq), sin techo de negocio. Cooldown 48h interno.
+  cron.schedule('0 7,19 * * *', jobHermesBudgetScaler, {
+    timezone: TIMEZONE,
+    name: 'hermes-budget-scaler'
+  });
+  logger.info(`  [*] Hermes Budget Scaler — 2x/día ${config.hermes?.scaler?.enabled ? '(LIVE)' : '(OFF — set HERMES_BUDGET_SCALER=true)'}`);
 
   // Testing Agent — 5x/día durante horas activas (6am, 10am, 2pm, 6pm, 10pm ET)
   cron.schedule('30 6,10,14,18,22 * * *', jobTestingAgent, {

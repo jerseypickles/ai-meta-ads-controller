@@ -80,7 +80,28 @@ module.exports = {
     // Comment Intelligence — auto-reply OFF por default (shadow→live).
     // Con OFF, incluso respuestas high-confidence van a cola de aprobación
     // manual. Activar (=true) solo tras validar la calidad de las respuestas.
-    commentAutoReply: process.env.HERMES_COMMENT_AUTOREPLY === 'true'
+    commentAutoReply: process.env.HERMES_COMMENT_AUTOREPLY === 'true',
+    // ═══ Budget Scaler — escala el CBO por CONGRUENCIA, sin techo de negocio ═══
+    // Hermes es foot traffic: NO tiene ROAS (sin ventas online). El escalado se
+    // gatea con señales de plataforma (CTR/CPC/frecuencia). Mientras el scale sea
+    // congruente (eficiencia sostenida) el budget sube; si degrada, se frena/baja
+    // solo → el mercado define el techo, no un número.
+    scaler: {
+      enabled: process.env.HERMES_BUDGET_SCALER === 'true',  // arranca OFF; live cuando se prende
+      // Gates para SUBIR (+stepUpPct): todos deben cumplirse
+      ctrMin: parseFloat(process.env.HERMES_SCALER_CTR_MIN) || 4.0,        // % CTR 7d mínimo
+      cpcMax: parseFloat(process.env.HERMES_SCALER_CPC_MAX) || 0.50,       // $ CPC al link máximo
+      freqMax: parseFloat(process.env.HERMES_SCALER_FREQ_MAX) || 2.5,      // frecuencia máxima para subir
+      // Gates para BAJAR (-stepDownPct): cualquiera lo dispara
+      ctrFloor: parseFloat(process.env.HERMES_SCALER_CTR_FLOOR) || 2.0,    // % CTR bajo el cual recortar
+      freqCeiling: parseFloat(process.env.HERMES_SCALER_FREQ_CEIL) || 3.5, // saturación → recortar
+      stepUpPct: parseFloat(process.env.HERMES_SCALER_STEP_UP) || 0.15,    // +15% por paso
+      stepDownPct: parseFloat(process.env.HERMES_SCALER_STEP_DOWN) || 0.20,// -20% por paso
+      cooldownHours: parseInt(process.env.HERMES_SCALER_COOLDOWN_H) || 48, // entre ajustes
+      minSpend7d: parseFloat(process.env.HERMES_SCALER_MIN_SPEND) || 50,   // no decidir con muestra chica
+      // Circuit-breaker absoluto contra runaway por bug — NO es el techo de negocio
+      safetyCeiling: parseFloat(process.env.HERMES_SCALER_SAFETY_CEILING) || 2000
+    }
   },
 
   googleAI: {
