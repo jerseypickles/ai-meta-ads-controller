@@ -292,6 +292,15 @@ async function executeStarvedRescue(cboSnapshot, adsets, getRescueCbo) {
   // sobre sí mismo (rescatar clones del rescate hacia el mismo rescate).
   if (await isRescueCbo(cboSnapshot.campaign_id)) return executed;
   for (const a of adsets) {
+    // No re-rescatar adsets que YA son producto de un rescate previo. El clon
+    // de rescate siempre lleva el prefijo "[Ares-Rescue]" (ver cloneName abajo),
+    // así que su presencia en el nombre marca un adset ya rescatado. Sin esto,
+    // un rescate que vuelve a dar ROAS alto + poco spend se re-rescata en loop,
+    // acumulando clones de clones ("[Ares-Rescue] [Ares-Rescue] ...") — adsets
+    // ya probados que ensucian el portfolio y diluyen el budget del rescate.
+    // El guard isRescueCbo de arriba solo cubre el rescate ACTUAL por campaign_id;
+    // esto cubre también clones de rescates viejos que viven en otros CBOs.
+    if (a.name && a.name.includes('[Ares-Rescue]')) continue;
     if (a.spend_share_7d >= STARVED_WINNER_SHARE_MAX) continue;
     if (a.roas_7d < STARVED_WINNER_ROAS_MIN) continue;
     if (a.purchases_7d < STARVED_WINNER_PURCHASES_MIN) continue;
