@@ -708,4 +708,142 @@ router.delete('/references/:id', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+// Comment Intelligence — leer/clasificar/responder comentarios de ads
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/hermes/comments
+ * Query: ?status=drafted (cola de aprobación) | ?proposal_id=X | ?classification=Y
+ * Default: últimos comentarios clasificados.
+ */
+router.get('/comments', async (req, res) => {
+  try {
+    const HermesComment = require('../../db/models/HermesComment');
+    const { proposal_id, classification, reply_status, days = 14, limit = 200 } = req.query;
+    const since = new Date(Date.now() - parseInt(days) * 86400000);
+    const query = { created_time: { $gte: since } };
+    if (proposal_id) query.proposal_id = proposal_id;
+    if (classification && classification !== 'all') query.classification = classification;
+    if (reply_status && reply_status !== 'all') query.reply_status = reply_status;
+
+    const comments = await HermesComment.find(query)
+      .sort({ created_time: -1 })
+      .limit(parseInt(limit))
+      .lean();
+    res.json({ comments, count: comments.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/hermes/comments/intent-summary
+ * Score de intención agregado por oferta — qué creativo/oferta mueve gente.
+ */
+router.get('/comments/intent-summary', async (req, res) => {
+  try {
+    const HermesComment = require('../../db/models/HermesComment');
+    const { days = 30 } = req.query;
+    const since = new Date(Date.now() - parseInt(days) * 86400000);
+    const rows = await HermesComment.aggregate([
+      { $match: { created_time: { $gte: since }, classification: { $ne: 'unclassified' } } },
+      { $group: {
+        _id: '$offer_type',
+        total: { $sum: 1 },
+        avg_intent: { $avg: '$intent_score' },
+        intent_visit: { $sum: { $cond: [{ $eq: ['$classification', 'intent_visit'] }, 1, 0] } },
+        questions: { $sum: { $cond: [{ $eq: ['$classification', 'question_logistics'] }, 1, 0] } },
+        visits_reported: { $sum: { $cond: [{ $eq: ['$classification', 'visit_reported'] }, 1, 0] } },
+        creative_issues: { $sum: { $cond: ['$flags_creative_issue', 1, 0] } }
+      }},
+      { $sort: { avg_intent: -1 } }
+    ]);
+    res.json({ summary: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/hermes/comments/flagged-creatives
+ * Creativos con problema de percepción del visual (≥2 comentarios negativos).
+ */
+router.get('/comments/flagged-creatives', async (req, res) => {
+  try {
+    const { detectCreativeIssues } = require('../../ai/hermes/comment-intelligence');
+    const flagged = await detectCreativeIssues();
+    res.json({ flagged });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * PATCH /api/hermes/comments/:id/reply — editar el texto de la respuesta draft
+ */
+router.patch('/comments/:id/reply', async (req, res) => {
+  try {
+    const HermesComment = require('../../db/models/HermesComment');
+    const { reply_text } = req.body;
+    if (!reply_text?.trim()) return res.status(400).json({ error: 'reply_text requerido' });
+    const doc = await HermesComment.findByIdAndUpdate(
+      req.params.id,
+      { $set: { reply_text: reply_text.trim() } },
+      { new: true }
+    ).lean();
+    if (!doc) return res.status(404).json({ error: 'comentario no encontrado' });
+    res.json({ comment: doc });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/hermes/comments/:id/approve-reply — publica la respuesta a Meta.
+ * Escribe en la página pública.
+ */
+router.post('/comments/:id/approve-reply', async (req, res) => {
+  try {
+    const { postApprovedReply } = require('../../ai/hermes/comment-intelligence');
+    const result = await postApprovedReply(req.params.id, req.user?.username || 'user');
+    res.json(result);
+  } catch (err) {
+    logger.error(`[HERMES-API] approve-reply failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/hermes/comments/:id/skip-reply — descarta la respuesta (no publica)
+ */
+router.post('/comments/:id/skip-reply', async (req, res) => {
+  try {
+    const HermesComment = require('../../db/models/HermesComment');
+    const doc = await HermesComment.findByIdAndUpdate(
+      req.params.id,
+      { $set: { reply_status: 'skipped', reply_decided_by: req.user?.username || 'user' } },
+      { new: true }
+    ).lean();
+    if (!doc) return res.status(404).json({ error: 'comentario no encontrado' });
+    res.json({ comment: doc });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/hermes/comments/run-cycle — dispara el ciclo manualmente (on-demand)
+ */
+router.post('/comments/run-cycle', async (req, res) => {
+  try {
+    const { runCommentIntelligenceCycle } = require('../../ai/hermes/comment-intelligence');
+    const result = await runCommentIntelligenceCycle();
+    res.json(result);
+  } catch (err) {
+    logger.error(`[HERMES-API] run-cycle failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

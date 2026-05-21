@@ -76,7 +76,11 @@ module.exports = {
     minDailyBudget: parseInt(process.env.HERMES_MIN_DAILY_BUDGET) || 20,
     // Operacional
     maxActiveAds: parseInt(process.env.HERMES_MAX_ACTIVE_ADS) || 5,
-    proposalExpiryHours: parseInt(process.env.HERMES_PROPOSAL_EXPIRY_HOURS) || 72
+    proposalExpiryHours: parseInt(process.env.HERMES_PROPOSAL_EXPIRY_HOURS) || 72,
+    // Comment Intelligence — auto-reply OFF por default (shadow→live).
+    // Con OFF, incluso respuestas high-confidence van a cola de aprobación
+    // manual. Activar (=true) solo tras validar la calidad de las respuestas.
+    commentAutoReply: process.env.HERMES_COMMENT_AUTOREPLY === 'true'
   },
 
   googleAI: {

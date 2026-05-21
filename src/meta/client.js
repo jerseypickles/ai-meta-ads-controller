@@ -527,6 +527,134 @@ class MetaClient {
     return data.data || [];
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // Comentarios de ads (Hermes) — leer + responder.
+  //
+  // Los comentarios de un ad viven en el post que lo respalda
+  // (effective_object_story_id). Leerlos y responderlos requiere un PAGE
+  // access token (no el de la cuenta publicitaria) con scopes:
+  //   - pages_read_engagement  (leer comentarios)
+  //   - pages_manage_engagement (responder/postear)
+  // El page token se deriva del user/system token vía GET /{page_id}?fields=access_token.
+  //
+  // NOTA v1: cubre comentarios del lado Facebook. Instagram usa otro grafo
+  // (IG media id + Instagram Graph API) — queda para fase 2.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Llamada a Graph API con un token explícito (page token), aislada del
+   * bearer global. Evita el conflicto de "dos access tokens" que ocurre si
+   * se pasa access_token como param mientras el header Authorization sigue
+   * con el user token. Pasa por el mismo limiter + retry.
+   */
+  async _graphWithToken(method, endpoint, params, token) {
+    return this.limiter.schedule(() =>
+      withRetry(
+        () => axios.request({
+          method,
+          url: `${this.baseUrl}${endpoint}`,
+          params: { ...params, access_token: token },
+          timeout: 30000
+        }),
+        {
+          maxRetries: 3,
+          baseDelay: 2000,
+          shouldRetry: shouldRetryMetaError,
+          label: `META ${method.toUpperCase()} ${endpoint} (page token)`
+        }
+      )
+    ).then(res => res.data);
+  }
+
+  /**
+   * Deriva (y cachea) el Page Access Token a partir del token actual.
+   * Lanza error claro si el token no tiene los scopes necesarios o el
+   * usuario no es admin de la página.
+   */
+  async getPageAccessToken() {
+    if (this._pageAccessToken) return this._pageAccessToken;
+
+    const pageId = await this.getPageId();
+    if (!pageId) {
+      throw new Error('No se pudo resolver page_id para derivar el Page Access Token');
+    }
+
+    const data = await this.get(`/${pageId}`, { fields: 'access_token' });
+    if (!data?.access_token) {
+      throw new Error(
+        'Meta no devolvió access_token de la página. El token actual necesita scopes ' +
+        'pages_show_list + pages_read_engagement (y pages_manage_engagement para responder), ' +
+        'y la cuenta debe ser admin de la página. Regenerar el token con esos permisos.'
+      );
+    }
+    this._pageAccessToken = data.access_token;
+    this._pageId = pageId;
+    logger.info('[META] Page Access Token derivado y cacheado');
+    return this._pageAccessToken;
+  }
+
+  /**
+   * Resuelve el effective_object_story_id (el post que respalda un ad).
+   * Necesario para leer/responder sus comentarios.
+   */
+  async getAdStoryId(adId) {
+    const data = await this.get(`/${adId}`, { fields: 'creative{effective_object_story_id}' });
+    return data?.creative?.effective_object_story_id || null;
+  }
+
+  /**
+   * Lee los comentarios (lado Facebook) de un ad.
+   *
+   * @param {string} adId - meta_ad_id de la proposal
+   * @param {object} opts - { limit (default 100), since (unix ts opcional) }
+   * @returns {Promise<{story_id, comments: Array<{id, author_name, author_id, message, created_time, like_count, reply_count}>}>}
+   */
+  async getAdComments(adId, opts = {}) {
+    const storyId = await this.getAdStoryId(adId);
+    if (!storyId) {
+      logger.warn(`[META] ad ${adId} sin effective_object_story_id — no se pueden leer comentarios`);
+      return { story_id: null, comments: [] };
+    }
+
+    const pageToken = await this.getPageAccessToken();
+    const params = {
+      fields: 'id,from{name,id},message,created_time,like_count,comment_count',
+      order: 'reverse_chronological',
+      limit: opts.limit || 100,
+      filter: 'toplevel'
+    };
+    if (opts.since) params.since = opts.since;
+
+    const data = await this._graphWithToken('get', `/${storyId}/comments`, params, pageToken);
+    const comments = (data?.data || []).map(c => ({
+      id: c.id,
+      author_name: c.from?.name || '(desconocido)',
+      author_id: c.from?.id || null,
+      message: c.message || '',
+      created_time: c.created_time ? new Date(c.created_time) : null,
+      like_count: c.like_count || 0,
+      reply_count: c.comment_count || 0
+    }));
+
+    return { story_id: storyId, comments };
+  }
+
+  /**
+   * Responde a un comentario (o postea en un post). Escribe en la PÁGINA
+   * PÚBLICA — usar con cuidado. Requiere pages_manage_engagement.
+   *
+   * @param {string} objectId - comment_id (para reply) u object_story_id (para post)
+   * @param {string} message - texto de la respuesta
+   * @returns {Promise<{id}>}
+   */
+  async postComment(objectId, message) {
+    if (!message || !message.trim()) throw new Error('postComment: message vacío');
+    const pageToken = await this.getPageAccessToken();
+    const result = await this._graphWithToken('post', `/${objectId}/comments`, { message }, pageToken);
+    logger.info(`[META] Comentario publicado en ${objectId} — id=${result?.id}`);
+    return result;
+  }
+
   /**
    * Obtener insights (métricas) de un objeto
    */
@@ -1259,18 +1387,22 @@ class MetaClient {
           });
           const newAdsetId = shallowResult.copied_adset_id || shallowResult.id;
 
-          // Paso 3: para cada ad original, crear ad nuevo referenciando creative_id
+          // Paso 3: para cada ad original, crear ad nuevo referenciando creative_id.
+          // Respetamos el status del ad fuente — antes hardcodeábamos PAUSED y eso
+          // dejaba rescates ACTIVE con todos los ads adentro apagados (no entrega).
+          // Si el original estaba ACTIVE → clon ACTIVE; cualquier otro estado → PAUSED.
           let adsRelinked = 0;
           let adsFailed = 0;
           for (const ad of (originalAds || [])) {
             const creativeId = ad.creative?.id;
             if (!creativeId) { adsFailed++; continue; }
+            const cloneStatus = ad.status === 'ACTIVE' ? 'ACTIVE' : 'PAUSED';
             try {
               await this.createAd(
                 newAdsetId,
                 creativeId,
                 ad.name || `Ad clonado ${Date.now()}`,
-                'PAUSED'
+                cloneStatus
               );
               adsRelinked++;
             } catch (linkErr) {

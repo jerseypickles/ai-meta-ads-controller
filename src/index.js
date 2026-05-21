@@ -909,6 +909,24 @@ async function jobHermesHousekeeping() {
 }
 
 /**
+ * Job: Hermes Comment Intelligence — cada 3h.
+ * Lee comentarios de los ads live de Hermes, los clasifica (intención de
+ * visita, preguntas, resonancia), detecta creativos que confunden/repelen
+ * (ej. "bloody pickles") y prepara respuestas (auto-publica determinísticas
+ * de alta confianza si HERMES_COMMENT_AUTOREPLY=true, resto a cola de
+ * aprobación). Única señal de foot traffic atribuible por creativo.
+ */
+async function jobHermesComments() {
+  if (!config.hermes?.enabled) return;
+  try {
+    const { runCommentIntelligenceCycle } = require('./ai/hermes/comment-intelligence');
+    await runCommentIntelligenceCycle();
+  } catch (error) {
+    logger.error('[CRON] Error en Hermes Comment Intelligence:', error);
+  }
+}
+
+/**
  * Job: AI Ops Metrics Refresh — 24/7 con frecuencia adaptativa.
  * Horas activas: cada 15 min (Meta refresca insights cada ~15 min).
  * Fuera de horas: cada 30 min (mantener datos razonablemente frescos).
@@ -1422,6 +1440,14 @@ function initCronJobs() {
     name: 'hermes-housekeeping'
   });
   logger.info('  [*] Hermes Housekeeping — diario 3:30am ET');
+
+  // Hermes Comment Intelligence — cada 3h. Lee + clasifica comentarios de los
+  // ads live, detecta creativos fallidos y prepara respuestas (auto/cola).
+  cron.schedule('15 */3 * * *', jobHermesComments, {
+    timezone: TIMEZONE,
+    name: 'hermes-comments'
+  });
+  logger.info(`  [*] Hermes Comment Intelligence — cada 3h ${config.hermes?.commentAutoReply ? '(auto-reply ON)' : '(auto-reply OFF — todo a cola)'}`);
 
   // Testing Agent — 5x/día durante horas activas (6am, 10am, 2pm, 6pm, 10pm ET)
   cron.schedule('30 6,10,14,18,22 * * *', jobTestingAgent, {

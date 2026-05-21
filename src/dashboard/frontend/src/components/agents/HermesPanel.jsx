@@ -5,7 +5,7 @@ import {
   Store, MapPin, Activity, Zap, Check, X, Send, RefreshCw, ExternalLink,
   DollarSign, Eye, MousePointerClick, Users, TrendingUp, Layers, Sparkles,
   FileText, BarChart3, DoorOpen, Plus, Loader2, AlertCircle, Trash2,
-  Image as ImageIcon, Camera
+  Image as ImageIcon, Camera, MessageSquare, ThumbsUp, AlertTriangle
 } from 'lucide-react';
 import api from '../../api';
 
@@ -1139,6 +1139,224 @@ function EmptyState({ icon: Icon, title, message, compact }) {
 // MAIN
 // ═══════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════
+// COMMENTS TAB — inteligencia de comentarios (medir + detectar + responder)
+// ═══════════════════════════════════════════════════════════════════════
+
+const CLASS_META = {
+  intent_visit:       { color: '#10b981', label: 'Quiere ir', icon: '🎯' },
+  visit_reported:     { color: '#3b82f6', label: 'Ya fue', icon: '✅' },
+  question_logistics: { color: '#fbbf24', label: 'Pregunta', icon: '❓' },
+  resonance:          { color: '#94a3b8', label: 'Resonancia', icon: '💬' },
+  negative_creative:  { color: '#f43f5e', label: 'Visual confunde', icon: '⚠️' },
+  negative_other:     { color: '#fb7185', label: 'Queja', icon: '👎' },
+  spam:               { color: '#64748b', label: 'Spam', icon: '🚫' },
+  other:              { color: '#64748b', label: 'Otro', icon: '·' },
+  unclassified:       { color: '#64748b', label: 'Sin clasificar', icon: '…' }
+};
+
+function ClassBadge({ cls }) {
+  const m = CLASS_META[cls] || CLASS_META.other;
+  return (
+    <span style={{
+      fontSize: '0.68rem', fontWeight: 600, padding: '2px 8px', borderRadius: 999,
+      background: `${m.color}1a`, color: m.color, border: `1px solid ${m.color}33`,
+      whiteSpace: 'nowrap'
+    }}>{m.icon} {m.label}</span>
+  );
+}
+
+function CommentsTab({ onToast }) {
+  const [summary, setSummary] = useState([]);
+  const [flagged, setFlagged] = useState([]);
+  const [queue, setQueue] = useState([]);
+  const [recent, setRecent] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [running, setRunning] = useState(false);
+  const [edits, setEdits] = useState({});
+
+  async function fetchAll() {
+    setLoading(true);
+    try {
+      const [sum, flg, q, rec] = await Promise.all([
+        api.get('/api/hermes/comments/intent-summary?days=30'),
+        api.get('/api/hermes/comments/flagged-creatives'),
+        api.get('/api/hermes/comments?reply_status=drafted&limit=50'),
+        api.get('/api/hermes/comments?limit=80')
+      ]);
+      setSummary(sum.data.summary || []);
+      setFlagged(flg.data.flagged || []);
+      setQueue(q.data.comments || []);
+      setRecent(rec.data.comments || []);
+    } catch (err) {
+      onToast(err.response?.data?.error || err.message, 'error');
+    } finally { setLoading(false); }
+  }
+  useEffect(() => { fetchAll(); }, []);
+
+  async function runCycle() {
+    setRunning(true);
+    try {
+      const { data } = await api.post('/api/hermes/comments/run-cycle', {}, { timeout: 180000 });
+      onToast(`Ciclo OK: ${data.sync?.new_comments || 0} nuevos, ${data.classified || 0} clasificados`, 'success');
+      fetchAll();
+    } catch (err) {
+      onToast(err.response?.data?.error || err.message, 'error');
+    } finally { setRunning(false); }
+  }
+
+  async function approve(c) {
+    const text = edits[c._id] != null ? edits[c._id] : c.reply_text;
+    try {
+      if (edits[c._id] != null && edits[c._id] !== c.reply_text) {
+        await api.patch(`/api/hermes/comments/${c._id}/reply`, { reply_text: text });
+      }
+      await api.post(`/api/hermes/comments/${c._id}/approve-reply`, {}, { timeout: 30000 });
+      onToast('Respuesta publicada', 'success');
+      fetchAll();
+    } catch (err) {
+      onToast(err.response?.data?.error || err.message, 'error');
+    }
+  }
+
+  async function skip(c) {
+    try {
+      await api.post(`/api/hermes/comments/${c._id}/skip-reply`);
+      fetchAll();
+    } catch (err) {
+      onToast(err.response?.data?.error || err.message, 'error');
+    }
+  }
+
+  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: COLORS.textMuted }}><Loader2 size={20} className="spin" /></div>;
+
+  return (
+    <div style={{ display: 'grid', gap: 18 }}>
+      {/* Header + run */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ fontSize: '0.82rem', color: COLORS.textMuted }}>
+          Señal de foot traffic leída de los comentarios — la persona de la tienda no entra acá.
+        </div>
+        <Button onClick={runCycle} loading={running} icon={RefreshCw}>
+          {running ? 'Procesando...' : 'Sincronizar ahora'}
+        </Button>
+      </div>
+
+      {/* Flagged creatives — alerta */}
+      {flagged.length > 0 && (
+        <GlassCard padding={16} style={{ border: `1px solid ${COLORS.error}44` }}>
+          <SectionTitle icon={AlertTriangle}>Creativos con problema de percepción</SectionTitle>
+          <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
+            {flagged.map(f => (
+              <div key={String(f.proposal_id)} style={{
+                padding: '10px 12px', background: `${COLORS.error}0d`, borderRadius: 8,
+                border: `1px solid ${COLORS.error}22`
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <OfferBadge type={f.offer_type} size="sm" />
+                  <span style={{ fontSize: '0.72rem', color: COLORS.error, fontWeight: 700 }}>
+                    {f.negative_count} comentarios negativos del visual
+                  </span>
+                </div>
+                {(f.samples || []).map((s, i) => (
+                  <div key={i} style={{ fontSize: '0.74rem', color: COLORS.textMuted, fontStyle: 'italic' }}>“{s}”</div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+      )}
+
+      {/* Intent summary por oferta */}
+      <GlassCard padding={18}>
+        <SectionTitle icon={TrendingUp}>Intención por oferta (30d)</SectionTitle>
+        {summary.length > 0 ? (
+          <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
+            {summary.map(s => (
+              <div key={s._id || 'none'} style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '10px 12px', background: COLORS.surface, borderRadius: 8, border: `1px solid ${COLORS.border}`
+              }}>
+                <OfferBadge type={s._id} size="sm" />
+                <div style={{ display: 'flex', gap: 14, fontSize: '0.76rem', fontFamily: 'JetBrains Mono, monospace', alignItems: 'center' }}>
+                  <span title="Intención promedio" style={{ color: COLORS.hermes, fontWeight: 700 }}>{Math.round(s.avg_intent)}<span style={{ color: COLORS.textDim, fontWeight: 400 }}>/100</span></span>
+                  <span style={{ color: '#10b981' }}>{s.intent_visit} ir</span>
+                  <span style={{ color: '#fbbf24' }}>{s.questions} preg</span>
+                  <span style={{ color: '#3b82f6' }}>{s.visits_reported} fue</span>
+                  {s.creative_issues > 0 && <span style={{ color: COLORS.error }}>{s.creative_issues} ⚠</span>}
+                  <span style={{ color: COLORS.textDim }}>{s.total} total</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState icon={MessageSquare} title="Sin comentarios clasificados" message="Cuando los ads junten comentarios, acá ves qué oferta genera más intención de visita." compact />
+        )}
+      </GlassCard>
+
+      {/* Cola de respuestas pendientes */}
+      <GlassCard padding={18}>
+        <SectionTitle icon={Send}>Respuestas pendientes de aprobar ({queue.length})</SectionTitle>
+        {queue.length > 0 ? (
+          <div style={{ display: 'grid', gap: 12, marginTop: 8 }}>
+            {queue.map(c => (
+              <div key={c._id} style={{ padding: 12, background: COLORS.surface, borderRadius: 8, border: `1px solid ${COLORS.border}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <ClassBadge cls={c.classification} />
+                    <span style={{ fontSize: '0.74rem', color: COLORS.textDim }}>{c.author_name}</span>
+                  </div>
+                  {c.reply_confidence === 'low' && <span style={{ fontSize: '0.66rem', color: COLORS.warning }}>baja confianza</span>}
+                </div>
+                <div style={{ fontSize: '0.82rem', color: COLORS.text, marginBottom: 8 }}>“{c.message}”</div>
+                <textarea
+                  defaultValue={c.reply_text}
+                  onChange={e => setEdits({ ...edits, [c._id]: e.target.value })}
+                  rows="2"
+                  style={{ ...inputStyle, width: '100%', marginBottom: 8 }}
+                  placeholder="Respuesta a publicar..."
+                />
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Button onClick={() => approve(c)} icon={Check}>Publicar</Button>
+                  <button onClick={() => skip(c)} style={{
+                    padding: '8px 14px', background: 'transparent', border: `1px solid ${COLORS.border}`,
+                    borderRadius: 8, color: COLORS.textMuted, cursor: 'pointer', fontSize: '0.82rem', fontFamily: 'inherit'
+                  }}>Descartar</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState icon={Check} title="Cola vacía" message="No hay respuestas esperando aprobación." compact />
+        )}
+      </GlassCard>
+
+      {/* Feed reciente */}
+      <GlassCard padding={18}>
+        <SectionTitle icon={MessageSquare}>Comentarios recientes</SectionTitle>
+        {recent.length > 0 ? (
+          <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
+            {recent.map(c => (
+              <div key={c._id} style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+                padding: '8px 12px', background: COLORS.surface, borderRadius: 8, border: `1px solid ${COLORS.border}`
+              }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: '0.8rem', color: COLORS.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.message}</div>
+                  <div style={{ fontSize: '0.68rem', color: COLORS.textDim }}>{c.author_name}{c.reply_status === 'auto_posted' && ' · 🤖 auto-respondido'}{c.reply_status === 'posted' && ' · ✓ respondido'}</div>
+                </div>
+                <ClassBadge cls={c.classification} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState icon={MessageSquare} title="Sin comentarios aún" message="El ciclo corre cada 3h. Usá 'Sincronizar ahora' para traerlos al toque." compact />
+        )}
+      </GlassCard>
+    </div>
+  );
+}
+
 export default function HermesPanel() {
   const [tab, setTab] = useState('proposals');
   const [stats, setStats] = useState(null);
@@ -1162,6 +1380,7 @@ export default function HermesPanel() {
     { id: 'proposals', label: 'Proposals', icon: FileText, badge: pendingCount > 0 ? pendingCount : null },
     { id: 'references', label: 'Referencias', icon: ImageIcon, badge: null },
     { id: 'performance', label: 'Performance', icon: BarChart3, badge: liveCount > 0 ? liveCount : null },
+    { id: 'comments', label: 'Comentarios', icon: MessageSquare, badge: null },
     { id: 'visits', label: 'Store Visits', icon: DoorOpen, badge: visitsCount > 0 ? visitsCount : null }
   ];
 
@@ -1292,6 +1511,7 @@ export default function HermesPanel() {
           {tab === 'proposals' && <ProposalsTab onToast={showToast} />}
           {tab === 'references' && <ReferencesTab onToast={showToast} />}
           {tab === 'performance' && <PerformanceTab onToast={showToast} />}
+          {tab === 'comments' && <CommentsTab onToast={showToast} />}
           {tab === 'visits' && <VisitsTab onToast={showToast} />}
         </motion.div>
       </AnimatePresence>
