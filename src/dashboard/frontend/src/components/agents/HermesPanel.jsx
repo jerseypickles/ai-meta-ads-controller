@@ -1476,11 +1476,14 @@ export default function HermesPanel() {
 
   return (
     <div style={{
-      padding: 24,
+      padding: 20,
       color: COLORS.text,
       fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
       background: `radial-gradient(ellipse at top, ${COLORS.hermes}08 0%, transparent 50%), ${COLORS.bg}`,
-      minHeight: '100vh'
+      width: '100%',
+      maxWidth: '100%',
+      boxSizing: 'border-box',
+      overflowX: 'hidden'
     }}>
       <style>{`
         .spin { animation: spin 1s linear infinite; }
@@ -1495,7 +1498,7 @@ export default function HermesPanel() {
         animate={{ opacity: 1, y: 0 }}
         style={{ marginBottom: 28 }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
               <div style={{
@@ -1544,7 +1547,7 @@ export default function HermesPanel() {
         </div>
 
         {/* Hero KPIs */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginTop: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginTop: 16 }}>
           <HeroKpi label="Pending approval" value={pendingCount} accent={pendingCount > 0 ? COLORS.warning : COLORS.textDim} />
           <HeroKpi label="Live ads" value={liveCount} accent={COLORS.info} />
           <HeroKpi label="Visitas 30d" value={visitsCount} accent={COLORS.hermes} />
@@ -1553,23 +1556,25 @@ export default function HermesPanel() {
       </motion.div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: `1px solid ${COLORS.border}` }}>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: `1px solid ${COLORS.border}`, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
         {tabs.map(t => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
             style={{
-              padding: '10px 18px',
+              padding: '10px 14px',
               background: 'transparent',
               border: 'none',
               borderBottom: tab === t.id ? `2px solid ${COLORS.hermes}` : '2px solid transparent',
               color: tab === t.id ? COLORS.hermes : COLORS.textMuted,
               cursor: 'pointer',
               fontWeight: tab === t.id ? 600 : 500,
-              fontSize: '0.88rem',
+              fontSize: '0.85rem',
               display: 'inline-flex',
               alignItems: 'center',
-              gap: 8,
+              gap: 7,
+              flexShrink: 0,
+              whiteSpace: 'nowrap',
               transition: 'color 0.15s',
               fontFamily: 'inherit'
             }}
