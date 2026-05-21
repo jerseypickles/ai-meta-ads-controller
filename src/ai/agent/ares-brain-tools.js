@@ -1426,7 +1426,12 @@ async function handleCreateNewCBO({ name, daily_budget, objective, seed_adset_id
     return { error: `meta API falló al crear CBO: ${err.message}` };
   }
 
-  // ─── DUPLICAR SEEDS A LA NUEVA CBO (PAUSED) ──────────────────────────
+  // ─── DUPLICAR SEEDS A LA NUEVA CBO (ACTIVE) ──────────────────────────
+  // Seeds arrancan ACTIVE (consistente con Ares Portfolio, que duplica
+  // rescates ACTIVE desde el 26-abr). Antes arrancaban PAUSED esperando
+  // review manual, pero eso dejaba la CBO muerta si el creador no la
+  // activaba — la decisión de Ares se desperdiciaba. Traza vía SafetyEvent
+  // (high) + ping a Zeus; si algo va mal, se pausa manual en Meta.
 
   const seedsResult = [];
   for (const snap of seedSnaps) {
@@ -1437,7 +1442,7 @@ async function handleCreateNewCBO({ name, daily_budget, objective, seed_adset_id
         campaign_id: campaignId,
         deep_copy: true,
         name: `[Seed] ${snap.entity_name}`,
-        status: 'PAUSED'
+        status: 'ACTIVE'
       });
       if (dup?.success && dup?.new_adset_id) {
         await logBrainAction({
@@ -1453,7 +1458,7 @@ async function handleCreateNewCBO({ name, daily_budget, objective, seed_adset_id
             parent_action: 'create_campaign',
             new_adset_id: dup.new_adset_id,
             new_cbo_id: campaignId,
-            new_adset_status: 'PAUSED'
+            new_adset_status: 'ACTIVE'
           },
           success: true
         });
@@ -1472,8 +1477,8 @@ async function handleCreateNewCBO({ name, daily_budget, objective, seed_adset_id
 
   await emitSafetyEvent({
     type: 'autonomous_cbo_created',
-    severity: 'warning',
-    description: `Ares Brain creó CBO autónoma "${name}" con budget $${resolvedBudget}/d + ${seedsOk}/${seed_adset_ids.length} seeds`,
+    severity: 'high',
+    description: `Ares Brain creó CBO autónoma "${name}" con budget $${resolvedBudget}/d + ${seedsOk}/${seed_adset_ids.length} seeds ACTIVE`,
     entity_id: campaignId,
     entity_name: name,
     details: {
@@ -1486,7 +1491,7 @@ async function handleCreateNewCBO({ name, daily_budget, objective, seed_adset_id
     }
   });
 
-  const zeusMsg = `**Ares Brain creó CBO nueva:** "${name}"\n\n- Campaign ID: \`${campaignId}\`\n- Budget: $${resolvedBudget}/d\n- Seeds duplicados (PAUSED): ${seedsOk}/${seed_adset_ids.length}\n- Objective: ${resolvedObjective}\n\n**Razón:** ${reasoning}\n\n_Los seeds están PAUSED — revisalos y activá los que quieras. La CBO madre está ACTIVA pero sin spend hasta que se activen adsets. Esta es decisión Ola 3 autónoma, sale en \`autonomous_cbo_created\` SafetyEvent._`;
+  const zeusMsg = `**Ares Brain creó CBO nueva:** "${name}"\n\n- Campaign ID: \`${campaignId}\`\n- Budget: $${resolvedBudget}/d\n- Seeds duplicados (ACTIVE): ${seedsOk}/${seed_adset_ids.length}\n- Objective: ${resolvedObjective}\n\n**Razón:** ${reasoning}\n\n_Los seeds arrancan ACTIVE — la CBO ya está explorando con su budget. Decisión Ola 3 autónoma (sale en \`autonomous_cbo_created\` SafetyEvent). Si algo no va, pausá manual en Meta._`;
 
   await pingZeusProactive({
     content: zeusMsg,
