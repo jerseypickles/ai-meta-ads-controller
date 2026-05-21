@@ -5,7 +5,8 @@ import {
   Store, MapPin, Activity, Zap, Check, X, Send, RefreshCw, ExternalLink,
   DollarSign, Eye, MousePointerClick, Users, TrendingUp, Layers, Sparkles,
   FileText, BarChart3, DoorOpen, Plus, Loader2, AlertCircle, Trash2,
-  Image as ImageIcon, Camera, MessageSquare, ThumbsUp, AlertTriangle
+  Image as ImageIcon, Camera, MessageSquare, ThumbsUp, AlertTriangle,
+  HelpCircle, ThumbsDown, Ban, Bot
 } from 'lucide-react';
 import api from '../../api';
 
@@ -1144,25 +1145,63 @@ function EmptyState({ icon: Icon, title, message, compact }) {
 // ═══════════════════════════════════════════════════════════════════════
 
 const CLASS_META = {
-  intent_visit:       { color: '#10b981', label: 'Quiere ir', icon: '🎯' },
-  visit_reported:     { color: '#3b82f6', label: 'Ya fue', icon: '✅' },
-  question_logistics: { color: '#fbbf24', label: 'Pregunta', icon: '❓' },
-  resonance:          { color: '#94a3b8', label: 'Resonancia', icon: '💬' },
-  negative_creative:  { color: '#f43f5e', label: 'Visual confunde', icon: '⚠️' },
-  negative_other:     { color: '#fb7185', label: 'Queja', icon: '👎' },
-  spam:               { color: '#64748b', label: 'Spam', icon: '🚫' },
-  other:              { color: '#64748b', label: 'Otro', icon: '·' },
-  unclassified:       { color: '#64748b', label: 'Sin clasificar', icon: '…' }
+  intent_visit:       { color: '#10b981', label: 'Quiere ir', Icon: MapPin },
+  visit_reported:     { color: '#3b82f6', label: 'Ya fue', Icon: Check },
+  question_logistics: { color: '#fbbf24', label: 'Pregunta', Icon: HelpCircle },
+  resonance:          { color: '#94a3b8', label: 'Resonancia', Icon: ThumbsUp },
+  negative_creative:  { color: '#f43f5e', label: 'Visual confunde', Icon: AlertTriangle },
+  negative_other:     { color: '#fb7185', label: 'Queja', Icon: ThumbsDown },
+  spam:               { color: '#64748b', label: 'Spam', Icon: Ban },
+  other:              { color: '#64748b', label: 'Otro', Icon: MessageSquare },
+  unclassified:       { color: '#64748b', label: 'Sin clasificar', Icon: MessageSquare }
 };
 
 function ClassBadge({ cls }) {
   const m = CLASS_META[cls] || CLASS_META.other;
+  const Icon = m.Icon;
   return (
     <span style={{
-      fontSize: '0.68rem', fontWeight: 600, padding: '2px 8px', borderRadius: 999,
+      display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0,
+      fontSize: '0.68rem', fontWeight: 600, padding: '3px 8px', borderRadius: 999,
       background: `${m.color}1a`, color: m.color, border: `1px solid ${m.color}33`,
       whiteSpace: 'nowrap'
-    }}>{m.icon} {m.label}</span>
+    }}><Icon size={11} /> {m.label}</span>
+  );
+}
+
+// Color del score de intención según nivel (verde alto / amber medio / gris bajo)
+function intentColor(score) {
+  if (score >= 60) return COLORS.success;
+  if (score >= 35) return COLORS.warning;
+  return COLORS.textMuted;
+}
+
+// Chip compacto métrica (icono + valor + label) — reemplaza el monospace crudo
+function StatChip({ icon: Icon, value, label, color }) {
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap',
+      padding: '4px 9px', borderRadius: 7, background: `${color}12`,
+      border: `1px solid ${color}22`, fontSize: '0.72rem', color: COLORS.textMuted
+    }}>
+      <Icon size={12} style={{ color }} />
+      <strong style={{ color, fontWeight: 700 }}>{value}</strong> {label}
+    </span>
+  );
+}
+
+// Mini-stat del resumen del tab
+function MiniStat({ label, value, color, icon: Icon }) {
+  return (
+    <div style={{
+      padding: '12px 14px', background: COLORS.surface, border: `1px solid ${COLORS.border}`,
+      borderRadius: 10, borderTop: `2px solid ${color}`, minWidth: 0
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: COLORS.textMuted, fontSize: '0.7rem', fontWeight: 500, marginBottom: 4 }}>
+        <Icon size={12} style={{ color }} /> {label}
+      </div>
+      <div style={{ fontSize: '1.4rem', fontWeight: 700, color, lineHeight: 1, fontFamily: "'Fira Code', 'JetBrains Mono', monospace" }}>{value}</div>
+    </div>
   );
 }
 
@@ -1230,64 +1269,110 @@ function CommentsTab({ onToast }) {
 
   if (loading) return <div style={{ padding: 40, textAlign: 'center', color: COLORS.textMuted }}><Loader2 size={20} className="spin" /></div>;
 
+  // Totales para el resumen del tab
+  const sortedSummary = [...summary].sort((a, b) => (b.avg_intent || 0) - (a.avg_intent || 0));
+  const totals = summary.reduce((acc, s) => ({
+    comments: acc.comments + (s.total || 0),
+    intent: acc.intent + (s.intent_visit || 0),
+    questions: acc.questions + (s.questions || 0)
+  }), { comments: 0, intent: 0, questions: 0 });
+
   return (
-    <div style={{ display: 'grid', gap: 18 }}>
+    <div style={{ display: 'grid', gap: 18, maxWidth: '100%' }}>
       {/* Header + run */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ fontSize: '0.82rem', color: COLORS.textMuted }}>
-          Señal de foot traffic leída de los comentarios — la persona de la tienda no entra acá.
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: '0.82rem', color: COLORS.textMuted, flex: '1 1 260px', minWidth: 0, lineHeight: 1.5 }}>
+          Señal de foot traffic leída de los comentarios — sin depender de la tienda.
         </div>
-        <Button onClick={runCycle} loading={running} icon={RefreshCw}>
-          {running ? 'Procesando...' : 'Sincronizar ahora'}
-        </Button>
+        <div style={{ flexShrink: 0 }}>
+          <Button onClick={runCycle} loading={running} icon={RefreshCw}>
+            {running ? 'Procesando...' : 'Sincronizar ahora'}
+          </Button>
+        </div>
+      </div>
+
+      {/* Resumen del tab */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 }}>
+        <MiniStat label="Comentarios" value={totals.comments} color={COLORS.info} icon={MessageSquare} />
+        <MiniStat label="Quieren ir" value={totals.intent} color={COLORS.success} icon={MapPin} />
+        <MiniStat label="Preguntas" value={totals.questions} color={COLORS.warning} icon={HelpCircle} />
+        <MiniStat label="Creativos flaggeados" value={flagged.length} color={flagged.length > 0 ? COLORS.error : COLORS.textDim} icon={AlertTriangle} />
       </div>
 
       {/* Flagged creatives — alerta */}
       {flagged.length > 0 && (
-        <GlassCard padding={16} style={{ border: `1px solid ${COLORS.error}44` }}>
+        <GlassCard padding={18} style={{ borderColor: `${COLORS.error}44` }}>
           <SectionTitle icon={AlertTriangle}>Creativos con problema de percepción</SectionTitle>
-          <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
+          <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
             {flagged.map(f => (
               <div key={String(f.proposal_id)} style={{
-                padding: '10px 12px', background: `${COLORS.error}0d`, borderRadius: 8,
+                padding: '12px 14px', background: `${COLORS.error}0d`, borderRadius: 10,
                 border: `1px solid ${COLORS.error}22`
               }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
                   <OfferBadge type={f.offer_type} size="sm" />
-                  <span style={{ fontSize: '0.72rem', color: COLORS.error, fontWeight: 700 }}>
-                    {f.negative_count} comentarios negativos del visual
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0,
+                    fontSize: '0.68rem', fontWeight: 700, color: COLORS.error, padding: '2px 8px',
+                    borderRadius: 999, background: `${COLORS.error}1a`, border: `1px solid ${COLORS.error}33`
+                  }}>
+                    <AlertTriangle size={11} /> {f.negative_count} negativos del visual
                   </span>
                 </div>
-                {(f.samples || []).map((s, i) => (
-                  <div key={i} style={{ fontSize: '0.74rem', color: COLORS.textMuted, fontStyle: 'italic' }}>“{s}”</div>
-                ))}
+                <div style={{ display: 'grid', gap: 5 }}>
+                  {(f.samples || []).map((s, i) => (
+                    <div key={i} style={{
+                      fontSize: '0.78rem', color: COLORS.textMuted, fontStyle: 'italic',
+                      paddingLeft: 10, borderLeft: `2px solid ${COLORS.error}44`, lineHeight: 1.45,
+                      overflowWrap: 'anywhere'
+                    }}>“{s}”</div>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
         </GlassCard>
       )}
 
-      {/* Intent summary por oferta */}
+      {/* Intención por oferta — barras de progreso */}
       <GlassCard padding={18}>
         <SectionTitle icon={TrendingUp}>Intención por oferta (30d)</SectionTitle>
-        {summary.length > 0 ? (
-          <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
-            {summary.map(s => (
-              <div key={s._id || 'none'} style={{
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                padding: '10px 12px', background: COLORS.surface, borderRadius: 8, border: `1px solid ${COLORS.border}`
-              }}>
-                <OfferBadge type={s._id} size="sm" />
-                <div style={{ display: 'flex', gap: 14, fontSize: '0.76rem', fontFamily: 'JetBrains Mono, monospace', alignItems: 'center' }}>
-                  <span title="Intención promedio" style={{ color: COLORS.hermes, fontWeight: 700 }}>{Math.round(s.avg_intent)}<span style={{ color: COLORS.textDim, fontWeight: 400 }}>/100</span></span>
-                  <span style={{ color: '#10b981' }}>{s.intent_visit} ir</span>
-                  <span style={{ color: '#fbbf24' }}>{s.questions} preg</span>
-                  <span style={{ color: '#3b82f6' }}>{s.visits_reported} fue</span>
-                  {s.creative_issues > 0 && <span style={{ color: COLORS.error }}>{s.creative_issues} ⚠</span>}
-                  <span style={{ color: COLORS.textDim }}>{s.total} total</span>
+        {sortedSummary.length > 0 ? (
+          <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
+            {sortedSummary.map(s => {
+              const score = Math.round(s.avg_intent || 0);
+              const col = intentColor(score);
+              return (
+                <div key={s._id || 'none'} style={{
+                  padding: '12px 14px', background: COLORS.surface, borderRadius: 10, border: `1px solid ${COLORS.border}`
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+                    <OfferBadge type={s._id} size="sm" />
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
+                      <span style={{ fontSize: '1.15rem', fontWeight: 700, color: col, lineHeight: 1, fontFamily: "'Fira Code', 'JetBrains Mono', monospace" }}>{score}</span>
+                      <span style={{ fontSize: '0.7rem', color: COLORS.textDim }}>/ 100 intención</span>
+                    </div>
+                  </div>
+                  {/* Barra de progreso */}
+                  <div style={{ height: 6, background: COLORS.border, borderRadius: 999, overflow: 'hidden', marginBottom: 10 }}>
+                    <motion.div
+                      initial={{ width: 0 }}
+                      animate={{ width: `${Math.min(100, score)}%` }}
+                      transition={{ duration: 0.6, ease: 'easeOut' }}
+                      style={{ height: '100%', background: col, borderRadius: 999 }}
+                    />
+                  </div>
+                  {/* Chips de breakdown */}
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <StatChip icon={MapPin} value={s.intent_visit || 0} label="quieren ir" color={COLORS.success} />
+                    <StatChip icon={HelpCircle} value={s.questions || 0} label="preguntas" color={COLORS.warning} />
+                    <StatChip icon={Check} value={s.visits_reported || 0} label="fueron" color={COLORS.info} />
+                    {s.creative_issues > 0 && <StatChip icon={AlertTriangle} value={s.creative_issues} label="visual" color={COLORS.error} />}
+                    <StatChip icon={MessageSquare} value={s.total || 0} label="total" color={COLORS.textMuted} />
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <EmptyState icon={MessageSquare} title="Sin comentarios clasificados" message="Cuando los ads junten comentarios, acá ves qué oferta genera más intención de visita." compact />
@@ -1298,30 +1383,31 @@ function CommentsTab({ onToast }) {
       <GlassCard padding={18}>
         <SectionTitle icon={Send}>Respuestas pendientes de aprobar ({queue.length})</SectionTitle>
         {queue.length > 0 ? (
-          <div style={{ display: 'grid', gap: 12, marginTop: 8 }}>
+          <div style={{ display: 'grid', gap: 12, marginTop: 10 }}>
             {queue.map(c => (
-              <div key={c._id} style={{ padding: 12, background: COLORS.surface, borderRadius: 8, border: `1px solid ${COLORS.border}` }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div key={c._id} style={{ padding: 14, background: COLORS.surface, borderRadius: 10, border: `1px solid ${COLORS.border}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', minWidth: 0 }}>
                     <ClassBadge cls={c.classification} />
-                    <span style={{ fontSize: '0.74rem', color: COLORS.textDim }}>{c.author_name}</span>
+                    <span style={{ fontSize: '0.74rem', color: COLORS.textDim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.author_name}</span>
                   </div>
-                  {c.reply_confidence === 'low' && <span style={{ fontSize: '0.66rem', color: COLORS.warning }}>baja confianza</span>}
+                  {c.reply_confidence === 'low' && (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0, fontSize: '0.66rem', fontWeight: 600, color: COLORS.warning, padding: '2px 7px', borderRadius: 999, background: `${COLORS.warning}1a`, border: `1px solid ${COLORS.warning}33` }}>
+                      <AlertCircle size={10} /> baja confianza
+                    </span>
+                  )}
                 </div>
-                <div style={{ fontSize: '0.82rem', color: COLORS.text, marginBottom: 8 }}>“{c.message}”</div>
+                <div style={{ fontSize: '0.82rem', color: COLORS.text, marginBottom: 10, lineHeight: 1.45, overflowWrap: 'anywhere' }}>“{c.message}”</div>
                 <textarea
                   defaultValue={c.reply_text}
                   onChange={e => setEdits({ ...edits, [c._id]: e.target.value })}
                   rows="2"
-                  style={{ ...inputStyle, width: '100%', marginBottom: 8 }}
+                  style={{ ...inputStyle, width: '100%', boxSizing: 'border-box', marginBottom: 10, resize: 'vertical' }}
                   placeholder="Respuesta a publicar..."
                 />
                 <div style={{ display: 'flex', gap: 8 }}>
                   <Button onClick={() => approve(c)} icon={Check}>Publicar</Button>
-                  <button onClick={() => skip(c)} style={{
-                    padding: '8px 14px', background: 'transparent', border: `1px solid ${COLORS.border}`,
-                    borderRadius: 8, color: COLORS.textMuted, cursor: 'pointer', fontSize: '0.82rem', fontFamily: 'inherit'
-                  }}>Descartar</button>
+                  <Button onClick={() => skip(c)} variant="secondary" icon={X}>Descartar</Button>
                 </div>
               </div>
             ))}
@@ -1335,15 +1421,19 @@ function CommentsTab({ onToast }) {
       <GlassCard padding={18}>
         <SectionTitle icon={MessageSquare}>Comentarios recientes</SectionTitle>
         {recent.length > 0 ? (
-          <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
+          <div style={{ display: 'grid', gap: 6, marginTop: 10 }}>
             {recent.map(c => (
               <div key={c._id} style={{
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
-                padding: '8px 12px', background: COLORS.surface, borderRadius: 8, border: `1px solid ${COLORS.border}`
+                padding: '9px 12px', background: COLORS.surface, borderRadius: 8, border: `1px solid ${COLORS.border}`
               }}>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontSize: '0.8rem', color: COLORS.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.message}</div>
-                  <div style={{ fontSize: '0.68rem', color: COLORS.textDim }}>{c.author_name}{c.reply_status === 'auto_posted' && ' · 🤖 auto-respondido'}{c.reply_status === 'posted' && ' · ✓ respondido'}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.68rem', color: COLORS.textDim, marginTop: 2 }}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.author_name}</span>
+                    {c.reply_status === 'auto_posted' && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: COLORS.success, flexShrink: 0 }}><Bot size={10} /> auto</span>}
+                    {c.reply_status === 'posted' && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: COLORS.success, flexShrink: 0 }}><Check size={10} /> respondido</span>}
+                  </div>
                 </div>
                 <ClassBadge cls={c.classification} />
               </div>
