@@ -531,10 +531,16 @@ async function handleGetPortfolioRecommendations() {
   });
 
   const candidates = [];
+  // Fake rescue resolver para dry-run: devuelve un id falso así el gate de
+  // starved_winner_rescue pasa y el call a meta.duplicateAdSet mockeado tira
+  // DRY_RUN_BRAIN_INSPECT (que es lo que queremos capturar como intent).
+  // Sin esto, pasar null hacía que executeStarvedRescue reventara con
+  // "getRescueCbo is not a function" cada minuto en el cron de Ares Brain.
+  const dryRunRescue = async () => 'DRY_RUN_FAKE_CBO_ID';
   try {
     for (const snap of snaps) {
       // Capturar logs para extraer lo que habrían hecho
-      const { executed } = await executePortfolioActionsForCBO(snap, null, 10);
+      const { executed } = await executePortfolioActionsForCBO(snap, dryRunRescue, 10);
       // executed está vacío (todas fallaron DRY_RUN) pero ActionLog guardó
       // intentos fallidos con reasoning — esos son las recomendaciones
     }

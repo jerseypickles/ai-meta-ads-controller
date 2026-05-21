@@ -1008,7 +1008,7 @@ async function createRescueCbo() {
       const SafetyEvent = require('../../db/models/SafetyEvent');
       await SafetyEvent.create({
         event_type: 'autonomous_cbo_created',
-        severity: 'warning',
+        severity: 'high',
         entity_id: result.campaign_id,
         entity_name: name,
         description: `Ares Portfolio auto-creó el CBO rescate "${name}" ($${RESCUE_CBO_BUDGET}/d) — destino para winners famélicos.`,

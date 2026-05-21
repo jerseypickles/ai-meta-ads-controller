@@ -76,7 +76,7 @@ async function getRecentlyAlerted() {
   // Kinds que son agregados (no tienen entity) — si ya se emitió, dedup full
   const AGGREGATE_KINDS = new Set([
     'stale_recs', 'bulk_kills', 'kill_switch', 'follow_up_review',
-    'platform_degraded_enter', 'watcher_triggered'
+    'platform_degraded_enter', 'watcher_triggered', 'ares_portfolio_activity'
   ]);
 
   for (const msg of recent) {
@@ -446,6 +446,55 @@ async function detectSignals(sinceDate) {
     }
   } catch (err) {
     // noop
+  }
+
+  // 8.5 Actividad de Ares Portfolio (acciones autónomas que el creador debe saber)
+  // Ares ejecuta sin pedir permiso — kills, rescates, scale_ups, creación de CBOs.
+  // Sin este detector Zeus quedaba mudo cuando Ares hacía cosas grandes
+  // (ej: 14 rescates + creación de CBO rescate el 20-may sin que Zeus reportara).
+  try {
+    const aresActions = await ActionLog.find({
+      agent_type: 'ares_portfolio',
+      executed_at: { $gte: sinceDate },
+      success: true
+    }).sort({ executed_at: -1 }).lean();
+
+    if (aresActions.length > 0) {
+      const byAction = {};
+      const byDetector = {};
+      const cboCreations = [];
+      for (const a of aresActions) {
+        byAction[a.action] = (byAction[a.action] || 0) + 1;
+        const det = a.metadata?.detector || 'unknown';
+        byDetector[det] = (byDetector[det] || 0) + 1;
+        if (a.action === 'create_campaign') {
+          cboCreations.push({ id: a.entity_id, name: a.entity_name, budget: a.after_value });
+        }
+      }
+
+      // Solo emitimos signal si hubo creación de CBO O ≥3 acciones del mismo tipo
+      // (eventos individuales chicos no son worth interrumpir).
+      const isWorthAlerting = cboCreations.length > 0 ||
+                              Object.values(byAction).some(c => c >= 3);
+
+      if (isWorthAlerting) {
+        const summary = Object.entries(byAction)
+          .map(([k, v]) => `${v} ${k}`).join(', ');
+        signals.push({
+          kind: 'ares_portfolio_activity',
+          severity: cboCreations.length > 0 ? 'high' : 'medium',
+          count: aresActions.length,
+          summary,
+          by_detector: byDetector,
+          cbos_created: cboCreations,
+          detail: cboCreations.length > 0
+            ? `Ares creó ${cboCreations.length} CBO nueva${cboCreations.length > 1 ? 's' : ''}: ${cboCreations.map(c => `"${c.name}" ($${c.budget}/d)`).join(', ')}. Total ${aresActions.length} acciones (${summary}).`
+            : `Ares ejecutó ${aresActions.length} acciones autónomas: ${summary}.`
+        });
+      }
+    }
+  } catch (err) {
+    logger.warn(`[ZEUS-PROACTIVE] ares_portfolio detector falló: ${err.message}`);
   }
 
   // 9. Eventos estacionales entrando en anticipación (awareness pings)
