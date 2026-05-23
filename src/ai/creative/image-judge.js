@@ -211,4 +211,74 @@ Here are the images:`
   };
 }
 
-module.exports = { judgeImages };
+/**
+ * Fidelity gate — verifica que el PRODUCTO en la imagen generada sea fiel a la(s)
+ * imagen(es) de referencia real(es), sobre todo COLOR y contenido del envase.
+ * Distinto de judgeImages (que rankea CTR sin ver la referencia): este compara
+ * generada vs referencia, así atrapa cosas como el tomate VERDE saliendo ROJO.
+ *
+ * Fail-open: si no hay API key, no hay referencia, o falla el parseo → pass:true
+ * (nunca bloquea la generación por un error propio).
+ *
+ * @param {string} generatedBase64 - imagen generada (base64, sin data: prefix)
+ * @param {Array<object|string>} referenceImages - refs: {image_base64,mime_type} | {path} | string path
+ * @param {string} productName
+ * @returns {Promise<{pass:boolean, score?:number, color_match?:boolean, issues?:string[], verdict?:string, skipped?:string}>}
+ */
+async function judgeFidelity(generatedBase64, referenceImages = [], productName = '') {
+  const apiKey = config.claude.apiKey;
+  if (!apiKey) return { pass: true, skipped: 'no_api_key' };
+  if (!generatedBase64) return { pass: true, skipped: 'no_image' };
+
+  // Extraer base64 de las referencias (formato flexible)
+  const refs = [];
+  for (const r of (referenceImages || [])) {
+    try {
+      if (typeof r === 'string') {
+        refs.push({ b64: fs.readFileSync(path.resolve(r)).toString('base64'), mt: 'image/png' });
+      } else if (r && r.image_base64) {
+        refs.push({ b64: r.image_base64, mt: r.mime_type || 'image/jpeg' });
+      } else if (r && r.path && fs.existsSync(r.path)) {
+        refs.push({ b64: fs.readFileSync(path.resolve(r.path)).toString('base64'), mt: 'image/png' });
+      }
+    } catch (_) { /* skip ref ilegible */ }
+  }
+  if (refs.length === 0) return { pass: true, skipped: 'no_reference' };
+
+  try {
+    const client = new Anthropic({ apiKey });
+    const content = [{
+      type: 'text',
+      text: `Sos un control de calidad de FIDELIDAD de producto para ads. Te muestro PRIMERO la(s) foto(s) REAL(es) del producto "${productName}" (referencia), y LUEGO una imagen generada por IA. Verificá que el producto generado sea FIEL a la referencia, sobre todo el COLOR y el contenido del envase (ej: si el contenido en la referencia es verde, NO debe salir rojo). NO evalúes la escena, el fondo ni el estilo — solo la fidelidad del producto y su contenido.\n\nREFERENCIA(S) REAL(ES):`
+    }];
+    refs.forEach(r => content.push({ type: 'image', source: { type: 'base64', media_type: r.mt, data: r.b64 } }));
+    content.push({ type: 'text', text: '\nIMAGEN GENERADA (a verificar):' });
+    content.push({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: generatedBase64 } });
+    content.push({
+      type: 'text',
+      text: '\nRespondé SOLO JSON, sin markdown: {"fidelity_score":0-100,"color_match":true|false,"issues":["..."],"verdict":"1 frase"}. color_match=false si el color del producto o su contenido difiere de la referencia (ej: tomate rojo cuando la referencia es verde). fidelity_score<70 si hay desviaciones serias de color/contenido/forma/label.'
+    });
+
+    const resp = await client.messages.create({
+      model: config.claude.model,
+      max_tokens: 500,
+      messages: [{ role: 'user', content }]
+    });
+    const text = resp.content[0]?.text || '';
+    let parsed;
+    try {
+      parsed = JSON.parse(text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
+    } catch (e) {
+      logger.warn(`[IMAGE-JUDGE] fidelity parse error: ${text.slice(0, 150)}`);
+      return { pass: true, skipped: 'parse_error' };
+    }
+    const score = typeof parsed.fidelity_score === 'number' ? parsed.fidelity_score : null;
+    const pass = (parsed.color_match !== false) && (score == null || score >= 70);
+    return { pass, score, color_match: parsed.color_match, issues: parsed.issues || [], verdict: parsed.verdict || '' };
+  } catch (err) {
+    logger.warn(`[IMAGE-JUDGE] fidelity gate error (fail-open): ${err.message}`);
+    return { pass: true, skipped: 'error' };
+  }
+}
+
+module.exports = { judgeImages, judgeFidelity };

@@ -726,6 +726,22 @@ async function runCreativeAgent() {
         }
         const imageBase64 = await generateImage(prompt, refImages);
 
+        // ═══ FIDELITY GATE ═══ verifica que el producto generado sea fiel a la
+        // referencia (color/contenido). Atrapa p.ej. el tomate VERDE saliendo ROJO.
+        // Fail-open (errores no bloquean). Desactivable con APOLLO_FIDELITY_GATE=off.
+        if (String(process.env.APOLLO_FIDELITY_GATE || 'on').toLowerCase() !== 'off' && !doCombo) {
+          try {
+            const { judgeFidelity } = require('../creative/image-judge');
+            const fid = await judgeFidelity(imageBase64, refImages, product.product_name);
+            if (fid && fid.pass === false) {
+              logger.warn(`[CREATIVE-AGENT] ❌ FIDELITY GATE rechazó "${adsetName}" — ${sceneShort}: score=${fid.score} color_match=${fid.color_match} · ${fid.verdict}${(fid.issues || []).length ? ' · [' + fid.issues.join('; ') + ']' : ''}`);
+              continue; // no guardar; agent_needs_new_creatives queda set → reintenta próximo ciclo
+            }
+          } catch (e) {
+            logger.warn(`[CREATIVE-AGENT] fidelity gate falló (fail-open): ${e.message}`);
+          }
+        }
+
         // Generate copy with angle
         const copy = await generateCopy(product.product_name, sceneShort, copyAngle, doCombo, comboNames);
 
