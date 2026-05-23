@@ -778,6 +778,18 @@ async function handleScaleBudget(input, ctx) {
     ctr: m7d.ctr || 0
   };
 
+  // ── SHADOW: cash-gate de Demeter. Computa qué habría decidido un gate basado
+  // en cash-ROAS real (vs el Meta-ROAS que usó Athena) y lo loguea. NO cambia el
+  // comportamiento — Athena ya ejecutó. Fail-open: si Demeter falla, no afecta nada.
+  let cashShadow = null;
+  try {
+    const { getAccountCashSignal, buildCashShadow } = require('./demeter-cash-signal');
+    const signal = await getAccountCashSignal();
+    cashShadow = buildCashShadow(signal, metricsAtExecution.roas_7d, isScaleUp ? 'scale_up' : 'scale_down');
+  } catch (e) {
+    logger.warn(`[ACCOUNT-AGENT] cash shadow falló (no crítico): ${e.message}`);
+  }
+
   const actionLog = await ActionLog.create({
     entity_type: 'adset',
     entity_id: adset_id,
@@ -791,7 +803,8 @@ async function handleScaleBudget(input, ctx) {
     agent_type: 'unified_agent',
     success: true,
     executed_at: new Date(),
-    metrics_at_execution: metricsAtExecution
+    metrics_at_execution: metricsAtExecution,
+    metadata: cashShadow ? { shadow_cash_consideration: cashShadow } : {}
   });
 
   // Marcar directivas matching de Zeus como executed
