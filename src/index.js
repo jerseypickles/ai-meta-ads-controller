@@ -373,6 +373,17 @@ async function jobMeasureImpact() {
       const adMetrics = extractAdMetrics(action, snapshotMap);
       if (adMetrics) updates.ad_metrics_after_7d = adMetrics;
 
+      // Veredicto + deltas: destila before→after en un juicio por acción. Cierra el
+      // loop de aprendizaje (follow_up_verdict/deltas estaban siempre vacíos). Fail-open.
+      try {
+        const { computeFollowUp } = require('./ai/zeus/action-verdict');
+        const fu = computeFollowUp({ ...action, ...updates });
+        updates.follow_up_deltas = fu.follow_up_deltas;
+        updates.follow_up_verdict = fu.follow_up_verdict;
+      } catch (e) {
+        logger.warn(`[CRON] verdict falló para ${action._id} (no crítico): ${e.message}`);
+      }
+
       await ActionLog.findByIdAndUpdate(action._id, updates);
       measured7d++;
     }
