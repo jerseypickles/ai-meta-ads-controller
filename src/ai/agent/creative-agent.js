@@ -118,7 +118,11 @@ function buildImagePrompt(productName, scene, refTypes, style, isCombo = false, 
     prompt += 'Study EVERY uploaded reference carefully — the container shape, label design, text, colors, proportions, and contents are ALL visible in the references. ';
     prompt += 'The product in the generated image MUST be a pixel-perfect match to the references. Same label, same text, same colors, same container type. ';
     prompt += 'Do NOT change, invent, or modify ANY aspect of the product. Do NOT add other products not shown in references. ';
-    prompt += 'If the product contains RED tomatoes, show RED tomatoes — not green, not yellow. Match the EXACT color from references. ';
+    // FIDELIDAD DE COLOR (neutra, product-agnostic). NO nombrar colores/comidas
+    // concretas acá: la versión vieja usaba "RED tomatoes" como ejemplo y para el
+    // producto de tomate VERDE encurtido inyectaba "RED tomatoes" → salía rojo
+    // intermitente (el modelo latcheaba el token y vencía a la referencia).
+    prompt += 'CRITICAL COLOR FIDELITY: replicate the EXACT colors of the product and its contents from the reference images. Do NOT shift them toward what this type of food is "usually" expected to look like — match the references, not your assumptions. Never introduce a color that is not present in the references. ';
   }
 
   prompt += `Scene: ${scene}. `;
