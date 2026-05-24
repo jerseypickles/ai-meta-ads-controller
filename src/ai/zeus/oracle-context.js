@@ -314,6 +314,32 @@ async function buildOracleContext(lastSeenAt = null) {
     // No log — Demeter es informativo, no crítico para Zeus
   }
 
+  // Hermes — awareness. Antes Hermes era un silo: Zeus no lo veía. Ahora aparece
+  // en el contexto. NOTA: Hermes optimiza FOOT TRAFFIC (tienda física), se mide
+  // por comentarios/visitas, NO por ROAS online. Awareness only — Zeus NO debe
+  // comandarlo como a los agentes de ROAS.
+  try {
+    const HermesProposal = require('../../db/models/HermesProposal');
+    const ActionLog = require('../../db/models/ActionLog');
+    const [live, pending, recentActions] = await Promise.all([
+      HermesProposal.countDocuments({ status: 'live' }),
+      HermesProposal.countDocuments({ status: 'pending' }),
+      ActionLog.find({ agent_type: 'hermes' }).sort({ executed_at: -1 }).limit(5)
+        .select('action entity_name before_value after_value executed_at').lean()
+    ]);
+    ctx.hermes = {
+      note: 'Foot traffic (tienda física NJ). Se mide por comentarios/visitas, NO ROAS. Awareness only — no comandar.',
+      live_ads: live,
+      pending_proposals: pending,
+      recent_actions: recentActions.map(a => ({
+        action: a.action,
+        entity: a.entity_name,
+        change: (a.before_value != null && a.after_value != null) ? `${a.before_value}→${a.after_value}` : undefined,
+        at: a.executed_at
+      }))
+    };
+  } catch (_) { /* Hermes informativo, no crítico para el contexto de Zeus */ }
+
   return ctx;
 }
 

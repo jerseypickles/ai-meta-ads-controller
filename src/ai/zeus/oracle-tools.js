@@ -283,6 +283,17 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'query_hermes',
+    description: 'Estado del agente Hermes (foot traffic / tienda física NJ): proposals por status, acciones recientes (publishes a Meta + escalados de budget), comentarios recientes. OJO: Hermes NO optimiza ROAS online — se mide por comentarios/visitas a la tienda. Es awareness: Zeus puede verlo pero NO debe comandarlo como a los agentes de ROAS.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number', default: 15 }
+      },
+      required: []
+    }
+  },
+  {
     name: 'query_strategic_directives',
     description: 'Directivas estratégicas de largo plazo + strategic insights que alimentan a Zeus.',
     input_schema: {
@@ -2161,6 +2172,7 @@ const TOOL_HANDLERS = {
   query_campaigns: handleQueryCampaigns,
   query_recommendations: handleQueryRecommendations,
   query_products: handleQueryProducts,
+  query_hermes: handleQueryHermes,
   query_strategic_directives: handleQueryStrategicDirectives,
   query_agent_conversations: handleQueryAgentConversations,
   ask_athena: (input) => handleAskAgent('athena', input),
@@ -2300,6 +2312,35 @@ async function handleOverrideAgentStance(input) {
   } catch (err) {
     return { error: err.message };
   }
+}
+
+async function handleQueryHermes(input = {}) {
+  const limit = Math.min(input.limit || 15, 50);
+  const HermesProposal = require('../../db/models/HermesProposal');
+  const ActionLog = require('../../db/models/ActionLog');
+  const mongoose = require('mongoose');
+  let comments7d = 0;
+  try {
+    comments7d = await mongoose.connection.collection('hermescomments')
+      .countDocuments({ created_at: { $gte: new Date(Date.now() - 7 * 86400000) } });
+  } catch (_) { /* colección puede no existir */ }
+  const [byStatus, actions] = await Promise.all([
+    HermesProposal.aggregate([{ $group: { _id: '$status', n: { $sum: 1 } } }, { $sort: { n: -1 } }]),
+    ActionLog.find({ agent_type: 'hermes' }).sort({ executed_at: -1 }).limit(limit)
+      .select('action entity_name before_value after_value reasoning executed_at').lean()
+  ]);
+  return {
+    note: 'Hermes = foot traffic (tienda física NJ). Se mide por comentarios/visitas, NO ROAS. Awareness only — no comandar como a los agentes de ROAS.',
+    proposals_by_status: byStatus.reduce((o, s) => { o[s._id || 'unknown'] = s.n; return o; }, {}),
+    recent_comments_7d: comments7d,
+    recent_actions: actions.map(a => ({
+      action: a.action,
+      entity: a.entity_name,
+      change: (a.before_value != null && a.after_value != null) ? `${a.before_value}→${a.after_value}` : null,
+      reasoning: a.reasoning,
+      at: a.executed_at
+    }))
+  };
 }
 
 async function executeTool(toolName, input) {

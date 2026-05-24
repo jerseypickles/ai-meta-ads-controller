@@ -301,6 +301,28 @@ async function approveProposal(proposalId, approvedBy = 'user') {
     const result = await publishProposalToMeta(proposalId);
     logger.info(`[HERMES] Proposal ${proposalId} publicado a Meta — ad_id=${result.meta_ad_id} status=${result.ad_status}`);
 
+    // Track en ActionLog para visibilidad global. Antes Hermes NO logueaba sus
+    // publishes (solo el budget-scaler logueaba scale_up), así que sus acciones
+    // eran invisibles para el tracking global y para Zeus. Fail-open.
+    try {
+      const ActionLog = require('../../db/models/ActionLog');
+      await ActionLog.create({
+        entity_type: 'ad',
+        entity_id: result.meta_ad_id || 'unknown',
+        entity_name: `[HERMES] ${proposal.headline || proposal.offer_type || 'ad'}`,
+        campaign_id: result.meta_campaign_id || null,
+        action: 'create_ad',
+        after_value: 'live',
+        reasoning: `Hermes publicó a Meta — oferta "${proposal.offer_type || '?'}" / concepto "${proposal.visual_concept || '?'}"`,
+        agent_type: 'hermes',
+        success: true,
+        executed_at: new Date(),
+        metadata: { hermes_proposal_id: String(proposalId), meta_adset_id: result.meta_adset_id, source: 'hermes_publish' }
+      });
+    } catch (e) {
+      logger.warn(`[HERMES] no se pudo loguear el publish en ActionLog (no crítico): ${e.message}`);
+    }
+
     // Re-leer del DB porque publish actualiza el doc
     return await HermesProposal.findById(proposalId);
   } catch (err) {

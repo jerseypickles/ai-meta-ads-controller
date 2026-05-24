@@ -403,6 +403,25 @@ router.get('/stats', async (req, res) => {
 });
 
 /**
+ * GET /api/hermes/actions — acciones de Hermes desde ActionLog (scale_up/down del
+ * budget-scaler + create_ad de los publishes). Antes invisibles en el panel.
+ */
+router.get('/actions', async (req, res) => {
+  try {
+    const ActionLog = require('../../db/models/ActionLog');
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const actions = await ActionLog.find({ agent_type: 'hermes' })
+      .sort({ executed_at: -1 })
+      .limit(limit)
+      .select('action entity_name entity_id before_value after_value change_percent reasoning executed_at metadata')
+      .lean();
+    res.json({ actions });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
  * GET /api/hermes/offers — lista las 3 ofertas + weights
  */
 router.get('/offers', (req, res) => {

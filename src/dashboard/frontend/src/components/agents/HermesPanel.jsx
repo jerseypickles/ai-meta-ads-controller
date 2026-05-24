@@ -1447,6 +1447,55 @@ function CommentsTab({ onToast }) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// ACTIONS TAB — acciones de Hermes desde ActionLog (publishes + escalados)
+// ═══════════════════════════════════════════════════════════════════════
+function ActionsTab({ onToast }) {
+  const [actions, setActions] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    api.get('/api/hermes/actions?limit=80')
+      .then(r => { if (alive) setActions(r.data.actions || []); })
+      .catch(err => onToast?.(err.response?.data?.error || err.message, 'error'))
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
+  const fmtChange = (a) => (a.before_value != null && a.after_value != null) ? `${a.before_value} → ${a.after_value}` : '';
+  const actionColor = (act) => act === 'scale_up' ? COLORS.success
+    : act === 'scale_down' ? COLORS.warning
+    : act === 'create_ad' ? COLORS.info
+    : COLORS.textMuted;
+
+  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: COLORS.textMuted }}>Cargando acciones…</div>;
+  if (actions.length === 0) return <EmptyState icon={Activity} title="Sin acciones" message="Hermes todavía no registró acciones (publishes a Meta + escalados de budget)." />;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ fontSize: '0.8rem', color: COLORS.textMuted, marginBottom: 4 }}>
+        Acciones de Hermes registradas — publishes a Meta + escalados de budget. {actions.length} más recientes.
+      </div>
+      {actions.map((a, i) => (
+        <motion.div
+          key={a._id || i}
+          initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i * 0.02, 0.4) }}
+          style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 10 }}
+        >
+          <span style={{ fontSize: '0.72rem', fontWeight: 700, color: actionColor(a.action), textTransform: 'uppercase', minWidth: 92 }}>{a.action}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: '0.85rem', color: COLORS.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.entity_name || a.entity_id || '—'}</div>
+            {a.reasoning && <div style={{ fontSize: '0.72rem', color: COLORS.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.reasoning}</div>}
+          </div>
+          {fmtChange(a) && <span style={{ fontSize: '0.78rem', color: COLORS.textMuted, fontVariantNumeric: 'tabular-nums' }}>{fmtChange(a)}</span>}
+          <span style={{ fontSize: '0.7rem', color: COLORS.textDim, minWidth: 96, textAlign: 'right' }}>{a.executed_at ? new Date(a.executed_at).toLocaleString('es', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}</span>
+        </motion.div>
+      ))}
+    </div>
+  );
+}
+
 export default function HermesPanel() {
   const [tab, setTab] = useState('proposals');
   const [stats, setStats] = useState(null);
@@ -1468,6 +1517,7 @@ export default function HermesPanel() {
 
   const tabs = [
     { id: 'proposals', label: 'Proposals', icon: FileText, badge: pendingCount > 0 ? pendingCount : null },
+    { id: 'actions', label: 'Acciones', icon: Activity, badge: null },
     { id: 'references', label: 'Referencias', icon: ImageIcon, badge: null },
     { id: 'performance', label: 'Performance', icon: BarChart3, badge: liveCount > 0 ? liveCount : null },
     { id: 'comments', label: 'Comentarios', icon: MessageSquare, badge: null },
@@ -1604,6 +1654,7 @@ export default function HermesPanel() {
           transition={{ duration: 0.2 }}
         >
           {tab === 'proposals' && <ProposalsTab onToast={showToast} />}
+          {tab === 'actions' && <ActionsTab onToast={showToast} />}
           {tab === 'references' && <ReferencesTab onToast={showToast} />}
           {tab === 'performance' && <PerformanceTab onToast={showToast} />}
           {tab === 'comments' && <CommentsTab onToast={showToast} />}
