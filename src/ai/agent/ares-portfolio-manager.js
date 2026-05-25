@@ -172,7 +172,7 @@ async function logAction({ entity_id, entity_name, entity_type, action, before_v
  * directiva Zeus granular por action_type.
  * Retorna { allowed: true } o { allowed: false, reason: '...' }.
  */
-async function validateSafetyGates({ entity_id, action_type, before_value, after_value }) {
+async function validateSafetyGates({ entity_id, action_type, before_value, after_value, agent = 'ares_portfolio' }) {
   // -1. Warehouse throttle — bloquea scale_up cuando logística no da
   if (action_type === 'scale_up') {
     try {
@@ -212,10 +212,17 @@ async function validateSafetyGates({ entity_id, action_type, before_value, after
   // Da "sentido entre cada scale". Cubre Brain y Portfolio (ambos pasan por acá).
   if (action_type === 'scale_up') {
     try {
-      const { checkCBOScaleSanity } = require('./ares-scale-gate');
+      const { checkCBOScaleSanity, logScaleHold } = require('./ares-scale-gate');
       const sanity = await checkCBOScaleSanity(entity_id);
       if (!sanity.allow) {
-        return { allowed: false, reason: sanity.reason };
+        // Holds marginal/fatiga → loguear en ActionLog (señal alta) para que se
+        // vean en las acciones de Ares. Cooldown NO (pacing rutinario = ruido).
+        let logged = false;
+        if (sanity.holdType === 'marginal' || sanity.holdType === 'fatigue') {
+          await logScaleHold({ campaignId: entity_id, reason: sanity.reason, holdType: sanity.holdType, agent });
+          logged = true;
+        }
+        return { allowed: false, reason: sanity.reason, logged };
       }
     } catch (err) {
       logger.warn(`[ARES-PORTFOLIO] CBO scale sanity check failed (fail-open): ${err.message}`);

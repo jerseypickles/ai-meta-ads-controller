@@ -947,15 +947,19 @@ async function handleScaleCBOBudget({ campaign_id, new_daily_budget, reasoning, 
     entity_id: campaign_id,
     action_type: actionType,
     before_value: currentBudget,
-    after_value: target
+    after_value: target,
+    agent: 'ares_brain'
   });
   if (!gate.allowed) {
-    await logBrainAction({
-      entity_type: 'campaign', entity_id: campaign_id, entity_name: snap.entity_name,
-      action: actionType, before_value: currentBudget, after_value: target,
-      reasoning, metadata: { blocked_by: gate.reason, source: 'ares_brain_decision' },
-      success: false, error: `gate_blocked: ${gate.reason}`
-    });
+    // Si el gate ya logueó el hold (marginal/fatiga), no duplicar.
+    if (!gate.logged) {
+      await logBrainAction({
+        entity_type: 'campaign', entity_id: campaign_id, entity_name: snap.entity_name,
+        action: actionType, before_value: currentBudget, after_value: target,
+        reasoning, metadata: { blocked_by: gate.reason, source: 'ares_brain_decision' },
+        success: false, error: `gate_blocked: ${gate.reason}`
+      });
+    }
     return { blocked: true, reason: gate.reason };
   }
 
