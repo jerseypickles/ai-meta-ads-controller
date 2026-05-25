@@ -48,6 +48,15 @@ const CBO_CREATE_COOLDOWN_KEY = 'ares_brain_last_cbo_creation';  // SystemConfig
 
 async function logBrainAction({ entity_id, entity_name, entity_type, action, before_value, after_value, reasoning, metadata, success, error }) {
   try {
+    // metrics_at_execution para scales de CBO — baseline real para la capa de
+    // veredicto (antes Ares no lo poblaba → el veredicto medía contra 0). 2026-05-25.
+    let metricsAtExecution = null;
+    if (success && ['scale_up', 'scale_down'].includes(action) && entity_type === 'campaign') {
+      try {
+        const cs = await CBOHealthSnapshot.findOne({ campaign_id: entity_id }).sort({ snapshot_at: -1 }).lean();
+        if (cs) metricsAtExecution = { roas_7d: cs.cbo_roas_7d || 0, roas_3d: cs.cbo_roas_3d || 0, spend_7d: cs.cbo_spend_7d || 0, daily_budget: before_value || cs.daily_budget || 0 };
+      } catch (_) { /* fail-open */ }
+    }
     await ActionLog.create({
       entity_type, entity_id, entity_name,
       action, success: !!success,
@@ -56,6 +65,7 @@ async function logBrainAction({ entity_id, entity_name, entity_type, action, bef
       reasoning,
       before_value, after_value,
       metadata: metadata || {},
+      ...(metricsAtExecution ? { metrics_at_execution: metricsAtExecution } : {}),
       error: error || null
     });
   } catch (err) {

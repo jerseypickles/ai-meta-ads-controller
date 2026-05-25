@@ -142,6 +142,15 @@ async function alreadyActedOn(entity_id, action_type) {
  */
 async function logAction({ entity_id, entity_name, entity_type, action, before_value, after_value, reasoning, metadata, success, error }) {
   try {
+    // metrics_at_execution para scales de CBO — baseline real para la capa de
+    // veredicto (antes Ares no lo poblaba → el veredicto medía contra 0). 2026-05-25.
+    let metricsAtExecution = null;
+    if (success && ['scale_up', 'scale_down'].includes(action) && entity_type === 'campaign') {
+      try {
+        const cs = await CBOHealthSnapshot.findOne({ campaign_id: entity_id }).sort({ snapshot_at: -1 }).lean();
+        if (cs) metricsAtExecution = { roas_7d: cs.cbo_roas_7d || 0, roas_3d: cs.cbo_roas_3d || 0, spend_7d: cs.cbo_spend_7d || 0, daily_budget: before_value || cs.daily_budget || 0 };
+      } catch (_) { /* fail-open */ }
+    }
     await ActionLog.create({
       entity_type, entity_id, entity_name,
       action, success: !!success,
@@ -150,6 +159,7 @@ async function logAction({ entity_id, entity_name, entity_type, action, before_v
       reasoning,
       before_value, after_value,
       metadata: metadata || {},
+      ...(metricsAtExecution ? { metrics_at_execution: metricsAtExecution } : {}),
       error: error || null
     });
   } catch (err) {
@@ -195,6 +205,21 @@ async function validateSafetyGates({ entity_id, action_type, before_value, after
     }
   } catch (err) {
     logger.warn(`[ARES-PORTFOLIO] cooldown check failed (fail-open): ${err.message}`);
+  }
+
+  // 1.5. Gate de cordura para scale_up de CBO (2026-05-25): cooldown 48h por-CBO
+  // unificado cross-agent + freno por degradación marginal + fatiga del favorito.
+  // Da "sentido entre cada scale". Cubre Brain y Portfolio (ambos pasan por acá).
+  if (action_type === 'scale_up') {
+    try {
+      const { checkCBOScaleSanity } = require('./ares-scale-gate');
+      const sanity = await checkCBOScaleSanity(entity_id);
+      if (!sanity.allow) {
+        return { allowed: false, reason: sanity.reason };
+      }
+    } catch (err) {
+      logger.warn(`[ARES-PORTFOLIO] CBO scale sanity check failed (fail-open): ${err.message}`);
+    }
   }
 
   // 2. Guard-rail para acciones de budget — cap 50% por ciclo
