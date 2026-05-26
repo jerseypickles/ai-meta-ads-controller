@@ -158,6 +158,12 @@ Then: set next_review_hours: 48.
 - ROAS 7d < 1.5x with $100+ spend 7d AND 3d confirms decline → scale -20%.
 Then: set next_review_hours: 72.
 
+## MOVE BUDGET (reasignación suma-cero)
+- Cuando un loser tiene budget que rinde menos que un winner con headroom, PREFERÍ move_budget sobre subir el winner — no infla el spend total, solo mejora el mix.
+- Solo de PEOR a MEJOR (source ROAS < target ROAS). El target no puede estar en declive (ROAS 3d cayendo).
+- Es mejor que pausar el loser y esperar que "Zeus redistribuya": acá el budget va directo al ganador.
+- Ej: source ROAS 1.2x con $30 → mover $15 a un target ROAS 4x con headroom.
+
 ## PAUSE AD
 - Ad has $30+ spend, 0 purchases, 7+ days old.
 - OR ROAS AND CTR declining across ALL windows (14d > 7d > 3d = dying).
@@ -288,6 +294,20 @@ const TOOLS = [
         reason: { type: 'string', description: 'Why you are scaling' }
       },
       required: ['adset_id', 'new_budget', 'reason']
+    }
+  },
+  {
+    name: 'move_budget',
+    description: 'Reasignar budget de un ad set perdedor a uno ganador (SUMA CERO — no cambia el spend total). Usalo cuando hay un loser con budget que rinde menos que un winner con headroom: en vez de subir el winner (que infla el spend total) o solo pausar el loser (que deja el budget colgado esperando a Zeus). Gated: source queda > floor, source ROAS < target ROAS (solo de peor a mejor), target no en declive, aumento del target ≤20% (evita resetear el learning de Meta).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        source_adset_id: { type: 'string', description: 'Ad set del que se SACA budget (el de peor ROAS)' },
+        target_adset_id: { type: 'string', description: 'Ad set al que se DA budget (el de mejor ROAS, con headroom)' },
+        amount: { type: 'number', description: 'Monto diario en USD a mover' },
+        reason: { type: 'string', description: 'Por qué esta reasignación' }
+      },
+      required: ['source_adset_id', 'target_adset_id', 'amount', 'reason']
     }
   },
   {
@@ -854,6 +874,106 @@ async function handleScaleBudget(input, ctx) {
   };
 }
 
+async function handleMoveBudget(input, ctx) {
+  const { source_adset_id, target_adset_id, amount, reason } = input;
+  if (!source_adset_id || !target_adset_id || source_adset_id === target_adset_id) {
+    return { blocked: true, reason: 'source y target deben ser ad sets distintos' };
+  }
+  if (typeof amount !== 'number' || amount <= 0) return { blocked: true, reason: 'amount debe ser > 0' };
+
+  const meta = getMetaClient();
+  const minBudget = safetyGuards.min_adset_budget || 10;
+  const allSnapshots = await getLatestSnapshots('adset');
+  const src = allSnapshots.find(s => s.entity_id === source_adset_id);
+  const tgt = allSnapshots.find(s => s.entity_id === target_adset_id);
+  if (!src) return { blocked: true, reason: 'source ad set no encontrado' };
+  if (!tgt) return { blocked: true, reason: 'target ad set no encontrado' };
+
+  const srcBudget = src.daily_budget || 0;
+  const tgtBudget = tgt.daily_budget || 0;
+  if (srcBudget <= 0 || tgtBudget <= 0) return { blocked: true, reason: 'algún ad set sin daily_budget (¿CBO/ABO?)' };
+
+  // ── GATE: directiva Zeus (toca budget en ambos lados)
+  try {
+    const { isActionBlockedForAgent } = require('../zeus/directive-guard');
+    const block = await isActionBlockedForAgent('athena', 'move_budget');
+    if (block.blocked) return { blocked: true, reason: `Directiva de Zeus bloquea move_budget: "${block.reason}"`, directive_id: block.directive_id };
+  } catch (_) { /* fail-open */ }
+
+  // ── GATE: cadencia — no alimentar un target que recién se tocó (tiempo de respuesta)
+  try {
+    const cd = await _isOnAgentCooldown(target_adset_id);
+    if (cd.onCooldown) return { blocked: true, reason: `target en cooldown (${cd.minutesLeft}min, last: ${cd.lastAction}) — dale tiempo de medir su último cambio antes de sumarle más budget` };
+  } catch (_) { /* fail-open */ }
+
+  // ── GATE: source queda por encima del floor
+  if (srcBudget - amount < minBudget) {
+    return { blocked: true, reason: `mover $${amount} dejaría al source bajo el floor $${minBudget} (tiene $${srcBudget}). Reducí el amount.` };
+  }
+
+  // ── GATE: solo de PEOR a MEJOR (sanity del move)
+  const srcRoas = src.metrics?.last_7d?.roas || 0;
+  const tgtRoas = tgt.metrics?.last_7d?.roas || 0;
+  if (srcRoas >= tgtRoas) {
+    return { blocked: true, reason: `move sin sentido: source ROAS 7d ${srcRoas.toFixed(2)}x ≥ target ${tgtRoas.toFixed(2)}x. Solo se mueve de peor a mejor.` };
+  }
+
+  // ── GATE: target no en declive (mismo freno marginal que el scale)
+  try {
+    const { checkAdsetScaleSanity } = require('./athena-scale-gate');
+    const sanity = checkAdsetScaleSanity(tgt);
+    if (!sanity.allow) return { blocked: true, reason: `no alimentar un target en declive: ${sanity.reason}` };
+  } catch (_) { /* fail-open */ }
+
+  // ── GATE: el aumento del target no debe resetear el learning de Meta (>20%). Clamp.
+  let moveAmount = amount;
+  const maxTargetAdd = Math.round(tgtBudget * 0.20);
+  if (moveAmount > maxTargetAdd) {
+    logger.info(`[ACCOUNT-AGENT] move_budget capado: $${amount}→$${maxTargetAdd} (evita reset de learning del target >20%)`);
+    moveAmount = maxTargetAdd;
+  }
+  if (moveAmount < 1) return { blocked: true, reason: 'amount efectivo < $1 tras el clamp del target' };
+
+  const newSrc = Math.round(srcBudget - moveAmount);
+  const newTgt = Math.round(tgtBudget + moveAmount);
+
+  // Execute — cortar el source primero, después alimentar el target
+  await meta.updateBudget(source_adset_id, newSrc);
+  await meta.updateBudget(target_adset_id, newTgt);
+
+  await ActionLog.create({
+    entity_type: 'adset',
+    entity_id: source_adset_id,
+    entity_name: src.entity_name || source_adset_id,
+    action: 'move_budget',
+    before_value: srcBudget,
+    after_value: newSrc,
+    change_percent: srcBudget > 0 ? Math.round((newSrc - srcBudget) / srcBudget * 100) : 0,
+    reasoning: reason,
+    confidence: 'high',
+    agent_type: 'unified_agent',
+    success: true,
+    executed_at: new Date(),
+    target_entity_id: target_adset_id,
+    target_entity_name: tgt.entity_name || target_adset_id,
+    redistributable_budget: moveAmount,
+    metrics_at_execution: { roas_7d: Math.round(srcRoas * 100) / 100, daily_budget: srcBudget },
+    target_metrics_at_execution: { roas_7d: Math.round(tgtRoas * 100) / 100, daily_budget: tgtBudget },
+    metadata: { move: { from: source_adset_id, to: target_adset_id, amount: moveAmount, src_roas_7d: +srcRoas.toFixed(2), tgt_roas_7d: +tgtRoas.toFixed(2) } }
+  });
+
+  ctx.actionsExecuted++;
+  if (ctx.actionTypes) ctx.actionTypes.push('move_budget');
+  logger.info(`[ACCOUNT-AGENT] move_budget: $${moveAmount} de "${src.entity_name || source_adset_id}" (${srcRoas.toFixed(2)}x) → "${tgt.entity_name || target_adset_id}" (${tgtRoas.toFixed(2)}x)`);
+
+  return {
+    success: true,
+    moved: moveAmount,
+    source: { id: source_adset_id, before: srcBudget, after: newSrc },
+    target: { id: target_adset_id, before: tgtBudget, after: newTgt }
+  };
+}
+
 async function handlePauseAd(input, ctx) {
   const { ad_id, adset_id, reason } = input;
   const meta = getMetaClient();
@@ -1186,6 +1306,7 @@ const TOOL_HANDLERS = {
   get_entity_memory: (input, _ctx) => handleGetEntityMemory(input),
   get_recent_insights: (input, _ctx) => handleGetRecentInsights(input),
   scale_budget: handleScaleBudget,
+  move_budget: handleMoveBudget,
   pause_ad: handlePauseAd,
   reactivate_ad: handleReactivateAd,
   pause_adset: handlePauseAdSet,
