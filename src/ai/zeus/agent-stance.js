@@ -207,6 +207,17 @@ async function buildBriefingContext(agent) {
     roas_7d: spend7d > 0 ? +(rev7d / spend7d).toFixed(2) : null
   };
 
+  // Cash awareness (Demeter) — el stance debe pesar el CASH real, no solo el
+  // Meta-ROAS del portfolio. El portfolio.roas_7d es Meta (sobre-atribuye al
+  // escalar); el cash es la verdad de lo que entra al banco. (2026-05-26)
+  try {
+    const { getAccountCashSignal } = require('../agent/demeter-cash-signal');
+    const cs = await getAccountCashSignal();
+    ctx.cash = cs.available
+      ? { cash_roas_14d: cs.cash_roas_14d, cash_roas_7d: cs.cash_roas_7d, meta_roas_7d: cs.meta_roas_7d, gap_pct_7d: cs.gap_pct_7d, zone: cs.zone, trend: cs.trend }
+      : { available: false };
+  } catch (_) { ctx.cash = { available: false }; }
+
   // Platform health
   try {
     const { isDegraded } = require('../../safety/platform-circuit-breaker');
@@ -271,6 +282,7 @@ Además del stance (volumen), puedes declarar un FOCUS temático: qué vas a mir
 
 REGLAS:
 - Si platform_degraded=true → stance casi siempre debe ser paused o recovering.
+- CASH MANDA: si ctx.cash.cash_roas_14d está bajo (<2.5x) o ctx.cash.trend='empeorando', sesga defensivo AUNQUE el portfolio.roas_7d (Meta) se vea bien — el Meta-ROAS sobre-atribuye al escalar, el cash es la verdad de lo que entra al banco. Si cash_roas sano (≥3x) y trend estable/mejorando, el Meta-ROAS bueno es defendible para aggressive.
 - Si similar_episodes tiene un failure reciente con similarity alta → sesga defensivo.
 - Si los otros agentes tienen stance bajo y tú quieres aggressive → justifica por qué no tiene contagio.
 

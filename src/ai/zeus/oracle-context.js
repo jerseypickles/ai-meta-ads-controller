@@ -421,6 +421,24 @@ function formatContextForPrompt(ctx) {
     lines.push(`  Proyección cierre: $${dm.projection_eom.spend} spend · $${dm.projection_eom.net_after_fees} cash net · profit $${dm.projection_eom.profit} · ROAS ${dm.projection_eom.cash_roas}x (${dm.projection_eom.days_remaining} días restantes)`);
   }
 
+  // Tu track record — win-rate de tus agentes (capa de veredicto, medido a 7d).
+  if (ctx.performance) {
+    const pf = ctx.performance;
+    lines.push(`\nTU TRACK RECORD (win-rate de tus agentes a 7d — es TU performance como CEO):`);
+    lines.push(`  Overall: ${pf.overall_win_rate_pct ?? '—'}% win · gate-holds de Ares (7d): ${pf.ares_scale_gate_holds_7d}`);
+    for (const [ag, w] of Object.entries(pf.by_agent_30d || {})) {
+      if ((w.positive + w.negative + w.neutral) === 0) continue;
+      lines.push(`  ${ag}: ${w.win_rate_pct ?? '—'}% (+${w.positive} −${w.negative} ~${w.neutral})`);
+    }
+  }
+
+  // Hermes — awareness (foot traffic, NO ROAS; no comandarlo como a los de ROAS).
+  if (ctx.hermes) {
+    const h = ctx.hermes;
+    const last = h.recent_actions?.[0];
+    lines.push(`\nHERMES (foot traffic tienda física — NO ROAS, awareness only): ${h.live_ads} ads live · ${h.pending_proposals} pending${last ? ` · última: ${last.action} ${last.change || ''}` : ''}`);
+  }
+
   if (ctx.active_directives.length) {
     lines.push(`\nDIRECTIVAS ACTIVAS (${ctx.active_directives.length}):`);
     for (const d of ctx.active_directives.slice(0, 5)) {
