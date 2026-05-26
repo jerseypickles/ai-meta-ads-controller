@@ -544,6 +544,8 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   const [stancesHistory, setStancesHistory] = useState({});
   // Hilo B — panel 📓 de calibración de respuesta
   const [showCalibration, setShowCalibration] = useState(false);
+  const [showTrackRecord, setShowTrackRecord] = useState(false);
+  const [trackRecord, setTrackRecord] = useState(null);
   const [calibTab, setCalibTab] = useState('anti_refs'); // anti_refs | references | traps | audits
   const [calibEntries, setCalibEntries] = useState([]);
   const [calibCounts, setCalibCounts] = useState({});
@@ -899,6 +901,12 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
     if (showCalibration) loadCalibrationEntries(calibTab);
   }, [showCalibration, calibTab]);
 
+  useEffect(() => {
+    if (showTrackRecord) {
+      api.get('/api/zeus/track-record').then(r => setTrackRecord(r.data)).catch(() => setTrackRecord(null));
+    }
+  }, [showTrackRecord]);
+
   // Hilo C — auto-pause handlers
   async function loadAutoPause(tab) {
     try {
@@ -1225,6 +1233,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                     setShowConversationList(false);
                     setShowStances(false);
                     setShowCalibration(false);
+                    setShowTrackRecord(false);
                     setShowAutoPause(false);
                     setShowNotifications(false);
                     if (key === 'plans') setShowPlans(true);
@@ -1234,6 +1243,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                     else if (key === 'coderecs') setShowCodeRecs(true);
                     else if (key === 'stances') setShowStances(true);
                     else if (key === 'calibration') setShowCalibration(true);
+                    else if (key === 'trackrecord') setShowTrackRecord(true);
                     else if (key === 'autopause') setShowAutoPause(true);
                     else if (key === 'notifications') setShowNotifications(true);
                     else if (key === 'conversations') {
@@ -1295,6 +1305,51 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                     onDelete={() => deletePlan(p._id)}
                   />
                 ))
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Panel track record — win-rate real de los agentes (capa de veredicto) */}
+        <AnimatePresence>
+          {showTrackRecord && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="zeus-plans-panel"
+            >
+              <div className="zeus-plans-header">
+                <button className="zeus-panel-close" onClick={() => setShowTrackRecord(false)} aria-label="Cerrar panel">×</button>
+                <div className="zeus-plans-title">📊 Track Record</div>
+              </div>
+              {!trackRecord ? (
+                <div className="zeus-plans-empty">Cargando…</div>
+              ) : (
+                <div style={{ padding: '8px 14px 16px', fontSize: '0.82rem', color: '#cbd5e1' }}>
+                  <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#10b981' }}>
+                    {trackRecord.overall_win_rate ?? '—'}%
+                    <span style={{ fontSize: '0.7rem', fontWeight: 400, color: '#94a3b8', marginLeft: 8 }}>win-rate global · {trackRecord.total_decided} acciones decididas (30d)</span>
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: '#64748b', margin: '4px 0 14px' }}>
+                    Win-rate = positive / (positive+negative) de acciones medidas a 7d. Es la performance real del equipo que Zeus dirige.
+                  </div>
+
+                  <div style={{ fontWeight: 600, color: '#e2e8f0', marginBottom: 4 }}>Por agente</div>
+                  {trackRecord.by_agent.filter(a => (a.decided + a.neutral) > 0).map(a => (
+                    <TrackRecordRow key={`ag-${a.key}`} label={a.key} wr={a.win_rate} pos={a.positive} neg={a.negative} neu={a.neutral} />
+                  ))}
+
+                  <div style={{ fontWeight: 600, color: '#e2e8f0', margin: '14px 0 4px' }}>Por tipo de acción</div>
+                  {trackRecord.by_action.filter(a => (a.decided + a.neutral) > 0).map(a => (
+                    <TrackRecordRow key={`ac-${a.key}`} label={a.key} wr={a.win_rate} pos={a.positive} neg={a.negative} neu={a.neutral} />
+                  ))}
+
+                  <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.08)', fontSize: '0.76rem', color: '#94a3b8', lineHeight: 1.6 }}>
+                    Gate-holds de Ares (7d): <b style={{ color: '#e2e8f0' }}>{trackRecord.ares_scale_gate_holds_7d}</b><br />
+                    Rec-outcomes de Zeus (7d): {Object.entries(trackRecord.rec_outcomes_7d || {}).map(([k, v]) => `${k}: ${v}`).join(' · ') || '—'}
+                  </div>
+                </div>
               )}
             </motion.div>
           )}
@@ -1975,6 +2030,19 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   );
 }
 
+function TrackRecordRow({ label, wr, pos, neg, neu }) {
+  const color = wr == null ? '#94a3b8' : wr >= 70 ? '#10b981' : wr >= 50 ? '#f59e0b' : '#ef4444';
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '3px 0' }}>
+      <span style={{ color: '#cbd5e1' }}>{label}</span>
+      <span>
+        <b style={{ color }}>{wr == null ? '—' : `${wr}%`}</b>
+        <span style={{ color: '#64748b', fontSize: '0.72rem', marginLeft: 6 }}>+{pos} −{neg} ~{neu}</span>
+      </span>
+    </div>
+  );
+}
+
 function ZeusPalette({ onClose, onSelect, codeRecsPending, archDrafts, prefDrafts, notificationsUnread }) {
   const items = [
     {
@@ -1998,6 +2066,7 @@ function ZeusPalette({ onClose, onSelect, codeRecsPending, archDrafts, prefDraft
       group: 'Estado mental del equipo',
       entries: [
         { key: 'stances', emoji: '🎯', label: 'Stances', desc: 'Postura del día de cada agente' },
+        { key: 'trackrecord', emoji: '📊', label: 'Track Record', desc: 'Win-rate real de los agentes (capa de veredicto)' },
         { key: 'calibration', emoji: '📓', label: 'Calibración', desc: 'Golden / anti-refs / trampas / auditorías' }
       ]
     },

@@ -191,6 +191,54 @@ router.get('/intelligence', async (req, res) => {
   }
 });
 
+// ═══ GET /track-record — lo que ve Zeus: win-rate de agentes (capa de veredicto)
+// + rec-outcomes. Mismo data que ctx.performance, pero para que el creador lo vea. ═══
+router.get('/track-record', async (req, res) => {
+  try {
+    const since30 = new Date(Date.now() - 30 * 86400000);
+    const grp = (idField) => ([
+      { $match: { executed_at: { $gte: since30 }, follow_up_verdict: { $in: ['positive', 'negative', 'neutral'] } } },
+      { $group: {
+        _id: idField,
+        positive: { $sum: { $cond: [{ $eq: ['$follow_up_verdict', 'positive'] }, 1, 0] } },
+        negative: { $sum: { $cond: [{ $eq: ['$follow_up_verdict', 'negative'] }, 1, 0] } },
+        neutral: { $sum: { $cond: [{ $eq: ['$follow_up_verdict', 'neutral'] }, 1, 0] } }
+      } }
+    ]);
+    const fmt = (arr) => arr.map(r => {
+      const dec = r.positive + r.negative;
+      return { key: r._id || '?', win_rate: dec ? Math.round(100 * r.positive / dec) : null, positive: r.positive, negative: r.negative, neutral: r.neutral, decided: dec };
+    }).sort((a, b) => b.decided - a.decided);
+
+    const [agentsRaw, actionsRaw] = await Promise.all([
+      ActionLog.aggregate(grp('$agent_type')),
+      ActionLog.aggregate(grp('$action'))
+    ]);
+    const agents = fmt(agentsRaw);
+    const totPos = agents.reduce((s, a) => s + a.positive, 0);
+    const totNeg = agents.reduce((s, a) => s + a.negative, 0);
+    const gateHolds7d = await ActionLog.countDocuments({ 'metadata.gate_hold': true, executed_at: { $gte: new Date(Date.now() - 7 * 86400000) } });
+
+    const ZeusRecommendationOutcome = require('../../db/models/ZeusRecommendationOutcome');
+    const recAgg = await ZeusRecommendationOutcome.aggregate([{ $group: { _id: '$measurement_7d.verdict', n: { $sum: 1 } } }]);
+    const recOutcomes = {};
+    recAgg.forEach(r => { recOutcomes[r._id || 'pending'] = r.n; });
+
+    res.json({
+      window_days: 30,
+      overall_win_rate: (totPos + totNeg) ? Math.round(100 * totPos / (totPos + totNeg)) : null,
+      total_decided: totPos + totNeg,
+      by_agent: agents,
+      by_action: fmt(actionsRaw),
+      ares_scale_gate_holds_7d: gateHolds7d,
+      rec_outcomes_7d: recOutcomes
+    });
+  } catch (err) {
+    logger.error(`[ZEUS] Error en /track-record: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ═══ GET /stats — Stats rapidas ═══
 router.get('/stats', async (req, res) => {
   try {
