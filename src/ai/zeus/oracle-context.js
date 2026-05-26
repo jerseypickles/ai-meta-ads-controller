@@ -372,6 +372,14 @@ async function buildOracleContext(lastSeenAt = null) {
     };
   } catch (_) { /* performance es informativo, no crítico */ }
 
+  // Changelog automático — commits recientes del deploy, para que Zeus sepa qué
+  // cambió en el sistema sin que nadie se lo cuente. Evita que razone sobre un
+  // modelo mental viejo (ej. flaggear como anomalía un cambio intencional). (2026-05-26)
+  try {
+    const { getRecentChanges } = require('./system-changelog');
+    ctx.recent_changes = getRecentChanges().slice(0, 15);
+  } catch (_) { ctx.recent_changes = []; }
+
   return ctx;
 }
 
@@ -437,6 +445,16 @@ function formatContextForPrompt(ctx) {
     const h = ctx.hermes;
     const last = h.recent_actions?.[0];
     lines.push(`\nHERMES (foot traffic tienda física — NO ROAS, awareness only): ${h.live_ads} ads live · ${h.pending_proposals} pending${last ? ` · última: ${last.action} ${last.change || ''}` : ''}`);
+  }
+
+  // Changelog del sistema — qué cambió en el código/conducta de los agentes en los
+  // últimos deploys. Si ves un cambio de comportamiento (ej. menos graduación, scaling
+  // más lento), chequeá acá antes de flaggearlo como anomalía: puede ser intencional.
+  if (ctx.recent_changes && ctx.recent_changes.length) {
+    lines.push(`\nCAMBIOS RECIENTES DEL SISTEMA (deploys — qué cambió en los agentes):`);
+    for (const c of ctx.recent_changes.slice(0, 12)) {
+      lines.push(`  ${c.at} · ${c.subject}`);
+    }
   }
 
   if (ctx.active_directives.length) {
