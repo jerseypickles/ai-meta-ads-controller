@@ -24,7 +24,7 @@ const GRADUATED_BUDGET = 20;   // Budget al promover test ad set graduado ($20/d
 const GRADUATE_MIN_ROAS = 2.0;
 const GRADUATE_EARLY_ROAS = 3.0;
 const GRADUATE_EARLY_PURCHASES = 2;
-const GRADUATE_MIN_PURCHASES = 1;
+const GRADUATE_MIN_PURCHASES = 2;  // 2026-05-26: 1→2. Graduar con 1 compra era ruido (fluke) → graduates débiles que Ares escalaba y revertían. Ahora exigido en AMBOS paths (antes meetsRoas no pedía mínimo).
 const GRADUATE_MAX_CPA = 35;
 const MIN_READY_POOL = 5;
 
@@ -282,6 +282,15 @@ async function monitorTests() {
 
   let graduated = 0, killed = 0, expired = 0;
 
+  // Cash haircut de cuenta (Demeter) — graduar con cash-adjusted ROAS, no solo Meta.
+  // Un graduate de Meta 2x pero cash 1.2x es un mal ganador que no debería pasar. (2026-05-26)
+  let cashHaircut = 1;
+  try {
+    const { getAccountCashSignal } = require('./demeter-cash-signal');
+    const cs = await getAccountCashSignal();
+    if (cs.available) cashHaircut = cs.haircut_factor;
+  } catch (_) { /* fail-open: haircut 1 = sin ajuste */ }
+
   for (const test of activeTests) {
     try {
       const daysActive = getDaysActive(test.launched_at);
@@ -336,8 +345,11 @@ async function monitorTests() {
         continue;
       }
 
-      // GRADUATE EARLY: rendimiento excepcional
-      if (metrics.roas >= GRADUATE_EARLY_ROAS && metrics.purchases >= GRADUATE_EARLY_PURCHASES) {
+      // Cash-adjusted ROAS: ajusta el Meta-ROAS por el haircut de cuenta (cash real).
+      const cashAdjRoas = metrics.roas * cashHaircut;
+
+      // GRADUATE EARLY: rendimiento excepcional (cash-adjusted)
+      if (cashAdjRoas >= GRADUATE_EARLY_ROAS && metrics.purchases >= GRADUATE_EARLY_PURCHASES) {
         await graduateTest(test, metrics);
         graduated++;
         continue;
@@ -345,7 +357,8 @@ async function monitorTests() {
 
       // Dia 6-7: Decision final
       if (daysActive >= 6) {
-        const meetsRoas = metrics.roas >= GRADUATE_MIN_ROAS;
+        // Cash-adjusted + sample mínimo: graduar exige señal real (≥2 compras), no 1 fluke.
+        const meetsRoas = cashAdjRoas >= GRADUATE_MIN_ROAS && metrics.purchases >= GRADUATE_MIN_PURCHASES;
         const meetsCpa = metrics.purchases >= GRADUATE_MIN_PURCHASES && metrics.cpa <= GRADUATE_MAX_CPA && metrics.cpa > 0;
 
         if (meetsRoas || meetsCpa) {
