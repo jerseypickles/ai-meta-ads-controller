@@ -726,19 +726,26 @@ async function runCreativeAgent() {
         }
         const imageBase64 = await generateImage(prompt, refImages);
 
-        // ═══ FIDELITY GATE ═══ verifica que el producto generado sea fiel a la
-        // referencia (color/contenido). Atrapa p.ej. el tomate VERDE saliendo ROJO.
-        // Fail-open (errores no bloquean). Desactivable con APOLLO_FIDELITY_GATE=off.
+        // ═══ CREATIVE GATE ═══ una sola llamada de Claude Vision juzga FIDELIDAD
+        // (el producto matchea la referencia — atrapa el tomate verde→rojo) Y CALIDAD
+        // CTR (¿para el scroll?). Rechaza si falla fidelidad O si la calidad está
+        // bajo el umbral → curar en vez de rociar (corta el 80% que expira inconcluso).
+        // Fail-open. Flags: APOLLO_FIDELITY_GATE=off, APOLLO_QUALITY_MIN (default 45, 0=off).
         if (String(process.env.APOLLO_FIDELITY_GATE || 'on').toLowerCase() !== 'off' && !doCombo) {
           try {
-            const { judgeFidelity } = require('../creative/image-judge');
-            const fid = await judgeFidelity(imageBase64, refImages, product.product_name);
-            if (fid && fid.pass === false) {
-              logger.warn(`[CREATIVE-AGENT] ❌ FIDELITY GATE rechazó "${adsetName}" — ${sceneShort}: score=${fid.score} color_match=${fid.color_match} · ${fid.verdict}${(fid.issues || []).length ? ' · [' + fid.issues.join('; ') + ']' : ''}`);
-              continue; // no guardar; agent_needs_new_creatives queda set → reintenta próximo ciclo
+            const { judgeCreative } = require('../creative/image-judge');
+            const j = await judgeCreative(imageBase64, refImages, product.product_name, style.key);
+            if (j && j.fidelity_pass === false) {
+              logger.warn(`[CREATIVE-AGENT] ❌ FIDELITY rechazó "${adsetName}" — ${sceneShort}: fid=${j.fidelity_score} color_match=${j.color_match} · ${j.verdict}`);
+              continue;
+            }
+            const qMin = parseInt(process.env.APOLLO_QUALITY_MIN || '45', 10);
+            if (qMin > 0 && j && typeof j.quality_score === 'number' && j.quality_score < qMin) {
+              logger.warn(`[CREATIVE-AGENT] ❌ CALIDAD rechazó "${adsetName}" — ${sceneShort}: quality=${j.quality_score} (<${qMin}, ctr ${j.predicted_ctr}) · ${j.verdict}`);
+              continue;
             }
           } catch (e) {
-            logger.warn(`[CREATIVE-AGENT] fidelity gate falló (fail-open): ${e.message}`);
+            logger.warn(`[CREATIVE-AGENT] creative gate falló (fail-open): ${e.message}`);
           }
         }
 

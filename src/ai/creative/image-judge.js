@@ -225,60 +225,56 @@ Here are the images:`
  * @param {string} productName
  * @returns {Promise<{pass:boolean, score?:number, color_match?:boolean, issues?:string[], verdict?:string, skipped?:string}>}
  */
-async function judgeFidelity(generatedBase64, referenceImages = [], productName = '') {
+async function judgeCreative(generatedBase64, referenceImages = [], productName = '', style = '') {
   const apiKey = config.claude.apiKey;
-  if (!apiKey) return { pass: true, skipped: 'no_api_key' };
-  if (!generatedBase64) return { pass: true, skipped: 'no_image' };
+  if (!apiKey) return { fidelity_pass: true, quality_score: null, skipped: 'no_api_key' };
+  if (!generatedBase64) return { fidelity_pass: true, quality_score: null, skipped: 'no_image' };
 
   // Extraer base64 de las referencias (formato flexible)
   const refs = [];
   for (const r of (referenceImages || [])) {
     try {
-      if (typeof r === 'string') {
-        refs.push({ b64: fs.readFileSync(path.resolve(r)).toString('base64'), mt: 'image/png' });
-      } else if (r && r.image_base64) {
-        refs.push({ b64: r.image_base64, mt: r.mime_type || 'image/jpeg' });
-      } else if (r && r.path && fs.existsSync(r.path)) {
-        refs.push({ b64: fs.readFileSync(path.resolve(r.path)).toString('base64'), mt: 'image/png' });
-      }
+      if (typeof r === 'string') refs.push({ b64: fs.readFileSync(path.resolve(r)).toString('base64'), mt: 'image/png' });
+      else if (r && r.image_base64) refs.push({ b64: r.image_base64, mt: r.mime_type || 'image/jpeg' });
+      else if (r && r.path && fs.existsSync(r.path)) refs.push({ b64: fs.readFileSync(path.resolve(r.path)).toString('base64'), mt: 'image/png' });
     } catch (_) { /* skip ref ilegible */ }
   }
-  if (refs.length === 0) return { pass: true, skipped: 'no_reference' };
+  const hasRef = refs.length > 0;
 
   try {
     const client = new Anthropic({ apiKey });
     const content = [{
       type: 'text',
-      text: `Sos un control de calidad de FIDELIDAD de producto para ads. Te muestro PRIMERO la(s) foto(s) REAL(es) del producto "${productName}" (referencia), y LUEGO una imagen generada por IA. Verificá que el producto generado sea FIEL a la referencia, sobre todo el COLOR y el contenido del envase (ej: si el contenido en la referencia es verde, NO debe salir rojo). NO evalúes la escena, el fondo ni el estilo — solo la fidelidad del producto y su contenido.\n\nREFERENCIA(S) REAL(ES):`
+      text: `Sos QA de creativos para ads de Meta (Facebook/Instagram). ${hasRef ? `Te muestro PRIMERO la(s) foto(s) REAL(es) del producto "${productName}" (referencia) y LUEGO la imagen generada por IA.` : 'Te muestro una imagen generada por IA para un ad.'} Evaluá:\n${hasRef ? '1. FIDELIDAD: ¿el producto generado matchea la referencia, sobre todo COLOR y contenido del envase? (ej: tomate rojo cuando la ref es verde = falla grave).\n2. ' : ''}CALIDAD CTR: ¿esta imagen PARA el scroll en el feed? Considerá pattern-interrupt, composición, autenticidad (parece foto real de un cliente, NO render/stock/3D), gancho visual. Estilo buscado: "${style || 'organic'}".`
     }];
-    refs.forEach(r => content.push({ type: 'image', source: { type: 'base64', media_type: r.mt, data: r.b64 } }));
-    content.push({ type: 'text', text: '\nIMAGEN GENERADA (a verificar):' });
+    if (hasRef) {
+      content.push({ type: 'text', text: '\nREFERENCIA(S):' });
+      refs.forEach(r => content.push({ type: 'image', source: { type: 'base64', media_type: r.mt, data: r.b64 } }));
+      content.push({ type: 'text', text: '\nGENERADA:' });
+    }
     content.push({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: generatedBase64 } });
     content.push({
       type: 'text',
-      text: '\nRespondé SOLO JSON, sin markdown: {"fidelity_score":0-100,"color_match":true|false,"issues":["..."],"verdict":"1 frase"}. color_match=false si el color del producto o su contenido difiere de la referencia (ej: tomate rojo cuando la referencia es verde). fidelity_score<70 si hay desviaciones serias de color/contenido/forma/label.'
+      text: `\nRespondé SOLO JSON, sin markdown: {${hasRef ? '"fidelity_score":0-100,"color_match":true|false,' : ''}"quality_score":0-100,"predicted_ctr":"high|medium|low","issues":["..."],"verdict":"1 frase"}. ${hasRef ? 'color_match=false si el color/contenido difiere de la ref; fidelity_score<70 si hay desviación seria de color/contenido/forma/label. ' : ''}quality_score = potencial de CTR/scroll-stop (alto = para el scroll; bajo = genérico/aburrido/render/stock).`
     });
 
-    const resp = await client.messages.create({
-      model: config.claude.model,
-      max_tokens: 500,
-      messages: [{ role: 'user', content }]
-    });
+    const resp = await client.messages.create({ model: config.claude.model, max_tokens: 500, messages: [{ role: 'user', content }] });
     const text = resp.content[0]?.text || '';
     let parsed;
     try {
       parsed = JSON.parse(text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim());
     } catch (e) {
-      logger.warn(`[IMAGE-JUDGE] fidelity parse error: ${text.slice(0, 150)}`);
-      return { pass: true, skipped: 'parse_error' };
+      logger.warn(`[IMAGE-JUDGE] judgeCreative parse error: ${text.slice(0, 150)}`);
+      return { fidelity_pass: true, quality_score: null, skipped: 'parse_error' };
     }
-    const score = typeof parsed.fidelity_score === 'number' ? parsed.fidelity_score : null;
-    const pass = (parsed.color_match !== false) && (score == null || score >= 70);
-    return { pass, score, color_match: parsed.color_match, issues: parsed.issues || [], verdict: parsed.verdict || '' };
+    const fidScore = typeof parsed.fidelity_score === 'number' ? parsed.fidelity_score : null;
+    const fidelity_pass = !hasRef ? true : ((parsed.color_match !== false) && (fidScore == null || fidScore >= 70));
+    const quality_score = typeof parsed.quality_score === 'number' ? parsed.quality_score : null;
+    return { fidelity_pass, fidelity_score: fidScore, color_match: parsed.color_match, quality_score, predicted_ctr: parsed.predicted_ctr || null, issues: parsed.issues || [], verdict: parsed.verdict || '' };
   } catch (err) {
-    logger.warn(`[IMAGE-JUDGE] fidelity gate error (fail-open): ${err.message}`);
-    return { pass: true, skipped: 'error' };
+    logger.warn(`[IMAGE-JUDGE] judgeCreative error (fail-open): ${err.message}`);
+    return { fidelity_pass: true, quality_score: null, skipped: 'error' };
   }
 }
 
-module.exports = { judgeImages, judgeFidelity };
+module.exports = { judgeImages, judgeCreative };
