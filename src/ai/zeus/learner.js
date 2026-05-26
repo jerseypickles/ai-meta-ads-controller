@@ -49,10 +49,22 @@ async function measureImpact(outcome, windowDays) {
     };
   }
 
-  // Default: kpi_delta (mantiene el comportamiento legacy)
-  if (!outcome.entity_id) {
-    // Sin entity — mediciones agregadas del portfolio
-    return null;
+  // Default: kpi_delta. Requiere una entidad de ads real con snapshot. Las recos
+  // de código (rec_type code_change) usan rec._id como entity_id y NUNCA tienen
+  // snapshot → antes el `return null` las dejaba sin medir para siempre (el cron
+  // las re-queriaba a diario sin escribir nada). Marcarlas inconclusive para que
+  // se registren y dejen de colgarse. (2026-05-26)
+  const inconclusive = (reason) => ({
+    measured_at: new Date(),
+    metrics: { method: 'kpi_delta', reason, window_days: windowDays },
+    actual_direction: 'unknown',
+    actual_magnitude: '',
+    accuracy_score: null,
+    verdict: 'inconclusive'
+  });
+
+  if (!outcome.entity_id || outcome.rec_type === 'code_change') {
+    return inconclusive('kpi_delta sin entidad de ads medible (ej. rec de código) — no auto-instrumentable');
   }
 
   const current = await MetricSnapshot.findOne({
@@ -60,6 +72,8 @@ async function measureImpact(outcome, windowDays) {
     entity_type: outcome.entity_type || 'adset'
   }).sort({ snapshot_at: -1 }).lean();
 
+  // Rec táctica con entidad real pero snapshot ausente: probablemente transiente
+  // → null para reintentar el próximo ciclo (no marcar inconclusive prematuro).
   if (!current) return null;
 
   const baseline = outcome.baseline || {};
