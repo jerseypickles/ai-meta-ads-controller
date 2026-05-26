@@ -736,6 +736,23 @@ async function handleScaleBudget(input, ctx) {
     logger.info(`[ACCOUNT-AGENT] scale_budget: cooldown bypassed for ${adset_id} — Zeus PRIORITIZE directive`);
   }
 
+  // ── GATE: scale-gate de Athena (2026-05-26) — freno marginal + step adaptativo
+  // al win-rate. Solo scale_up; sesga conservador (la causa del scale_up 32% es
+  // escalar adsets que revierten). Fail-open.
+  let athenaScaleStep = null;
+  if (isScaleUp) {
+    try {
+      const { checkAdsetScaleSanity, getAdaptiveScaleStep } = require('./athena-scale-gate');
+      const sanity = checkAdsetScaleSanity(snap);
+      if (!sanity.allow) {
+        return { blocked: true, reason: sanity.reason };
+      }
+      athenaScaleStep = await getAdaptiveScaleStep();
+    } catch (e) {
+      logger.warn(`[ACCOUNT-AGENT] athena scale-gate falló (fail-open): ${e.message}`);
+    }
+  }
+
   // ── GATE: Max 25% increase
   if (isScaleUp && prevBudget > 0) {
     const changePct = ((new_budget - prevBudget) / prevBudget) * 100;
@@ -758,7 +775,17 @@ async function handleScaleBudget(input, ctx) {
     return { blocked: true, reason: validation.reason };
   }
 
-  const finalBudget = validation.modified ? validation.adjustedValue : new_budget;
+  let finalBudget = validation.modified ? validation.adjustedValue : new_budget;
+
+  // Step cap adaptativo: si el win-rate de scale_up de Athena viene bajo, achicar
+  // el paso máximo (graduado). mal track → pasos chicos hasta recuperar.
+  if (isScaleUp && athenaScaleStep && prevBudget > 0) {
+    const maxBudget = Math.round(prevBudget * (1 + athenaScaleStep.maxStepPct));
+    if (finalBudget > maxBudget) {
+      logger.info(`[ACCOUNT-AGENT] scale capado por win-rate: $${finalBudget}→$${maxBudget} (${athenaScaleStep.reason})`);
+      finalBudget = maxBudget;
+    }
+  }
 
   // Execute
   await meta.updateBudget(adset_id, finalBudget);
@@ -804,7 +831,10 @@ async function handleScaleBudget(input, ctx) {
     success: true,
     executed_at: new Date(),
     metrics_at_execution: metricsAtExecution,
-    metadata: cashShadow ? { shadow_cash_consideration: cashShadow } : {}
+    metadata: {
+      ...(cashShadow ? { shadow_cash_consideration: cashShadow } : {}),
+      ...(athenaScaleStep ? { athena_scale_step: athenaScaleStep } : {})
+    }
   });
 
   // Marcar directivas matching de Zeus como executed
