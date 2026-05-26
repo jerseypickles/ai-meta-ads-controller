@@ -340,6 +340,38 @@ async function buildOracleContext(lastSeenAt = null) {
     };
   } catch (_) { /* Hermes informativo, no crítico para el contexto de Zeus */ }
 
+  // Performance / track-record — el "dashboard de CEO" de Zeus. Zeus es el CEO de
+  // los agentes, así que el win-rate de SUS AGENTES es su track record. Lo computa
+  // de la capa de veredicto (follow_up_verdict, medido a 7d). Antes Zeus no lo veía
+  // cada turno; ahora razona con su performance real en vez de a ciegas. (2026-05-26)
+  try {
+    const ActionLog = require('../../db/models/ActionLog');
+    const since30 = new Date(Date.now() - 30 * 86400000);
+    const rows = await ActionLog.aggregate([
+      { $match: { executed_at: { $gte: since30 }, follow_up_verdict: { $in: ['positive', 'negative', 'neutral'] } } },
+      { $group: {
+        _id: '$agent_type',
+        positive: { $sum: { $cond: [{ $eq: ['$follow_up_verdict', 'positive'] }, 1, 0] } },
+        negative: { $sum: { $cond: [{ $eq: ['$follow_up_verdict', 'negative'] }, 1, 0] } },
+        neutral: { $sum: { $cond: [{ $eq: ['$follow_up_verdict', 'neutral'] }, 1, 0] } }
+      } }
+    ]);
+    const byAgent = {};
+    let totPos = 0, totNeg = 0;
+    for (const r of rows) {
+      const dec = r.positive + r.negative;
+      totPos += r.positive; totNeg += r.negative;
+      byAgent[r._id || 'unknown'] = { win_rate_pct: dec ? Math.round(100 * r.positive / dec) : null, positive: r.positive, negative: r.negative, neutral: r.neutral };
+    }
+    const gateHolds7d = await ActionLog.countDocuments({ 'metadata.gate_hold': true, executed_at: { $gte: new Date(Date.now() - 7 * 86400000) } });
+    ctx.performance = {
+      note: 'Win-rate = positive/(positive+negative) de acciones medidas a 7d (capa de veredicto). Es tu track record como CEO de los agentes. neutral = inconcluso/sin efecto claro.',
+      overall_win_rate_pct: (totPos + totNeg) ? Math.round(100 * totPos / (totPos + totNeg)) : null,
+      by_agent_30d: byAgent,
+      ares_scale_gate_holds_7d: gateHolds7d
+    };
+  } catch (_) { /* performance es informativo, no crítico */ }
+
   return ctx;
 }
 
