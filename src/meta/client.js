@@ -1147,16 +1147,21 @@ class MetaClient {
 
     if (!name) throw new Error('name es requerido para crear campana');
 
+    // CBO = budget a nivel de campana; ABO = sin budget de campana (cada ad set
+    // trae el suyo). Meta valida campos distintos para cada caso (2026-05-28):
+    //   - bid_strategy a nivel campana SOLO se acepta con budget de campana (CBO).
+    //     En ABO lanza "No Budget for Campaign" (subcode 1885183/1885737).
+    //   - is_adset_budget_sharing_enabled es OBLIGATORIO (True/False) en ABO
+    //     (subcode 4834011). En CBO no aplica.
+    const isCBO = !!params.daily_budget;
     const campaignParams = {
       name,
       objective,
       status,
-      bid_strategy: params.bid_strategy || 'LOWEST_COST_WITHOUT_CAP',
       special_ad_categories: JSON.stringify(special_ad_categories),
-      // CBO: daily_budget a nivel de campana (en centavos)
-      ...(params.daily_budget ? { daily_budget: Math.round(params.daily_budget * 100) } : {}),
-      // ABO con budget sharing: Meta puede compartir hasta 20% entre ad sets
-      ...(params.is_adset_budget_sharing_enabled ? { is_adset_budget_sharing_enabled: 'True' } : {})
+      ...(isCBO ? { daily_budget: Math.round(params.daily_budget * 100) } : {}),
+      ...(isCBO ? { bid_strategy: params.bid_strategy || 'LOWEST_COST_WITHOUT_CAP' } : {}),
+      ...(isCBO ? {} : { is_adset_budget_sharing_enabled: params.is_adset_budget_sharing_enabled ? 'True' : 'False' })
     };
 
     logger.info(`Creando campana: "${name}" (${objective})`);
