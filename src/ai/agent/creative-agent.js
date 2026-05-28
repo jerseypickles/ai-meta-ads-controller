@@ -337,8 +337,8 @@ async function runCreativeAgent() {
   //   >= SOFT_MAX: skip reactive, permite mínimo proactive (rotación temática)
   //   < SOFT_MAX:  generate normal segun ad sets que necesitan
   //   < MIN:       generate agresivo para levantar pool
-  const HARD_MAX_POOL_SIZE = 60;   // freeze completo
-  const SOFT_MAX_POOL_SIZE = 40;   // freeze reactive, mínimo proactive
+  const HARD_MAX_POOL_SIZE = 100;  // freeze completo (60→100 el 28-may: cold-start, pool grande para alimentar ~50 tests)
+  const SOFT_MAX_POOL_SIZE = 70;   // freeze reactive, mínimo proactive (40→70 el 28-may)
   const currentPool = await CreativeProposal.countDocuments({ status: 'ready' });
   const skipReactive = currentPool >= SOFT_MAX_POOL_SIZE;
   const skipEverything = currentPool >= HARD_MAX_POOL_SIZE;
@@ -825,8 +825,8 @@ async function runCreativeAgent() {
   // ═══ GENERACION PROACTIVA — respeta umbrales de pool (Abril 2026 fix) ═══
   // Antes: siempre generaba MIN_PROACTIVE_PER_CYCLE (2) regardless del pool size.
   // Ahora: si pool >= SOFT_MAX → 0 proactivos. Si pool healthy → solo llega a target.
-  const MIN_POOL_SIZE = 10;       // pool minimo para evitar que se vacie
-  const TARGET_POOL_SIZE = 25;    // target de trabajo
+  const MIN_POOL_SIZE = 20;       // pool minimo para evitar que se vacie (10→20 el 28-may)
+  const TARGET_POOL_SIZE = 60;    // target de trabajo (25→60 el 28-may: alimentar ~50 tests en cold-start)
   const readyCount = await CreativeProposal.countDocuments({ status: 'ready' });
   const poolNeeded = Math.max(0, TARGET_POOL_SIZE - readyCount - generated);
 
@@ -835,9 +835,9 @@ async function runCreativeAgent() {
     proactiveNeeded = 0; // pool lleno, no generar más
     logger.info(`[CREATIVE-AGENT] Pool >= SOFT_MAX (${readyCount} >= ${SOFT_MAX_POOL_SIZE}). Skip proactive completamente.`);
   } else if (readyCount < MIN_POOL_SIZE) {
-    proactiveNeeded = Math.min(5, poolNeeded); // pool bajo, agresivo hasta 5
+    proactiveNeeded = Math.min(10, poolNeeded); // pool bajo, agresivo hasta 10 (5→10 el 28-may)
   } else {
-    proactiveNeeded = Math.min(2, poolNeeded); // normal, max 2 per ciclo
+    proactiveNeeded = Math.min(5, poolNeeded); // normal, max 5 per ciclo (2→5 el 28-may)
   }
 
   if (proactiveNeeded > 0 && rankedProducts.length > 0 && rankedScenes.length > 0) {

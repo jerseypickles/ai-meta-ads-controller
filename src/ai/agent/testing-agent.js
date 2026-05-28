@@ -14,10 +14,10 @@ const { getAdsForAdSet } = require('../../db/queries');
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURACION
 // ═══════════════════════════════════════════════════════════════════════════════
-const MAX_CONCURRENT_TESTS = 40;
+const MAX_CONCURRENT_TESTS = 50;
 const TEST_DAILY_BUDGET = 10; // $10/dia
-const MAX_DAILY_TESTING_BUDGET = 200; // Cap diario total: $200 max en testing (bajado de $400 el 17-may-2026)
-const MAX_LAUNCHES_PER_CYCLE = 5; // Max tests nuevos por ciclo
+const MAX_DAILY_TESTING_BUDGET = 500; // Cap diario total. 2026-05-28: 200→500 — cold-start cuenta nueva post-hack, máximo volumen de testeo autorizado por el creador para alimentar el pixel. Bajar cuando haya señal estable.
+const MAX_LAUNCHES_PER_CYCLE = 8; // Max tests nuevos por ciclo (5→8 el 28-may para ramp rápido en cold-start)
 const TEST_MAX_DAYS = 7;
 const KILL_MIN_SPEND = 25;     // Kill si $25+ spend y 0 compras
 const GRADUATED_BUDGET = 20;   // Budget al promover test ad set graduado ($20/dia)
