@@ -1449,12 +1449,14 @@ function initCronJobs() {
   });
   logger.info('  [*] Account Agent unificado — cada 2h 24/7 (6am-10pm: completo, 10pm-6am: observador)');
 
-  // Creative Agent — 3x/día durante horas activas (8am, 2pm, 8pm ET)
-  cron.schedule('0 8,14,20 * * *', jobCreativeAgent, {
+  // Creative Agent — cada 2h durante horas activas (6am–10pm ET, 9x/día).
+  // Subido de 3x → 9x el 28-may-2026: cuenta nueva post-hack sin data, hay que
+  // inyectar creativos agresivamente para que el pixel salga de learning.
+  cron.schedule('0 6,8,10,12,14,16,18,20,22 * * *', jobCreativeAgent, {
     timezone: TIMEZONE,
     name: 'creative-agent'
   });
-  logger.info('  [*] Creative Agent — 3x/día: 8am, 2pm, 8pm ET');
+  logger.info('  [*] Creative Agent — 9x/día cada 2h: 6am–10pm ET');
 
   // Hermes Agent — 5x/día (9am, 12pm, 3pm, 6pm, 9pm ET) — foot traffic NJ store
   // Aumentado de 2x → 5x el 14-may-2026 para acelerar inyección de creativos
@@ -1488,12 +1490,14 @@ function initCronJobs() {
   });
   logger.info(`  [*] Hermes Budget Scaler — 2x/día ${config.hermes?.scaler?.enabled ? '(LIVE)' : '(OFF — set HERMES_BUDGET_SCALER=true)'}`);
 
-  // Testing Agent — 5x/día durante horas activas (6am, 10am, 2pm, 6pm, 10pm ET)
-  cron.schedule('30 6,10,14,18,22 * * *', jobTestingAgent, {
+  // Testing Agent — cada 2h durante horas activas (6:30am–10:30pm ET, 9x/día).
+  // Subido de 5x → 9x el 28-may-2026: cuenta nueva post-hack, lanzar/evaluar
+  // tests más seguido para acelerar la generación de señal y volumen de pixel.
+  cron.schedule('30 6,8,10,12,14,16,18,20,22 * * *', jobTestingAgent, {
     timezone: TIMEZONE,
     name: 'testing-agent'
   });
-  logger.info('  [*] Testing Agent — 5x/día: 6:30am, 10:30am, 2:30pm, 6:30pm, 10:30pm ET');
+  logger.info('  [*] Testing Agent — 9x/día cada 2h: 6:30am–10:30pm ET');
 
   // Graduated metrics tracking — cada 30 min, sigue pulleando metrics de
   // tests graduados últimos 30d para mostrar "ROAS al graduar vs ROAS hoy"
