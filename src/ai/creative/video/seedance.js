@@ -13,7 +13,8 @@ const logger = require('../../../utils/logger');
 
 // Config (todo override-able por env, para ajustar al endpoint real sin redeploy de código).
 const BASE_URL = process.env.BYTEPLUS_BASE_URL || 'https://ark.ap-southeast.bytepluses.com/api/v3';
-const MODEL = process.env.SEEDANCE_MODEL || 'seedance-2.0'; // -fast | -pro variantes
+// Model ID real de Seedance 2.0 en BytePlus Ark (confirmado 2026-05-29).
+const MODEL = process.env.SEEDANCE_MODEL || 'dreamina-seedance-2-0-260128'; // o -fast-260128
 const SUBMIT_PATH = process.env.SEEDANCE_SUBMIT_PATH || '/contents/generations/tasks';
 const POLL_BASE_DELAY_MS = 3000;
 const POLL_MAX_DELAY_MS = 15000;
