@@ -468,8 +468,11 @@ async function handleGetAdsetMetrics(input) {
   const freq7 = m7d.frequency || 0;
   const freq3 = m3d.frequency || 0;
 
-  // Account context
-  const activeSnapshots = allSnapshots.filter(s => s.status === 'ACTIVE');
+  // Account context — SOLO adsets ABO (budget propio). Los adsets de un CBO
+  // tienen daily_budget 0 (budget a nivel campaña) y NO son de Athena: los
+  // gestiona Ares. Excluirlos evita que Athena intente escalar budget de adset
+  // que no existe en un CBO (Meta lo rechaza) y ensucie su análisis (2026-05-29).
+  const activeSnapshots = allSnapshots.filter(s => s.status === 'ACTIVE' && (s.daily_budget || 0) > 0);
   const totalBudget = activeSnapshots.reduce((sum, s) => sum + (s.daily_budget || 0), 0);
   const totalSpend7d = activeSnapshots.reduce((sum, s) => sum + (s.metrics?.last_7d?.spend || 0), 0);
   const totalPV7d = activeSnapshots.reduce((sum, s) => sum + (s.metrics?.last_7d?.purchase_value || 0), 0);
@@ -709,6 +712,14 @@ async function handleScaleBudget(input, ctx) {
   if (!snap) return { blocked: true, reason: 'No snapshot found for this ad set' };
 
   const prevBudget = snap.daily_budget || 0;
+
+  // GUARD CBO: un adset con daily_budget 0 pertenece a un CBO (budget a nivel
+  // campaña). Athena NO escala adsets de CBO — eso es de Ares, y Meta rechaza
+  // setear budget de adset en CBO. Bloquear con mensaje claro (2026-05-29).
+  if (prevBudget <= 0) {
+    return { blocked: true, reason: 'Adset de CBO (budget a nivel campaña) — lo gestiona Ares, no Athena.' };
+  }
+
   const isScaleUp = new_budget > prevBudget;
   const actionType = isScaleUp ? 'scale_up' : 'scale_down';
 
