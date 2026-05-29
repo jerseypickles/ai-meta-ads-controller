@@ -14,9 +14,9 @@ const { getAdsForAdSet } = require('../../db/queries');
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURACION
 // ═══════════════════════════════════════════════════════════════════════════════
-const MAX_CONCURRENT_TESTS = 50;
+const MAX_CONCURRENT_TESTS = 100;
 const TEST_DAILY_BUDGET = 10; // $10/dia
-const MAX_DAILY_TESTING_BUDGET = 500; // Cap diario total. 2026-05-28: 200→500 — cold-start cuenta nueva post-hack, máximo volumen de testeo autorizado por el creador para alimentar el pixel. Bajar cuando haya señal estable.
+const MAX_DAILY_TESTING_BUDGET = 1000; // Cap diario total. 2026-05-28: 200→500. 2026-05-29: 500→1000 — la entrega rampeaba contra el techo de $500, el creador subió el cap para acelerar señal del pixel. Acoplado a MAX_CONCURRENT_TESTS (100 × $10). Bajar cuando haya señal estable.
 const MAX_LAUNCHES_PER_CYCLE = 8; // Max tests nuevos por ciclo (5→8 el 28-may para ramp rápido en cold-start)
 const TEST_MAX_DAYS = 7;
 const KILL_MIN_SPEND = 25;     // Kill si $25+ spend y 0 compras
