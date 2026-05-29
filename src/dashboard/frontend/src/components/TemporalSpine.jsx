@@ -20,11 +20,23 @@ const AGENT_SCHEDULES = [
       { h: 12 }, { h: 14 }, { h: 16 }, { h: 17 }, { h: 18 }, { h: 20 }, { h: 22 }
     ]
   },
-  { agent: 'apollo', label: 'apollo cycle', times: [{ h: 8 }, { h: 14 }, { h: 20 }] },
+  {
+    agent: 'apollo',
+    label: 'apollo cycle',
+    // creative-agent cada 2h, 6am–10pm ET (9x/día desde 2026-05-28)
+    times: [
+      { h: 6 }, { h: 8 }, { h: 10 }, { h: 12 }, { h: 14 },
+      { h: 16 }, { h: 18 }, { h: 20 }, { h: 22 }
+    ]
+  },
   {
     agent: 'prometheus',
     label: 'prometheus cycle',
-    times: [{ h: 6, m: 30 }, { h: 10, m: 30 }, { h: 14, m: 30 }, { h: 18, m: 30 }, { h: 22, m: 30 }]
+    // testing-agent cada 2h, 6:30am–10:30pm ET (9x/día desde 2026-05-28)
+    times: [
+      { h: 6, m: 30 }, { h: 8, m: 30 }, { h: 10, m: 30 }, { h: 12, m: 30 }, { h: 14, m: 30 },
+      { h: 16, m: 30 }, { h: 18, m: 30 }, { h: 20, m: 30 }, { h: 22, m: 30 }
+    ]
   },
   {
     agent: 'ares',
