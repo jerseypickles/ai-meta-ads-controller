@@ -1402,7 +1402,15 @@ async function runAccountAgent() {
 
   // Get ALL active ad set snapshots
   const allSnapshots = await getLatestSnapshots('adset');
-  const activeAdSets = allSnapshots.filter(s => s.status === 'ACTIVE' && !(s.entity_name || '').startsWith('[TEST]') && !(s.entity_name || '').startsWith('[Ares]') && !(s.entity_name || '').startsWith('[HERMES]') && !(s.entity_name || '').startsWith('[Hermes]'));
+  // Athena = ABO. Excluye: tests activos de Prometheus ([TEST]), clones de Ares,
+  // Hermes, y adsets de CBO (daily_budget 0 = budget a nivel campaña → de Ares,
+  // no de Athena). Solo deja adsets ABO de producción + graduados [Prometheus].
+  const activeAdSets = allSnapshots.filter(s => s.status === 'ACTIVE'
+    && (s.daily_budget || 0) > 0
+    && !(s.entity_name || '').startsWith('[TEST]')
+    && !(s.entity_name || '').startsWith('[Ares]')
+    && !(s.entity_name || '').startsWith('[HERMES]')
+    && !(s.entity_name || '').startsWith('[Hermes]'));
 
   if (activeAdSets.length === 0) {
     logger.info('[ACCOUNT-AGENT] No active ad sets found');
