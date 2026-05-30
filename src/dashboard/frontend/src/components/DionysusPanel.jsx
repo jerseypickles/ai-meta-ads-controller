@@ -34,14 +34,16 @@ function DionysusPanel() {
   const onRun = async () => {
     setRunning(true);
     try { await runDionysusApi(); } catch (e) { console.error(e); }
-    // poll mientras genera — los placeholders 'generando' y luego los videos aparecen solos
+    // poll mientras genera — los placeholders 'generando' y luego los videos aparecen solos.
+    // VIP 1080p puede tardar 20-25min, así que polleamos hasta 28min (no 5).
+    const POLL_WINDOW_MS = 28 * 60 * 1000;
     const t0 = Date.now();
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {
       await load();
-      if (Date.now() - t0 > 5 * 60 * 1000) { clearInterval(pollRef.current); setRunning(false); }
-    }, 6000);
-    setTimeout(() => { if (pollRef.current) clearInterval(pollRef.current); setRunning(false); }, 5 * 60 * 1000 + 1000);
+      if (Date.now() - t0 > POLL_WINDOW_MS) { clearInterval(pollRef.current); setRunning(false); }
+    }, 8000);
+    setTimeout(() => { if (pollRef.current) clearInterval(pollRef.current); setRunning(false); }, POLL_WINDOW_MS + 1000);
   };
 
   const decide = async (id, action) => {
@@ -97,7 +99,7 @@ function DionysusPanel() {
             <div style={{ fontWeight: 600 }}>
               Dionisio está generando{genVideos.length > 0 ? ` ${genVideos.length} video${genVideos.length > 1 ? 's' : ''}` : ' videos'}…
             </div>
-            <div style={{ fontSize: 12, opacity: 0.6 }}>Juzga tus mejores imágenes → anima 5s con Seedance. Toma 1-2 min/video; van apareciendo abajo.</div>
+            <div style={{ fontSize: 12, opacity: 0.6 }}>Juzga tus mejores imágenes → anima 5s con Seedance 1080p. Puede tardar varios minutos por video (HD); van apareciendo abajo a medida que terminan.</div>
           </div>
         </div>
       )}

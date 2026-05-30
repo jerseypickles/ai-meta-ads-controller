@@ -6,11 +6,17 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // Base compartida — el "ADN" de todos los motion prompts (UGC, sin cinemático).
+// Empuja FUERTE hacia foto-realismo y color fiel: el modelo tiende a sobre-saturar
+// y dar "look AI"; estas instrucciones lo frenan para que pase el ojo humano.
 const BASE_STYLE =
-  'Real handheld iPhone video. Almost no movement, just ambient micro-motion. ' +
+  'Photorealistic real handheld iPhone video, looks shot by a real person, NOT AI-generated. ' +
+  'Almost no movement, just ambient micro-motion. ' +
   'Barely perceptible handheld micro-drift, faint focus breathing, no smooth gimbal motion. ' +
-  'Authentic unedited phone footage, natural harsh daylight, realistic textures, ' +
-  'no cinematic effects, no slow-motion, no zoom.';
+  'Authentic unedited phone footage, natural realistic lighting, true-to-life accurate colors, ' +
+  'neutral white balance, NO color grading, NO oversaturation, NO boosted contrast, ' +
+  'preserve the exact original colors of the source image, ' +
+  'real skin tones, natural film grain, realistic textures and imperfections, ' +
+  'no cinematic effects, no glossy CGI look, no slow-motion, no zoom, no plastic surfaces.';
 
 // Variantes — cada una aporta UN micro-gesto distinto. Mantener todas low-motion.
 // {product} se reemplaza por el nombre del producto (ej. "Jersey Pickles Chamoy").

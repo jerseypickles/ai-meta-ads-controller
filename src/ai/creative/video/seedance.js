@@ -2,8 +2,14 @@
 // Apollo Video — MOTOR Seedance 2.0 vía PiAPI
 // Image-to-video async: submit → task_id → poll → output.video (URL).
 // Schema confirmado contra la API real (2026-05-30): model="seedance",
-// task_type="seedance-2-preview" (NORMAL, no fast), input.mode="first_last_frames",
-// input.image_urls=[URL pública]. Gated en PIAPI_KEY. Ver memoria apollo-video.
+// task_type="seedance-2-preview-vip" (NORMAL HD, no fast), input.mode="first_last_frames",
+// input.image_urls=[URL pública], input.resolution="1080p". Gated en PIAPI_KEY.
+//
+// IMPORTANTE (doc PiAPI): el campo `resolution` SOLO lo respeta el tier VIP
+// (`seedance-2-preview-vip`). Los modelos estándar (`seedance-2-preview` /
+// `-fast`) salen a 480p fijo. Por eso el default es VIP → 1080p real. Sigue
+// siendo el modelo NORMAL (no fast), es el tier de alta resolución del mismo.
+// Ver memoria apollo-video / dionysus-agent.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const axios = require('axios');
@@ -11,11 +17,16 @@ const logger = require('../../../utils/logger');
 
 const BASE_URL = process.env.PIAPI_BASE_URL || 'https://api.piapi.ai/api/v1';
 const MODEL = 'seedance';
-// NORMAL por default (no fast) — pedido del creador. Override por env.
-const TASK_TYPE = process.env.SEEDANCE_TASK_TYPE || 'seedance-2-preview';
+// NORMAL HD por default (no fast) — pedido del creador: 1080p + máxima fidelidad.
+// VIP es el único tier que respeta `resolution`. Override por env si hace falta.
+const TASK_TYPE = process.env.SEEDANCE_TASK_TYPE || 'seedance-2-preview-vip';
+const RESOLUTION = process.env.SEEDANCE_RESOLUTION || '1080p'; // 720p | 1080p (solo VIP)
 const POLL_BASE_DELAY_MS = 5000;
 const POLL_MAX_DELAY_MS = 20000;
-const POLL_TIMEOUT_MS = 8 * 60 * 1000;
+// El tier VIP 1080p renderiza MUCHO más lento que el 480p estándar (cola VIP +
+// más cómputo); observado 24min+ con la cola congestionada. Subimos el timeout a
+// 25min para no marcar failed videos que en realidad iban a salir bien. Override por env.
+const POLL_TIMEOUT_MS = parseInt(process.env.SEEDANCE_POLL_TIMEOUT_MS || String(25 * 60 * 1000), 10);
 
 function _key() {
   const k = process.env.PIAPI_KEY;
@@ -36,6 +47,7 @@ async function _submit({ imageUrl, prompt, durationSeconds, aspectRatio }) {
       prompt,
       duration: durationSeconds,
       aspect_ratio: aspectRatio,
+      resolution: RESOLUTION,        // 1080p (solo lo respeta el tier VIP)
       image_urls: [imageUrl]
     }
   };
@@ -85,7 +97,7 @@ async function generateVideoFromImage(opts) {
   if (!prompt) throw new Error('Seedance: falta motion prompt');
 
   const t0 = Date.now();
-  logger.info(`[SEEDANCE] ${MODEL}/${TASK_TYPE} image-to-video · ${durationSeconds}s ${aspectRatio}`);
+  logger.info(`[SEEDANCE] ${MODEL}/${TASK_TYPE} image-to-video · ${durationSeconds}s ${aspectRatio} · ${RESOLUTION}`);
   const taskId = await _submit({ imageUrl, prompt, durationSeconds, aspectRatio });
   logger.info(`[SEEDANCE] task ${taskId} en cola, pooleando...`);
   const videoUrl = await _poll(taskId);
