@@ -33,6 +33,50 @@ const GRADUATE_MIN_PURCHASES = 2;  // 2026-05-26: 1→2. Graduar con 1 compra er
 const GRADUATE_MAX_CPA = 35;
 const MIN_READY_POOL = 5;
 
+// ── Señales propias de VIDEO (Dionisio) — engagement del creativo ──
+// El video tiene métricas que la foto no: hold rate (% que lo ve completo) y
+// thumbstop (% que se queda a verlo). Sirven para matar creativos que no
+// enganchan ANTES de quemar budget, y para proteger los que sí enganchan.
+const VIDEO_ENGAGEMENT_MIN_IMPR = parseInt(process.env.VIDEO_ENG_MIN_IMPR || '2000', 10); // impresiones mín para confiar en las tasas
+const VIDEO_THUMBSTOP_MIN = parseFloat(process.env.VIDEO_THUMBSTOP_MIN || '0.15'); // p25/impr — bajo esto, hook débil → kill
+const VIDEO_HOLD_GOOD = parseFloat(process.env.VIDEO_HOLD_GOOD || '0.10');         // p100/impr — sobre esto, engancha → más runway
+
+const VIDEO_INSIGHT_FIELDS = 'impressions,video_play_actions,video_thruplay_watched_actions,video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,video_p100_watched_actions,video_avg_time_watched_actions';
+function _firstActionVal(arr) { return (Array.isArray(arr) && arr.length) ? (parseFloat(arr[0].value) || 0) : 0; }
+
+/**
+ * Trae las señales de engagement de VIDEO de un adset desde Meta (on-demand).
+ * @returns {Object|null} { video_impressions, video_plays, video_p25..p100, thumbstop_rate, hold_rate, thruplay_rate }
+ */
+async function getVideoEngagement(meta, adsetId, launchedAt) {
+  try {
+    const since = new Date(launchedAt).toISOString().split('T')[0];
+    const until = new Date().toISOString().split('T')[0];
+    const rows = await meta.getInsights(adsetId, { fields: VIDEO_INSIGHT_FIELDS, time_range: JSON.stringify({ since, until }) });
+    if (!rows || !rows.length) return null;
+    const r = rows[0];
+    const impr = parseFloat(r.impressions) || 0;
+    if (impr <= 0) return null;
+    const plays = _firstActionVal(r.video_play_actions);
+    const thru = _firstActionVal(r.video_thruplay_watched_actions);
+    const p25 = _firstActionVal(r.video_p25_watched_actions);
+    const p50 = _firstActionVal(r.video_p50_watched_actions);
+    const p75 = _firstActionVal(r.video_p75_watched_actions);
+    const p100 = _firstActionVal(r.video_p100_watched_actions);
+    const avgT = _firstActionVal(r.video_avg_time_watched_actions);
+    return {
+      video_impressions: impr, video_plays: plays, video_thruplays: thru,
+      video_p25: p25, video_p50: p50, video_p75: p75, video_p100: p100, video_avg_time: avgT,
+      thumbstop_rate: p25 / impr,   // proxy thumbstop: % que vio >=25%
+      hold_rate: p100 / impr,       // % que lo vio completo
+      thruplay_rate: thru / impr
+    };
+  } catch (e) {
+    logger.debug(`[TESTING-AGENT] video engagement falló ${adsetId}: ${e.message}`);
+    return null;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -411,6 +455,14 @@ async function monitorTests() {
         continue;
       }
 
+      // VIDEO: traer señales de engagement (hold/thumbstop) y mergearlas a metrics.
+      let videoEng = null;
+      if (test.media_type === 'video') {
+        const { getMetaClient } = require('../../meta/client');
+        videoEng = await getVideoEngagement(getMetaClient(), test.test_adset_id, test.launched_at);
+        if (videoEng) Object.assign(metrics, videoEng);
+      }
+
       // Actualizar metricas en TestRun
       await TestRun.findByIdAndUpdate(test._id, {
         $set: { metrics: { ...metrics, updated_at: new Date() } }
@@ -445,6 +497,16 @@ async function monitorTests() {
         continue;
       }
 
+      // KILL VIDEO: hook débil — nadie se queda a verlo (thumbstop bajo) con
+      // impresiones suficientes y 0 compras. Mata creativos de video que no
+      // enganchan ANTES de quemar todo el budget.
+      if (test.media_type === 'video' && videoEng && videoEng.video_impressions >= VIDEO_ENGAGEMENT_MIN_IMPR
+          && metrics.purchases === 0 && metrics.spend >= 15 && videoEng.thumbstop_rate < VIDEO_THUMBSTOP_MIN) {
+        await killOrExpireTest(test, `Video no engancha: thumbstop ${(videoEng.thumbstop_rate * 100).toFixed(0)}% (<${(VIDEO_THUMBSTOP_MIN * 100).toFixed(0)}%) · hold ${(videoEng.hold_rate * 100).toFixed(0)}% · ${videoEng.video_impressions} impr · 0 compras`, 'killed');
+        killed++;
+        continue;
+      }
+
       // Cash-adjusted ROAS: ajusta el Meta-ROAS por el haircut de cuenta (cash real).
       const cashAdjRoas = metrics.roas * cashHaircut;
 
@@ -471,15 +533,22 @@ async function monitorTests() {
         continue;
       }
 
-      // Dia 3-5: Kill agresivo — 1 compra + $40+ spend + ROAS < 2x = no va a mejorar
-      if (daysActive >= 3 && metrics.purchases <= 1 && metrics.spend >= 40 && metrics.roas < 2.0) {
+      // Dia 3-5: Kill agresivo — 1 compra + $40+ spend + ROAS < 2x = no va a mejorar.
+      // EXCEPCIÓN video: si engancha fuerte (hold alto), le damos el runway completo
+      // hasta día 6-7 — el creativo gusta, dale tiempo a que las compras maduren.
+      const videoEngages = test.media_type === 'video' && videoEng && videoEng.hold_rate >= VIDEO_HOLD_GOOD;
+      if (daysActive >= 3 && metrics.purchases <= 1 && metrics.spend >= 40 && metrics.roas < 2.0 && !videoEngages) {
         await killOrExpireTest(test, `${metrics.purchases} compras con $${metrics.spend.toFixed(0)} spend, ROAS ${metrics.roas.toFixed(2)}x — CPA demasiado alto, no mejorara`, 'killed');
         killed++;
         continue;
       }
+      if (videoEngages && daysActive >= 3 && metrics.purchases <= 1 && metrics.spend >= 40 && metrics.roas < 2.0) {
+        logger.info(`[TESTING-AGENT] ${test.test_adset_name}: video engancha (hold ${(videoEng.hold_rate * 100).toFixed(0)}%) — protegido del kill agresivo, runway completo`);
+      }
 
       // Dia 3-5: Esperar — guardar assessment
-      const assessment = `Dia ${daysActive}: $${metrics.spend.toFixed(2)} spend, ${metrics.purchases} compras, ROAS ${metrics.roas.toFixed(2)}x, CTR ${metrics.ctr.toFixed(1)}%, ${metrics.add_to_cart || 0} ATC, freq ${metrics.frequency.toFixed(1)}. Evaluando.`;
+      const videoSuffix = videoEng ? ` · 🎬 thumbstop ${(videoEng.thumbstop_rate * 100).toFixed(0)}%, hold ${(videoEng.hold_rate * 100).toFixed(0)}%` : '';
+      const assessment = `Dia ${daysActive}: $${metrics.spend.toFixed(2)} spend, ${metrics.purchases} compras, ROAS ${metrics.roas.toFixed(2)}x, CTR ${metrics.ctr.toFixed(1)}%, ${metrics.add_to_cart || 0} ATC, freq ${metrics.frequency.toFixed(1)}${videoSuffix}. Evaluando.`;
       await TestRun.findByIdAndUpdate(test._id, {
         $set: { phase: 'evaluating' },
         $push: { assessments: { day_number: daysActive, phase: 'evaluating', assessment, metrics_snapshot: metrics } }
