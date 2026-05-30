@@ -37,8 +37,11 @@ async function _getCandidates() {
 
   // Filtrar los que YA tienen un video hijo (dedup).
   const ids = candidates.map(c => c._id);
+  // Solo cuentan los videos hijos "vivos" — si el video falló/se rechazó, el
+  // source PUEDE reintentar (no lo excluimos para siempre).
   const existingVideos = await CreativeProposal.find({
-    media_type: 'video', source_proposal_id: { $in: ids }
+    media_type: 'video', source_proposal_id: { $in: ids },
+    status: { $nin: ['failed', 'rejected'] }
   }).select('source_proposal_id').lean();
   const done = new Set(existingVideos.map(v => String(v.source_proposal_id)));
   return candidates.filter(c => !done.has(String(c._id)));
