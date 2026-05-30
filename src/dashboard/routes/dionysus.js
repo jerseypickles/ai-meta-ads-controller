@@ -108,6 +108,26 @@ router.get('/pending', async (req, res) => {
   }
 });
 
+// GET /sources — imágenes-fuente DISPONIBLES (no consumidas) para mostrar en Apollo.
+// "Consumida" = ya tiene un video hijo vivo (Dionisio la animó) → desaparece del tab
+// para no seguir mostrándola. Mismo criterio que el dedup de _getCandidates.
+router.get('/sources', async (req, res) => {
+  try {
+    const sources = await CreativeProposal.find({
+      media_type: 'image', tags: 'video_source', status: { $nin: ['failed', 'rejected'] }
+    }).sort({ created_at: -1 }).select('headline product_name motion_variant scene created_at').lean();
+    const ids = sources.map(s => s._id);
+    const animated = await CreativeProposal.find({
+      media_type: 'video', source_proposal_id: { $in: ids }, status: { $ne: 'failed' }
+    }).select('source_proposal_id').lean();
+    const consumed = new Set(animated.map(v => String(v.source_proposal_id)));
+    const available = sources.filter(s => !consumed.has(String(s._id)));
+    res.json({ available, available_count: available.length, consumed_count: sources.length - available.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /generate-sources — gatillar la generación del pool de imágenes-fuente (async)
 router.post('/generate-sources', async (req, res) => {
   try {

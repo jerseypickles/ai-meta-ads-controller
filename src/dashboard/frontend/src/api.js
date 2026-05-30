@@ -320,6 +320,10 @@ export const generateDionysusSources = async () => {
   const { data } = await api.post('/api/dionysus/generate-sources', {});
   return data;
 };
+export const getDionysusSources = async () => {
+  const { data } = await api.get('/api/dionysus/sources');
+  return data;
+};
 export const getDionysusStats = async () => {
   const { data } = await api.get('/api/dionysus/stats');
   return data;

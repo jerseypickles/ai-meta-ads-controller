@@ -5,6 +5,7 @@ import {
   getApolloIntelligence,
   getProducts,
   getProposalImageUrl,
+  getDionysusSources,
   getDNALab,
   setApolloEvolutionRatio,
   sendProposalFeedback,
@@ -54,13 +55,13 @@ export default function ApolloPanel() {
         getDNALab({ limit: 50, min_samples: 1 }).catch(() => ({})),
         getCreativeProposals().catch(() => []),
         getProducts().catch(() => []),
-        getCreativeProposals('video_source').catch(() => ({}))
+        getDionysusSources().catch(() => ({}))  // solo las DISPONIBLES (no consumidas por Dionisio)
       ]);
       setIntel(intelR);
       setDna(dnaR);
       setProposals(Array.isArray(propsR) ? propsR : (propsR?.proposals || []));
       setProducts(Array.isArray(prodsR) ? prodsR : (prodsR?.products || []));
-      setVideoSources(Array.isArray(vsrcR) ? vsrcR : (vsrcR?.proposals || []));
+      setVideoSources(Array.isArray(vsrcR) ? vsrcR : (vsrcR?.available || []));
     } catch (err) {
       console.error('Apollo load error:', err);
     } finally {
