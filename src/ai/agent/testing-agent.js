@@ -15,7 +15,7 @@ const { getAdsForAdSet } = require('../../db/queries');
 // CONFIGURACION
 // ═══════════════════════════════════════════════════════════════════════════════
 const MAX_CONCURRENT_TESTS = 100;
-const TEST_DAILY_BUDGET = 10; // $10/dia
+const TEST_DAILY_BUDGET = 20; // $20/dia (10→20 el 30-may: más delivery/señal por test + kills más rápidos)
 const MAX_DAILY_TESTING_BUDGET = 1000; // Cap diario total. 2026-05-28: 200→500. 2026-05-29: 500→1000 — la entrega rampeaba contra el techo de $500, el creador subió el cap para acelerar señal del pixel. Acoplado a MAX_CONCURRENT_TESTS (100 × $10). Bajar cuando haya señal estable.
 const MAX_LAUNCHES_PER_CYCLE = 8; // Max tests nuevos por ciclo (5→8 el 28-may para ramp rápido en cold-start)
 const TEST_MAX_DAYS = 7;
