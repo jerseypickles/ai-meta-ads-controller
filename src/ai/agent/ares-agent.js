@@ -4,6 +4,7 @@ const SystemConfig = require('../../db/models/SystemConfig');
 const MetricSnapshot = require('../../db/models/MetricSnapshot');
 const ZeusDirective = require('../../db/models/ZeusDirective');
 const { getLatestSnapshots } = require('../../db/queries');
+const { isExcludedEntity } = require('../../config/excluded-entities');
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURACION — Ares: Agente de Duplicacion (5to agente)
@@ -106,6 +107,7 @@ async function findDuplicationCandidates() {
   // Filtrar activos, no excluidos
   const active = allSnapshots.filter(s => {
     if (s.status !== 'ACTIVE') return false;
+    if (isExcludedEntity({ campaign_id: s.campaign_id, entity_name: s.entity_name })) return false; // manual-only
     const name = (s.entity_name || '').toUpperCase();
     return !EXCLUDE_PATTERNS.some(ex => name.includes(ex.toUpperCase()));
   });

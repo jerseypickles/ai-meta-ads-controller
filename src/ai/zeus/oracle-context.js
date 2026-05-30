@@ -12,6 +12,7 @@ const ZeusPreference = require('../../db/models/ZeusPreference');
 const ZeusPlaybook = require('../../db/models/ZeusPlaybook');
 const SystemConfig = require('../../db/models/SystemConfig');
 const { getLatestSnapshots } = require('../../db/queries');
+const { isExcludedEntity } = require('../../config/excluded-entities');
 
 /**
  * Construye un snapshot compacto del estado actual del sistema.
@@ -23,7 +24,9 @@ async function buildOracleContext(lastSeenAt = null) {
 
   // Portfolio
   const snapshots = await getLatestSnapshots('adset');
-  const active = snapshots.filter(s => s.status === 'ACTIVE');
+  // Excluir entidades manual-only (posts boosteados, etc) — Zeus no las ve ni las flaggea.
+  const active = snapshots.filter(s => s.status === 'ACTIVE'
+    && !isExcludedEntity({ campaign_id: s.campaign_id, entity_name: s.entity_name }));
 
   const agg = (w) => {
     const spend = active.reduce((s, a) => s + (a.metrics?.[w]?.spend || 0), 0);

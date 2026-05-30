@@ -18,6 +18,7 @@ const MetricSnapshot = require('../../db/models/MetricSnapshot');
 const CBOHealthSnapshot = require('../../db/models/CBOHealthSnapshot');
 const BrainInsight = require('../../db/models/BrainInsight');
 const logger = require('../../utils/logger');
+const { isExcludedEntity } = require('../../config/excluded-entities');
 
 // Threshold configurable — empezamos en 30% del proporcional, afinar con data real
 const STARVED_THRESHOLD_PCT = 0.3;
@@ -437,6 +438,7 @@ async function analyzeAllCBOs() {
   const otherAgentNamespaces = ['[HERMES]', '[Hermes]', '[TEST]'];
   const allCBOs = campaigns.filter(isCBO).filter(c => {
     const name = c.entity_name || '';
+    if (isExcludedEntity({ campaign_id: c.entity_id, entity_name: name })) return false; // manual-only (posts boosteados, etc)
     return !otherAgentNamespaces.some(ns => name.includes(ns));
   });
   const cbos = allCBOs.filter(c => {

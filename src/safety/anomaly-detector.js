@@ -2,6 +2,7 @@ const safetyGuards = require('../../config/safety-guards');
 const kpiTargets = require('../../config/kpi-targets');
 const { getMetaClient } = require('../meta/client');
 const { getLatestSnapshots } = require('../db/queries');
+const { isExcludedEntity } = require('../config/excluded-entities');
 const SafetyEvent = require('../db/models/SafetyEvent');
 const ActionLog = require('../db/models/ActionLog');
 const logger = require('../utils/logger');
@@ -50,6 +51,7 @@ class AnomalyDetector {
 
       for (const snapshot of snapshots) {
         if (snapshot.status !== 'ACTIVE') continue;
+        if (isExcludedEntity({ campaign_id: snapshot.campaign_id, entity_name: snapshot.entity_name })) continue; // manual-only
 
         const entityId = snapshot.entity_id;
         const entityName = snapshot.entity_name || 'Sin nombre';

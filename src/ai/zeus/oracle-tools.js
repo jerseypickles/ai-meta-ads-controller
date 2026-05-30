@@ -27,6 +27,8 @@ const ZeusJournalEntry = require('../../db/models/ZeusJournalEntry');
 const ZeusPlaybook = require('../../db/models/ZeusPlaybook');
 const ZeusExecutionAuthority = require('../../db/models/ZeusExecutionAuthority');
 const { getLatestSnapshots, getSnapshotHistory, getOverviewHistory } = require('../../db/queries');
+const { isExcludedEntity } = require('../../config/excluded-entities');
+const _notExcluded = (s) => !isExcludedEntity({ campaign_id: s.campaign_id, entity_name: s.entity_name }); // manual-only fuera
 const logger = require('../../utils/logger');
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -828,7 +830,7 @@ const TOOL_DEFINITIONS = [
 
 async function handleQueryPortfolio() {
   const snapshots = await getLatestSnapshots('adset');
-  const active = snapshots.filter(s => s.status === 'ACTIVE');
+  const active = snapshots.filter(s => s.status === 'ACTIVE' && _notExcluded(s));
 
   // NOTA: 'today' reemplaza a 'last_1d' — schema real usa today/last_3d/last_7d/last_14d/last_30d.
   // Bug histórico fijado 2026-04-21: last_1d no existe en los datos → retornaba $0 silencioso.
@@ -875,7 +877,7 @@ async function handleQueryPortfolio() {
 
 async function handleQueryAdsets(input) {
   const snapshots = await getLatestSnapshots('adset');
-  let list = snapshots.filter(s => s.status === 'ACTIVE');
+  let list = snapshots.filter(s => s.status === 'ACTIVE' && _notExcluded(s));
 
   if (input.name_contains) {
     const q = input.name_contains.toLowerCase();
@@ -1282,7 +1284,7 @@ async function handleQueryAICreations(input) {
 
 async function handleQueryAds(input) {
   const snapshots = await getLatestSnapshots('ad');
-  let list = snapshots.filter(s => s.status === 'ACTIVE');
+  let list = snapshots.filter(s => s.status === 'ACTIVE' && _notExcluded(s));
   if (input.parent_adset_id) list = list.filter(s => s.parent_adset_id === input.parent_adset_id);
   if (typeof input.min_roas === 'number') list = list.filter(s => (s.metrics?.last_7d?.roas || 0) >= input.min_roas);
   if (typeof input.min_spend_7d === 'number') list = list.filter(s => (s.metrics?.last_7d?.spend || 0) >= input.min_spend_7d);
@@ -1312,7 +1314,8 @@ async function handleQueryAds(input) {
 }
 
 async function handleQueryCampaigns(input) {
-  const snapshots = await getLatestSnapshots('campaign');
+  const snapshots = (await getLatestSnapshots('campaign'))
+    .filter(s => !isExcludedEntity({ campaign_id: s.entity_id, entity_name: s.entity_name })); // manual-only fuera
   let list = input.active_only === false ? snapshots : snapshots.filter(s => s.status === 'ACTIVE');
   if (input.name_contains) {
     const q = input.name_contains.toLowerCase();

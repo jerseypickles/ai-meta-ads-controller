@@ -20,6 +20,7 @@ const MetricSnapshot = require('../../db/models/MetricSnapshot');
 const ActionLog = require('../../db/models/ActionLog');
 const TestRun = require('../../db/models/TestRun');
 const SafetyEvent = require('../../db/models/SafetyEvent');
+const { isExcludedEntity } = require('../../config/excluded-entities');
 
 const CRITERIA_VERSION = 'v1';
 
@@ -145,6 +146,7 @@ async function detectCandidates() {
 
   const candidates = [];
   for (const snapshot of latest) {
+    if (isExcludedEntity({ campaign_id: snapshot.campaign_id, entity_name: snapshot.entity_name })) continue; // manual-only
     const hardCheck = meetsHardCriteria(snapshot);
     if (!hardCheck.meets) continue;
 

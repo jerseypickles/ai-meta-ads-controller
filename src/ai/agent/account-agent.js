@@ -10,6 +10,7 @@ const MetricSnapshot = require('../../db/models/MetricSnapshot');
 const StrategicDirective = require('../../db/models/StrategicDirective');
 const { getMetaClient } = require('../../meta/client');
 const { getLatestSnapshots, getAdsForAdSet, getSnapshotFreshness } = require('../../db/queries');
+const { isExcludedEntity } = require('../../config/excluded-entities');
 const { CooldownManager } = require('../../safety/cooldown-manager');
 const GuardRail = require('../../safety/guard-rail');
 const PolicyLearner = require('../unified/policy-learner');
@@ -1410,7 +1411,8 @@ async function runAccountAgent() {
     && !(s.entity_name || '').startsWith('[TEST]')
     && !(s.entity_name || '').startsWith('[Ares]')
     && !(s.entity_name || '').startsWith('[HERMES]')
-    && !(s.entity_name || '').startsWith('[Hermes]'));
+    && !(s.entity_name || '').startsWith('[Hermes]')
+    && !isExcludedEntity({ campaign_id: s.campaign_id, entity_name: s.entity_name })); // campañas manual-only (ej. posts boosteados)
 
   if (activeAdSets.length === 0) {
     logger.info('[ACCOUNT-AGENT] No active ad sets found');
@@ -1645,6 +1647,10 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
   }
 
   // ═══ PRE-CHECK: Excluded ad sets (traffic campaigns, manual-only) ═══
+  if (isExcludedEntity({ campaign_id: adSetSnap.campaign_id, entity_name: adSetName })) {
+    logger.debug(`[ACCOUNT-AGENT] ${adSetName}: campaña/entidad excluida (manual-only) — skip`);
+    return { actionsExecuted: 0, assessmentSaved: false, skipped: true, skipReason: 'Excluded entity' };
+  }
   const excludePatterns = ['DONT TOUCH', 'DONT_TOUCH', 'NO TOCAR', 'EXCLUDE', 'MANUAL ONLY', '[TEST]', '[ARES]', '[HERMES]'];
   if (excludePatterns.some(p => (adSetName || '').toUpperCase().includes(p))) {
     logger.debug(`[ACCOUNT-AGENT] ${adSetName}: excluded by name pattern — skip`);
