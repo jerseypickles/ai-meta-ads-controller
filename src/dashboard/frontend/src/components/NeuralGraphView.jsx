@@ -17,6 +17,7 @@ const AGENT_COLORS = {
   ares: '#a78bfa',       // violet-400 — Portfolio
   hermes: '#f59e0b',      // amber-500 — Foot traffic NJ store
   demeter: '#14b8a6',    // teal-500 — Cash reconciliation
+  dionysus: '#c026d3',   // fuchsia-600 — Video (vino/teatro)
   satellite: '#94a3b8',  // slate-400 — sub-nodes
   cbo: '#c084fc',        // purple-400 — CBOs (Ares children)
   directive: '#38bdf8',  // sky-400 — directives
@@ -30,7 +31,7 @@ const AGENT_COLORS = {
 const AGENT_ICONS = {
   zeus: '⚡', athena: '🦉', apollo: '☀️',
   prometheus: '🔥', ares: '⚔️',
-  hermes: '🏪', demeter: '✿',
+  hermes: '🏪', demeter: '✿', dionysus: '🎭',
   cbo: '◎', test: '⚗', directive: '▣', pool: '✦',
 
   // Planned
@@ -156,6 +157,12 @@ export default function NeuralGraphView({ onAgentClick }) {
         metric: `${prometheusTests}`, metricLabel: 'tests',
         status: prometheusTests > 0 ? 'running' : 'idle',
         color: AGENT_COLORS.prometheus, icon: AGENT_ICONS.prometheus
+      },
+      {
+        id: 'dionysus', group: 'dionysus', tier: 1, size: 12,
+        label: 'DIONISIO', sub: 'Video',
+        status: 'idle',
+        color: AGENT_COLORS.dionysus, icon: AGENT_ICONS.dionysus
       },
       {
         id: 'ares', group: 'ares', tier: 1, size: 13,
@@ -290,7 +297,7 @@ export default function NeuralGraphView({ onAgentClick }) {
 
     // ─── PLANNED SUB-FEATURES (future extensions) ────────────────────────
     const plannedFeatures = [
-      { id: 'video-pipeline', parent: 'apollo', label: 'Video', sub: 'pipeline', icon: AGENT_ICONS.video, color: AGENT_COLORS.apollo },
+      // 'Video' ya no es placeholder de Apollo — es Dionisio (agente real). Ver nodos tier-1.
       { id: 'audio-pipeline', parent: 'apollo', label: 'Audio', sub: 'pipeline', icon: AGENT_ICONS.audio, color: AGENT_COLORS.apollo },
       { id: 'crossplatform', parent: 'ares', label: 'TikTok', sub: '+ Google', icon: AGENT_ICONS.crossplatform, color: AGENT_COLORS.ares },
       { id: 'memory-db', parent: 'zeus', label: 'Memory', sub: 'Vector DB', icon: AGENT_ICONS.memory, color: AGENT_COLORS.zeus }
@@ -313,6 +320,10 @@ export default function NeuralGraphView({ onAgentClick }) {
       // Cross-agent (workflows: apollo feeds prometheus, prometheus feeds ares)
       { source: 'apollo', target: 'prometheus', kind: 'workflow', active: apolloPool > 0 },
       { source: 'prometheus', target: 'ares', kind: 'workflow', active: prometheusTests > 0 },
+      // Dionisio (video): Zeus lo coordina; Apollo le pasa winners; sus videos van a Prometheus.
+      { source: 'zeus', target: 'dionysus', kind: 'primary', active: false },
+      { source: 'apollo', target: 'dionysus', kind: 'workflow', active: apolloPool > 0 },
+      { source: 'dionysus', target: 'prometheus', kind: 'workflow', active: false },
 
       // Demeter — agente activo (cash reconciliation)
       { source: 'zeus', target: 'demeter', kind: 'primary', active: demeterCount > 0 },
