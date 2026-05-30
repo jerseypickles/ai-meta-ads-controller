@@ -1,26 +1,49 @@
-import { useState, useEffect, useCallback } from 'react';
-import { getDionysusPending, runDionysusApi, approveDionysusVideo, rejectDionysusVideo } from '../api';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  getDionysusPending, getDionysusStats, runDionysusApi,
+  approveDionysusVideo, rejectDionysusVideo
+} from '../api';
 
-// 🎭 Dionisio — cola de videos pendientes de aprobación (human-in-the-loop).
+const FUCHSIA = '#c026d3';
+
+// 🎭 Dionisio — cola de videos + DNA (qué motion rinde). Human-in-the-loop.
 function DionysusPanel() {
   const [pending, setPending] = useState([]);
+  const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [running, setRunning] = useState(false);
-  const [busy, setBusy] = useState(null); // id en proceso
+  const [generating, setGenerating] = useState(false);
+  const [busy, setBusy] = useState(null);
+  const pollRef = useRef(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
-    try { const d = await getDionysusPending(); setPending(d.pending || []); }
-    catch (e) { console.error(e); }
+    try {
+      const [p, s] = await Promise.all([getDionysusPending(), getDionysusStats().catch(() => null)]);
+      setPending(p.pending || []);
+      setStats(s);
+    } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [load]);
 
   const onRun = async () => {
-    setRunning(true);
+    setGenerating(true);
     try { await runDionysusApi(); } catch (e) { console.error(e); }
-    finally { setRunning(false); }
+    // poll mientras genera — los videos van apareciendo solos
+    const startCount = pending.length;
+    const t0 = Date.now();
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      await load();
+      const elapsed = Date.now() - t0;
+      if (elapsed > 4 * 60 * 1000) { clearInterval(pollRef.current); setGenerating(false); }
+    }, 7000);
+    // corte de seguridad
+    setTimeout(() => { if (pollRef.current) clearInterval(pollRef.current); setGenerating(false); }, 4 * 60 * 1000 + 1000);
+    void startCount;
   };
 
   const decide = async (id, action) => {
@@ -33,51 +56,116 @@ function DionysusPanel() {
     finally { setBusy(null); }
   };
 
+  const card = { background: 'rgba(192,38,211,0.06)', border: `1px solid rgba(192,38,211,0.2)`, borderRadius: 12 };
+
   return (
-    <div className="dionysus-panel">
-      <div className="agent-panel-identity" data-agent="dionysus">
-        <span className="agent-icon">🎭</span>
-        <span className="agent-name">Dionisio</span>
-        <span className="agent-role">— Video</span>
-        <button className="btn-agent-run" onClick={onRun} disabled={running} style={{ marginLeft: 'auto' }}>
-          {running ? 'Generando…' : 'Generar videos'}
+    <div className="dionysus-panel" style={{ padding: 4 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingBottom: 14, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+        <span style={{ fontSize: 26 }}>🎭</span>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 18, color: FUCHSIA }}>Dionisio</div>
+          <div style={{ fontSize: 11, opacity: 0.55 }}>Video · Seedance 2.0</div>
+        </div>
+        <button onClick={onRun} disabled={generating}
+          style={{ marginLeft: 'auto', padding: '9px 18px', borderRadius: 8, border: 'none', fontWeight: 700, cursor: generating ? 'default' : 'pointer',
+                   background: generating ? 'rgba(192,38,211,0.3)' : FUCHSIA, color: '#fff' }}>
+          {generating ? '🎬 Generando…' : '✨ Generar videos'}
         </button>
-        <button className="btn-agent-run" onClick={load} disabled={loading} style={{ marginLeft: 8 }}>
-          ↻
-        </button>
+        <button onClick={load} title="Refrescar" style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#fff', cursor: 'pointer' }}>↻</button>
       </div>
 
-      <p style={{ opacity: 0.7, fontSize: 13, margin: '8px 0 16px' }}>
-        Videos 5s generados de los winners (Seedance 2.0). Aprobá los que quieras → Prometheus los testea.
-      </p>
+      {/* Stat strip */}
+      {stats && (
+        <div style={{ display: 'flex', gap: 10, margin: '14px 0' }}>
+          {[
+            { label: 'Pendientes', value: stats.pending, color: FUCHSIA },
+            { label: 'Videos totales', value: stats.total_videos, color: '#a78bfa' },
+            { label: 'Testeados', value: stats.tested_count, color: '#34d399' }
+          ].map(s => (
+            <div key={s.label} style={{ ...card, flex: 1, padding: '12px 14px' }}>
+              <div style={{ fontSize: 22, fontWeight: 800, color: s.color }}>{s.value}</div>
+              <div style={{ fontSize: 11, opacity: 0.6 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
-      {loading ? (
-        <p>Cargando…</p>
-      ) : pending.length === 0 ? (
-        <p style={{ opacity: 0.6 }}>Sin videos pendientes. Dale "Generar videos" o esperá el próximo ciclo.</p>
+      {/* Generando — banner animado */}
+      {generating && (
+        <div style={{ ...card, padding: '16px 18px', margin: '12px 0', display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div className="dio-pulse" style={{ width: 14, height: 14, borderRadius: '50%', background: FUCHSIA }} />
+          <div>
+            <div style={{ fontWeight: 600 }}>Dionisio está generando videos…</div>
+            <div style={{ fontSize: 12, opacity: 0.6 }}>Juzga tus mejores imágenes → anima 5s con Seedance. Toma 1-2 min/video; van apareciendo abajo.</div>
+          </div>
+        </div>
+      )}
+
+      {/* DNA — qué aprende */}
+      <div style={{ margin: '18px 0 10px', fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+        🧬 Lo que Dionisio aprende <span style={{ fontWeight: 400, opacity: 0.5, fontSize: 11 }}>(qué motion rinde mejor)</span>
+      </div>
+      {!stats?.dna?.length ? (
+        <div style={{ ...card, padding: 14, fontSize: 12, opacity: 0.6 }}>
+          Todavía sin data — el DNA se construye a medida que los videos se testean. Cuando Prometheus testee los primeros, vas a ver acá qué movimiento (drip, breeze, shimmer…) trae mejor CTR/ROAS.
+        </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 16 }}>
+        <div style={{ ...card, padding: 6 }}>
+          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+            <thead><tr style={{ opacity: 0.55, textAlign: 'left' }}>
+              <th style={{ padding: 8 }}>Motion</th><th>Testeados</th><th>CTR avg</th><th>ROAS avg</th><th>Win-rate</th>
+            </tr></thead>
+            <tbody>
+              {stats.dna.map(d => (
+                <tr key={d.variant} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                  <td style={{ padding: 8, fontWeight: 600 }}>{d.variant}</td>
+                  <td>{d.tested}</td>
+                  <td>{d.avg_ctr}%</td>
+                  <td style={{ color: d.avg_roas >= 2 ? '#34d399' : '#f87171' }}>{d.avg_roas}x</td>
+                  <td>{d.win_rate}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Cola de review */}
+      <div style={{ margin: '20px 0 10px', fontWeight: 700, fontSize: 13 }}>📋 Cola de aprobación</div>
+      {loading ? (
+        <p style={{ opacity: 0.5 }}>Cargando…</p>
+      ) : pending.length === 0 ? (
+        <div style={{ ...card, padding: 20, textAlign: 'center', opacity: 0.6 }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>🎬</div>
+          Sin videos pendientes. Dale <b>"Generar videos"</b> para crear desde tus winners.
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 14 }}>
           {pending.map(v => (
-            <div key={v._id} style={{ border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, overflow: 'hidden', background: 'rgba(255,255,255,0.03)' }}>
-              <video src={v.video_url} controls loop muted playsInline style={{ width: '100%', display: 'block', aspectRatio: '9/16', objectFit: 'cover', background: '#000' }} />
+            <div key={v._id} style={{ ...card, overflow: 'hidden', padding: 0 }}>
+              <video src={v.video_url} controls loop muted playsInline
+                style={{ width: '100%', display: 'block', aspectRatio: '9/16', objectFit: 'cover', background: '#000' }} />
               <div style={{ padding: 10 }}>
-                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>{v.headline}</div>
-                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 8 }}>{v.product_name} · {v.motion_variant}</div>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{v.headline}</div>
+                <div style={{ fontSize: 10, opacity: 0.55, marginBottom: 8 }}>
+                  {v.product_name} · <span style={{ color: FUCHSIA }}>{v.motion_variant}</span>
+                </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button onClick={() => decide(v._id, 'approve')} disabled={busy === v._id}
-                    style={{ flex: 1, padding: '6px 0', borderRadius: 6, border: 'none', background: '#22c55e', color: '#fff', cursor: 'pointer', fontWeight: 600 }}>
+                    style={{ flex: 1, padding: '7px 0', borderRadius: 6, border: 'none', background: '#22c55e', color: '#fff', cursor: 'pointer', fontWeight: 600 }}>
                     {busy === v._id ? '…' : '✓ Aprobar'}
                   </button>
                   <button onClick={() => decide(v._id, 'reject')} disabled={busy === v._id}
-                    style={{ flex: 1, padding: '6px 0', borderRadius: 6, border: '1px solid rgba(255,255,255,0.2)', background: 'transparent', color: '#f87171', cursor: 'pointer' }}>
-                    ✗
-                  </button>
+                    style={{ padding: '7px 12px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#f87171', cursor: 'pointer' }}>✗</button>
                 </div>
               </div>
             </div>
           ))}
         </div>
       )}
+
+      <style>{`@keyframes dioPulse {0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(1.4)}} .dio-pulse{animation:dioPulse 1.2s ease-in-out infinite}`}</style>
     </div>
   );
 }

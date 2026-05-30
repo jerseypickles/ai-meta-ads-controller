@@ -316,6 +316,10 @@ export const runDionysusApi = async () => {
   const { data } = await api.post('/api/dionysus/run', {});
   return data;
 };
+export const getDionysusStats = async () => {
+  const { data } = await api.get('/api/dionysus/stats');
+  return data;
+};
 export const approveDionysusVideo = async (id) => {
   const { data } = await api.post(`/api/dionysus/${id}/approve`, {});
   return data;

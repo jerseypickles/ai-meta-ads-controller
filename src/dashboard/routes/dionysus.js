@@ -10,7 +10,65 @@
 const express = require('express');
 const router = express.Router();
 const CreativeProposal = require('../../db/models/CreativeProposal');
+const TestRun = require('../../db/models/TestRun');
 const logger = require('../../utils/logger');
+
+const r2 = (n) => Math.round((n || 0) * 100) / 100;
+
+// GET /stats — rendimiento de los videos testeados + DNA por motion variant.
+// Es lo que Dionisio "aprende": qué tipo de movimiento rinde mejor.
+router.get('/stats', async (req, res) => {
+  try {
+    // Videos que pasaron a testing/graduated/killed (ya tienen señal o veredicto).
+    const videos = await CreativeProposal.find({
+      media_type: 'video',
+      status: { $in: ['testing', 'graduated', 'killed', 'expired'] }
+    }).select('headline product_name motion_variant status video_url').lean();
+
+    // Métricas desde el TestRun de cada video (proposal_id → TestRun).
+    const ids = videos.map(v => v._id);
+    const runs = await TestRun.find({ proposal_id: { $in: ids } })
+      .select('proposal_id phase metrics metrics_at_graduation').lean();
+    const runByProp = {};
+    for (const t of runs) runByProp[String(t.proposal_id)] = t;
+
+    const tested = videos.map(v => {
+      const t = runByProp[String(v._id)] || {};
+      const m = t.metrics || {};
+      return {
+        headline: v.headline, product_name: v.product_name, motion_variant: v.motion_variant,
+        status: v.status, video_url: v.video_url,
+        ctr: r2(m.ctr), roas: r2(m.roas), spend: r2(m.spend), purchases: m.purchases || 0,
+        impressions: m.impressions || 0
+      };
+    });
+
+    // DNA: agregado por motion variant.
+    const byVariant = {};
+    for (const v of tested) {
+      const k = v.motion_variant || 'desconocido';
+      byVariant[k] = byVariant[k] || { variant: k, n: 0, ctr_sum: 0, roas_sum: 0, graduated: 0, killed: 0 };
+      const b = byVariant[k];
+      b.n++; b.ctr_sum += v.ctr; b.roas_sum += v.roas;
+      if (v.status === 'graduated') b.graduated++;
+      if (v.status === 'killed') b.killed++;
+    }
+    const dna = Object.values(byVariant).map(b => ({
+      variant: b.variant, tested: b.n,
+      avg_ctr: r2(b.ctr_sum / b.n), avg_roas: r2(b.roas_sum / b.n),
+      graduated: b.graduated, killed: b.killed,
+      win_rate: b.n ? Math.round((b.graduated / b.n) * 100) : 0
+    })).sort((a, b) => b.avg_roas - a.avg_roas);
+
+    // Contadores de cola.
+    const pending = await CreativeProposal.countDocuments({ media_type: 'video', status: 'pending_video_review' });
+    const totalVideos = await CreativeProposal.countDocuments({ media_type: 'video' });
+
+    res.json({ pending, total_videos: totalVideos, tested_count: tested.length, dna, tested });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // GET /pending — videos en cola de aprobación
 router.get('/pending', async (req, res) => {
