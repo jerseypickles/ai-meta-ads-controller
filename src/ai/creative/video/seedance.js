@@ -1,108 +1,101 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// Apollo Video — MOTOR Seedance 2.0 (BytePlus ModelArk)
-// Image-to-video async: submit → job_id → poll → video_url. Engine pinneado a
-// seedance-2.0. Gated en BYTEPLUS_API_KEY.
-//
-// ⚠️ ENDPOINT/SHAPE TENTATIVO (de guía third-party): confirmar contra el console
-// oficial de ModelArk cuando tengamos la key. Toda la parte HTTP está aislada en
-// _submit() y _poll() para que sea un fix de un solo lugar. Ver memoria apollo-video.
+// Apollo Video — MOTOR Seedance 2.0 vía PiAPI
+// Image-to-video async: submit → task_id → poll → output.video (URL).
+// Schema confirmado contra la API real (2026-05-30): model="seedance",
+// task_type="seedance-2-preview" (NORMAL, no fast), input.mode="first_last_frames",
+// input.image_urls=[URL pública]. Gated en PIAPI_KEY. Ver memoria apollo-video.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const axios = require('axios');
 const logger = require('../../../utils/logger');
 
-// Config (todo override-able por env, para ajustar al endpoint real sin redeploy de código).
-const BASE_URL = process.env.BYTEPLUS_BASE_URL || 'https://ark.ap-southeast.bytepluses.com/api/v3';
-// Model ID real de Seedance 2.0 en BytePlus Ark (confirmado 2026-05-29).
-const MODEL = process.env.SEEDANCE_MODEL || 'dreamina-seedance-2-0-260128'; // o -fast-260128
-const SUBMIT_PATH = process.env.SEEDANCE_SUBMIT_PATH || '/contents/generations/tasks';
-const POLL_BASE_DELAY_MS = 3000;
-const POLL_MAX_DELAY_MS = 15000;
-const POLL_TIMEOUT_MS = 6 * 60 * 1000; // 6 min máx por video
+const BASE_URL = process.env.PIAPI_BASE_URL || 'https://api.piapi.ai/api/v1';
+const MODEL = 'seedance';
+// NORMAL por default (no fast) — pedido del creador. Override por env.
+const TASK_TYPE = process.env.SEEDANCE_TASK_TYPE || 'seedance-2-preview';
+const POLL_BASE_DELAY_MS = 5000;
+const POLL_MAX_DELAY_MS = 20000;
+const POLL_TIMEOUT_MS = 8 * 60 * 1000;
 
-function _apiKey() {
-  const k = process.env.BYTEPLUS_API_KEY;
-  if (!k) throw new Error('BYTEPLUS_API_KEY no configurada — motor Seedance 2.0 no disponible');
+function _key() {
+  const k = process.env.PIAPI_KEY;
+  if (!k) throw new Error('PIAPI_KEY no configurada — motor Seedance no disponible');
   return k;
 }
-
 function _headers() {
-  return { Authorization: `Bearer ${_apiKey()}`, 'Content-Type': 'application/json' };
+  return { 'x-api-key': _key(), 'Content-Type': 'application/json' };
 }
 
-/**
- * Submit del job de image-to-video. Devuelve job_id.
- * ⚠️ Ajustar body/endpoint al shape oficial cuando tengamos la key.
- */
-async function _submit({ imageBase64, imageUrl, prompt, durationSeconds, aspectRatio, resolution }) {
+/** Submit del job image-to-video. Devuelve task_id. */
+async function _submit({ imageUrl, prompt, durationSeconds, aspectRatio }) {
   const body = {
     model: MODEL,
-    // image-to-video: una de las dos
-    ...(imageUrl ? { image_url: imageUrl } : { image_base64: imageBase64 }),
-    prompt,
-    duration: durationSeconds,
-    aspect_ratio: aspectRatio,
-    resolution
+    task_type: TASK_TYPE,
+    input: {
+      mode: 'first_last_frames',     // imagen = primer frame → preserva fidelidad del producto
+      prompt,
+      duration: durationSeconds,
+      aspect_ratio: aspectRatio,
+      image_urls: [imageUrl]
+    }
   };
-  const res = await axios.post(`${BASE_URL}${SUBMIT_PATH}`, body, { headers: _headers(), timeout: 30000 });
-  const jobId = res.data?.job_id || res.data?.id || res.data?.task_id;
-  if (!jobId) throw new Error(`Seedance: submit sin job_id (resp: ${JSON.stringify(res.data).slice(0, 200)})`);
-  return jobId;
+  const res = await axios.post(`${BASE_URL}/task`, body, { headers: _headers(), timeout: 30000 });
+  if (res.data?.code !== 200) {
+    throw new Error(`PiAPI submit: ${res.data?.message || JSON.stringify(res.data).slice(0, 200)}`);
+  }
+  const taskId = res.data?.data?.task_id;
+  if (!taskId) throw new Error('PiAPI submit sin task_id');
+  return taskId;
 }
 
-/** Poll del estado hasta completar (backoff 3s→15s). Devuelve video_url. */
-async function _poll(jobId) {
+/** Poll hasta completar. Devuelve la URL del video. */
+async function _poll(taskId) {
   const start = Date.now();
   let delay = POLL_BASE_DELAY_MS;
   while (Date.now() - start < POLL_TIMEOUT_MS) {
     await new Promise(r => setTimeout(r, delay));
-    const res = await axios.get(`${BASE_URL}${SUBMIT_PATH}/${jobId}`, { headers: _headers(), timeout: 30000 });
-    const status = (res.data?.status || '').toLowerCase();
-    if (status === 'completed' || status === 'succeeded' || status === 'success') {
-      const url = res.data?.output?.video_url || res.data?.content?.video_url || res.data?.video_url;
-      if (!url) throw new Error(`Seedance: completado sin video_url (resp: ${JSON.stringify(res.data).slice(0, 200)})`);
+    const res = await axios.get(`${BASE_URL}/task/${taskId}`, { headers: _headers(), timeout: 30000 });
+    const d = res.data?.data || {};
+    const status = (d.status || '').toLowerCase();
+    if (status === 'completed' || status === 'success') {
+      const url = d.output?.video || d.output?.video_url;
+      if (!url) throw new Error(`PiAPI completado sin video (output: ${JSON.stringify(d.output)})`);
       return url;
     }
-    if (status === 'failed' || status === 'error') {
-      throw new Error(`Seedance: job falló — ${res.data?.error || res.data?.failure_reason || 'desconocido'}`);
+    if (status === 'failed') {
+      throw new Error(`PiAPI job falló: ${JSON.stringify(d.logs || d.error)}`);
     }
-    delay = Math.min(delay * 1.5, POLL_MAX_DELAY_MS);
+    delay = Math.min(delay * 1.4, POLL_MAX_DELAY_MS);
   }
-  throw new Error(`Seedance: timeout (${POLL_TIMEOUT_MS / 1000}s) esperando job ${jobId}`);
+  throw new Error(`PiAPI timeout (${POLL_TIMEOUT_MS / 1000}s) esperando task ${taskId}`);
 }
 
 /**
- * Genera un video corto (≤5s) a partir de una imagen de referencia.
+ * Genera un video corto (≤5s) image-to-video desde una imagen de referencia PÚBLICA.
  * @param {object} opts
- * @param {string} [opts.imageBase64] - imagen origen (o imageUrl)
- * @param {string} [opts.imageUrl]
+ * @param {string} opts.imageUrl - URL PÚBLICA de la imagen origen (PiAPI la descarga)
  * @param {string} opts.prompt - motion prompt (ver motion-prompts.js)
  * @param {number} [opts.durationSeconds=5]
  * @param {string} [opts.aspectRatio='9:16']
- * @param {string} [opts.resolution='1080p']
- * @returns {Promise<{video_url, job_id, model, elapsed_s}>}
+ * @returns {Promise<{video_url, task_id, model, task_type, elapsed_s}>}
  */
 async function generateVideoFromImage(opts) {
-  const {
-    imageBase64, imageUrl, prompt,
-    durationSeconds = 5, aspectRatio = '9:16', resolution = '1080p'
-  } = opts;
-  if (!imageBase64 && !imageUrl) throw new Error('Seedance: falta imagen origen (imageBase64 o imageUrl)');
+  const { imageUrl, prompt, durationSeconds = 5, aspectRatio = '9:16' } = opts;
+  if (!imageUrl) throw new Error('Seedance: falta imageUrl (URL pública)');
   if (!prompt) throw new Error('Seedance: falta motion prompt');
 
   const t0 = Date.now();
-  logger.info(`[SEEDANCE] ${MODEL} image-to-video · ${durationSeconds}s ${aspectRatio} ${resolution}`);
-  const jobId = await _submit({ imageBase64, imageUrl, prompt, durationSeconds, aspectRatio, resolution });
-  logger.info(`[SEEDANCE] job ${jobId} en cola, pooleando...`);
-  const videoUrl = await _poll(jobId);
+  logger.info(`[SEEDANCE] ${MODEL}/${TASK_TYPE} image-to-video · ${durationSeconds}s ${aspectRatio}`);
+  const taskId = await _submit({ imageUrl, prompt, durationSeconds, aspectRatio });
+  logger.info(`[SEEDANCE] task ${taskId} en cola, pooleando...`);
+  const videoUrl = await _poll(taskId);
   const elapsed = Math.round((Date.now() - t0) / 1000);
-  logger.info(`[SEEDANCE] ✅ video listo en ${elapsed}s · job ${jobId}`);
-  return { video_url: videoUrl, job_id: jobId, model: MODEL, elapsed_s: elapsed };
+  logger.info(`[SEEDANCE] ✅ video listo en ${elapsed}s · ${videoUrl}`);
+  return { video_url: videoUrl, task_id: taskId, model: MODEL, task_type: TASK_TYPE, elapsed_s: elapsed };
 }
 
-/** Chequeo barato de disponibilidad (key presente). */
 function isAvailable() {
-  return !!process.env.BYTEPLUS_API_KEY;
+  return !!process.env.PIAPI_KEY;
 }
 
-module.exports = { generateVideoFromImage, isAvailable, MODEL };
+module.exports = { generateVideoFromImage, isAvailable, MODEL, TASK_TYPE };
