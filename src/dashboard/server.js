@@ -147,6 +147,7 @@ app.use('/api/ares', aresRoutes);
 app.use('/api/demeter', require('./routes/demeter'));
 app.use('/api/hermes', require('./routes/hermes'));
 app.use('/api/system/warehouse-throttle', require('./routes/warehouse-throttle'));
+app.use('/api/dionysus', require('./routes/dionysus'));
 app.use('/api/system/tribe-validation', require('./routes/tribe-validation'));
 
 // Ruta PÚBLICA (sin auth) para servir la imagen origen de un proposal como PNG.
