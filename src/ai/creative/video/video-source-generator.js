@@ -13,10 +13,10 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const Anthropic = require('@anthropic-ai/sdk');
-const config = require('../../../config');
-const logger = require('../../utils/logger');
-const ProductBank = require('../../db/models/ProductBank');
-const CreativeProposal = require('../../db/models/CreativeProposal');
+const config = require('../../../../config');
+const logger = require('../../../utils/logger');
+const ProductBank = require('../../../db/models/ProductBank');
+const CreativeProposal = require('../../../db/models/CreativeProposal');
 const { generateCreativeImage } = require('../image-engine');
 
 const POOL_TARGET = parseInt(process.env.VIDEO_SOURCE_POOL_TARGET || '30', 10); // máx imágenes sin consumir
