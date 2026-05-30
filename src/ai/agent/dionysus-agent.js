@@ -32,12 +32,14 @@ function motionVariantFor(suggested) {
  * graduates reales, priorizar esos.)
  */
 async function _getCandidates() {
-  // Source proposals de imagen, no video, en estado prometedor.
+  // SOLO imágenes de la vía dedicada 'video_source' (interacción mano+chip+salsa,
+  // hechas para video). No animamos fotos de producto estáticas. (2026-05-30)
   const candidates = await CreativeProposal.find({
     media_type: { $ne: 'video' },
-    status: { $in: ['testing', 'graduated', 'ready'] },
+    tags: 'video_source',
+    status: { $nin: ['failed', 'rejected'] },
     image_base64: { $type: 'string', $ne: '' }
-  }).sort({ status: 1, created_at: -1 }).limit(40).lean();
+  }).sort({ created_at: -1 }).limit(40).lean();
 
   // Filtrar los que YA tienen un video hijo (dedup).
   const ids = candidates.map(c => c._id);
@@ -83,7 +85,9 @@ async function runDionysus() {
 
     // 2. Crear el registro YA en estado 'generating_video' (para que el panel
     // lo muestre como card "generando…" mientras Seedance trabaja).
-    const variant = motionVariantFor(verdict.suggested_motion);
+    // Preferir el motion BAKED en la imagen-fuente (la interacción ya está en la
+    // foto) — si no hay hint, usar la sugerencia del judge.
+    const variant = c.motion_variant || motionVariantFor(verdict.suggested_motion);
     const { prompt } = buildMotionPrompt(c.product_name || 'the product', variant);
     const placeholder = await CreativeProposal.create({
       adset_id: c.adset_id, product_id: c.product_id, product_name: c.product_name,

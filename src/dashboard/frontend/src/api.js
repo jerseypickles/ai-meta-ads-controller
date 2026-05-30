@@ -316,6 +316,10 @@ export const runDionysusApi = async () => {
   const { data } = await api.post('/api/dionysus/run', {});
   return data;
 };
+export const generateDionysusSources = async () => {
+  const { data } = await api.post('/api/dionysus/generate-sources', {});
+  return data;
+};
 export const getDionysusStats = async () => {
   const { data } = await api.get('/api/dionysus/stats');
   return data;

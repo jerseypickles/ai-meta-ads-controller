@@ -1458,6 +1458,20 @@ function initCronJobs() {
   });
   logger.info('  [*] Creative Agent — 9x/día cada 2h: 6am–10pm ET');
 
+  // Video-Source Generator — vía DEDICADA de imágenes de interacción (mano+chip+
+  // salsa) para que Dionisio las anime. Independiente de Apollo: mantiene un pool
+  // de máx 30 sin consumir, se rellena solo. No-op cuando el pool está lleno.
+  cron.schedule('30 7,11,15,19,23 * * *', async () => {
+    try {
+      const { generateVideoSources } = require('./ai/creative/video/video-source-generator');
+      const r = await generateVideoSources();
+      logger.info(`[CRON] Video-Source: ${JSON.stringify(r)}`);
+    } catch (err) {
+      logger.error(`[CRON] Video-Source Generator falló: ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'video-source-generator' });
+  logger.info('  [*] Video-Source Generator — 5x/día (pool máx 30 para Dionisio)');
+
   // Hermes Agent — 5x/día (9am, 12pm, 3pm, 6pm, 9pm ET) — foot traffic NJ store
   // Aumentado de 2x → 5x el 14-may-2026 para acelerar inyección de creativos
   // los primeros 7d. Solo registra el cron si HERMES_ENABLED=true.

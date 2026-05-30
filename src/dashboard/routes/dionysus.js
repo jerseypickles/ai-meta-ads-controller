@@ -64,7 +64,15 @@ router.get('/stats', async (req, res) => {
     const pending = await CreativeProposal.countDocuments({ media_type: 'video', status: 'pending_video_review' });
     const totalVideos = await CreativeProposal.countDocuments({ media_type: 'video', status: { $nin: ['failed', 'rejected'] } });
 
-    res.json({ pending, total_videos: totalVideos, tested_count: tested.length, dna, tested });
+    // Pool de imágenes-fuente para video (vía dedicada con tag video_source).
+    let sourcePool = 0, sourcePoolTarget = 30;
+    try {
+      const { countAvailableSources, POOL_TARGET } = require('../../ai/creative/video/video-source-generator');
+      sourcePool = await countAvailableSources();
+      sourcePoolTarget = POOL_TARGET;
+    } catch (_) { /* noop */ }
+
+    res.json({ pending, total_videos: totalVideos, tested_count: tested.length, source_pool: sourcePool, source_pool_target: sourcePoolTarget, dna, tested });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -84,6 +92,18 @@ router.get('/pending', async (req, res) => {
         .lean()
     ]);
     res.json({ count: pending.length, pending, generating });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /generate-sources — gatillar la generación del pool de imágenes-fuente (async)
+router.post('/generate-sources', async (req, res) => {
+  try {
+    const { generateVideoSources } = require('../../ai/creative/video/video-source-generator');
+    generateVideoSources().then(r => logger.info(`[VIDEO-SOURCE] run manual: ${JSON.stringify(r).slice(0, 200)}`))
+      .catch(e => logger.error(`[VIDEO-SOURCE] run manual falló: ${e.message}`));
+    res.json({ started: true, message: 'Generando imágenes-fuente para video (pool)' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

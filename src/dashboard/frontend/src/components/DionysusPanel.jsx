@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   getDionysusPending, getDionysusStats, runDionysusApi,
-  approveDionysusVideo, rejectDionysusVideo
+  approveDionysusVideo, rejectDionysusVideo, generateDionysusSources
 } from '../api';
 
 const FUCHSIA = '#c026d3';
@@ -46,6 +46,13 @@ function DionysusPanel() {
     setTimeout(() => { if (pollRef.current) clearInterval(pollRef.current); setRunning(false); }, POLL_WINDOW_MS + 1000);
   };
 
+  const [genSources, setGenSources] = useState(false);
+  const onGenSources = async () => {
+    setGenSources(true);
+    try { await generateDionysusSources(); } catch (e) { console.error(e); }
+    setTimeout(() => { load(); setGenSources(false); }, 4000);
+  };
+
   const decide = async (id, action) => {
     setBusy(id);
     try {
@@ -67,8 +74,13 @@ function DionysusPanel() {
           <div style={{ fontWeight: 700, fontSize: 18, color: FUCHSIA }}>Dionisio</div>
           <div style={{ fontSize: 11, opacity: 0.55 }}>Video · Seedance 2.0</div>
         </div>
+        <button onClick={onGenSources} disabled={genSources} title="Generar imágenes de interacción (mano+chip+salsa) que Dionisio anima"
+          style={{ marginLeft: 'auto', padding: '9px 14px', borderRadius: 8, border: '1px solid rgba(192,38,211,0.4)', fontWeight: 600, cursor: genSources ? 'default' : 'pointer',
+                   background: 'transparent', color: FUCHSIA }}>
+          {genSources ? '🎨 Generando…' : '🎨 Fuentes'}
+        </button>
         <button onClick={onRun} disabled={running}
-          style={{ marginLeft: 'auto', padding: '9px 18px', borderRadius: 8, border: 'none', fontWeight: 700, cursor: running ? 'default' : 'pointer',
+          style={{ padding: '9px 18px', borderRadius: 8, border: 'none', fontWeight: 700, cursor: running ? 'default' : 'pointer',
                    background: running ? 'rgba(192,38,211,0.3)' : FUCHSIA, color: '#fff' }}>
           {running ? '🎬 Generando…' : '✨ Generar videos'}
         </button>
@@ -79,6 +91,7 @@ function DionysusPanel() {
       {stats && (
         <div style={{ display: 'flex', gap: 10, margin: '14px 0' }}>
           {[
+            { label: 'Pool fuentes', value: `${stats.source_pool ?? 0}/${stats.source_pool_target ?? 30}`, color: '#f0abfc' },
             { label: 'Pendientes', value: stats.pending, color: FUCHSIA },
             { label: 'Videos totales', value: stats.total_videos, color: '#a78bfa' },
             { label: 'Testeados', value: stats.tested_count, color: '#34d399' }

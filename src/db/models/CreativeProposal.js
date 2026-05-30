@@ -44,12 +44,19 @@ const creativeProposalSchema = new mongoose.Schema({
   generation: { type: Number, default: 0, index: true },  // 0 = random, 1+ = producto de evolucion
 
   // Status
+  // 'video_source' = imagen generada EXPLÍCITAMENTE como primer-frame para video
+  // (vía dedicada con tag 'video_source'). NO entra a testeo de fotos (Prometheus
+  // solo busca 'ready'); solo Dionisio la consume. (2026-05-30)
   status: {
     type: String,
-    enum: ['pending', 'approved', 'rejected', 'uploaded', 'failed', 'ready', 'testing', 'graduated', 'killed', 'expired', 'pending_video_review', 'generating_video'],
+    enum: ['pending', 'approved', 'rejected', 'uploaded', 'failed', 'ready', 'testing', 'graduated', 'killed', 'expired', 'pending_video_review', 'generating_video', 'video_source'],
     default: 'pending',
     index: true
   },
+
+  // Tags libres para rutear creativos por propósito. 'video_source' = imagen de
+  // interacción (mano+chip+salsa) hecha para que Dionisio la anime. (2026-05-30)
+  tags: { type: [String], default: [], index: true },
 
   // ── Dionisio (video) ──────────────────────────────────────────────────────
   // media_type distingue creativos estáticos (Apollo) de video (Dionisio).
