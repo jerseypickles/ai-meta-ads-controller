@@ -34,6 +34,7 @@ export default function ApolloPanel() {
   const [intel, setIntel] = useState(null);
   const [dna, setDna] = useState(null);
   const [proposals, setProposals] = useState([]);
+  const [videoSources, setVideoSources] = useState([]);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeSection, setActiveSection] = useState('overview');
@@ -48,16 +49,18 @@ export default function ApolloPanel() {
 
   async function loadAll() {
     try {
-      const [intelR, dnaR, propsR, prodsR] = await Promise.all([
+      const [intelR, dnaR, propsR, prodsR, vsrcR] = await Promise.all([
         getApolloIntelligence().catch(() => ({})),
         getDNALab({ limit: 50, min_samples: 1 }).catch(() => ({})),
         getCreativeProposals().catch(() => []),
-        getProducts().catch(() => [])
+        getProducts().catch(() => []),
+        getCreativeProposals('video_source').catch(() => ({}))
       ]);
       setIntel(intelR);
       setDna(dnaR);
       setProposals(Array.isArray(propsR) ? propsR : (propsR?.proposals || []));
       setProducts(Array.isArray(prodsR) ? prodsR : (prodsR?.products || []));
+      setVideoSources(Array.isArray(vsrcR) ? vsrcR : (vsrcR?.proposals || []));
     } catch (err) {
       console.error('Apollo load error:', err);
     } finally {
@@ -202,6 +205,7 @@ export default function ApolloPanel() {
         {[
           { k: 'overview', l: 'Resumen', c: APOLLO_COLOR },
           { k: 'pipeline', l: 'Pipeline', c: '#fbbf24', n: readyProposals.length },
+          { k: 'video_source', l: '🎬 Video Source', c: '#c026d3', n: videoSources.length },
           { k: 'dna', l: '🧬 DNA Lab', c: '#8b5cf6', n: globalStats.total_dnas },
           { k: 'intelligence', l: 'Inteligencia', c: '#60a5fa' },
           { k: 'evolution', l: 'Evolution', c: '#ec4899' },
@@ -255,6 +259,9 @@ export default function ApolloPanel() {
           )}
           {activeSection === 'pipeline' && (
             <PipelineSection proposals={readyProposals} setLightbox={setLightboxImg} setFeedbackModal={setFeedbackModal} />
+          )}
+          {activeSection === 'video_source' && (
+            <VideoSourceSection sources={videoSources} setLightbox={setLightboxImg} />
           )}
           {activeSection === 'dna' && (
             <DNALabSection dna={dna} dnaSpace={dnaSpace} />
@@ -579,6 +586,63 @@ function PipelineSection({ proposals, setLightbox, setFeedbackModal }) {
         </motion.div>
       ))}
     </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VIDEO SOURCE — pool de imágenes de interacción (mano+chip+salsa) para Dionisio
+// ═══════════════════════════════════════════════════════════════════════════
+
+function VideoSourceSection({ sources, setLightbox }) {
+  const FUCHSIA = '#c026d3';
+  if (!sources || sources.length === 0) {
+    return (
+      <Empty>
+        Pool de video source vacío. Se genera solo por cron (máx 30) o con el botón 🎨 Fuentes en el panel de Dionisio.
+        Son fotos de interacción (mano levantando/mojando un chip con salsa) → el primer-frame que Dionisio anima.
+      </Empty>
+    );
+  }
+  return (
+    <>
+      <div style={{ fontSize: '0.62rem', color: 'var(--bos-text-muted)', marginBottom: 10, lineHeight: 1.4 }}>
+        Imágenes de interacción generadas para video (tag <b style={{ color: FUCHSIA }}>video_source</b>). NO se testean como foto —
+        Dionisio las anima (lift/dip/pull) y de ahí van a la campaña de video. Mirá acá si salen creíbles antes de animarlas.
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10 }}>
+        {sources.map((p, i) => (
+          <motion.div
+            key={p._id}
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: Math.min(i * 0.02, 0.5) }}
+            style={{ background: 'rgba(17, 21, 51, 0.55)', border: `1px solid ${FUCHSIA}33`, borderRadius: 10, overflow: 'hidden', cursor: 'pointer' }}
+          >
+            <div onClick={() => setLightbox(getProposalImageUrl(p._id))} style={{ position: 'relative', aspectRatio: '9/16', overflow: 'hidden', background: '#000' }}>
+              <img src={getProposalImageUrl(p._id)} alt={p.headline} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+              {p.motion_variant && (
+                <div style={{ position: 'absolute', top: 6, left: 6, background: `${FUCHSIA}e6`, color: '#fff', padding: '2px 6px', borderRadius: 4, fontSize: '0.55rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  {p.motion_variant}
+                </div>
+              )}
+            </div>
+            <div style={{ padding: 9 }}>
+              <div style={{ fontSize: '0.7rem', color: 'var(--bos-text)', fontWeight: 600, lineHeight: 1.3, marginBottom: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                {p.headline}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.55rem', padding: '1px 5px', background: 'rgba(251, 191, 36, 0.15)', color: '#fbbf24', borderRadius: 3 }}>
+                  {(p.product_name || '').substring(0, 18)}
+                </span>
+                <span style={{ fontSize: '0.55rem', color: 'var(--bos-text-dim)', fontFamily: 'JetBrains Mono, monospace' }}>
+                  {formatDate(p.created_at)}
+                </span>
+              </div>
+            </div>
+          </motion.div>
+        ))}
+      </div>
+    </>
   );
 }
 
