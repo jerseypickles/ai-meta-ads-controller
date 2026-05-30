@@ -18,34 +18,20 @@ const logger = require('../../../utils/logger');
 const ProductBank = require('../../../db/models/ProductBank');
 const CreativeProposal = require('../../../db/models/CreativeProposal');
 const { generateCreativeImage } = require('../image-engine');
+const dna = require('./video-dna');
 
 const POOL_TARGET = parseInt(process.env.VIDEO_SOURCE_POOL_TARGET || '30', 10); // máx imágenes sin consumir
 const PER_CYCLE_CAP = parseInt(process.env.VIDEO_SOURCE_PER_CYCLE || '6', 10);  // máx generadas por corrida (evita bursts)
 const ENABLED = process.env.VIDEO_SOURCE_ENABLED !== 'false';
 
-// Intenciones de interacción — cada una mapea al motion que Dionisio aplicará luego.
-const INTERACTIONS = [
-  {
-    motion: 'lift_drip',
-    scene: 'a hand slowly lifting a single pickle chip up out of the open jar, a glossy strand of brine dripping off the chip back into the jar'
-  },
-  {
-    motion: 'dip_drip',
-    scene: 'a hand holding a single pickle chip right above the open tub, thick glossy chamoy/hot sauce dripping off the chip in a stretching strand back into the tub'
-  },
-  {
-    motion: 'pull_up',
-    scene: 'a hand pulling a single sauce-coated pickle chip upward out of the tub, the chip glistening wet with sauce, a little dripping off the bottom edge'
-  }
-];
-
 const FIDELITY = 'The product container and its LABEL must remain a pixel-perfect match to the reference photo — same shape, same label design, same text, same colors, same proportions. Do NOT redraw, re-render, or restyle the packaging or the label. CRITICAL COLOR FIDELITY: replicate the EXACT colors of the product and its contents from the reference; do not shift them toward what this food "usually" looks like.';
 
-const STYLE = 'Authentic UGC iPhone photo, handheld, natural daylight outdoors (backyard / picnic table / poolside vibe), shallow casual framing. Photorealistic and appetizing — looks shot by a real person, NOT AI. Real skin tones on the hand, realistic glossy sauce texture, natural shadows. No text overlays, no graphics, no filters, no color grading.';
+const STYLE = 'Authentic UGC iPhone photo, handheld, natural daylight, shallow casual framing. Photorealistic and appetizing — looks shot by a real person, NOT AI. Real skin tones on the hand, realistic glossy sauce texture, natural shadows. No text overlays, no graphics, no filters, no color grading.';
 
-/** Construye el prompt de imagen de interacción para un producto + intención. */
-function buildSourcePrompt(productName, interaction) {
-  return `Create a vertical photograph of ${interaction.scene}, for the product "${productName}". ` +
+/** Construye el prompt de imagen para un producto + (motion, scene) del DNA. */
+function buildSourcePrompt(productName, motionKey, sceneKey) {
+  const interaction = dna.buildImageScene(motionKey, sceneKey); // "<mano hace X>, <escena>"
+  return `Create a vertical photograph of ${interaction}, for the product "${productName}". ` +
     `The jar/tub from the reference photo is clearly visible in the shot with its label readable. ` +
     `${FIDELITY} ${STYLE} The hand and the dripping sauce/brine should be the hero of the shot, mouth-watering and in sharp focus.`;
 }
@@ -113,20 +99,27 @@ async function generateVideoSources() {
     return { available, generated: 0, skipped: 'no_products' };
   }
 
+  // DNA stats para exploit/explore (qué motion / scene rinde mejor hasta ahora).
+  const [motionStats, sceneStats] = await Promise.all([
+    dna.getDimensionStats('motion').catch(() => ({})),
+    dna.getDimensionStats('scene').catch(() => ({}))
+  ]);
+
   logger.info(`[VIDEO-SOURCE] pool ${available}/${POOL_TARGET} → genero ${need}`);
   let generated = 0;
 
   for (let i = 0; i < need; i++) {
-    // Rotar producto + intención de interacción para variedad.
     const product = products[i % products.length];
-    const interaction = INTERACTIONS[i % INTERACTIONS.length];
+    // Exploit/explore: sesga hacia el motion/scene ganador, sigue probando los otros.
+    const motionKey = dna.pickWeighted('motion', motionStats);
+    const sceneKey = dna.pickWeighted('scene', sceneStats);
     try {
       const refImages = product.png_references.map(ref => ({
         image_base64: ref.image_base64,
         mime_type: ref.mime_type,
         path: !ref.image_base64 ? null : null
       }));
-      const prompt = buildSourcePrompt(product.product_name, interaction);
+      const prompt = buildSourcePrompt(product.product_name, motionKey, sceneKey);
       const result = await generateCreativeImage(prompt, { referenceImages: refImages, aspectRatio: '9:16', imageSize: '2K' });
       if (!result?.base64) { logger.warn(`[VIDEO-SOURCE] sin imagen para ${product.product_name}`); continue; }
 
@@ -142,11 +135,12 @@ async function generateVideoSources() {
         media_type: 'image',
         status: 'video_source',
         tags: ['video_source'],
-        motion_variant: interaction.motion,  // hint del motion que mejor le calza
+        motion_variant: motionKey,  // motion baked en la imagen
+        scene: sceneKey,            // escena (dimensión DNA)
         style: 'video_source'
       });
       generated++;
-      logger.info(`[VIDEO-SOURCE] ✓ "${copy.headline}" (${product.product_name}, ${interaction.motion})`);
+      logger.info(`[VIDEO-SOURCE] ✓ "${copy.headline}" (${product.product_name}, ${motionKey}/${sceneKey})`);
     } catch (e) {
       logger.error(`[VIDEO-SOURCE] error generando para ${product.product_name}: ${e.message}`);
     }

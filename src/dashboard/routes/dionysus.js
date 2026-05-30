@@ -23,7 +23,7 @@ router.get('/stats', async (req, res) => {
     const videos = await CreativeProposal.find({
       media_type: 'video',
       status: { $in: ['testing', 'graduated', 'killed', 'expired'] }
-    }).select('headline product_name motion_variant status video_url').lean();
+    }).select('headline product_name motion_variant camera scene status video_url').lean();
 
     // Métricas desde el TestRun de cada video (proposal_id → TestRun).
     const ids = videos.map(v => v._id);
@@ -36,29 +36,38 @@ router.get('/stats', async (req, res) => {
       const t = runByProp[String(v._id)] || {};
       const m = t.metrics || {};
       return {
-        headline: v.headline, product_name: v.product_name, motion_variant: v.motion_variant,
+        headline: v.headline, product_name: v.product_name,
+        motion_variant: v.motion_variant, camera: v.camera, scene: v.scene,
         status: v.status, video_url: v.video_url,
         ctr: r2(m.ctr), roas: r2(m.roas), spend: r2(m.spend), purchases: m.purchases || 0,
         impressions: m.impressions || 0
       };
     });
 
-    // DNA: agregado por motion variant.
-    const byVariant = {};
-    for (const v of tested) {
-      const k = v.motion_variant || 'desconocido';
-      byVariant[k] = byVariant[k] || { variant: k, n: 0, ctr_sum: 0, roas_sum: 0, graduated: 0, killed: 0 };
-      const b = byVariant[k];
-      b.n++; b.ctr_sum += v.ctr; b.roas_sum += v.roas;
-      if (v.status === 'graduated') b.graduated++;
-      if (v.status === 'killed') b.killed++;
-    }
-    const dna = Object.values(byVariant).map(b => ({
-      variant: b.variant, tested: b.n,
-      avg_ctr: r2(b.ctr_sum / b.n), avg_roas: r2(b.roas_sum / b.n),
-      graduated: b.graduated, killed: b.killed,
-      win_rate: b.n ? Math.round((b.graduated / b.n) * 100) : 0
-    })).sort((a, b) => b.avg_roas - a.avg_roas);
+    // DNA por DIMENSIÓN (motion / camera / scene) — qué valor rinde mejor.
+    const aggregateBy = (field) => {
+      const by = {};
+      for (const v of tested) {
+        const k = v[field] || '—';
+        by[k] = by[k] || { variant: k, n: 0, ctr_sum: 0, roas_sum: 0, graduated: 0, killed: 0 };
+        const b = by[k];
+        b.n++; b.ctr_sum += v.ctr; b.roas_sum += v.roas;
+        if (v.status === 'graduated') b.graduated++;
+        if (v.status === 'killed') b.killed++;
+      }
+      return Object.values(by).map(b => ({
+        variant: b.variant, tested: b.n,
+        avg_ctr: r2(b.ctr_sum / b.n), avg_roas: r2(b.roas_sum / b.n),
+        graduated: b.graduated, killed: b.killed,
+        win_rate: b.n ? Math.round((b.graduated / b.n) * 100) : 0
+      })).sort((a, b) => b.avg_roas - a.avg_roas);
+    };
+    const dnaByDimension = {
+      motion: aggregateBy('motion_variant'),
+      camera: aggregateBy('camera'),
+      scene: aggregateBy('scene')
+    };
+    const dna = dnaByDimension.motion; // back-compat
 
     // Contadores de cola.
     const pending = await CreativeProposal.countDocuments({ media_type: 'video', status: 'pending_video_review' });
@@ -72,7 +81,7 @@ router.get('/stats', async (req, res) => {
       sourcePoolTarget = POOL_TARGET;
     } catch (_) { /* noop */ }
 
-    res.json({ pending, total_videos: totalVideos, tested_count: tested.length, source_pool: sourcePool, source_pool_target: sourcePoolTarget, dna, tested });
+    res.json({ pending, total_videos: totalVideos, tested_count: tested.length, source_pool: sourcePool, source_pool_target: sourcePoolTarget, dna, dna_by_dimension: dnaByDimension, tested });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

@@ -9,21 +9,22 @@
 const logger = require('../../utils/logger');
 const CreativeProposal = require('../../db/models/CreativeProposal');
 const { judgeVideoSuitability } = require('../creative/video/video-judge');
-const { buildMotionPrompt } = require('../creative/video/motion-prompts');
+const dna = require('../creative/video/video-dna');
 const seedance = require('../creative/video/seedance');
 
 const ENABLED = process.env.DIONYSUS_ENABLED !== 'false';
 const MAX_VIDEOS_PER_CYCLE = parseInt(process.env.DIONYSUS_MAX_PER_CYCLE || '3', 10); // control de costo
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://ai-meta-ads-controller.onrender.com';
 
-/** Mapea la sugerencia del judge a una variante del banco de motion-prompts. */
+/** Mapea la sugerencia del judge a un motion del DNA (fallback si la fuente no lo trae). */
 function motionVariantFor(suggested) {
   const map = {
-    lift_drip: 'lift_drip', dip_drip: 'dip_drip', pull_up: 'pull_up', drip: 'micro_drip',
+    lift_drip: 'lift_drip', dip_drip: 'dip_drip', pull_up: 'pull_up', drip: 'lift_drip',
+    pinch: 'pinch_twirl', bite: 'bite_tease',
     // back-compat con vocabulario viejo
-    breeze: 'micro_drip', shimmer: 'micro_drip', hand_hold: 'lift_drip'
+    breeze: 'lift_drip', shimmer: 'lift_drip', hand_hold: 'lift_drip'
   };
-  return map[suggested] || 'lift_drip'; // default = el hero (no el quieto)
+  return map[suggested] || 'lift_drip'; // default = el hero
 }
 
 /**
@@ -66,6 +67,9 @@ async function runDionysus() {
   const candidates = await _getCandidates();
   logger.info(`[DIONISIO] ${candidates.length} candidatos a evaluar (cap ${MAX_VIDEOS_PER_CYCLE} videos/ciclo)`);
 
+  // DNA de cámara — exploit/explore: qué movimiento de cámara rinde mejor.
+  const cameraStats = await dna.getDimensionStats('camera').catch(() => ({}));
+
   let judged = 0, generated = 0, rejected = 0;
   const results = [];
 
@@ -85,14 +89,16 @@ async function runDionysus() {
 
     // 2. Crear el registro YA en estado 'generating_video' (para que el panel
     // lo muestre como card "generando…" mientras Seedance trabaja).
-    // Preferir el motion BAKED en la imagen-fuente (la interacción ya está en la
-    // foto) — si no hay hint, usar la sugerencia del judge.
+    // motion = BAKED en la imagen-fuente (la interacción ya está en la foto).
+    // camera = exploit/explore del DNA. scene = heredada de la fuente.
     const variant = c.motion_variant || motionVariantFor(verdict.suggested_motion);
-    const { prompt } = buildMotionPrompt(c.product_name || 'the product', variant);
+    const camera = dna.pickWeighted('camera', cameraStats);
+    const prompt = dna.buildVideoPrompt(c.product_name || 'the product', variant, camera);
     const placeholder = await CreativeProposal.create({
       adset_id: c.adset_id, product_id: c.product_id, product_name: c.product_name,
       headline: c.headline, primary_text: c.primary_text, link_url: c.link_url,
-      media_type: 'video', status: 'generating_video', motion_variant: variant,
+      media_type: 'video', status: 'generating_video',
+      motion_variant: variant, camera, scene: c.scene || '',
       video_judge_score: verdict.score, source_proposal_id: c._id
     });
 

@@ -117,34 +117,55 @@ function DionysusPanel() {
         </div>
       )}
 
-      {/* DNA — qué aprende */}
+      {/* DNA — qué aprende (3 dimensiones: motion / cámara / escena) */}
       <div style={{ margin: '18px 0 10px', fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
-        🧬 Lo que Dionisio aprende <span style={{ fontWeight: 400, opacity: 0.5, fontSize: 11 }}>(qué motion rinde mejor)</span>
+        🧬 Lo que Dionisio aprende <span style={{ fontWeight: 400, opacity: 0.5, fontSize: 11 }}>(qué rinde mejor en cada dimensión · exploit/explore)</span>
       </div>
-      {!stats?.dna?.length ? (
-        <div style={{ ...card, padding: 14, fontSize: 12, opacity: 0.6 }}>
-          Todavía sin data — el DNA se construye a medida que los videos se testean. Cuando Prometheus testee los primeros, vas a ver acá qué movimiento (drip, breeze, shimmer…) trae mejor CTR/ROAS.
-        </div>
-      ) : (
-        <div style={{ ...card, padding: 6 }}>
-          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-            <thead><tr style={{ opacity: 0.55, textAlign: 'left' }}>
-              <th style={{ padding: 8 }}>Motion</th><th>Testeados</th><th>CTR avg</th><th>ROAS avg</th><th>Win-rate</th>
-            </tr></thead>
-            <tbody>
-              {stats.dna.map(d => (
-                <tr key={d.variant} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                  <td style={{ padding: 8, fontWeight: 600 }}>{d.variant}</td>
-                  <td>{d.tested}</td>
-                  <td>{d.avg_ctr}%</td>
-                  <td style={{ color: d.avg_roas >= 2 ? '#34d399' : '#f87171' }}>{d.avg_roas}x</td>
-                  <td>{d.win_rate}%</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {(() => {
+        const dims = [
+          { key: 'motion', label: 'Motion (interacción)' },
+          { key: 'camera', label: 'Cámara' },
+          { key: 'scene', label: 'Escena' }
+        ];
+        const byDim = stats?.dna_by_dimension;
+        const hasAny = byDim && dims.some(d => (byDim[d.key] || []).length);
+        if (!hasAny) {
+          return (
+            <div style={{ ...card, padding: 14, fontSize: 12, opacity: 0.6 }}>
+              Todavía sin data — el DNA se construye a medida que los videos se testean. Cuando Prometheus testee los primeros, vas a ver acá qué <b>motion</b>, qué <b>cámara</b> y qué <b>escena</b> traen mejor CTR/ROAS, y Dionisio va a generar más del ganador.
+            </div>
+          );
+        }
+        return (
+          <div style={{ display: 'grid', gap: 10 }}>
+            {dims.map(dim => {
+              const rows = byDim[dim.key] || [];
+              if (!rows.length) return null;
+              return (
+                <div key={dim.key} style={{ ...card, padding: 6 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.7, padding: '4px 8px' }}>{dim.label}</div>
+                  <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                    <thead><tr style={{ opacity: 0.55, textAlign: 'left' }}>
+                      <th style={{ padding: 8 }}>Valor</th><th>Test</th><th>CTR</th><th>ROAS</th><th>Win</th>
+                    </tr></thead>
+                    <tbody>
+                      {rows.map(d => (
+                        <tr key={d.variant} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                          <td style={{ padding: 8, fontWeight: 600, color: FUCHSIA }}>{d.variant}</td>
+                          <td>{d.tested}</td>
+                          <td>{d.avg_ctr}%</td>
+                          <td style={{ color: d.avg_roas >= 2 ? '#34d399' : '#f87171' }}>{d.avg_roas}x</td>
+                          <td>{d.win_rate}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {/* Cola de review */}
       <div style={{ margin: '20px 0 10px', fontWeight: 700, fontSize: 13 }}>📋 Cola de aprobación</div>

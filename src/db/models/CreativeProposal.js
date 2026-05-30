@@ -63,7 +63,9 @@ const creativeProposalSchema = new mongoose.Schema({
   media_type: { type: String, enum: ['image', 'video'], default: 'image', index: true },
   video_url: { type: String, default: '' },          // URL del .mp4 generado (PiAPI/Seedance)
   video_task_id: { type: String, default: '' },       // task_id de PiAPI
-  motion_variant: { type: String, default: '' },      // variante de motion-prompts.js
+  motion_variant: { type: String, default: '' },      // DNA: interacción (lift_drip/dip_drip/…)
+  scene: { type: String, default: '' },                // DNA: entorno (poolside/kitchen/…)
+  camera: { type: String, default: '' },               // DNA: movimiento de cámara (static/push_in/…)
   video_judge_score: { type: Number, default: null },  // score 0-100 del video-judge
   source_proposal_id: { type: mongoose.Schema.Types.ObjectId, ref: 'CreativeProposal', default: null }, // imagen origen
 
