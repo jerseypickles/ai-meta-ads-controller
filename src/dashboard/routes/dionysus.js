@@ -62,7 +62,7 @@ router.get('/stats', async (req, res) => {
 
     // Contadores de cola.
     const pending = await CreativeProposal.countDocuments({ media_type: 'video', status: 'pending_video_review' });
-    const totalVideos = await CreativeProposal.countDocuments({ media_type: 'video' });
+    const totalVideos = await CreativeProposal.countDocuments({ media_type: 'video', status: { $nin: ['failed', 'rejected'] } });
 
     res.json({ pending, total_videos: totalVideos, tested_count: tested.length, dna, tested });
   } catch (e) {
