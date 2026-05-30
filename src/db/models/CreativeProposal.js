@@ -46,10 +46,18 @@ const creativeProposalSchema = new mongoose.Schema({
   // Status
   status: {
     type: String,
-    enum: ['pending', 'approved', 'rejected', 'uploaded', 'failed', 'ready', 'testing', 'graduated', 'killed', 'expired'],
+    enum: ['pending', 'approved', 'rejected', 'uploaded', 'failed', 'ready', 'testing', 'graduated', 'killed', 'expired', 'pending_video_review'],
     default: 'pending',
     index: true
   },
+
+  // ── Dionisio (video) ──────────────────────────────────────────────────────
+  // media_type distingue creativos estáticos (Apollo) de video (Dionisio).
+  media_type: { type: String, enum: ['image', 'video'], default: 'image', index: true },
+  video_url: { type: String, default: '' },          // URL del .mp4 generado (PiAPI/Seedance)
+  video_task_id: { type: String, default: '' },       // task_id de PiAPI
+  motion_variant: { type: String, default: '' },      // variante de motion-prompts.js
+  source_proposal_id: { type: mongoose.Schema.Types.ObjectId, ref: 'CreativeProposal', default: null }, // imagen origen
 
   // Approval
   decided_at: { type: Date, default: null },

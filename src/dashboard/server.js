@@ -149,6 +149,23 @@ app.use('/api/hermes', require('./routes/hermes'));
 app.use('/api/system/warehouse-throttle', require('./routes/warehouse-throttle'));
 app.use('/api/system/tribe-validation', require('./routes/tribe-validation'));
 
+// Ruta PÚBLICA (sin auth) para servir la imagen origen de un proposal como PNG.
+// La usa Dionisio: PiAPI/Seedance descarga la imagen vía esta URL pública para
+// hacer image-to-video (image_urls requiere URL accesible, no base64). Solo
+// expone creativos (no data sensible); el _id es difícil de adivinar.
+app.get('/vsrc/:id.png', async (req, res) => {
+  try {
+    const CreativeProposal = require('../db/models/CreativeProposal');
+    const p = await CreativeProposal.findById(req.params.id).select('image_base64').lean();
+    if (!p || !p.image_base64) return res.status(404).send('not found');
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'public, max-age=3600');
+    return res.send(Buffer.from(p.image_base64, 'base64'));
+  } catch (e) {
+    return res.status(400).send('bad request');
+  }
+});
+
 // SPA fallback — todas las rutas no-API sirven el frontend
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'frontend', 'dist', 'index.html'));
