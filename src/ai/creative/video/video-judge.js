@@ -11,22 +11,30 @@ const logger = require('../../../utils/logger');
 
 const MIN_SCORE = parseInt(process.env.DIONYSUS_VIDEO_MIN_SCORE || '60', 10);
 
-const PROMPT = (productName) => `You are a senior performance video editor judging whether a STATIC product image will make a good 5-second ambient-motion vertical video ad (image-to-video, handheld UGC style, almost no movement) for "${productName}".
+const PROMPT = (productName) => `You are a senior DTC food-ad video editor judging whether a STATIC image will make a HIGH-CONVERTING 5-second vertical UGC video ad (image-to-video) for "${productName}".
 
-The video keeps the image as the first frame and only adds subtle micro-motion (a drip, a faint breeze, light shimmer). So the IMAGE must be a strong base.
+The video keeps the image as the FIRST FRAME and animates what is already in it — it CANNOT add objects that aren't there. So a hand or a held chip must already be visible to animate an interaction.
 
-Score 0-100 on video potential. Reward:
-- Clean, in-focus product with a readable label.
-- Clear composition with a clear subject (not cluttered).
-- A scene that naturally benefits from subtle motion (liquid, condensation, a hand, food texture).
-- Realistic / authentic look (UGC, not over-stylized).
-Penalize heavily:
-- Cluttered/busy scenes (would morph/warp badly when animated).
-- Product small, cut off, blurry, or label unreadable.
-- Heavy text overlays or graphics (look fake in motion).
-- Anything that would distort the product when animated.
+What sells for this brand (reward HEAVILY, score 80-100):
+- A HAND interacting with the product: lifting / picking up / holding a single pickle chip, dipping a chip, pulling a chip out of the jar or tub.
+- Visible glossy sauce / chamoy / brine on the chip that can DRIP (appetizing, mouth-watering).
+- The product/chip in sharp focus, authentic handheld UGC look, natural daylight.
 
-Return ONLY JSON: {"score": <0-100>, "suitable": <true|false>, "reason": "<one sentence>", "suggested_motion": "<drip|breeze|shimmer|hand_hold|none>"}`;
+Mediocre (score 40-65):
+- Product (jar/tub) clean and in focus but NO hand and NO chip held → can only do a tiny passive drip. Lower video potential.
+
+Penalize HEAVILY (score 0-35):
+- Static jar just sitting there with nothing to animate, or cluttered/busy scenes that would morph/warp.
+- Product small, cut off, blurry, label unreadable, or heavy text/graphics overlays.
+
+suggested_motion: pick the interaction the image best supports:
+- "lift_drip" = a hand can lift a chip out with sauce dripping (BEST).
+- "dip_drip" = a held chip with sauce can drip back into the tub.
+- "pull_up" = a hand pulling a sauced chip up.
+- "drip" = no hand/chip, only a passive brine drip (jar-only fallback).
+- "none" = not suitable.
+
+Return ONLY JSON: {"score": <0-100>, "suitable": <true|false>, "reason": "<one sentence>", "suggested_motion": "<lift_drip|dip_drip|pull_up|drip|none>"}`;
 
 /**
  * @param {string} imageBase64 - imagen generada (base64, sin prefijo data:)

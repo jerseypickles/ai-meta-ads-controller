@@ -18,8 +18,12 @@ const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://ai-meta-ads-cont
 
 /** Mapea la sugerencia del judge a una variante del banco de motion-prompts. */
 function motionVariantFor(suggested) {
-  const map = { drip: 'micro_drip', breeze: 'breeze_napkin', shimmer: 'wet_shimmer', hand_hold: 'hand_hold' };
-  return map[suggested] || 'micro_drip';
+  const map = {
+    lift_drip: 'lift_drip', dip_drip: 'dip_drip', pull_up: 'pull_up', drip: 'micro_drip',
+    // back-compat con vocabulario viejo
+    breeze: 'micro_drip', shimmer: 'micro_drip', hand_hold: 'lift_drip'
+  };
+  return map[suggested] || 'lift_drip'; // default = el hero (no el quieto)
 }
 
 /**

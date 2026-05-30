@@ -18,33 +18,37 @@ const BASE_STYLE =
   'real skin tones, natural film grain, realistic textures and imperfections, ' +
   'no cinematic effects, no glossy CGI look, no slow-motion, no zoom, no plastic surfaces.';
 
-// Variantes — cada una aporta UN micro-gesto distinto. Mantener todas low-motion.
-// {product} se reemplaza por el nombre del producto (ej. "Jersey Pickles Chamoy").
+// Variantes — la INTERACCIÓN vende: una mano levanta/saca un pickle chip y la
+// salsa/brine chorrea glossy. Eso da hambre. Evitar el "sostener quieto" (DNA
+// pobre). Como es image-to-video, el movimiento anima lo que YA está en la foto
+// (idealmente una mano con un chip). {product} = nombre del producto.
 const VARIANTS = [
   {
+    // HERO — el que vende: levantar el chip y que la salsa chorree.
+    key: 'lift_drip',
+    motion: 'A hand slowly lifts a single pickle chip up out of the {product} jar. ' +
+            'A glossy strand of sauce / brine drips slowly off the chip back into the jar. ' +
+            'The chip stays in focus, the motion is smooth and appetizing.'
+  },
+  {
+    // Mojar en chamoy y que chorree (para productos con salsa).
+    key: 'dip_drip',
+    motion: 'A hand holds a sauced pickle chip just above the {product} tub and the thick ' +
+            'glossy chamoy sauce drips slowly off it in a stretching strand back into the tub. ' +
+            'Mouth-watering, the chip glistening and in focus.'
+  },
+  {
+    // Sacar lentamente el chip cubierto de salsa.
+    key: 'pull_up',
+    motion: 'A hand slowly pulls a sauce-coated pickle chip upward out of the {product} tub, ' +
+            'the chip glistening wet, a little sauce dripping off the bottom edge.'
+  },
+  {
+    // Fallback de bajo movimiento para fotos donde NO hay mano/chip (solo frasco):
+    // una gota cae al frasco, mínima animación que no distorsiona.
     key: 'micro_drip',
-    motion: 'A single tiny drop slowly drips back into the open {product} tub. ' +
-            'The hand holds the product still just above the tub.'
-  },
-  {
-    key: 'breeze_napkin',
-    motion: 'A faint breeze flutters the edge of the crumpled kraft paper napkin nearby. ' +
-            'The {product} sits still, product in focus.'
-  },
-  {
-    key: 'wet_shimmer',
-    motion: 'Sunlight shimmers faintly on the wet surface of the {product}. ' +
-            'No movement other than the light catching the glaze.'
-  },
-  {
-    key: 'hand_hold',
-    motion: 'A hand holds the {product} still in frame, barely perceptible natural hand tremor. ' +
-            'Nothing else moves.'
-  },
-  {
-    key: 'steam_curl',
-    motion: 'A barely visible curl of cool condensation/vapor rises slowly off the fresh {product}. ' +
-            'Everything else stays still.'
+    motion: 'A single glossy drop of brine slowly drips off the rim of the {product} jar ' +
+            'back inside. Minimal movement, product stays sharp and undistorted.'
   }
 ];
 
