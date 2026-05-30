@@ -6,8 +6,8 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const Anthropic = require('@anthropic-ai/sdk');
-const config = require('../../../config');
-const logger = require('../../utils/logger');
+const config = require('../../../../config');
+const logger = require('../../../utils/logger');
 
 const MIN_SCORE = parseInt(process.env.DIONYSUS_VIDEO_MIN_SCORE || '60', 10);
 
