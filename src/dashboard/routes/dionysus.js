@@ -73,11 +73,17 @@ router.get('/stats', async (req, res) => {
 // GET /pending — videos en cola de aprobación
 router.get('/pending', async (req, res) => {
   try {
-    const pending = await CreativeProposal.find({ media_type: 'video', status: 'pending_video_review' })
-      .sort({ created_at: -1 })
-      .select('headline primary_text product_name video_url motion_variant source_proposal_id created_at')
-      .lean();
-    res.json({ count: pending.length, pending });
+    const [pending, generating] = await Promise.all([
+      CreativeProposal.find({ media_type: 'video', status: 'pending_video_review' })
+        .sort({ created_at: -1 })
+        .select('headline primary_text product_name video_url motion_variant video_judge_score source_proposal_id created_at')
+        .lean(),
+      CreativeProposal.find({ media_type: 'video', status: 'generating_video' })
+        .sort({ created_at: -1 })
+        .select('headline product_name motion_variant video_judge_score created_at')
+        .lean()
+    ]);
+    res.json({ count: pending.length, pending, generating });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

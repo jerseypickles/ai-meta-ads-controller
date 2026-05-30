@@ -46,7 +46,7 @@ const creativeProposalSchema = new mongoose.Schema({
   // Status
   status: {
     type: String,
-    enum: ['pending', 'approved', 'rejected', 'uploaded', 'failed', 'ready', 'testing', 'graduated', 'killed', 'expired', 'pending_video_review'],
+    enum: ['pending', 'approved', 'rejected', 'uploaded', 'failed', 'ready', 'testing', 'graduated', 'killed', 'expired', 'pending_video_review', 'generating_video'],
     default: 'pending',
     index: true
   },
@@ -57,6 +57,7 @@ const creativeProposalSchema = new mongoose.Schema({
   video_url: { type: String, default: '' },          // URL del .mp4 generado (PiAPI/Seedance)
   video_task_id: { type: String, default: '' },       // task_id de PiAPI
   motion_variant: { type: String, default: '' },      // variante de motion-prompts.js
+  video_judge_score: { type: Number, default: null },  // score 0-100 del video-judge
   source_proposal_id: { type: mongoose.Schema.Types.ObjectId, ref: 'CreativeProposal', default: null }, // imagen origen
 
   // Approval

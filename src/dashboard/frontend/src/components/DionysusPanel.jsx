@@ -9,9 +9,10 @@ const FUCHSIA = '#c026d3';
 // 🎭 Dionisio — cola de videos + DNA (qué motion rinde). Human-in-the-loop.
 function DionysusPanel() {
   const [pending, setPending] = useState([]);
+  const [genVideos, setGenVideos] = useState([]); // generándose ahora
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
+  const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(null);
   const pollRef = useRef(null);
 
@@ -19,6 +20,7 @@ function DionysusPanel() {
     try {
       const [p, s] = await Promise.all([getDionysusPending(), getDionysusStats().catch(() => null)]);
       setPending(p.pending || []);
+      setGenVideos(p.generating || []);
       setStats(s);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -30,20 +32,16 @@ function DionysusPanel() {
   }, [load]);
 
   const onRun = async () => {
-    setGenerating(true);
+    setRunning(true);
     try { await runDionysusApi(); } catch (e) { console.error(e); }
-    // poll mientras genera — los videos van apareciendo solos
-    const startCount = pending.length;
+    // poll mientras genera — los placeholders 'generando' y luego los videos aparecen solos
     const t0 = Date.now();
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {
       await load();
-      const elapsed = Date.now() - t0;
-      if (elapsed > 4 * 60 * 1000) { clearInterval(pollRef.current); setGenerating(false); }
-    }, 7000);
-    // corte de seguridad
-    setTimeout(() => { if (pollRef.current) clearInterval(pollRef.current); setGenerating(false); }, 4 * 60 * 1000 + 1000);
-    void startCount;
+      if (Date.now() - t0 > 5 * 60 * 1000) { clearInterval(pollRef.current); setRunning(false); }
+    }, 6000);
+    setTimeout(() => { if (pollRef.current) clearInterval(pollRef.current); setRunning(false); }, 5 * 60 * 1000 + 1000);
   };
 
   const decide = async (id, action) => {
@@ -67,10 +65,10 @@ function DionysusPanel() {
           <div style={{ fontWeight: 700, fontSize: 18, color: FUCHSIA }}>Dionisio</div>
           <div style={{ fontSize: 11, opacity: 0.55 }}>Video · Seedance 2.0</div>
         </div>
-        <button onClick={onRun} disabled={generating}
-          style={{ marginLeft: 'auto', padding: '9px 18px', borderRadius: 8, border: 'none', fontWeight: 700, cursor: generating ? 'default' : 'pointer',
-                   background: generating ? 'rgba(192,38,211,0.3)' : FUCHSIA, color: '#fff' }}>
-          {generating ? '🎬 Generando…' : '✨ Generar videos'}
+        <button onClick={onRun} disabled={running}
+          style={{ marginLeft: 'auto', padding: '9px 18px', borderRadius: 8, border: 'none', fontWeight: 700, cursor: running ? 'default' : 'pointer',
+                   background: running ? 'rgba(192,38,211,0.3)' : FUCHSIA, color: '#fff' }}>
+          {running ? '🎬 Generando…' : '✨ Generar videos'}
         </button>
         <button onClick={load} title="Refrescar" style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#fff', cursor: 'pointer' }}>↻</button>
       </div>
@@ -92,11 +90,13 @@ function DionysusPanel() {
       )}
 
       {/* Generando — banner animado */}
-      {generating && (
+      {(running || genVideos.length > 0) && (
         <div style={{ ...card, padding: '16px 18px', margin: '12px 0', display: 'flex', alignItems: 'center', gap: 14 }}>
           <div className="dio-pulse" style={{ width: 14, height: 14, borderRadius: '50%', background: FUCHSIA }} />
           <div>
-            <div style={{ fontWeight: 600 }}>Dionisio está generando videos…</div>
+            <div style={{ fontWeight: 600 }}>
+              Dionisio está generando{genVideos.length > 0 ? ` ${genVideos.length} video${genVideos.length > 1 ? 's' : ''}` : ' videos'}…
+            </div>
             <div style={{ fontSize: 12, opacity: 0.6 }}>Juzga tus mejores imágenes → anima 5s con Seedance. Toma 1-2 min/video; van apareciendo abajo.</div>
           </div>
         </div>
@@ -135,13 +135,29 @@ function DionysusPanel() {
       <div style={{ margin: '20px 0 10px', fontWeight: 700, fontSize: 13 }}>📋 Cola de aprobación</div>
       {loading ? (
         <p style={{ opacity: 0.5 }}>Cargando…</p>
-      ) : pending.length === 0 ? (
+      ) : (pending.length === 0 && genVideos.length === 0) ? (
         <div style={{ ...card, padding: 20, textAlign: 'center', opacity: 0.6 }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>🎬</div>
           Sin videos pendientes. Dale <b>"Generar videos"</b> para crear desde tus winners.
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 14 }}>
+          {/* Skeletons de los que se están generando */}
+          {genVideos.map(g => (
+            <div key={g._id} style={{ ...card, overflow: 'hidden', padding: 0 }}>
+              <div style={{ width: '100%', aspectRatio: '9/16', background: 'linear-gradient(135deg, rgba(192,38,211,0.15), rgba(192,38,211,0.04))', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+                <div style={{ fontSize: 26 }} className="dio-spin">🎬</div>
+                <div style={{ fontSize: 11, color: FUCHSIA, fontWeight: 600 }}>generando…</div>
+                <div style={{ width: '60%', height: 4, borderRadius: 4, background: 'rgba(255,255,255,0.1)', overflow: 'hidden' }}>
+                  <div className="dio-bar" style={{ height: '100%', background: FUCHSIA, width: '40%' }} />
+                </div>
+              </div>
+              <div style={{ padding: 10 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{g.headline}</div>
+                <div style={{ fontSize: 10, opacity: 0.55 }}>{g.product_name} · <span style={{ color: FUCHSIA }}>{g.motion_variant}</span>{g.video_judge_score != null ? ` · score ${g.video_judge_score}` : ''}</div>
+              </div>
+            </div>
+          ))}
           {pending.map(v => (
             <div key={v._id} style={{ ...card, overflow: 'hidden', padding: 0 }}>
               <video src={v.video_url} controls loop muted playsInline
@@ -150,6 +166,7 @@ function DionysusPanel() {
                 <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{v.headline}</div>
                 <div style={{ fontSize: 10, opacity: 0.55, marginBottom: 8 }}>
                   {v.product_name} · <span style={{ color: FUCHSIA }}>{v.motion_variant}</span>
+                  {v.video_judge_score != null ? <> · <span style={{ color: '#34d399' }}>score {v.video_judge_score}</span></> : null}
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button onClick={() => decide(v._id, 'approve')} disabled={busy === v._id}
@@ -165,7 +182,14 @@ function DionysusPanel() {
         </div>
       )}
 
-      <style>{`@keyframes dioPulse {0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(1.4)}} .dio-pulse{animation:dioPulse 1.2s ease-in-out infinite}`}</style>
+      <style>{`
+        @keyframes dioPulse {0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(1.4)}}
+        .dio-pulse{animation:dioPulse 1.2s ease-in-out infinite}
+        @keyframes dioSpin {0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
+        .dio-spin{animation:dioSpin 2.5s linear infinite; display:inline-block}
+        @keyframes dioBar {0%{margin-left:-40%}100%{margin-left:100%}}
+        .dio-bar{animation:dioBar 1.4s ease-in-out infinite}
+      `}</style>
     </div>
   );
 }

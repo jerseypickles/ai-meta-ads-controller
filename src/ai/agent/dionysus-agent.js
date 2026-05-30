@@ -72,31 +72,31 @@ async function runDionysus() {
       continue;
     }
 
-    // 2. Generar video (image-to-video desde URL pública del proposal)
-    const imageUrl = `${PUBLIC_BASE_URL}/vsrc/${c._id}.png`;
+    // 2. Crear el registro YA en estado 'generating_video' (para que el panel
+    // lo muestre como card "generando…" mientras Seedance trabaja).
     const variant = motionVariantFor(verdict.suggested_motion);
     const { prompt } = buildMotionPrompt(c.product_name || 'the product', variant);
+    const placeholder = await CreativeProposal.create({
+      adset_id: c.adset_id, product_id: c.product_id, product_name: c.product_name,
+      headline: c.headline, primary_text: c.primary_text, link_url: c.link_url,
+      media_type: 'video', status: 'generating_video', motion_variant: variant,
+      video_judge_score: verdict.score, source_proposal_id: c._id
+    });
+
+    // 3. Generar el video (image-to-video desde la URL pública del proposal origen).
+    const imageUrl = `${PUBLIC_BASE_URL}/vsrc/${c._id}.png`;
     try {
       const vid = await seedance.generateVideoFromImage({ imageUrl, prompt, durationSeconds: 5, aspectRatio: '9:16' });
-      // 3. Guardar como proposal de video, pendiente de aprobación
-      await CreativeProposal.create({
-        adset_id: c.adset_id,
-        product_id: c.product_id,
-        product_name: c.product_name,
-        headline: c.headline,
-        primary_text: c.primary_text,
-        link_url: c.link_url,
-        media_type: 'video',
-        status: 'pending_video_review',
-        video_url: vid.video_url,
-        video_task_id: vid.task_id,
-        motion_variant: variant,
-        source_proposal_id: c._id
+      await CreativeProposal.findByIdAndUpdate(placeholder._id, {
+        $set: { status: 'pending_video_review', video_url: vid.video_url, video_task_id: vid.task_id }
       });
       generated++;
       results.push({ source: c._id, headline: c.headline, score: verdict.score, video_url: vid.video_url, variant });
-      logger.info(`[DIONISIO] 🎬 video generado "${(c.headline||'').slice(0,30)}" (score ${verdict.score}, ${variant}) → pendiente de review`);
+      logger.info(`[DIONISIO] 🎬 video listo "${(c.headline||'').slice(0,30)}" (score ${verdict.score}, ${variant}) → pendiente de review`);
     } catch (e) {
+      await CreativeProposal.findByIdAndUpdate(placeholder._id, {
+        $set: { status: 'failed', rejection_reason: `video gen failed: ${e.message}` }
+      });
       logger.error(`[DIONISIO] generación falló para ${c._id}: ${e.message}`);
     }
   }
