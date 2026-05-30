@@ -17,6 +17,10 @@ const { getAdsForAdSet } = require('../../db/queries');
 const MAX_CONCURRENT_TESTS = 100;
 const TEST_DAILY_BUDGET = 20; // $20/dia (10→20 el 30-may: más delivery/señal por test + kills más rápidos)
 const VIDEO_TEST_DAILY_BUDGET = 25; // $25/dia ABO para tests de VIDEO (Dionisio), campaña aparte. (2026-05-30)
+// Track de VIDEO con caps PROPIOS — no compite por los slots/budget de las fotos
+// (campaña separada). Si no, los 100 tests de foto bloquean los videos. (2026-05-30)
+const MAX_CONCURRENT_VIDEO_TESTS = 30;
+const MAX_DAILY_VIDEO_TESTING_BUDGET = 750; // 30 × $25
 const MAX_DAILY_TESTING_BUDGET = 1000; // Cap diario total. 2026-05-28: 200→500. 2026-05-29: 500→1000 — la entrega rampeaba contra el techo de $500, el creador subió el cap para acelerar señal del pixel. Acoplado a MAX_CONCURRENT_TESTS (100 × $10). Bajar cuando haya señal estable.
 const MAX_LAUNCHES_PER_CYCLE = 8; // Max tests nuevos por ciclo (5→8 el 28-may para ramp rápido en cold-start)
 const TEST_MAX_DAYS = 7;
@@ -163,27 +167,39 @@ async function launchTests() {
     logger.warn(`[TESTING-AGENT] No se pudo verificar campana de testing: ${err.message}`);
   }
 
-  // Contar tests activos
-  const activeTests = await TestRun.countDocuments({ phase: { $in: ['learning', 'evaluating'] } });
-  const currentDailySpend = activeTests * TEST_DAILY_BUDGET;
-  const availableSlots = Math.max(0, MAX_CONCURRENT_TESTS - activeTests);
-  const budgetSlots = Math.max(0, Math.floor((MAX_DAILY_TESTING_BUDGET - currentDailySpend) / TEST_DAILY_BUDGET));
-  const maxLaunches = Math.min(availableSlots, budgetSlots, MAX_LAUNCHES_PER_CYCLE);
+  // Contar tests activos por TRACK (foto vs video) — caps independientes.
+  // El video tiene campaña/budget propios, así que no debe competir por los slots
+  // de foto (si no, los 100 tests de foto bloquean cualquier video). (2026-05-30)
+  const activePhotoTests = await TestRun.countDocuments({ phase: { $in: ['learning', 'evaluating'] }, media_type: { $ne: 'video' } });
+  const activeVideoTests = await TestRun.countDocuments({ phase: { $in: ['learning', 'evaluating'] }, media_type: 'video' });
 
-  if (maxLaunches === 0) {
-    if (availableSlots === 0) logger.info(`[TESTING-AGENT] ${activeTests} tests activos, max ${MAX_CONCURRENT_TESTS} — no hay slots`);
-    else if (budgetSlots === 0) logger.info(`[TESTING-AGENT] Budget cap alcanzado: $${currentDailySpend}/$${MAX_DAILY_TESTING_BUDGET} diario`);
+  // Slots FOTO
+  const photoSpend = activePhotoTests * TEST_DAILY_BUDGET;
+  const photoSlots = Math.max(0, MAX_CONCURRENT_TESTS - activePhotoTests);
+  const photoBudgetSlots = Math.max(0, Math.floor((MAX_DAILY_TESTING_BUDGET - photoSpend) / TEST_DAILY_BUDGET));
+  const maxPhotoLaunches = Math.min(photoSlots, photoBudgetSlots, MAX_LAUNCHES_PER_CYCLE);
+
+  // Slots VIDEO (independientes)
+  const videoSpend = activeVideoTests * VIDEO_TEST_DAILY_BUDGET;
+  const videoSlots = Math.max(0, MAX_CONCURRENT_VIDEO_TESTS - activeVideoTests);
+  const videoBudgetSlots = Math.max(0, Math.floor((MAX_DAILY_VIDEO_TESTING_BUDGET - videoSpend) / VIDEO_TEST_DAILY_BUDGET));
+  const maxVideoLaunches = Math.min(videoSlots, videoBudgetSlots, MAX_LAUNCHES_PER_CYCLE);
+
+  if (maxPhotoLaunches === 0 && maxVideoLaunches === 0) {
+    logger.info(`[TESTING-AGENT] Sin slots — foto ${activePhotoTests}/${MAX_CONCURRENT_TESTS} ($${photoSpend}/$${MAX_DAILY_TESTING_BUDGET}), video ${activeVideoTests}/${MAX_CONCURRENT_VIDEO_TESTS} ($${videoSpend}/$${MAX_DAILY_VIDEO_TESTING_BUDGET})`);
     return 0;
   }
 
-  // Leer proposals "ready"
-  const readyProposals = await CreativeProposal.find({ status: 'ready' })
+  // Leer proposals "ready" y partir por tipo; cada track se capa por separado.
+  const allReady = await CreativeProposal.find({ status: 'ready' })
     .sort({ created_at: 1 }) // las mas antiguas primero
-    .limit(maxLaunches)
     .lean();
+  const readyVideo = allReady.filter(p => p.media_type === 'video' && p.video_url).slice(0, maxVideoLaunches);
+  const readyPhoto = allReady.filter(p => !(p.media_type === 'video' && p.video_url)).slice(0, maxPhotoLaunches);
+  const readyProposals = [...readyVideo, ...readyPhoto]; // video primero (suele haber pocos)
 
   if (readyProposals.length === 0) {
-    logger.info('[TESTING-AGENT] No hay propuestas "ready" para testear');
+    logger.info('[TESTING-AGENT] No hay propuestas "ready" con slot disponible en su track');
     return 0;
   }
 
@@ -197,8 +213,10 @@ async function launchTests() {
   // Priorizar: ad sets con menos tests activos primero, skip si ya tiene 2+
   const prioritized = [];
   for (const proposal of readyProposals) {
+    const isVid = proposal.media_type === 'video' && proposal.video_url;
     const currentTests = testCountByAdset[proposal.adset_id] || 0;
-    if (proposal.adset_id !== 'proactive' && currentTests >= MAX_TESTS_PER_ADSET) {
+    // El cap por-adset solo aplica a FOTO; el video va a su campaña propia.
+    if (!isVid && proposal.adset_id !== 'proactive' && currentTests >= MAX_TESTS_PER_ADSET) {
       continue; // ya tiene suficientes tests
     }
     const ads = await getAdsForAdSet(proposal.adset_id);
