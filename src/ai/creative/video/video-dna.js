@@ -79,13 +79,18 @@ function keys(dim) {
  * Cada valor arranca con `floor` (explore) y suma bonus por avg_roas si tiene
  * muestra suficiente (exploit). Sin data → todos parejos (explore puro).
  */
-function pickWeighted(dim, statsByKey = {}, { minSamples = 2, floor = 1, k = 1.2 } = {}) {
+function pickWeighted(dim, statsByKey = {}, { minSamples = 2, floor = 1, k = 1.2, kHold = 3 } = {}) {
   const values = DIMS[dim] || [];
   if (!values.length) return null;
   const weights = values.map(v => {
     const s = statsByKey[v.key];
     let w = floor;
-    if (s && s.n >= minSamples && s.avg_roas > 0) w += s.avg_roas * k;
+    if (s && s.n >= minSamples) {
+      // ROAS = verdad de negocio (domina). hold_rate = señal TEMPRANA de retención
+      // (llega antes que las compras) → nudge mientras el ROAS junta muestra.
+      if (s.avg_roas > 0) w += s.avg_roas * k;
+      if (s.avg_hold > 0) w += s.avg_hold * kHold;
+    }
     return w;
   });
   const total = weights.reduce((a, b) => a + b, 0);
@@ -116,17 +121,23 @@ async function getDimensionStats(dim) {
     const key = v[field];
     if (!key) continue;
     const m = byProp[String(v._id)] || {};
-    agg[key] = agg[key] || { n: 0, roas_sum: 0, ctr_sum: 0, graduated: 0, killed: 0 };
+    agg[key] = agg[key] || { n: 0, roas_sum: 0, ctr_sum: 0, hold_sum: 0, thumb_sum: 0, graduated: 0, killed: 0 };
     agg[key].n++;
     agg[key].roas_sum += (m.roas || 0);
     agg[key].ctr_sum += (m.ctr || 0);
+    agg[key].hold_sum += (m.hold_rate || 0);    // % que ve el video completo
+    agg[key].thumb_sum += (m.thumbstop_rate || 0); // % que se queda a verlo
     if (v.status === 'graduated') agg[key].graduated++;
     if (v.status === 'killed') agg[key].killed++;
   }
   const out = {};
   for (const key in agg) {
     const a = agg[key];
-    out[key] = { n: a.n, avg_roas: a.roas_sum / a.n, avg_ctr: a.ctr_sum / a.n, graduated: a.graduated, killed: a.killed };
+    out[key] = {
+      n: a.n, avg_roas: a.roas_sum / a.n, avg_ctr: a.ctr_sum / a.n,
+      avg_hold: a.hold_sum / a.n, avg_thumbstop: a.thumb_sum / a.n,
+      graduated: a.graduated, killed: a.killed
+    };
   }
   return out;
 }

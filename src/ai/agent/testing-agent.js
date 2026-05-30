@@ -1215,4 +1215,4 @@ async function updateGraduatedMetrics() {
   return { updated, skipped, total: graduatedTests.length };
 }
 
-module.exports = { runTestingAgent, updateGraduatedMetrics };
+module.exports = { runTestingAgent, updateGraduatedMetrics, launchTests };

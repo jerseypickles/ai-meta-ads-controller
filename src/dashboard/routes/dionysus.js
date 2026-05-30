@@ -40,7 +40,8 @@ router.get('/stats', async (req, res) => {
         motion_variant: v.motion_variant, camera: v.camera, scene: v.scene,
         status: v.status, video_url: v.video_url,
         ctr: r2(m.ctr), roas: r2(m.roas), spend: r2(m.spend), purchases: m.purchases || 0,
-        impressions: m.impressions || 0
+        impressions: m.impressions || 0,
+        hold_rate: m.hold_rate || 0, thumbstop_rate: m.thumbstop_rate || 0
       };
     });
 
@@ -49,15 +50,16 @@ router.get('/stats', async (req, res) => {
       const by = {};
       for (const v of tested) {
         const k = v[field] || '—';
-        by[k] = by[k] || { variant: k, n: 0, ctr_sum: 0, roas_sum: 0, graduated: 0, killed: 0 };
+        by[k] = by[k] || { variant: k, n: 0, ctr_sum: 0, roas_sum: 0, hold_sum: 0, graduated: 0, killed: 0 };
         const b = by[k];
-        b.n++; b.ctr_sum += v.ctr; b.roas_sum += v.roas;
+        b.n++; b.ctr_sum += v.ctr; b.roas_sum += v.roas; b.hold_sum += (v.hold_rate || 0);
         if (v.status === 'graduated') b.graduated++;
         if (v.status === 'killed') b.killed++;
       }
       return Object.values(by).map(b => ({
         variant: b.variant, tested: b.n,
         avg_ctr: r2(b.ctr_sum / b.n), avg_roas: r2(b.roas_sum / b.n),
+        avg_hold: Math.round((b.hold_sum / b.n) * 100), // % visto completo
         graduated: b.graduated, killed: b.killed,
         win_rate: b.n ? Math.round((b.graduated / b.n) * 100) : 0
       })).sort((a, b) => b.avg_roas - a.avg_roas);
@@ -140,8 +142,17 @@ router.post('/:id/approve', async (req, res) => {
     p.status = 'ready';
     p.decided_at = new Date();
     await p.save();
-    logger.info(`[DIONISIO] video aprobado: "${p.headline}" → ready (Prometheus lo testeará)`);
-    res.json({ success: true, status: 'ready' });
+    logger.info(`[DIONISIO] video aprobado: "${p.headline}" → ready`);
+    // Lanzar el test YA — no esperar al cron de Prometheus (async, fire-and-forget).
+    try {
+      const { launchTests } = require('../../ai/agent/testing-agent');
+      launchTests()
+        .then(n => logger.info(`[DIONISIO] approve → launchTests inmediato: ${n} lanzado(s)`))
+        .catch(e => logger.error(`[DIONISIO] approve → launchTests falló: ${e.message}`));
+    } catch (e) {
+      logger.warn(`[DIONISIO] no se pudo disparar launchTests inmediato: ${e.message}`);
+    }
+    res.json({ success: true, status: 'ready', launching: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

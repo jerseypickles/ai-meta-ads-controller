@@ -146,7 +146,7 @@ function DionysusPanel() {
                   <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.7, padding: '4px 8px' }}>{dim.label}</div>
                   <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
                     <thead><tr style={{ opacity: 0.55, textAlign: 'left' }}>
-                      <th style={{ padding: 8 }}>Valor</th><th>Test</th><th>CTR</th><th>ROAS</th><th>Win</th>
+                      <th style={{ padding: 8 }}>Valor</th><th>Test</th><th>CTR</th><th title="% que ve el video completo">Hold</th><th>ROAS</th><th>Win</th>
                     </tr></thead>
                     <tbody>
                       {rows.map(d => (
@@ -154,6 +154,7 @@ function DionysusPanel() {
                           <td style={{ padding: 8, fontWeight: 600, color: FUCHSIA }}>{d.variant}</td>
                           <td>{d.tested}</td>
                           <td>{d.avg_ctr}%</td>
+                          <td style={{ color: d.avg_hold >= 10 ? '#34d399' : '#cbd5e1' }}>{d.avg_hold ?? 0}%</td>
                           <td style={{ color: d.avg_roas >= 2 ? '#34d399' : '#f87171' }}>{d.avg_roas}x</td>
                           <td>{d.win_rate}%</td>
                         </tr>
