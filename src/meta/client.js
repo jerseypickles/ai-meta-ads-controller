@@ -1549,7 +1549,7 @@ class MetaClient {
    * Requiere: page_id, image_hash o video_id, copy, headline, CTA, link.
    */
   async createAdCreative(params) {
-    const { page_id, image_hash, video_id, headline, body, description, cta, link_url } = params;
+    const { page_id, image_hash, video_id, headline, body, description, cta, link_url, thumbnail_url, thumbnail_hash } = params;
 
     if (!page_id) throw new Error('page_id es requerido para crear creative');
     if (!image_hash && !video_id) throw new Error('Se requiere image_hash o video_id');
@@ -1558,23 +1558,39 @@ class MetaClient {
       throw new Error('link_url es requerido para crear ad creative. Agrega el link de producto al creativo en el banco.');
     }
 
-    const linkData = {
-      message: body || '',
-      link: link_url,
-      name: headline || '',
-      description: description || '',
-      call_to_action: {
-        type: cta || 'SHOP_NOW',
-        value: { link: link_url }
-      }
-    };
-
-    if (image_hash) {
-      linkData.image_hash = image_hash;
-    }
-
+    // VIDEO vs IMAGEN: Meta usa estructuras distintas en object_story_spec.
+    // - Imagen → link_data (con image_hash)
+    // - Video  → video_data (con video_id + thumbnail OBLIGATORIO image_hash/image_url)
+    //   El video_id NO se acepta en link_data (error 1443050). (2026-05-30)
+    let storySpecInner;
     if (video_id) {
-      linkData.video_id = video_id;
+      const videoData = {
+        video_id,
+        message: body || '',
+        title: headline || '',
+        link_description: description || '',
+        call_to_action: {
+          type: cta || 'SHOP_NOW',
+          value: { link: link_url }
+        }
+      };
+      // Thumbnail requerido por Meta para video ads. Preferimos hash; si no, URL pública.
+      if (thumbnail_hash) videoData.image_hash = thumbnail_hash;
+      else if (thumbnail_url) videoData.image_url = thumbnail_url;
+      storySpecInner = { video_data: videoData };
+    } else {
+      const linkData = {
+        message: body || '',
+        link: link_url,
+        name: headline || '',
+        description: description || '',
+        call_to_action: {
+          type: cta || 'SHOP_NOW',
+          value: { link: link_url }
+        },
+        image_hash
+      };
+      storySpecInner = { link_data: linkData };
     }
 
     const creativeParams = {
@@ -1582,7 +1598,7 @@ class MetaClient {
       object_story_spec: JSON.stringify({
         page_id,
         instagram_user_id: params.instagram_user_id || '17841404033228624',
-        link_data: linkData
+        ...storySpecInner
       })
     };
 

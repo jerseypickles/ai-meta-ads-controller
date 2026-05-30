@@ -287,7 +287,25 @@ async function launchTests() {
         fs.writeFileSync(tmpVid, Buffer.from(resp.data));
         const vup = await meta.uploadVideo(tmpVid);
         try { fs.unlinkSync(tmpVid); } catch (_) {}
-        creative = await meta.createAdCreative({ ...creativeBase, video_id: vup.video_id });
+
+        // Thumbnail OBLIGATORIO para video ads (Meta video_data exige image_hash/url).
+        // Usamos la imagen ORIGEN del video (su primer frame) → subir → image_hash.
+        let thumbnail_hash = null;
+        try {
+          if (proposal.source_proposal_id) {
+            const src = await CreativeProposal.findById(proposal.source_proposal_id).select('image_base64').lean();
+            if (src?.image_base64) {
+              const tmpThumb = path.join(tmpDir, `thumb_${proposal._id}.png`);
+              fs.writeFileSync(tmpThumb, Buffer.from(src.image_base64, 'base64'));
+              const tup = await meta.uploadImage(tmpThumb);
+              try { fs.unlinkSync(tmpThumb); } catch (_) {}
+              thumbnail_hash = tup.image_hash;
+            }
+          }
+        } catch (thErr) {
+          logger.warn(`[TESTING-AGENT] No se pudo subir thumbnail del video ${proposal._id}: ${thErr.message}`);
+        }
+        creative = await meta.createAdCreative({ ...creativeBase, video_id: vup.video_id, thumbnail_hash });
       } else {
         // IMAGEN (Apollo): escribir base64 → subir → image_hash
         const tmpPath = path.join(tmpDir, `test_${proposal._id}.png`);
