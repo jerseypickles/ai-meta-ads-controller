@@ -32,7 +32,7 @@ async function _getCandidates() {
   const candidates = await CreativeProposal.find({
     media_type: { $ne: 'video' },
     status: { $in: ['testing', 'graduated', 'ready'] },
-    image_base64: { $ne: '' }
+    image_base64: { $type: 'string', $ne: '' }
   }).sort({ status: 1, created_at: -1 }).limit(40).lean();
 
   // Filtrar los que YA tienen un video hijo (dedup).

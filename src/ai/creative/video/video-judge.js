@@ -36,10 +36,22 @@ Return ONLY JSON: {"score": <0-100>, "suitable": <true|false>, "reason": "<one s
 async function judgeVideoSuitability(imageBase64, productName = 'the product') {
   const apiKey = config.claude?.apiKey || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY no configurada — video-judge no disponible');
+  // Sin imagen → no apto (no llamar a la API con data vacía).
+  if (!imageBase64 || imageBase64.length < 100) {
+    return { score: 0, suitable: false, reason: 'sin imagen', suggested_motion: 'none' };
+  }
   const client = new Anthropic({ apiKey });
 
+  // Detectar el formato real desde los magic bytes del base64 (las imágenes de
+  // Apollo suelen ser JPEG; mandar image/png hardcodeado hace fallar a Claude).
+  const mediaType = imageBase64.startsWith('/9j/') ? 'image/jpeg'
+    : imageBase64.startsWith('iVBOR') ? 'image/png'
+    : imageBase64.startsWith('UklGR') ? 'image/webp'
+    : imageBase64.startsWith('R0lGOD') ? 'image/gif'
+    : 'image/jpeg';
+
   const content = [
-    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: imageBase64 } },
+    { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBase64 } },
     { type: 'text', text: PROMPT(productName) }
   ];
 

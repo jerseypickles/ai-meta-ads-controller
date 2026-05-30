@@ -159,9 +159,13 @@ app.get('/vsrc/:id.png', async (req, res) => {
     const CreativeProposal = require('../db/models/CreativeProposal');
     const p = await CreativeProposal.findById(req.params.id).select('image_base64').lean();
     if (!p || !p.image_base64) return res.status(404).send('not found');
-    res.set('Content-Type', 'image/png');
+    const b64 = p.image_base64;
+    const mime = b64.startsWith('/9j/') ? 'image/jpeg'
+      : b64.startsWith('iVBOR') ? 'image/png'
+      : b64.startsWith('UklGR') ? 'image/webp' : 'image/jpeg';
+    res.set('Content-Type', mime);
     res.set('Cache-Control', 'public, max-age=3600');
-    return res.send(Buffer.from(p.image_base64, 'base64'));
+    return res.send(Buffer.from(b64, 'base64'));
   } catch (e) {
     return res.status(400).send('bad request');
   }
