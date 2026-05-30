@@ -23,6 +23,7 @@ const testRunSchema = new mongoose.Schema({
 
   // Config del test
   daily_budget: { type: Number, default: 10 },
+  media_type: { type: String, enum: ['image', 'video'], default: 'image' }, // tipo de creativo (2026-05-30)
   max_days: { type: Number, default: 7 },
 
   // Fase del test

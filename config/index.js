@@ -22,6 +22,10 @@ module.exports = {
     // antes se leía directo de process.env sin pasar por config (único env
     // var high-impact sin declarar).
     testingCampaignId: process.env.TESTING_CAMPAIGN_ID || '',
+    // Campaña SEPARADA para testear creativos de VIDEO (Dionisio). Los videos
+    // se testean aparte de las fotos (campaña propia, ABO $25/adset). Si está
+    // vacío → SystemConfig 'video_testing_campaign_id' → auto-crea. (2026-05-30)
+    videoTestingCampaignId: process.env.VIDEO_TESTING_CAMPAIGN_ID || '',
     rateLimit: {
       maxCalls: 200,
       perHour: 1,

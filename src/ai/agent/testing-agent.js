@@ -16,6 +16,7 @@ const { getAdsForAdSet } = require('../../db/queries');
 // ═══════════════════════════════════════════════════════════════════════════════
 const MAX_CONCURRENT_TESTS = 100;
 const TEST_DAILY_BUDGET = 20; // $20/dia (10→20 el 30-may: más delivery/señal por test + kills más rápidos)
+const VIDEO_TEST_DAILY_BUDGET = 25; // $25/dia ABO para tests de VIDEO (Dionisio), campaña aparte. (2026-05-30)
 const MAX_DAILY_TESTING_BUDGET = 1000; // Cap diario total. 2026-05-28: 200→500. 2026-05-29: 500→1000 — la entrega rampeaba contra el techo de $500, el creador subió el cap para acelerar señal del pixel. Acoplado a MAX_CONCURRENT_TESTS (100 × $10). Bajar cuando haya señal estable.
 const MAX_LAUNCHES_PER_CYCLE = 8; // Max tests nuevos por ciclo (5→8 el 28-may para ramp rápido en cold-start)
 const TEST_MAX_DAYS = 7;
@@ -58,6 +59,32 @@ async function getTestingCampaignId() {
 
   await SystemConfig.set('testing_campaign_id', result.campaign_id);
   logger.info(`[TESTING-AGENT] Campana de testing creada: ${result.campaign_id}`);
+  return result.campaign_id;
+}
+
+/**
+ * Obtener o crear la campana de testing de VIDEO (Dionisio).
+ * Los creativos de video se testean en su PROPIA campana (separada de las fotos),
+ * ABO $25/adset. Mismo patron que getTestingCampaignId: env → SystemConfig → auto-crear.
+ */
+async function getVideoTestingCampaignId() {
+  const config = require('../../../config');
+  if (config.meta.videoTestingCampaignId) return config.meta.videoTestingCampaignId;
+
+  const stored = await SystemConfig.get('video_testing_campaign_id', null);
+  if (stored) return stored;
+
+  const { getMetaClient } = require('../../meta/client');
+  const meta = getMetaClient();
+  const result = await meta.createCampaign({
+    name: '[TESTING-VIDEO] Video Creative Testing Pipeline',
+    objective: 'OUTCOME_SALES',
+    status: 'ACTIVE',
+    special_ad_categories: []
+  });
+
+  await SystemConfig.set('video_testing_campaign_id', result.campaign_id);
+  logger.info(`[TESTING-AGENT] Campana de testing de VIDEO creada: ${result.campaign_id}`);
   return result.campaign_id;
 }
 
@@ -183,6 +210,8 @@ async function launchTests() {
   // Obtener campaign + pixel
   const campaignId = await getTestingCampaignId();
   const pixelInfo = await meta.getPixelId();
+  // Lazy: solo resolvemos/creamos la campana de video si aparece un proposal de video.
+  let videoCampaignId = null;
 
   let launched = 0;
 
@@ -191,14 +220,24 @@ async function launchTests() {
     let createdAdsetId = null;
     let adCreated = false;
     try {
-      const testName = `[TEST] ${proposal.headline}`;
+      const isVideo = proposal.media_type === 'video' && !!proposal.video_url;
+      // VIDEO → campana propia + $25 ABO. FOTO → campana de testing normal + $20.
+      let targetCampaignId = campaignId;
+      let dailyBudget = TEST_DAILY_BUDGET;
+      if (isVideo) {
+        if (!videoCampaignId) videoCampaignId = await getVideoTestingCampaignId();
+        targetCampaignId = videoCampaignId;
+        dailyBudget = VIDEO_TEST_DAILY_BUDGET;
+      }
+      // Prefijo [TEST] siempre (Athena/Ares lo usan para excluir tests del scan).
+      const testName = `[TEST]${isVideo ? ' 🎬' : ''} ${proposal.headline}`;
 
       // 1. Crear test ad set
       if (launched === 0) logger.info(`[TESTING-AGENT] pixelInfo: ${JSON.stringify(pixelInfo)}`);
       const adset = await meta.createAdSet({
-        campaign_id: campaignId,
+        campaign_id: targetCampaignId,
         name: testName,
-        daily_budget: TEST_DAILY_BUDGET,
+        daily_budget: dailyBudget,
         optimization_goal: pixelInfo.optimization_goal || 'OFFSITE_CONVERSIONS',
         billing_event: pixelInfo.billing_event || 'IMPRESSIONS',
         bid_strategy: pixelInfo.bid_strategy || 'LOWEST_COST_WITHOUT_CAP',
@@ -259,8 +298,9 @@ async function launchTests() {
         test_adset_name: testName,
         test_ad_id: ad.ad_id,
         test_creative_id: creative.creative_id,
-        campaign_id: campaignId,
-        daily_budget: TEST_DAILY_BUDGET,
+        campaign_id: targetCampaignId,
+        daily_budget: dailyBudget,
+        media_type: isVideo ? 'video' : 'image',
         max_days: TEST_MAX_DAYS,
         phase: 'learning',
         launched_at: new Date()
