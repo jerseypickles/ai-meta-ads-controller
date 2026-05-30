@@ -19,6 +19,7 @@ import {
 } from '../api';
 
 import AthenaPanel from '../components/AthenaPanel';
+import DionysusPanel from '../components/DionysusPanel';
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
 const ImpactOrb = React.lazy(() => import('../components/ImpactOrb'));
 const BrainKnowledgeOrb = React.lazy(() => import('../components/BrainKnowledgeOrb'));
@@ -421,6 +422,9 @@ export default function BrainIntelligence() {
           Ares
           {(aresData?.active_duplicates || 0) > 0 && <span className="tab-badge" style={{ background: '#ef4444' }}>{aresData.active_duplicates}</span>}
         </button>
+        <button className={`brain-tab ${activeTab === 'dionysus' ? 'active' : ''}`} data-agent="dionysus" onClick={() => setActiveTab('dionysus')}>
+          🎭 Dionisio
+        </button>
       </div>
 
       {/* Lightbox global */}
@@ -505,6 +509,8 @@ export default function BrainIntelligence() {
             }}
             onRefresh={loadAresData}
           />
+        ) : activeTab === 'dionysus' ? (
+          <DionysusPanel />
         ) : null}
       </div>
 

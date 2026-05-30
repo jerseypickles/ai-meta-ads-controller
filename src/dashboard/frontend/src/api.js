@@ -307,6 +307,24 @@ export const runCreativeAgentApi = async () => {
   return data;
 };
 
+// ── Dionisio 🎭 (video) ──
+export const getDionysusPending = async () => {
+  const { data } = await api.get('/api/dionysus/pending');
+  return data;
+};
+export const runDionysusApi = async () => {
+  const { data } = await api.post('/api/dionysus/run', {});
+  return data;
+};
+export const approveDionysusVideo = async (id) => {
+  const { data } = await api.post(`/api/dionysus/${id}/approve`, {});
+  return data;
+};
+export const rejectDionysusVideo = async (id, reason) => {
+  const { data } = await api.post(`/api/dionysus/${id}/reject`, { reason });
+  return data;
+};
+
 export const getProductImageUrl = (productId, filename) => {
   const BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
   const token = localStorage.getItem('auth_token');
