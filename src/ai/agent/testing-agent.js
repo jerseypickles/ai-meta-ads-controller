@@ -208,28 +208,37 @@ async function launchTests() {
       });
       createdAdsetId = adset.adset_id;
 
-      // 2. Subir imagen — escribir base64 a temp file
+      // 2. Subir media (imagen o video según media_type) y armar el creative.
       const tmpDir = path.join(os.tmpdir(), 'testing-agent');
       if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-      const tmpPath = path.join(tmpDir, `test_${proposal._id}.png`);
-      fs.writeFileSync(tmpPath, Buffer.from(proposal.image_base64, 'base64'));
-
-      const upload = await meta.uploadImage(tmpPath);
-
-      // Limpiar temp file
-      try { fs.unlinkSync(tmpPath); } catch (_) {}
-
-      // 3. Crear ad creative
       const pageId = await meta.getPageId();
-      const creative = await meta.createAdCreative({
+      const creativeBase = {
         page_id: pageId,
-        image_hash: upload.image_hash,
         headline: proposal.headline,
         body: proposal.primary_text,
         description: '',
         cta: 'SHOP_NOW',
         link_url: proposal.link_url || 'https://jerseypickles.com'
-      });
+      };
+
+      let creative;
+      if (proposal.media_type === 'video' && proposal.video_url) {
+        // VIDEO (Dionisio): descargar el .mp4 → subir a Meta → video_id
+        const axios = require('axios');
+        const tmpVid = path.join(tmpDir, `test_${proposal._id}.mp4`);
+        const resp = await axios.get(proposal.video_url, { responseType: 'arraybuffer', timeout: 60000 });
+        fs.writeFileSync(tmpVid, Buffer.from(resp.data));
+        const vup = await meta.uploadVideo(tmpVid);
+        try { fs.unlinkSync(tmpVid); } catch (_) {}
+        creative = await meta.createAdCreative({ ...creativeBase, video_id: vup.video_id });
+      } else {
+        // IMAGEN (Apollo): escribir base64 → subir → image_hash
+        const tmpPath = path.join(tmpDir, `test_${proposal._id}.png`);
+        fs.writeFileSync(tmpPath, Buffer.from(proposal.image_base64, 'base64'));
+        const upload = await meta.uploadImage(tmpPath);
+        try { fs.unlinkSync(tmpPath); } catch (_) {}
+        creative = await meta.createAdCreative({ ...creativeBase, image_hash: upload.image_hash });
+      }
 
       // 4. Crear ad
       const adName = `${proposal.headline} [TEST]`;
