@@ -1472,6 +1472,29 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'video-source-generator' });
   logger.info('  [*] Video-Source Generator — 5x/día (pool máx 30 para Dionisio)');
 
+  // Dionisio — anima videos 2x/día (9am, 5pm ET) desde el pool de imágenes-fuente.
+  // Los deja en 'pending_video_review' para APROBACIÓN MANUAL del creador (no es
+  // autónomo end-to-end — el creador elige qué videos van a testeo). Skip si ya
+  // hay muchos esperando review (no inflar la cola con videos sin aprobar = no quemar
+  // créditos de video, que es caro). Cap via DIONYSUS_PENDING_REVIEW_CAP.
+  cron.schedule('0 9,17 * * *', async () => {
+    try {
+      const CreativeProposal = require('./db/models/CreativeProposal');
+      const pendingReview = await CreativeProposal.countDocuments({ media_type: 'video', status: 'pending_video_review' });
+      const cap = parseInt(process.env.DIONYSUS_PENDING_REVIEW_CAP || '8', 10);
+      if (pendingReview >= cap) {
+        logger.info(`[CRON] Dionisio SKIP — ${pendingReview} videos esperando review (cap ${cap}); aprobá/rechazá antes de generar más`);
+        return;
+      }
+      const { runDionysus } = require('./ai/agent/dionysus-agent');
+      const r = await runDionysus();
+      logger.info(`[CRON] Dionisio: ${JSON.stringify(r).slice(0, 200)}`);
+    } catch (err) {
+      logger.error(`[CRON] Dionisio falló: ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'dionysus' });
+  logger.info('  [*] Dionisio — 2x/día (9am, 5pm ET) genera videos → review MANUAL');
+
   // Hermes Agent — 5x/día (9am, 12pm, 3pm, 6pm, 9pm ET) — foot traffic NJ store
   // Aumentado de 2x → 5x el 14-may-2026 para acelerar inyección de creativos
   // los primeros 7d. Solo registra el cron si HERMES_ENABLED=true.
