@@ -187,6 +187,9 @@ async function launchTests() {
   let launched = 0;
 
   for (const { proposal } of prioritized) {
+    // Tracking para limpiar el adset si la creación del ad falla (evita orphans).
+    let createdAdsetId = null;
+    let adCreated = false;
     try {
       const testName = `[TEST] ${proposal.headline}`;
 
@@ -203,6 +206,7 @@ async function launchTests() {
         targeting: { geo_locations: { countries: ['US'] }, age_min: 18, age_max: 65 },
         status: 'ACTIVE'
       });
+      createdAdsetId = adset.adset_id;
 
       // 2. Subir imagen — escribir base64 a temp file
       const tmpDir = path.join(os.tmpdir(), 'testing-agent');
@@ -230,6 +234,7 @@ async function launchTests() {
       // 4. Crear ad
       const adName = `${proposal.headline} [TEST]`;
       const ad = await meta.createAd(adset.adset_id, creative.creative_id, adName, 'ACTIVE');
+      adCreated = true;
 
       // 5. Actualizar proposal
       await CreativeProposal.findByIdAndUpdate(proposal._id, {
@@ -260,6 +265,16 @@ async function launchTests() {
       const detail = metaError ? `${metaError.message} (code: ${metaError.code}, subcode: ${metaError.error_subcode})` : err.message;
       logger.error(`[TESTING-AGENT] Error lanzando test para "${proposal.headline}": ${detail}`);
       if (metaError) logger.error(`[TESTING-AGENT] Meta error detail: ${JSON.stringify(metaError)}`);
+      // CLEANUP: si se creó el adset pero el ad falló → borrar el adset huérfano
+      // (si no, queda un [TEST] vacío sin ad ocupando lugar y ensuciando).
+      if (createdAdsetId && !adCreated) {
+        try {
+          await meta.deleteObject(createdAdsetId);
+          logger.info(`[TESTING-AGENT] Adset huérfano ${createdAdsetId} borrado tras fallo de ad`);
+        } catch (delErr) {
+          logger.warn(`[TESTING-AGENT] No se pudo borrar adset huérfano ${createdAdsetId}: ${delErr.message}`);
+        }
+      }
       // Marcar como failed para no reintentar
       await CreativeProposal.findByIdAndUpdate(proposal._id, {
         $set: { status: 'failed', rejection_reason: `test launch failed: ${detail}` }
