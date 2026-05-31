@@ -6,31 +6,14 @@ const mongoose = require('mongoose');
 // mapea el funnel y detecta eventos rotos / caídas bruscas (pixel/CAPI).
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const funnelStep = {
-  impressions: { type: Number, default: 0 },
-  link_clicks: { type: Number, default: 0 },
-  landing_page_view: { type: Number, default: 0 },
-  view_content: { type: Number, default: 0 },
-  add_to_cart: { type: Number, default: 0 },
-  initiate_checkout: { type: Number, default: 0 },
-  purchase: { type: Number, default: 0 },
-  spend: { type: Number, default: 0 },
-  purchase_value: { type: Number, default: 0 }
-};
-
 const argosSnapshotSchema = new mongoose.Schema({
-  // Funnel por ventana (eventos crudos del pixel a nivel cuenta)
-  funnel_today: funnelStep,
-  funnel_7d: funnelStep,
-
-  // Tasas de conversión entre pasos (0-100). Calculadas sobre la ventana 7d.
-  rates: {
-    click_to_lpv: { type: Number, default: 0 },     // link_clicks → landing_page_view
-    lpv_to_vc: { type: Number, default: 0 },         // landing_page_view → view_content
-    vc_to_atc: { type: Number, default: 0 },         // view_content → add_to_cart
-    atc_to_ic: { type: Number, default: 0 },         // add_to_cart → initiate_checkout
-    ic_to_purchase: { type: Number, default: 0 }     // initiate_checkout → purchase
-  },
+  // Funnel del PIXEL (eventos reales: page_view/view_content/add_to_cart/
+  // initiate_checkout/purchase) + tasas. Mixed = flexible para evolucionar.
+  funnel_7d: { type: mongoose.Schema.Types.Mixed, default: {} },
+  funnel_today: { type: mongoose.Schema.Types.Mixed, default: {} },
+  rates: { type: mongoose.Schema.Types.Mixed, default: {} },
+  window_days: { type: Number, default: 30 },
+  pixel_meta: { type: mongoose.Schema.Types.Mixed, default: {} }, // last_fired_time, is_unavailable
 
   // Issues detectados (eventos rotos / caídas / cuellos de botella del funnel)
   issues: [{

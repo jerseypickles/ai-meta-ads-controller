@@ -12,16 +12,13 @@ const logger = require('../../utils/logger');
 const ArgosSnapshot = require('../../db/models/ArgosSnapshot');
 const { getMetaClient } = require('../../meta/client');
 
-// Mapeo de pasos del funnel → action_types de Meta, EN ORDEN DE PREFERENCIA.
-// Meta devuelve el MISMO evento bajo varios nombres (omni_*, fb_pixel_*, raw) con
-// el mismo valor → hay que tomar UNO (el primero presente), NO sumar (triplicaría).
-// Orden: omni_* (total cross-channel dedupeado) → fb_pixel_* → raw.
-const EVENT_TYPES = {
-  landing_page_view: ['omni_landing_page_view', 'landing_page_view'],
-  view_content: ['omni_view_content', 'offsite_conversion.fb_pixel_view_content', 'view_content'],
-  add_to_cart: ['omni_add_to_cart', 'offsite_conversion.fb_pixel_add_to_cart', 'add_to_cart'],
-  initiate_checkout: ['omni_initiated_checkout', 'offsite_conversion.fb_pixel_initiate_checkout', 'initiate_checkout'],
-  purchase: ['omni_purchase', 'offsite_conversion.fb_pixel_purchase', 'purchase']
+// Eventos del PIXEL (como los nombra Events Manager) → key interna del funnel.
+const PIXEL_EVENT_MAP = {
+  PageView: 'page_view',
+  ViewContent: 'view_content',
+  AddToCart: 'add_to_cart',
+  InitiateCheckout: 'initiate_checkout',
+  Purchase: 'purchase'
 };
 
 // Umbrales de cuellos de botella (tasas %, sobre 7d). Configurables por env.
@@ -32,113 +29,93 @@ const TH = {
   ic_to_purchase: parseFloat(process.env.ARGOS_TH_IC_PUR || '40')
 };
 
-// Toma el PRIMER action_type presente de la lista (dedup) — NO suma (el mismo
-// evento viene bajo varios nombres con el mismo valor).
-function _pickEvent(actions, types) {
-  if (!Array.isArray(actions)) return 0;
-  for (const t of types) {
-    const a = actions.find(x => x.action_type === t);
-    if (a) return parseInt(a.value) || 0;
-  }
-  return 0;
-}
-
 function _rate(num, den) { return den > 0 ? Math.round((num / den) * 1000) / 10 : 0; }
 
-/** Trae el funnel a nivel cuenta para un time_range (1 call). */
-async function getAccountFunnel(timeRange) {
+/** Metadata del pixel: nombre, último evento recibido, disponibilidad. */
+async function getPixelMeta() {
   const meta = getMetaClient();
-  const rows = await meta.getInsights(config.meta.adAccountId, {
-    fields: 'spend,impressions,inline_link_clicks,actions,action_values',
-    time_range: JSON.stringify(timeRange)
-  });
-  const r = (rows && rows[0]) || {};
-  const actions = r.actions || [];
-  const f = {
-    impressions: parseInt(r.impressions) || 0,
-    link_clicks: parseInt(r.inline_link_clicks) || 0,
-    landing_page_view: _pickEvent(actions, EVENT_TYPES.landing_page_view),
-    view_content: _pickEvent(actions, EVENT_TYPES.view_content),
-    add_to_cart: _pickEvent(actions, EVENT_TYPES.add_to_cart),
-    initiate_checkout: _pickEvent(actions, EVENT_TYPES.initiate_checkout),
-    purchase: _pickEvent(actions, EVENT_TYPES.purchase),
-    spend: parseFloat(r.spend) || 0
-  };
+  const pid = config.meta.pixelId;
+  try {
+    return await meta.get(`/${pid}`, { fields: 'name,last_fired_time,is_unavailable' });
+  } catch (e) {
+    logger.warn(`[ARGOS] getPixelMeta falló: ${e.message}`);
+    return {};
+  }
+}
+
+/**
+ * Funnel REAL del pixel (todos los eventos, no solo los atribuidos a ads) vía
+ * el endpoint /{pixel_id}/stats?aggregation=event. Suma los conteos por evento
+ * sobre la ventana. Es la misma data que muestra Events Manager.
+ */
+async function getPixelFunnel(days = 30) {
+  const meta = getMetaClient();
+  const pid = config.meta.pixelId;
+  const end = Math.floor(Date.now() / 1000);
+  const start = end - days * 86400;
+  const res = await meta.get(`/${pid}/stats`, { aggregation: 'event', start, end });
+  const buckets = res.data || [];
+  const f = { page_view: 0, view_content: 0, add_to_cart: 0, initiate_checkout: 0, purchase: 0 };
+  let minT = null, maxT = null, nBuckets = 0;
+  for (const b of buckets) {
+    nBuckets++;
+    if (b.start_time) { if (!minT || b.start_time < minT) minT = b.start_time; if (!maxT || b.start_time > maxT) maxT = b.start_time; }
+    for (const e of (b.data || [])) {
+      const key = PIXEL_EVENT_MAP[e.value];
+      if (key) f[key] += parseInt(e.count) || 0;
+    }
+  }
+  f.range_start = minT; f.range_end = maxT; f.buckets = nBuckets;
   return f;
 }
 
 /**
- * Analiza el pixel sobre una ventana (days, default 30). Funnel + tasas + issues:
- * detecta eventos sub-instrumentados (LPV/VC/ATC/IC que no disparan vs los clicks
- * y las compras) — el caso típico de pixel mal configurado.
+ * Analiza el PIXEL (eventos reales, no solo atribuidos a ads) sobre una ventana.
+ * Funnel PageView→ViewContent→AddToCart→InitiateCheckout→Purchase + frescura +
+ * disponibilidad + cuellos de botella. Misma data que Events Manager.
  */
 async function analyzePixel(days = 30) {
-  const moment = require('moment-timezone');
-  const TZ = config.system.timezone || 'America/New_York';
-  const today = moment().tz(TZ).format('YYYY-MM-DD');
-  const yesterday = moment().tz(TZ).subtract(1, 'days').format('YYYY-MM-DD');
-  const since = moment().tz(TZ).subtract(days, 'days').format('YYYY-MM-DD');
-
-  // Ventana principal (incluye hoy para no perder días en cuentas nuevas).
-  const f = await getAccountFunnel({ since, until: today });
+  const [f, pmeta] = await Promise.all([
+    getPixelFunnel(days),
+    getPixelMeta()
+  ]);
 
   const rates = {
-    click_to_lpv: _rate(f.landing_page_view, f.link_clicks),
-    lpv_to_vc: _rate(f.view_content, f.landing_page_view),
+    pv_to_vc: _rate(f.view_content, f.page_view),
     vc_to_atc: _rate(f.add_to_cart, f.view_content),
     atc_to_ic: _rate(f.initiate_checkout, f.add_to_cart),
     ic_to_purchase: _rate(f.purchase, f.initiate_checkout)
   };
 
   const issues = [];
-  const pur = f.purchase, clicks = f.link_clicks;
 
-  // ── 1. PageView casi no dispara vs clicks (pixel no carga / bounce) ──
-  if (clicks >= 50 && f.landing_page_view < clicks * 0.3) {
-    issues.push({
-      severity: 'critical', kind: 'broken_event', event: 'landing_page_view',
-      message: `Solo ${rates.click_to_lpv}% de los clicks registran Landing Page View (${f.landing_page_view}/${clicks}) — el pixel no carga en la mayoría de las visitas (o bounce altísimo / problema de tracking)`,
-      detail: { lpv: f.landing_page_view, link_clicks: clicks, rate: rates.click_to_lpv }
-    });
+  // ── 1. Disponibilidad del pixel ──
+  if (pmeta.is_unavailable) {
+    issues.push({ severity: 'critical', kind: 'broken_event', event: 'pixel', message: 'Meta marca el pixel como NO DISPONIBLE — no está recibiendo eventos correctamente.', detail: {} });
   }
 
-  // ── 2. ViewContent < compras = el evento de vista de producto no dispara ──
-  if (pur >= 3 && f.view_content < pur) {
-    issues.push({
-      severity: 'critical', kind: 'broken_event', event: 'view_content',
-      message: `ViewContent (${f.view_content}) es MENOR que las compras (${pur}) — debería ser muchísimo mayor. El evento ViewContent casi no se registra; el pixel no trackea las vistas de producto`,
-      detail: { view_content: f.view_content, purchase: pur }
-    });
+  // ── 2. Frescura (último evento recibido) ──
+  if (pmeta.last_fired_time) {
+    const hrs = (Date.now() - new Date(pmeta.last_fired_time).getTime()) / 3600000;
+    if (hrs > 12) {
+      issues.push({ severity: 'critical', kind: 'event_drop', event: 'pixel', message: `El pixel no recibe eventos hace ${Math.round(hrs)}h — probablemente caído o desconectado.`, detail: { hours: Math.round(hrs) } });
+    } else if (hrs > 3) {
+      issues.push({ severity: 'warning', kind: 'event_drop', event: 'pixel', message: `El pixel no recibe eventos hace ${Math.round(hrs)}h.`, detail: { hours: Math.round(hrs) } });
+    }
   }
 
-  // ── 3. AddToCart sin registrar ──
-  if (pur >= 3 && f.add_to_cart === 0) {
-    issues.push({
-      severity: 'warning', kind: 'broken_event', event: 'add_to_cart',
-      message: `0 AddToCart con ${pur} compras — el evento AddToCart no se está registrando (el theme no lo dispara, o los clientes usan "Buy Now" salteando el carrito)`,
-      detail: { add_to_cart: 0, purchase: pur }
-    });
+  // ── 3. Eventos que NO disparan (con PageView de volumen) ──
+  const stepLabels = { view_content: 'ViewContent', add_to_cart: 'AddToCart', initiate_checkout: 'InitiateCheckout', purchase: 'Purchase' };
+  if (f.page_view >= 100) {
+    for (const ev of Object.keys(stepLabels)) {
+      if (f[ev] === 0) {
+        issues.push({ severity: ev === 'purchase' ? 'critical' : 'warning', kind: 'broken_event', event: ev,
+          message: `${stepLabels[ev]} no dispara (0 eventos con ${f.page_view} PageView) — revisar tracking del evento.`, detail: { page_view: f.page_view } });
+      }
+    }
   }
 
-  // ── 4. InitiateCheckout < compras = checkout no dispara confiable ──
-  if (pur >= 3 && f.initiate_checkout < pur) {
-    issues.push({
-      severity: 'warning', kind: 'broken_event', event: 'initiate_checkout',
-      message: `InitiateCheckout (${f.initiate_checkout}) menor que las compras (${pur}) — el evento de checkout no dispara confiable (deberían ser ≥ compras)`,
-      detail: { initiate_checkout: f.initiate_checkout, purchase: pur }
-    });
-  }
-
-  // ── 5. ATC pero 0 compras (checkout/purchase roto) ──
-  if (f.add_to_cart >= 20 && pur === 0) {
-    issues.push({
-      severity: 'critical', kind: 'broken_event', event: 'purchase',
-      message: `${f.add_to_cart} AddToCart pero 0 compras — el evento Purchase o el checkout está roto`,
-      detail: { add_to_cart: f.add_to_cart, purchase: 0 }
-    });
-  }
-
-  // ── 6. Cuellos de botella reales (solo si los eventos SÍ disparan con volumen) ──
+  // ── 4. Cuellos de botella del funnel (tasas bajas con volumen) ──
   const bottlenecks = [
     { step: 'vc_to_atc', rate: rates.vc_to_atc, vol: f.view_content, th: TH.vc_to_atc, msg: 'poca gente agrega al carrito desde el producto' },
     { step: 'atc_to_ic', rate: rates.atc_to_ic, vol: f.add_to_cart, th: TH.atc_to_ic, msg: 'se caen entre carrito y checkout' },
@@ -146,16 +123,13 @@ async function analyzePixel(days = 30) {
   ];
   for (const b of bottlenecks) {
     if (b.vol >= 30 && b.rate < b.th) {
-      issues.push({
-        severity: 'warning', kind: 'funnel_bottleneck', event: b.step,
-        message: `Cuello de botella ${b.step}: ${b.rate}% (umbral ${b.th}%) — ${b.msg}`,
-        detail: { rate: b.rate, threshold: b.th, volume: b.vol }
-      });
+      issues.push({ severity: 'warning', kind: 'funnel_bottleneck', event: b.step,
+        message: `Cuello de botella ${b.step}: ${b.rate}% (umbral ${b.th}%) — ${b.msg}`, detail: { rate: b.rate, threshold: b.th, volume: b.vol } });
     }
   }
 
   if (issues.length === 0) {
-    issues.push({ severity: 'info', kind: 'healthy', event: 'pixel', message: 'Pixel sano — eventos disparando y funnel sin cuellos críticos.', detail: {} });
+    issues.push({ severity: 'info', kind: 'healthy', event: 'pixel', message: 'Pixel sano — todos los eventos disparando y funnel sin cuellos críticos.', detail: {} });
   }
 
   let score = 100;
@@ -164,11 +138,12 @@ async function analyzePixel(days = 30) {
 
   return {
     window_days: days,
-    funnel_7d: f,          // ahora es la ventana elegida (mantengo el nombre por compat del panel)
+    funnel_7d: f,
     funnel_today: f,
     rates,
     issues,
     health_score: score,
+    pixel_meta: { name: pmeta.name, last_fired_time: pmeta.last_fired_time, is_unavailable: !!pmeta.is_unavailable },
     pixel_id: config.meta.pixelId || ''
   };
 }
@@ -190,4 +165,4 @@ async function runArgos() {
   }
 }
 
-module.exports = { runArgos, analyzePixel, getAccountFunnel };
+module.exports = { runArgos, analyzePixel, getPixelFunnel, getPixelMeta };

@@ -31,16 +31,18 @@ function ArgosPanel() {
   const health = data?.health_score ?? 0;
   const healthColor = health >= 80 ? '#34d399' : health >= 50 ? '#fbbf24' : '#f87171';
 
-  // Pasos del funnel con su tasa hacia el siguiente.
+  // Pasos del funnel REAL del pixel con su tasa hacia el siguiente.
   const steps = [
-    { key: 'link_clicks', label: 'Link clicks', rateAfter: rates.click_to_lpv },
-    { key: 'landing_page_view', label: 'Landing page view', rateAfter: rates.lpv_to_vc },
+    { key: 'page_view', label: 'PageView', rateAfter: rates.pv_to_vc },
     { key: 'view_content', label: 'View content', rateAfter: rates.vc_to_atc },
     { key: 'add_to_cart', label: 'Add to cart', rateAfter: rates.atc_to_ic },
     { key: 'initiate_checkout', label: 'Initiate checkout', rateAfter: rates.ic_to_purchase },
     { key: 'purchase', label: 'Purchase', rateAfter: null }
   ];
   const maxVal = Math.max(1, ...steps.map(s => f[s.key] || 0));
+  const pm = data?.pixel_meta || {};
+  const lastFired = pm.last_fired_time ? new Date(pm.last_fired_time) : null;
+  const firedAgoMin = lastFired ? Math.round((Date.now() - lastFired.getTime()) / 60000) : null;
 
   return (
     <div style={{ padding: 4 }}>
@@ -78,10 +80,16 @@ function ArgosPanel() {
               <div style={{ fontSize: 11, opacity: 0.6 }}>Pixel health</div>
             </div>
             <div style={{ ...card, flex: 1, padding: '14px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-              <div style={{ fontSize: 12, opacity: 0.6, marginBottom: 4 }}>Funnel {data.window_days || days} días</div>
+              <div style={{ fontSize: 12, opacity: 0.6, marginBottom: 4 }}>Pixel · {data.window_days || days} días</div>
               <div style={{ fontSize: 13 }}>
-                {(f.link_clicks || 0).toLocaleString()} clicks → <b style={{ color: ARGOS }}>{(f.purchase || 0).toLocaleString()}</b> compras
-                {data.stale && <span style={{ color: '#fbbf24', marginLeft: 8 }}>· data en cache (Meta no respondió)</span>}
+                {(f.page_view || 0).toLocaleString()} PageView → <b style={{ color: ARGOS }}>{(f.purchase || 0).toLocaleString()}</b> compras
+              </div>
+              <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
+                {firedAgoMin != null
+                  ? <>último evento hace {firedAgoMin < 60 ? `${firedAgoMin}m` : `${Math.round(firedAgoMin / 60)}h`} {firedAgoMin <= 180 ? '🟢' : '🔴'}</>
+                  : 'sin data de frescura'}
+                {pm.is_unavailable && <span style={{ color: '#f87171', marginLeft: 8 }}>· pixel NO disponible</span>}
+                {data.stale && <span style={{ color: '#fbbf24', marginLeft: 8 }}>· cache</span>}
               </div>
             </div>
           </div>
