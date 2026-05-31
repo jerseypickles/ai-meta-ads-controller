@@ -20,6 +20,7 @@ import {
 
 import AthenaPanel from '../components/AthenaPanel';
 import DionysusPanel from '../components/DionysusPanel';
+import ArgosPanel from '../components/ArgosPanel';
 const BrainOrb = React.lazy(() => import('../components/BrainOrb'));
 const ImpactOrb = React.lazy(() => import('../components/ImpactOrb'));
 const BrainKnowledgeOrb = React.lazy(() => import('../components/BrainKnowledgeOrb'));
@@ -425,6 +426,9 @@ export default function BrainIntelligence() {
         <button className={`brain-tab ${activeTab === 'dionysus' ? 'active' : ''}`} data-agent="dionysus" onClick={() => setActiveTab('dionysus')}>
           🎭 Dionisio
         </button>
+        <button className={`brain-tab ${activeTab === 'argos' ? 'active' : ''}`} data-agent="argos" onClick={() => setActiveTab('argos')}>
+          🦚 Argos
+        </button>
       </div>
 
       {/* Lightbox global */}
@@ -511,6 +515,8 @@ export default function BrainIntelligence() {
           />
         ) : activeTab === 'dionysus' ? (
           <DionysusPanel />
+        ) : activeTab === 'argos' ? (
+          <ArgosPanel />
         ) : null}
       </div>
 
