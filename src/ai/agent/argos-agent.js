@@ -12,10 +12,9 @@ const logger = require('../../utils/logger');
 const Anthropic = require('@anthropic-ai/sdk');
 const ArgosSnapshot = require('../../db/models/ArgosSnapshot');
 const { getMetaClient } = require('../../meta/client');
-const { isExcludedCampaignId } = require('../../config/excluded-entities');
 
-// Meta necesita ~50 conversiones (del evento optimizado) en 7d por adset para salir
-// de la fase de aprendizaje. Clave para un pixel nuevo optimizando Purchase.
+// ~50 conversiones/semana del evento es el umbral que Meta necesita para optimizar
+// bien. Referencia para medir si el PIXEL tiene señal suficiente (no es per-adset).
 const LEARNING_TARGET = 50;
 
 // Eventos del PIXEL (como los nombra Events Manager) → key interna del funnel.
@@ -76,55 +75,29 @@ async function getPixelFunnel(days = 30) {
 }
 
 /**
- * Estado de APRENDIZAJE por adset activo (learning_stage_info de Meta).
- * Para un pixel nuevo optimizando Purchase, esto es lo que más importa:
- * cuántas conversiones lleva cada adset hacia las ~50 para salir de learning.
+ * Diagnóstico FUNDAMENTADO con Claude — 100% del PIXEL (no adsets): cuánta señal
+ * de conversión acumuló, qué tan maduro está, y qué falta para que aprenda.
  */
-async function getLearningStatus() {
-  const meta = getMetaClient();
-  try {
-    const adsets = await meta.getAllAdSets('name,campaign_id,effective_status,optimization_goal,learning_stage_info');
-    return (adsets || [])
-      .filter(a => a.effective_status === 'ACTIVE' && !isExcludedCampaignId(a.campaign_id))
-      .map(a => ({
-        name: a.name,
-        optimization_goal: a.optimization_goal || '',
-        status: a.learning_stage_info?.status || 'UNKNOWN',  // LEARNING | SUCCESS | LEARNING_LIMITED
-        conversions: a.learning_stage_info?.conversions != null ? Number(a.learning_stage_info.conversions) : null
-      }));
-  } catch (e) {
-    logger.warn(`[ARGOS] getLearningStatus falló: ${e.message}`);
-    return [];
-  }
-}
-
-/**
- * Diagnóstico FUNDAMENTADO con Claude — contextualizado a que el pixel es NUEVO
- * y los adsets optimizan SOLO Purchase, con el objetivo de que el pixel madure.
- */
-async function generateDiagnosis({ funnel, pmeta, learning, ageDays }) {
+async function generateDiagnosis({ funnel, pmeta, maturation, ageDays }) {
   const apiKey = config.claude?.apiKey || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return '';
   try {
     const claude = new Anthropic({ apiKey });
-    const learnLines = learning.length
-      ? learning.map(l => `- "${l.name}": ${l.status}${l.conversions != null ? `, ${l.conversions}/${LEARNING_TARGET} conv` : ''} (opt: ${l.optimization_goal})`).join('\n')
-      : '(sin adsets activos optimizando conversión)';
-    const prompt = `Sos ARGOS, el analista de salud del pixel de Meta de Jersey Pickles. Da un diagnóstico BREVE y FUNDAMENTADO (no genérico) en español neutro.
+    const pw = maturation.per_week;
+    const prompt = `Sos ARGOS, analista de salud del PIXEL de Meta de Jersey Pickles. Diagnóstico BREVE y FUNDAMENTADO en español neutro, hablando SOLO del pixel (NO de adsets).
 
-CONTEXTO CLAVE (no lo ignores):
-- El pixel y la cuenta son NUEVOS (~${ageDays} días de datos). Todo arranca de cero.
-- Los adsets optimizan SOLO Purchase. El OBJETIVO ahora es que el pixel ACUMULE señal de compra y MADURE (salga de learning), no perfeccionar el funnel todavía.
-- Meta necesita ~${LEARNING_TARGET} conversiones del evento optimizado en 7d por adset para salir de aprendizaje.
+CONTEXTO (no ignorar):
+- El pixel es NUEVO (~${ageDays} días de datos). Arranca de cero.
+- La cuenta optimiza Purchase. El objetivo es que el PIXEL acumule señal de conversión y madure.
+- Regla de oro de Meta: ~${LEARNING_TARGET} conversiones/semana del evento para optimizarlo bien. Con poca señal, el pixel está "ciego" y Meta no aprende.
+- Si Purchase es bajo, los eventos de mid-funnel (AddToCart, InitiateCheckout) sirven de PUENTE: dan más volumen de señal y se puede optimizar sobre ellos mientras Purchase madura.
 
-DATA REAL del pixel (ventana ~${funnel.buckets ? ageDays : ''} días):
-- PageView: ${funnel.page_view} · ViewContent: ${funnel.view_content} · AddToCart: ${funnel.add_to_cart} · InitiateCheckout: ${funnel.initiate_checkout} · Purchase: ${funnel.purchase}
-- Último evento: ${pmeta.last_fired_time || 'n/d'} · pixel ${pmeta.is_unavailable ? 'NO DISPONIBLE' : 'disponible'}
+DATA REAL del pixel (~${ageDays} días):
+- Totales: PageView ${funnel.page_view} · ViewContent ${funnel.view_content} · AddToCart ${funnel.add_to_cart} · InitiateCheckout ${funnel.initiate_checkout} · Purchase ${funnel.purchase}
+- Por semana: Purchase ${pw.purchase}/sem · AddToCart ${pw.add_to_cart}/sem · InitiateCheckout ${pw.initiate_checkout}/sem · ViewContent ${pw.view_content}/sem
+- Nivel de señal: ${maturation.signal_level} (cold/warming/mature) · último evento: ${pmeta.last_fired_time || 'n/d'} · pixel ${pmeta.is_unavailable ? 'NO DISPONIBLE' : 'disponible'}
 
-APRENDIZAJE por adset:
-${learnLines}
-
-Escribí 3-5 frases: (1) en qué etapa real está el pixel (nuevo/madurando), (2) cuánta señal de Purchase lleva y qué tan lejos está de madurar (usá las conversiones vs ${LEARNING_TARGET}), (3) qué es esperable vs preocupante DADO que es nuevo y purchase-only (NO alarmar por VC/ATC bajos si es coherente), (4) 1-2 recomendaciones concretas para acelerar el aprendizaje. Sé concreto con los números.`;
+Escribí 3-5 frases: (1) en qué etapa real está el pixel y cuánta señal acumuló; (2) qué tan lejos está de tener señal suficiente (Purchase/sem vs ${LEARNING_TARGET}); (3) si Purchase es bajo, evaluá si ATC/IC alcanzan como evento puente para alimentar el pixel ahora; (4) 1-2 recomendaciones concretas para que el pixel junte señal más rápido. Concreto con los números, sin alarmar por lo esperable de un pixel nuevo.`;
     const resp = await claude.messages.create({
       model: config.claude.model, max_tokens: 380,
       messages: [{ role: 'user', content: prompt }]
@@ -142,10 +115,9 @@ Escribí 3-5 frases: (1) en qué etapa real está el pixel (nuevo/madurando), (2
  * disponibilidad + cuellos de botella. Misma data que Events Manager.
  */
 async function analyzePixel(days = 30) {
-  const [f, pmeta, learning] = await Promise.all([
+  const [f, pmeta] = await Promise.all([
     getPixelFunnel(days),
-    getPixelMeta(),
-    getLearningStatus()
+    getPixelMeta()
   ]);
 
   // Edad del pixel = días desde el primer evento visto (cuenta nueva).
@@ -199,11 +171,25 @@ async function analyzePixel(days = 30) {
     }
   }
 
-  // ── 5. Aprendizaje: adsets trabados (LEARNING_LIMITED) o progreso ──
-  const limited = learning.filter(l => l.status === 'LEARNING_LIMITED');
-  for (const l of limited) {
-    issues.push({ severity: 'warning', kind: 'learning_limited', event: 'adset',
-      message: `"${l.name}" en LEARNING LIMITED — no junta suficientes conversiones (${l.conversions ?? '?'}/${LEARNING_TARGET}); subí budget/audiencia o consolidá para que aprenda.`, detail: { conversions: l.conversions } });
+  // ── 5. Señal del PIXEL: volumen de conversión por semana vs el umbral que
+  // Meta necesita (~50/sem) para optimizar bien ese evento. (pixel-céntrico) ──
+  const perWeek = (n) => ageDays > 0 ? Math.round((n / ageDays) * 7 * 10) / 10 : 0;
+  const purPerWeek = perWeek(f.purchase);
+  const atcPerWeek = perWeek(f.add_to_cart);
+  const icPerWeek = perWeek(f.initiate_checkout);
+
+  // Nivel de señal del pixel sobre el evento optimizado (Purchase).
+  const signalLevel = purPerWeek >= LEARNING_TARGET ? 'mature' : purPerWeek >= 15 ? 'warming' : 'cold';
+  if (signalLevel === 'cold') {
+    // Pixel nuevo SIN señal de purchase suficiente. Si tampoco hay ATC/IC → "ciego".
+    const hasBridge = atcPerWeek >= 20 || icPerWeek >= 20;
+    issues.push({
+      severity: 'warning', kind: 'pixel_cold', event: 'pixel',
+      message: hasBridge
+        ? `Pixel nuevo con poca señal de Purchase (${purPerWeek}/sem, necesita ~${LEARNING_TARGET}). Tenés señal de mid-funnel (ATC ${atcPerWeek}/sem, IC ${icPerWeek}/sem) que sirve de puente mientras madura.`
+        : `Pixel nuevo SIN señal suficiente: Purchase ${purPerWeek}/sem, AddToCart ${atcPerWeek}/sem, InitiateCheckout ${icPerWeek}/sem. Con tan pocas conversiones Meta no tiene de qué aprender — hay que generar volumen.`,
+      detail: { purchase_per_week: purPerWeek, atc_per_week: atcPerWeek, ic_per_week: icPerWeek }
+    });
   }
 
   if (issues.length === 0) {
@@ -214,19 +200,16 @@ async function analyzePixel(days = 30) {
   for (const i of issues) score -= i.severity === 'critical' ? 40 : i.severity === 'warning' ? 15 : 0;
   score = Math.max(0, score);
 
-  // Maduración (clave para pixel nuevo + purchase-only)
-  const learnAgg = {
+  // Maduración del PIXEL (no adsets): cuánta señal de conversión acumuló.
+  const maturation = {
     age_days: ageDays,
-    purchases: f.purchase,
-    purchases_per_week: ageDays > 0 ? Math.round((f.purchase / ageDays) * 7 * 10) / 10 : 0,
-    target: LEARNING_TARGET,
-    adsets: learning,
-    in_learning: learning.filter(l => l.status === 'LEARNING').length,
-    success: learning.filter(l => l.status === 'SUCCESS').length,
-    limited: limited.length
+    signal_level: signalLevel,      // cold | warming | mature
+    target_per_week: LEARNING_TARGET,
+    per_week: { purchase: purPerWeek, add_to_cart: atcPerWeek, initiate_checkout: icPerWeek, view_content: perWeek(f.view_content), page_view: perWeek(f.page_view) },
+    totals: { purchase: f.purchase, add_to_cart: f.add_to_cart, initiate_checkout: f.initiate_checkout, view_content: f.view_content, page_view: f.page_view }
   };
 
-  const diagnosis = await generateDiagnosis({ funnel: f, pmeta, learning, ageDays });
+  const diagnosis = await generateDiagnosis({ funnel: f, pmeta, maturation, ageDays });
 
   return {
     window_days: days,
@@ -235,7 +218,7 @@ async function analyzePixel(days = 30) {
     rates,
     issues,
     health_score: score,
-    maturation: learnAgg,
+    maturation,
     diagnosis,
     pixel_meta: { name: pmeta.name, last_fired_time: pmeta.last_fired_time, is_unavailable: !!pmeta.is_unavailable },
     pixel_id: config.meta.pixelId || ''

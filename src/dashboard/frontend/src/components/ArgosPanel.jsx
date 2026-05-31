@@ -94,40 +94,48 @@ function ArgosPanel() {
             </div>
           </div>
 
-          {/* Maduración del pixel (clave: pixel nuevo + purchase-only) */}
-          {data.maturation && (
-            <div style={{ ...card, padding: 12, margin: '14px 0' }}>
-              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>🌱 Maduración del pixel</div>
-              <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 12 }}>
-                <div><b style={{ color: ARGOS }}>{data.maturation.age_days}d</b> <span style={{ opacity: 0.6 }}>de datos</span></div>
-                <div><b style={{ color: ARGOS }}>{data.maturation.purchases}</b> <span style={{ opacity: 0.6 }}>compras · {data.maturation.purchases_per_week}/sem</span></div>
-                <div><b style={{ color: '#34d399' }}>{data.maturation.success}</b> <span style={{ opacity: 0.6 }}>adsets aprendidos</span></div>
-                <div><b style={{ color: '#fbbf24' }}>{data.maturation.in_learning}</b> <span style={{ opacity: 0.6 }}>en learning</span></div>
-                {data.maturation.limited > 0 && <div><b style={{ color: '#f87171' }}>{data.maturation.limited}</b> <span style={{ opacity: 0.6 }}>limitados</span></div>}
-              </div>
-              {/* Por adset: progreso hacia salir de learning */}
-              {(data.maturation.adsets || []).length > 0 && (
-                <div style={{ marginTop: 10, display: 'grid', gap: 6 }}>
-                  {data.maturation.adsets.map((a, i) => {
-                    const conv = a.conversions != null ? a.conversions : 0;
-                    const pct = Math.min(100, Math.round((conv / (data.maturation.target || 50)) * 100));
-                    const sc = a.status === 'SUCCESS' ? '#34d399' : a.status === 'LEARNING_LIMITED' ? '#f87171' : '#fbbf24';
+          {/* Maduración del PIXEL — cuánta señal de conversión acumuló */}
+          {data.maturation && (() => {
+            const m = data.maturation;
+            const lvl = m.signal_level;
+            const lvlColor = lvl === 'mature' ? '#34d399' : lvl === 'warming' ? '#fbbf24' : '#f87171';
+            const lvlLabel = lvl === 'mature' ? 'MADURO' : lvl === 'warming' ? 'CALENTANDO' : 'FRÍO (poca señal)';
+            const evs = [
+              { key: 'purchase', label: 'Purchase', target: m.target_per_week },
+              { key: 'add_to_cart', label: 'Add to cart', target: m.target_per_week },
+              { key: 'initiate_checkout', label: 'Initiate checkout', target: m.target_per_week }
+            ];
+            return (
+              <div style={{ ...card, padding: 12, margin: '14px 0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13 }}>🌱 Maduración del pixel</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 11, opacity: 0.7 }}>{m.age_days}d de datos</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: lvlColor, border: `1px solid ${lvlColor}`, borderRadius: 6, padding: '2px 8px' }}>{lvlLabel}</span>
+                </div>
+                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 8 }}>
+                  Señal de conversión por semana vs el umbral que Meta necesita (~{m.target_per_week}/sem) para optimizar bien.
+                </div>
+                <div style={{ display: 'grid', gap: 7 }}>
+                  {evs.map(e => {
+                    const v = m.per_week?.[e.key] || 0;
+                    const pct = Math.min(100, Math.round((v / e.target) * 100));
+                    const c = pct >= 100 ? '#34d399' : pct >= 30 ? '#fbbf24' : '#f87171';
                     return (
-                      <div key={i} style={{ fontSize: 11 }}>
+                      <div key={e.key} style={{ fontSize: 11 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
-                          <span style={{ opacity: 0.85, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '70%' }}>{a.name}</span>
-                          <span style={{ color: sc, fontWeight: 600 }}>{a.status}{a.conversions != null ? ` · ${conv}/${data.maturation.target}` : ''}</span>
+                          <span style={{ opacity: 0.85 }}>{e.label}</span>
+                          <span style={{ color: c, fontWeight: 600 }}>{v}/sem <span style={{ opacity: 0.5 }}>de ~{e.target}</span></span>
                         </div>
-                        <div style={{ height: 5, background: 'rgba(255,255,255,0.06)', borderRadius: 4, overflow: 'hidden' }}>
-                          <div style={{ width: `${pct}%`, height: '100%', background: sc }} />
+                        <div style={{ height: 6, background: 'rgba(255,255,255,0.06)', borderRadius: 4, overflow: 'hidden' }}>
+                          <div style={{ width: `${pct}%`, height: '100%', background: c }} />
                         </div>
                       </div>
                     );
                   })}
                 </div>
-              )}
-            </div>
-          )}
+              </div>
+            );
+          })()}
 
           {/* Diagnóstico fundamentado (Claude) */}
           {data.diagnosis && (
