@@ -92,6 +92,11 @@ router.get('/stats', async (req, res) => {
 // GET /pending — videos en cola de aprobación
 router.get('/pending', async (req, res) => {
   try {
+    // Auto-sanar zombies (generating_video pegados) al abrir el panel.
+    try {
+      const { reconcileStuckVideos } = require('../../ai/agent/dionysus-agent');
+      await reconcileStuckVideos();
+    } catch (_) { /* no bloquear el panel si falla */ }
     const [pending, generating] = await Promise.all([
       CreativeProposal.find({ media_type: 'video', status: 'pending_video_review' })
         .sort({ created_at: -1 })

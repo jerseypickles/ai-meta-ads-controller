@@ -56,12 +56,47 @@ async function _getCandidates() {
   return candidates.filter(c => !done.has(String(c._id)));
 }
 
+const STUCK_MIN = parseInt(process.env.DIONYSUS_STUCK_MIN || '30', 10);
+
+/**
+ * Reconcilia videos pegados en 'generating_video' (zombies por restart de proceso
+ * mid-render). Si el task de PiAPI terminó → lo recupera a review; si no → failed
+ * (libera la imagen-fuente para reintentar). Auto-sana sin intervención manual.
+ */
+async function reconcileStuckVideos() {
+  const cutoff = new Date(Date.now() - STUCK_MIN * 60000);
+  const stuck = await CreativeProposal.find({
+    media_type: 'video', status: 'generating_video', created_at: { $lt: cutoff }
+  }).lean();
+  if (!stuck.length) return 0;
+  let healed = 0;
+  for (const s of stuck) {
+    try {
+      if (s.video_task_id && seedance.isAvailable()) {
+        const r = await seedance.getTaskResult(s.video_task_id).catch(() => null);
+        if (r && (r.status === 'completed' || r.status === 'success') && r.video_url) {
+          await CreativeProposal.findByIdAndUpdate(s._id, { $set: { status: 'pending_video_review', video_url: r.video_url } });
+          logger.info(`[DIONISIO] reconcile: recuperado "${(s.headline || '').slice(0, 30)}" (task completó) → review`);
+          healed++; continue;
+        }
+      }
+      await CreativeProposal.findByIdAndUpdate(s._id, { $set: { status: 'failed', rejection_reason: `stuck generating_video >${STUCK_MIN}min — reconciled` } });
+      logger.info(`[DIONISIO] reconcile: "${(s.headline || '').slice(0, 30)}" pegado ${STUCK_MIN}min+ → failed`);
+      healed++;
+    } catch (e) { logger.warn(`[DIONISIO] reconcile falló ${s._id}: ${e.message}`); }
+  }
+  return healed;
+}
+
 /**
  * runDionysus() — un ciclo: selecciona, juzga, genera videos pendientes de review.
  */
 async function runDionysus() {
   if (!ENABLED) { logger.info('[DIONISIO] deshabilitado'); return { skipped: 'disabled' }; }
   if (!seedance.isAvailable()) { logger.warn('[DIONISIO] PIAPI_KEY no configurada — skip'); return { skipped: 'no_piapi_key' }; }
+
+  // Auto-sanar zombies antes de generar nuevos.
+  await reconcileStuckVideos().catch(e => logger.warn(`[DIONISIO] reconcile error: ${e.message}`));
 
   const t0 = Date.now();
   const candidates = await _getCandidates();
@@ -125,4 +160,4 @@ async function runDionysus() {
   return { judged, generated, rejected, elapsed_s: elapsed, results };
 }
 
-module.exports = { runDionysus };
+module.exports = { runDionysus, reconcileStuckVideos };

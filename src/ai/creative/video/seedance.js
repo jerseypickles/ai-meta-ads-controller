@@ -110,4 +110,11 @@ function isAvailable() {
   return !!process.env.PIAPI_KEY;
 }
 
-module.exports = { generateVideoFromImage, isAvailable, MODEL, TASK_TYPE };
+/** Una sola consulta del estado de un task (sin loop). Para reconciliación. */
+async function getTaskResult(taskId) {
+  const res = await axios.get(`${BASE_URL}/task/${taskId}`, { headers: _headers(), timeout: 30000 });
+  const d = res.data?.data || {};
+  return { status: (d.status || '').toLowerCase(), video_url: d.output?.video || d.output?.video_url || null };
+}
+
+module.exports = { generateVideoFromImage, isAvailable, getTaskResult, MODEL, TASK_TYPE };
