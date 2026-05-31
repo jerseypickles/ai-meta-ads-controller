@@ -18,6 +18,7 @@ const AGENT_COLORS = {
   hermes: '#f59e0b',      // amber-500 — Foot traffic NJ store
   demeter: '#14b8a6',    // teal-500 — Cash reconciliation
   dionysus: '#c026d3',   // fuchsia-600 — Video (vino/teatro)
+  argos: '#22d3ee',      // cyan-400 — Pixel analysis (el que todo lo ve)
   satellite: '#94a3b8',  // slate-400 — sub-nodes
   cbo: '#c084fc',        // purple-400 — CBOs (Ares children)
   directive: '#38bdf8',  // sky-400 — directives
@@ -31,7 +32,7 @@ const AGENT_COLORS = {
 const AGENT_ICONS = {
   zeus: '⚡', athena: '🦉', apollo: '☀️',
   prometheus: '🔥', ares: '⚔️',
-  hermes: '🏪', demeter: '✿', dionysus: '🎭',
+  hermes: '🏪', demeter: '✿', dionysus: '🎭', argos: '🦚',
   cbo: '◎', test: '⚗', directive: '▣', pool: '✦',
 
   // Planned
@@ -163,6 +164,12 @@ export default function NeuralGraphView({ onAgentClick }) {
         label: 'DIONISIO', sub: 'Video',
         status: 'idle',
         color: AGENT_COLORS.dionysus, icon: AGENT_ICONS.dionysus
+      },
+      {
+        id: 'argos', group: 'argos', tier: 1, size: 12,
+        label: 'ARGOS', sub: 'Pixel',
+        status: 'idle',
+        color: AGENT_COLORS.argos, icon: AGENT_ICONS.argos
       },
       {
         id: 'ares', group: 'ares', tier: 1, size: 13,
@@ -331,7 +338,11 @@ export default function NeuralGraphView({ onAgentClick }) {
       { source: 'ares', target: 'demeter', kind: 'workflow', active: demeterCount > 0 },
 
       // Hermes — agente activo (foot traffic NJ store, separado del flujo online)
-      { source: 'zeus', target: 'hermes', kind: 'primary', active: hermesEnabled }
+      { source: 'zeus', target: 'hermes', kind: 'primary', active: hermesEnabled },
+
+      // Argos — análisis del pixel; informa a Zeus y mide el funnel que alimenta a todos.
+      { source: 'zeus', target: 'argos', kind: 'primary', active: false },
+      { source: 'argos', target: 'prometheus', kind: 'workflow', active: false }
     ];
 
     // Planned agent links — Zeus como hub también de los futuros
@@ -476,7 +487,7 @@ export default function NeuralGraphView({ onAgentClick }) {
 
   const handleClick = useCallback((node) => {
     if (!node) return;
-    if (onAgentClick && ['zeus', 'athena', 'apollo', 'prometheus', 'ares', 'demeter', 'hermes', 'dionysus'].includes(node.id)) {
+    if (onAgentClick && ['zeus', 'athena', 'apollo', 'prometheus', 'ares', 'demeter', 'hermes', 'dionysus', 'argos'].includes(node.id)) {
       onAgentClick(node.id);
     }
   }, [onAgentClick]);
