@@ -9,8 +9,14 @@
 
 const config = require('../../../config');
 const logger = require('../../utils/logger');
+const Anthropic = require('@anthropic-ai/sdk');
 const ArgosSnapshot = require('../../db/models/ArgosSnapshot');
 const { getMetaClient } = require('../../meta/client');
+const { isExcludedCampaignId } = require('../../config/excluded-entities');
+
+// Meta necesita ~50 conversiones (del evento optimizado) en 7d por adset para salir
+// de la fase de aprendizaje. Clave para un pixel nuevo optimizando Purchase.
+const LEARNING_TARGET = 50;
 
 // Eventos del PIXEL (como los nombra Events Manager) → key interna del funnel.
 const PIXEL_EVENT_MAP = {
@@ -70,15 +76,80 @@ async function getPixelFunnel(days = 30) {
 }
 
 /**
+ * Estado de APRENDIZAJE por adset activo (learning_stage_info de Meta).
+ * Para un pixel nuevo optimizando Purchase, esto es lo que más importa:
+ * cuántas conversiones lleva cada adset hacia las ~50 para salir de learning.
+ */
+async function getLearningStatus() {
+  const meta = getMetaClient();
+  try {
+    const adsets = await meta.getAllAdSets('name,campaign_id,effective_status,optimization_goal,learning_stage_info');
+    return (adsets || [])
+      .filter(a => a.effective_status === 'ACTIVE' && !isExcludedCampaignId(a.campaign_id))
+      .map(a => ({
+        name: a.name,
+        optimization_goal: a.optimization_goal || '',
+        status: a.learning_stage_info?.status || 'UNKNOWN',  // LEARNING | SUCCESS | LEARNING_LIMITED
+        conversions: a.learning_stage_info?.conversions != null ? Number(a.learning_stage_info.conversions) : null
+      }));
+  } catch (e) {
+    logger.warn(`[ARGOS] getLearningStatus falló: ${e.message}`);
+    return [];
+  }
+}
+
+/**
+ * Diagnóstico FUNDAMENTADO con Claude — contextualizado a que el pixel es NUEVO
+ * y los adsets optimizan SOLO Purchase, con el objetivo de que el pixel madure.
+ */
+async function generateDiagnosis({ funnel, pmeta, learning, ageDays }) {
+  const apiKey = config.claude?.apiKey || process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return '';
+  try {
+    const claude = new Anthropic({ apiKey });
+    const learnLines = learning.length
+      ? learning.map(l => `- "${l.name}": ${l.status}${l.conversions != null ? `, ${l.conversions}/${LEARNING_TARGET} conv` : ''} (opt: ${l.optimization_goal})`).join('\n')
+      : '(sin adsets activos optimizando conversión)';
+    const prompt = `Sos ARGOS, el analista de salud del pixel de Meta de Jersey Pickles. Da un diagnóstico BREVE y FUNDAMENTADO (no genérico) en español neutro.
+
+CONTEXTO CLAVE (no lo ignores):
+- El pixel y la cuenta son NUEVOS (~${ageDays} días de datos). Todo arranca de cero.
+- Los adsets optimizan SOLO Purchase. El OBJETIVO ahora es que el pixel ACUMULE señal de compra y MADURE (salga de learning), no perfeccionar el funnel todavía.
+- Meta necesita ~${LEARNING_TARGET} conversiones del evento optimizado en 7d por adset para salir de aprendizaje.
+
+DATA REAL del pixel (ventana ~${funnel.buckets ? ageDays : ''} días):
+- PageView: ${funnel.page_view} · ViewContent: ${funnel.view_content} · AddToCart: ${funnel.add_to_cart} · InitiateCheckout: ${funnel.initiate_checkout} · Purchase: ${funnel.purchase}
+- Último evento: ${pmeta.last_fired_time || 'n/d'} · pixel ${pmeta.is_unavailable ? 'NO DISPONIBLE' : 'disponible'}
+
+APRENDIZAJE por adset:
+${learnLines}
+
+Escribí 3-5 frases: (1) en qué etapa real está el pixel (nuevo/madurando), (2) cuánta señal de Purchase lleva y qué tan lejos está de madurar (usá las conversiones vs ${LEARNING_TARGET}), (3) qué es esperable vs preocupante DADO que es nuevo y purchase-only (NO alarmar por VC/ATC bajos si es coherente), (4) 1-2 recomendaciones concretas para acelerar el aprendizaje. Sé concreto con los números.`;
+    const resp = await claude.messages.create({
+      model: config.claude.model, max_tokens: 380,
+      messages: [{ role: 'user', content: prompt }]
+    });
+    return resp.content?.[0]?.text?.trim() || '';
+  } catch (e) {
+    logger.warn(`[ARGOS] generateDiagnosis falló: ${e.message}`);
+    return '';
+  }
+}
+
+/**
  * Analiza el PIXEL (eventos reales, no solo atribuidos a ads) sobre una ventana.
  * Funnel PageView→ViewContent→AddToCart→InitiateCheckout→Purchase + frescura +
  * disponibilidad + cuellos de botella. Misma data que Events Manager.
  */
 async function analyzePixel(days = 30) {
-  const [f, pmeta] = await Promise.all([
+  const [f, pmeta, learning] = await Promise.all([
     getPixelFunnel(days),
-    getPixelMeta()
+    getPixelMeta(),
+    getLearningStatus()
   ]);
+
+  // Edad del pixel = días desde el primer evento visto (cuenta nueva).
+  const ageDays = f.range_start ? Math.max(1, Math.round((Date.now() - new Date(f.range_start).getTime()) / 86400000)) : days;
 
   const rates = {
     pv_to_vc: _rate(f.view_content, f.page_view),
@@ -128,6 +199,13 @@ async function analyzePixel(days = 30) {
     }
   }
 
+  // ── 5. Aprendizaje: adsets trabados (LEARNING_LIMITED) o progreso ──
+  const limited = learning.filter(l => l.status === 'LEARNING_LIMITED');
+  for (const l of limited) {
+    issues.push({ severity: 'warning', kind: 'learning_limited', event: 'adset',
+      message: `"${l.name}" en LEARNING LIMITED — no junta suficientes conversiones (${l.conversions ?? '?'}/${LEARNING_TARGET}); subí budget/audiencia o consolidá para que aprenda.`, detail: { conversions: l.conversions } });
+  }
+
   if (issues.length === 0) {
     issues.push({ severity: 'info', kind: 'healthy', event: 'pixel', message: 'Pixel sano — todos los eventos disparando y funnel sin cuellos críticos.', detail: {} });
   }
@@ -136,6 +214,20 @@ async function analyzePixel(days = 30) {
   for (const i of issues) score -= i.severity === 'critical' ? 40 : i.severity === 'warning' ? 15 : 0;
   score = Math.max(0, score);
 
+  // Maduración (clave para pixel nuevo + purchase-only)
+  const learnAgg = {
+    age_days: ageDays,
+    purchases: f.purchase,
+    purchases_per_week: ageDays > 0 ? Math.round((f.purchase / ageDays) * 7 * 10) / 10 : 0,
+    target: LEARNING_TARGET,
+    adsets: learning,
+    in_learning: learning.filter(l => l.status === 'LEARNING').length,
+    success: learning.filter(l => l.status === 'SUCCESS').length,
+    limited: limited.length
+  };
+
+  const diagnosis = await generateDiagnosis({ funnel: f, pmeta, learning, ageDays });
+
   return {
     window_days: days,
     funnel_7d: f,
@@ -143,6 +235,8 @@ async function analyzePixel(days = 30) {
     rates,
     issues,
     health_score: score,
+    maturation: learnAgg,
+    diagnosis,
     pixel_meta: { name: pmeta.name, last_fired_time: pmeta.last_fired_time, is_unavailable: !!pmeta.is_unavailable },
     pixel_id: config.meta.pixelId || ''
   };

@@ -14,6 +14,8 @@ const argosSnapshotSchema = new mongoose.Schema({
   rates: { type: mongoose.Schema.Types.Mixed, default: {} },
   window_days: { type: Number, default: 30 },
   pixel_meta: { type: mongoose.Schema.Types.Mixed, default: {} }, // last_fired_time, is_unavailable
+  maturation: { type: mongoose.Schema.Types.Mixed, default: {} }, // age, purchases, learning por adset
+  diagnosis: { type: String, default: '' },                        // narrativa fundamentada (Claude)
 
   // Issues detectados (eventos rotos / caídas / cuellos de botella del funnel)
   issues: [{
