@@ -69,19 +69,28 @@ async function reconcileStuckVideos() {
     media_type: 'video', status: 'generating_video', created_at: { $lt: cutoff }
   }).lean();
   if (!stuck.length) return 0;
+  const HARD_MAX_MIN = parseInt(process.env.DIONYSUS_STUCK_HARD_MIN || '45', 10); // tope absoluto
   let healed = 0;
   for (const s of stuck) {
     try {
+      const ageMin = Math.round((Date.now() - new Date(s.created_at).getTime()) / 60000);
+      const nm = (s.headline || '').slice(0, 30);
       if (s.video_task_id && seedance.isAvailable()) {
         const r = await seedance.getTaskResult(s.video_task_id).catch(() => null);
         if (r && (r.status === 'completed' || r.status === 'success') && r.video_url) {
           await CreativeProposal.findByIdAndUpdate(s._id, { $set: { status: 'pending_video_review', video_url: r.video_url } });
-          logger.info(`[DIONISIO] reconcile: recuperado "${(s.headline || '').slice(0, 30)}" (task completó) → review`);
+          logger.info(`[DIONISIO] reconcile: recuperado "${nm}" (task completó en PiAPI) → review`);
           healed++; continue;
         }
+        // PiAPI todavía procesando y no pasó el tope → dejarlo (puede completar).
+        if (r && r.status !== 'failed' && ageMin < HARD_MAX_MIN) {
+          logger.info(`[DIONISIO] reconcile: "${nm}" sigue en PiAPI (${r.status||'processing'}, ${ageMin}min) — espero`);
+          continue;
+        }
       }
-      await CreativeProposal.findByIdAndUpdate(s._id, { $set: { status: 'failed', rejection_reason: `stuck generating_video >${STUCK_MIN}min — reconciled` } });
-      logger.info(`[DIONISIO] reconcile: "${(s.headline || '').slice(0, 30)}" pegado ${STUCK_MIN}min+ → failed`);
+      // Sin task_id (murió antes de submit) o falló/superó el tope → failed.
+      await CreativeProposal.findByIdAndUpdate(s._id, { $set: { status: 'failed', rejection_reason: `stuck generating_video ${ageMin}min — reconciled` } });
+      logger.info(`[DIONISIO] reconcile: "${nm}" pegado ${ageMin}min → failed (libera fuente)`);
       healed++;
     } catch (e) { logger.warn(`[DIONISIO] reconcile falló ${s._id}: ${e.message}`); }
   }
@@ -140,7 +149,12 @@ async function runDionysus() {
     // 3. Generar el video (image-to-video desde la URL pública del proposal origen).
     const imageUrl = `${PUBLIC_BASE_URL}/vsrc/${c._id}.png`;
     try {
-      const vid = await seedance.generateVideoFromImage({ imageUrl, prompt, durationSeconds: 5, aspectRatio: '9:16' });
+      const vid = await seedance.generateVideoFromImage({
+        imageUrl, prompt, durationSeconds: 5, aspectRatio: '9:16',
+        // Persistir el task_id YA (apenas se emite) → si el proceso muere
+        // mid-render, reconcileStuckVideos puede recuperarlo desde PiAPI.
+        onSubmit: (taskId) => CreativeProposal.findByIdAndUpdate(placeholder._id, { $set: { video_task_id: taskId } })
+      });
       await CreativeProposal.findByIdAndUpdate(placeholder._id, {
         $set: { status: 'pending_video_review', video_url: vid.video_url, video_task_id: vid.task_id }
       });

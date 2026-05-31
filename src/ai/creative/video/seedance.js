@@ -100,6 +100,9 @@ async function generateVideoFromImage(opts) {
   logger.info(`[SEEDANCE] ${MODEL}/${TASK_TYPE} image-to-video · ${durationSeconds}s ${aspectRatio} · ${RESOLUTION}`);
   const taskId = await _submit({ imageUrl, prompt, durationSeconds, aspectRatio });
   logger.info(`[SEEDANCE] task ${taskId} en cola, pooleando...`);
+  // Avisar el task_id apenas se emite (para persistirlo y poder reconciliar si el
+  // proceso muere mid-render).
+  if (typeof opts.onSubmit === 'function') { try { await opts.onSubmit(taskId); } catch (_) {} }
   const videoUrl = await _poll(taskId);
   const elapsed = Math.round((Date.now() - t0) / 1000);
   logger.info(`[SEEDANCE] ✅ video listo en ${elapsed}s · ${videoUrl}`);
