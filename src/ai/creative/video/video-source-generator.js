@@ -30,10 +30,14 @@ const STYLE = 'Authentic UGC iPhone photo, handheld, natural daylight, shallow c
 
 /** Construye el prompt de imagen para un producto + (motion, scene) del DNA. */
 function buildSourcePrompt(productName, motionKey, sceneKey) {
-  const interaction = dna.buildImageScene(motionKey, sceneKey); // "<mano hace X>, <escena>"
+  const interaction = dna.buildImageScene(motionKey, sceneKey, productName); // pieza = producto real
+  const unit = dna.productUnit(productName);
+  // CRÍTICO: la pieza que se sostiene debe ser EL MISMO alimento que hay en el frasco
+  // (no un pickle chip genérico si el producto es cebolla/tomate/etc).
+  const matchPiece = `CRITICAL: the item held in the hand must be ${unit} — the SAME pickled food that is inside this "${productName}" jar (same type, same color, same shape as the contents visible in the reference). Do NOT substitute a generic pickle chip or any different food.`;
   return `Create a vertical photograph of ${interaction}, for the product "${productName}". ` +
     `The jar/tub from the reference photo is clearly visible in the shot with its label readable. ` +
-    `${FIDELITY} ${STYLE} The hand and the dripping sauce/brine should be the hero of the shot, mouth-watering and in sharp focus.`;
+    `${matchPiece} ${FIDELITY} ${STYLE} The hand and the dripping brine should be the hero of the shot, mouth-watering and in sharp focus.`;
 }
 
 /** Genera un headline + copy corto para el creativo (en inglés, mercado US). */

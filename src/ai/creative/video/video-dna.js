@@ -21,34 +21,48 @@ const BASE_STYLE =
   'neutral white balance, NO color grading, NO oversaturation, preserve the exact original colors, ' +
   'real skin tones, natural film grain, realistic textures, no glossy CGI look, no slow-motion, no zoom.';
 
-// MOTION — interacción con el chip. `img` = qué hace la mano en la foto (gpt-image),
-// `vid` = cómo se anima (Seedance).
+// MOTION — interacción con el producto. `{unit}` = la pieza real del producto
+// (rodaja de cebolla, tomate, pickle chip, etc — se reemplaza por producto).
+// `img` = qué hace la mano en la foto (gpt-image), `vid` = cómo se anima (Seedance).
 const MOTIONS = [
   { key: 'lift_drip',
-    img: 'a hand slowly lifting a single pickle chip up out of the jar, a glossy strand of brine dripping off it back into the jar',
-    vid: 'A hand slowly lifts a single pickle chip up out of the jar; a glossy strand of brine drips slowly off the chip back into the jar. The chip stays in focus.' },
+    img: 'a hand slowly lifting {unit} up out of the jar, a glossy strand of brine dripping off it back into the jar',
+    vid: 'A hand slowly lifts {unit} up out of the jar; a glossy strand of brine drips slowly off it back into the jar. It stays in focus.' },
   { key: 'dip_drip',
-    img: 'a hand holding a single sauced pickle chip just above the open tub, thick glossy chamoy sauce dripping off it in a stretching strand',
-    vid: 'A hand holds a sauced pickle chip above the tub and thick glossy chamoy sauce drips slowly off it in a stretching strand back into the tub.' },
+    img: 'a hand holding {unit} just above the open tub, thick glossy brine/sauce dripping off it in a stretching strand',
+    vid: 'A hand holds {unit} above the tub and thick glossy brine drips slowly off it in a stretching strand back into the tub.' },
   { key: 'pull_up',
-    img: 'a hand pulling a single sauce-coated pickle chip upward out of the tub, the chip glistening wet, a little sauce dripping',
-    vid: 'A hand slowly pulls a sauce-coated pickle chip upward out of the tub, glistening wet, a little sauce dripping off the bottom edge.' },
+    img: 'a hand pulling {unit} upward out of the tub, glistening wet, a little brine dripping',
+    vid: 'A hand slowly pulls {unit} upward out of the tub, glistening wet, a little brine dripping off the bottom edge.' },
   { key: 'pinch_twirl',
-    img: 'two fingers pinching a single glistening pickle chip held up close to the camera, sauce coating it',
-    vid: 'Two fingers pinch a pickle chip held close to the camera and slowly twirl it a few degrees; the sauce glistens and a single drop forms at the bottom.' },
+    img: 'two fingers pinching {unit} held up close to the camera, glistening with brine',
+    vid: 'Two fingers pinch {unit} held close to the camera and slowly twirl it a few degrees; it glistens and a single drop forms at the bottom.' },
   { key: 'bite_tease',
-    img: 'a hand holding a sauced pickle chip up close to the camera as if about to take a bite, glossy and dripping',
-    vid: 'A hand holds a sauced chip up close as if about to take a bite; a slow drop of sauce falls and the chip glistens.' },
+    img: 'a hand holding {unit} up close to the camera as if about to take a bite, glossy and dripping',
+    vid: 'A hand holds {unit} up close as if about to take a bite; a slow drop of brine falls and it glistens.' },
   { key: 'two_hand_open',
-    img: 'two hands holding the jar and just twisting the lid open, a chip and brine visible at the rim',
-    vid: 'Two hands hold the jar and slowly twist the lid open; the brine ripples and the top chip shifts slightly.' }
+    img: 'two hands holding the jar and just twisting the lid open, the product and brine visible at the rim',
+    vid: 'Two hands hold the jar and slowly twist the lid open; the brine ripples and the top piece shifts slightly.' }
 ];
+
+// Deriva la "pieza" real del producto a partir del nombre — para no poner un
+// "pickle chip" genérico cuando el producto es cebolla, tomate, etc.
+function productUnit(name = '') {
+  const n = name.toLowerCase();
+  if (n.includes('onion')) return 'a single pickled red onion slice';
+  if (n.includes('tomato')) return 'a single pickled cherry tomato';
+  if (n.includes('bean')) return 'a single pickled green bean';
+  if (n.includes('okra')) return 'a single pickled okra pod';
+  if (n.includes('jalap') || n.includes('pepper')) return 'a single pickled jalapeño slice';
+  if (n.includes('chip') || n.includes('chili') || n.includes('chamoy') || n.includes('pickle') || n.includes('horseradish') || n.includes('cucumber')) return 'a single pickle chip';
+  return 'a single piece of the pickled product (matching what is inside the jar)';
+}
 
 // CAMERA — movimiento de cámara (Seedance).
 const CAMERAS = [
   { key: 'static',         vid: 'Locked-off static shot, no camera movement at all.' },
-  { key: 'slow_push_in',   vid: 'Very slow, subtle push-in of the camera toward the chip.' },
-  { key: 'slight_tilt',    vid: 'A tiny handheld tilt of the camera following the chip upward.' },
+  { key: 'slow_push_in',   vid: 'Very slow, subtle push-in of the camera toward the product.' },
+  { key: 'slight_tilt',    vid: 'A tiny handheld tilt of the camera following the product upward.' },
   { key: 'handheld_drift', vid: 'Barely perceptible handheld camera drift, natural and unedited.' }
 ];
 
@@ -142,22 +156,24 @@ async function getDimensionStats(dim) {
   return out;
 }
 
-/** Prompt de la IMAGEN-fuente (gpt-image): interacción + escena. */
-function buildImageScene(motionKey, sceneKey) {
+/** Prompt de la IMAGEN-fuente (gpt-image): interacción (con la pieza REAL) + escena. */
+function buildImageScene(motionKey, sceneKey, productName) {
   const m = get('motion', motionKey);
   const s = get('scene', sceneKey);
-  return `${m.img}, ${s.img}`;
+  const unit = productUnit(productName);
+  return `${m.img.replace(/\{unit\}/g, unit)}, ${s.img}`;
 }
 
-/** Prompt del VIDEO (Seedance): motion + cámara + estilo base. */
+/** Prompt del VIDEO (Seedance): motion (con pieza real) + cámara + estilo base. */
 function buildVideoPrompt(productName, motionKey, cameraKey) {
   const m = get('motion', motionKey);
   const c = get('camera', cameraKey);
+  const unit = productUnit(productName);
   const readable = `Keep the ${productName || 'product'} label readable and undistorted at all times.`;
-  return `${m.vid} ${c.vid} ${BASE_STYLE} ${readable}`;
+  return `${m.vid.replace(/\{unit\}/g, unit)} ${c.vid} ${BASE_STYLE} ${readable}`;
 }
 
 module.exports = {
-  MOTIONS, CAMERAS, SCENES, DIMS, BASE_STYLE,
+  MOTIONS, CAMERAS, SCENES, DIMS, BASE_STYLE, productUnit,
   get, keys, pickWeighted, getDimensionStats, buildImageScene, buildVideoPrompt
 };
