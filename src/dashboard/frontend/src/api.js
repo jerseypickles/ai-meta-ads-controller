@@ -329,8 +329,8 @@ export const getDionysusStats = async () => {
   return data;
 };
 // ── Argos (pixel analysis) ──
-export const getArgosIntelligence = async () => {
-  const { data } = await api.get('/api/argos/intelligence');
+export const getArgosIntelligence = async (days = 30) => {
+  const { data } = await api.get(`/api/argos/intelligence?days=${days}`);
   return data;
 };
 export const runArgosApi = async () => {

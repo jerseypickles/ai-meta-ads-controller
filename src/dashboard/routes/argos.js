@@ -11,18 +11,20 @@ const router = express.Router();
 const ArgosSnapshot = require('../../db/models/ArgosSnapshot');
 const logger = require('../../utils/logger');
 
-let _cache = { data: null, ts: 0 };
+const _cache = {}; // por ventana de días
 const CACHE_TTL = 5 * 60 * 1000; // 5 min
 
-// GET /intelligence — reporte live (cacheado 5min). Si el cache está frío, analiza.
+// GET /intelligence?days=30 — reporte live (cacheado 5min por ventana).
 router.get('/intelligence', async (req, res) => {
   try {
-    if (_cache.data && Date.now() - _cache.ts < CACHE_TTL) {
-      return res.json({ ...(_cache.data), cached: true });
+    const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 90);
+    const c = _cache[days];
+    if (c && Date.now() - c.ts < CACHE_TTL) {
+      return res.json({ ...(c.data), cached: true });
     }
     const { analyzePixel } = require('../../ai/agent/argos-agent');
-    const report = await analyzePixel();
-    _cache = { data: report, ts: Date.now() };
+    const report = await analyzePixel(days);
+    _cache[days] = { data: report, ts: Date.now() };
     res.json({ ...report, cached: false });
   } catch (e) {
     // Fallback al último snapshot persistido si la API de Meta falla.
@@ -48,7 +50,7 @@ router.get('/history', async (req, res) => {
 router.post('/run', async (req, res) => {
   try {
     const { runArgos } = require('../../ai/agent/argos-agent');
-    runArgos().then(r => { _cache = { data: r, ts: Date.now() }; logger.info('[ARGOS] run manual completado'); })
+    runArgos().then(r => { if (r && !r.error) _cache[r.window_days || 30] = { data: r, ts: Date.now() }; logger.info('[ARGOS] run manual completado'); })
       .catch(e => logger.error(`[ARGOS] run manual falló: ${e.message}`));
     res.json({ started: true, message: 'Argos analizando el pixel…' });
   } catch (e) {

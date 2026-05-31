@@ -1,26 +1,28 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getArgosIntelligence, runArgosApi } from '../api';
 
-const ARGOS = '#14b8a6'; // teal — "el que todo lo ve"
+const ARGOS = '#22d3ee'; // cyan — "el que todo lo ve"
 
 // 🦚 Argos — análisis del pixel: funnel + salud de eventos.
 function ArgosPanel() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [days, setDays] = useState(30);
 
-  const load = useCallback(async () => {
-    try { setData(await getArgosIntelligence()); }
+  const load = useCallback(async (d) => {
+    setLoading(true);
+    try { setData(await getArgosIntelligence(d)); }
     catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(days); }, [load, days]);
 
   const onRun = async () => {
     setRunning(true);
     try { await runArgosApi(); } catch (e) { console.error(e); }
-    setTimeout(() => { load(); setRunning(false); }, 8000);
+    setTimeout(() => { load(days); setRunning(false); }, 8000);
   };
 
   const card = { background: 'rgba(20,184,166,0.06)', border: '1px solid rgba(20,184,166,0.2)', borderRadius: 12 };
@@ -49,9 +51,18 @@ function ArgosPanel() {
           <div style={{ fontWeight: 700, fontSize: 18, color: ARGOS }}>Argos</div>
           <div style={{ fontSize: 11, opacity: 0.55 }}>Análisis del pixel · funnel + salud</div>
         </div>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, marginRight: 8 }}>
+          {[7, 14, 30].map(d => (
+            <button key={d} onClick={() => setDays(d)}
+              style={{ padding: '6px 10px', borderRadius: 6, border: `1px solid ${days === d ? ARGOS : 'rgba(255,255,255,0.15)'}`,
+                       background: days === d ? `${ARGOS}22` : 'transparent', color: days === d ? ARGOS : '#94a3b8', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
+              {d}d
+            </button>
+          ))}
+        </div>
         <button onClick={onRun} disabled={running}
-          style={{ marginLeft: 'auto', padding: '9px 16px', borderRadius: 8, border: 'none', fontWeight: 700, cursor: running ? 'default' : 'pointer',
-                   background: running ? 'rgba(20,184,166,0.3)' : ARGOS, color: '#fff' }}>
+          style={{ padding: '9px 16px', borderRadius: 8, border: 'none', fontWeight: 700, cursor: running ? 'default' : 'pointer',
+                   background: running ? 'rgba(34,211,238,0.3)' : ARGOS, color: '#06262b' }}>
           {running ? '👁 Analizando…' : '👁 Analizar pixel'}
         </button>
       </div>
@@ -67,7 +78,7 @@ function ArgosPanel() {
               <div style={{ fontSize: 11, opacity: 0.6 }}>Pixel health</div>
             </div>
             <div style={{ ...card, flex: 1, padding: '14px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-              <div style={{ fontSize: 12, opacity: 0.6, marginBottom: 4 }}>Funnel 7 días</div>
+              <div style={{ fontSize: 12, opacity: 0.6, marginBottom: 4 }}>Funnel {data.window_days || days} días</div>
               <div style={{ fontSize: 13 }}>
                 {(f.link_clicks || 0).toLocaleString()} clicks → <b style={{ color: ARGOS }}>{(f.purchase || 0).toLocaleString()}</b> compras
                 {data.stale && <span style={{ color: '#fbbf24', marginLeft: 8 }}>· data en cache (Meta no respondió)</span>}
@@ -76,7 +87,7 @@ function ArgosPanel() {
           </div>
 
           {/* Funnel */}
-          <div style={{ margin: '16px 0 8px', fontWeight: 700, fontSize: 13 }}>🔻 Funnel & drop-off (7d)</div>
+          <div style={{ margin: '16px 0 8px', fontWeight: 700, fontSize: 13 }}>🔻 Funnel & drop-off ({data.window_days || days}d)</div>
           <div style={{ ...card, padding: 12 }}>
             {steps.map((s, i) => {
               const val = f[s.key] || 0;

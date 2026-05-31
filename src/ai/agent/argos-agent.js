@@ -12,13 +12,16 @@ const logger = require('../../utils/logger');
 const ArgosSnapshot = require('../../db/models/ArgosSnapshot');
 const { getMetaClient } = require('../../meta/client');
 
-// Mapeo de pasos del funnel → action_types posibles de Meta (browser + CAPI + omni).
+// Mapeo de pasos del funnel → action_types de Meta, EN ORDEN DE PREFERENCIA.
+// Meta devuelve el MISMO evento bajo varios nombres (omni_*, fb_pixel_*, raw) con
+// el mismo valor → hay que tomar UNO (el primero presente), NO sumar (triplicaría).
+// Orden: omni_* (total cross-channel dedupeado) → fb_pixel_* → raw.
 const EVENT_TYPES = {
-  landing_page_view: ['landing_page_view'],
-  view_content: ['offsite_conversion.fb_pixel_view_content', 'view_content', 'omni_view_content'],
-  add_to_cart: ['offsite_conversion.fb_pixel_add_to_cart', 'add_to_cart', 'omni_add_to_cart'],
-  initiate_checkout: ['offsite_conversion.fb_pixel_initiate_checkout', 'initiate_checkout', 'omni_initiated_checkout'],
-  purchase: ['offsite_conversion.fb_pixel_purchase', 'purchase', 'omni_purchase']
+  landing_page_view: ['omni_landing_page_view', 'landing_page_view'],
+  view_content: ['omni_view_content', 'offsite_conversion.fb_pixel_view_content', 'view_content'],
+  add_to_cart: ['omni_add_to_cart', 'offsite_conversion.fb_pixel_add_to_cart', 'add_to_cart'],
+  initiate_checkout: ['omni_initiated_checkout', 'offsite_conversion.fb_pixel_initiate_checkout', 'initiate_checkout'],
+  purchase: ['omni_purchase', 'offsite_conversion.fb_pixel_purchase', 'purchase']
 };
 
 // Umbrales de cuellos de botella (tasas %, sobre 7d). Configurables por env.
@@ -29,11 +32,15 @@ const TH = {
   ic_to_purchase: parseFloat(process.env.ARGOS_TH_IC_PUR || '40')
 };
 
-function _sumEvent(actions, types) {
+// Toma el PRIMER action_type presente de la lista (dedup) — NO suma (el mismo
+// evento viene bajo varios nombres con el mismo valor).
+function _pickEvent(actions, types) {
   if (!Array.isArray(actions)) return 0;
-  let total = 0;
-  for (const a of actions) if (types.includes(a.action_type)) total += parseInt(a.value) || 0;
-  return total;
+  for (const t of types) {
+    const a = actions.find(x => x.action_type === t);
+    if (a) return parseInt(a.value) || 0;
+  }
+  return 0;
 }
 
 function _rate(num, den) { return den > 0 ? Math.round((num / den) * 1000) / 10 : 0; }
@@ -50,79 +57,99 @@ async function getAccountFunnel(timeRange) {
   const f = {
     impressions: parseInt(r.impressions) || 0,
     link_clicks: parseInt(r.inline_link_clicks) || 0,
-    landing_page_view: _sumEvent(actions, EVENT_TYPES.landing_page_view),
-    view_content: _sumEvent(actions, EVENT_TYPES.view_content),
-    add_to_cart: _sumEvent(actions, EVENT_TYPES.add_to_cart),
-    initiate_checkout: _sumEvent(actions, EVENT_TYPES.initiate_checkout),
-    purchase: _sumEvent(actions, EVENT_TYPES.purchase),
+    landing_page_view: _pickEvent(actions, EVENT_TYPES.landing_page_view),
+    view_content: _pickEvent(actions, EVENT_TYPES.view_content),
+    add_to_cart: _pickEvent(actions, EVENT_TYPES.add_to_cart),
+    initiate_checkout: _pickEvent(actions, EVENT_TYPES.initiate_checkout),
+    purchase: _pickEvent(actions, EVENT_TYPES.purchase),
     spend: parseFloat(r.spend) || 0
   };
   return f;
 }
 
 /**
- * Analiza el pixel: funnel 7d + hoy, tasas de conversión, e issues (eventos rotos,
- * caídas, cuellos de botella). Devuelve el reporte estructurado.
+ * Analiza el pixel sobre una ventana (days, default 30). Funnel + tasas + issues:
+ * detecta eventos sub-instrumentados (LPV/VC/ATC/IC que no disparan vs los clicks
+ * y las compras) — el caso típico de pixel mal configurado.
  */
-async function analyzePixel() {
+async function analyzePixel(days = 30) {
   const moment = require('moment-timezone');
   const TZ = config.system.timezone || 'America/New_York';
   const today = moment().tz(TZ).format('YYYY-MM-DD');
   const yesterday = moment().tz(TZ).subtract(1, 'days').format('YYYY-MM-DD');
-  const since7 = moment().tz(TZ).subtract(7, 'days').format('YYYY-MM-DD');
+  const since = moment().tz(TZ).subtract(days, 'days').format('YYYY-MM-DD');
 
-  const [funnelToday, funnel7d] = await Promise.all([
-    getAccountFunnel({ since: today, until: today }),
-    getAccountFunnel({ since: since7, until: yesterday })
-  ]);
+  // Ventana principal (incluye hoy para no perder días en cuentas nuevas).
+  const f = await getAccountFunnel({ since, until: today });
 
-  // Tasas sobre 7d (señal estable, no el día parcial).
   const rates = {
-    click_to_lpv: _rate(funnel7d.landing_page_view, funnel7d.link_clicks),
-    lpv_to_vc: _rate(funnel7d.view_content, funnel7d.landing_page_view),
-    vc_to_atc: _rate(funnel7d.add_to_cart, funnel7d.view_content),
-    atc_to_ic: _rate(funnel7d.initiate_checkout, funnel7d.add_to_cart),
-    ic_to_purchase: _rate(funnel7d.purchase, funnel7d.initiate_checkout)
+    click_to_lpv: _rate(f.landing_page_view, f.link_clicks),
+    lpv_to_vc: _rate(f.view_content, f.landing_page_view),
+    vc_to_atc: _rate(f.add_to_cart, f.view_content),
+    atc_to_ic: _rate(f.initiate_checkout, f.add_to_cart),
+    ic_to_purchase: _rate(f.purchase, f.initiate_checkout)
   };
 
   const issues = [];
+  const pur = f.purchase, clicks = f.link_clicks;
 
-  // ── 1. EVENTOS ROTOS (top-funnel, disparan instantáneo → 0 hoy = roto) ──
-  // landing_page_view / view_content no tienen lag de atribución; si en 7d había
-  // volumen y HOY hay clicks pero 0 del evento → el pixel/CAPI se rompió.
-  for (const ev of ['landing_page_view', 'view_content']) {
-    const baselineDaily = funnel7d[ev] / 7;
-    if (baselineDaily >= 5 && funnelToday[ev] === 0 && funnelToday.link_clicks >= 10) {
-      issues.push({
-        severity: 'critical', kind: 'broken_event', event: ev,
-        message: `${ev} dejó de dispararse hoy (${funnelToday.link_clicks} clicks, 0 ${ev}) — pixel/CAPI probablemente roto`,
-        detail: { today: 0, baseline_daily: Math.round(baselineDaily) }
-      });
-    }
-  }
-
-  // ── 2. ATC pero 0 compras en 7d (checkout/pixel de purchase roto) ──
-  if (funnel7d.add_to_cart >= 20 && funnel7d.purchase === 0) {
+  // ── 1. PageView casi no dispara vs clicks (pixel no carga / bounce) ──
+  if (clicks >= 50 && f.landing_page_view < clicks * 0.3) {
     issues.push({
-      severity: 'critical', kind: 'broken_event', event: 'purchase',
-      message: `${funnel7d.add_to_cart} ATC en 7d pero 0 compras registradas — el evento Purchase o el checkout está roto`,
-      detail: { add_to_cart_7d: funnel7d.add_to_cart, purchase_7d: 0 }
+      severity: 'critical', kind: 'broken_event', event: 'landing_page_view',
+      message: `Solo ${rates.click_to_lpv}% de los clicks registran Landing Page View (${f.landing_page_view}/${clicks}) — el pixel no carga en la mayoría de las visitas (o bounce altísimo / problema de tracking)`,
+      detail: { lpv: f.landing_page_view, link_clicks: clicks, rate: rates.click_to_lpv }
     });
   }
 
-  // ── 3. CUELLOS DE BOTELLA del funnel (tasas bajas con volumen) ──
+  // ── 2. ViewContent < compras = el evento de vista de producto no dispara ──
+  if (pur >= 3 && f.view_content < pur) {
+    issues.push({
+      severity: 'critical', kind: 'broken_event', event: 'view_content',
+      message: `ViewContent (${f.view_content}) es MENOR que las compras (${pur}) — debería ser muchísimo mayor. El evento ViewContent casi no se registra; el pixel no trackea las vistas de producto`,
+      detail: { view_content: f.view_content, purchase: pur }
+    });
+  }
+
+  // ── 3. AddToCart sin registrar ──
+  if (pur >= 3 && f.add_to_cart === 0) {
+    issues.push({
+      severity: 'warning', kind: 'broken_event', event: 'add_to_cart',
+      message: `0 AddToCart con ${pur} compras — el evento AddToCart no se está registrando (el theme no lo dispara, o los clientes usan "Buy Now" salteando el carrito)`,
+      detail: { add_to_cart: 0, purchase: pur }
+    });
+  }
+
+  // ── 4. InitiateCheckout < compras = checkout no dispara confiable ──
+  if (pur >= 3 && f.initiate_checkout < pur) {
+    issues.push({
+      severity: 'warning', kind: 'broken_event', event: 'initiate_checkout',
+      message: `InitiateCheckout (${f.initiate_checkout}) menor que las compras (${pur}) — el evento de checkout no dispara confiable (deberían ser ≥ compras)`,
+      detail: { initiate_checkout: f.initiate_checkout, purchase: pur }
+    });
+  }
+
+  // ── 5. ATC pero 0 compras (checkout/purchase roto) ──
+  if (f.add_to_cart >= 20 && pur === 0) {
+    issues.push({
+      severity: 'critical', kind: 'broken_event', event: 'purchase',
+      message: `${f.add_to_cart} AddToCart pero 0 compras — el evento Purchase o el checkout está roto`,
+      detail: { add_to_cart: f.add_to_cart, purchase: 0 }
+    });
+  }
+
+  // ── 6. Cuellos de botella reales (solo si los eventos SÍ disparan con volumen) ──
   const bottlenecks = [
-    { step: 'lpv_to_vc', rate: rates.lpv_to_vc, vol: funnel7d.landing_page_view, th: TH.lpv_to_vc, msg: 'la landing no engancha (pocos llegan a ver el producto)' },
-    { step: 'vc_to_atc', rate: rates.vc_to_atc, vol: funnel7d.view_content, th: TH.vc_to_atc, msg: 'poca gente agrega al carrito desde el producto (oferta/precio/PDP)' },
-    { step: 'atc_to_ic', rate: rates.atc_to_ic, vol: funnel7d.add_to_cart, th: TH.atc_to_ic, msg: 'se caen entre carrito y checkout' },
-    { step: 'ic_to_purchase', rate: rates.ic_to_purchase, vol: funnel7d.initiate_checkout, th: TH.ic_to_purchase, msg: 'abandonan el checkout (fricción de pago/envío)' }
+    { step: 'vc_to_atc', rate: rates.vc_to_atc, vol: f.view_content, th: TH.vc_to_atc, msg: 'poca gente agrega al carrito desde el producto' },
+    { step: 'atc_to_ic', rate: rates.atc_to_ic, vol: f.add_to_cart, th: TH.atc_to_ic, msg: 'se caen entre carrito y checkout' },
+    { step: 'ic_to_purchase', rate: rates.ic_to_purchase, vol: f.initiate_checkout, th: TH.ic_to_purchase, msg: 'abandonan el checkout' }
   ];
   for (const b of bottlenecks) {
     if (b.vol >= 30 && b.rate < b.th) {
       issues.push({
         severity: 'warning', kind: 'funnel_bottleneck', event: b.step,
         message: `Cuello de botella ${b.step}: ${b.rate}% (umbral ${b.th}%) — ${b.msg}`,
-        detail: { rate: b.rate, threshold: b.th, volume_7d: b.vol }
+        detail: { rate: b.rate, threshold: b.th, volume: b.vol }
       });
     }
   }
@@ -131,14 +158,14 @@ async function analyzePixel() {
     issues.push({ severity: 'info', kind: 'healthy', event: 'pixel', message: 'Pixel sano — eventos disparando y funnel sin cuellos críticos.', detail: {} });
   }
 
-  // Health score
   let score = 100;
   for (const i of issues) score -= i.severity === 'critical' ? 40 : i.severity === 'warning' ? 15 : 0;
   score = Math.max(0, score);
 
   return {
-    funnel_today: funnelToday,
-    funnel_7d: funnel7d,
+    window_days: days,
+    funnel_7d: f,          // ahora es la ventana elegida (mantengo el nombre por compat del panel)
+    funnel_today: f,
     rates,
     issues,
     health_score: score,
