@@ -1679,6 +1679,47 @@ class MetaClient {
   }
 
   /**
+   * Crear un ad creative MULTI-FORMATO (placement asset customization):
+   * sube una imagen 9:16 (Stories/Reels) y una 4:5 (Feed/desktop) y mapea cada
+   * una a sus placements. Así el ad se ve bien en mobile vertical Y en desktop.
+   * Meta API: asset_feed_spec.images + asset_customization_rules.
+   */
+  async createAdCreativeMultiFormat(params) {
+    const { page_id, image_hash_vertical, image_hash_feed, headline, body, description, cta, link_url } = params;
+    if (!page_id) throw new Error('page_id requerido');
+    if (!image_hash_vertical || !image_hash_feed) throw new Error('se requieren ambos image_hash (vertical 9:16 y feed 4:5)');
+    if (!link_url) throw new Error('link_url requerido');
+
+    const assetFeedSpec = {
+      images: [
+        { hash: image_hash_feed, adlabels: [{ name: 'AR_4x5' }] },      // feed / desktop
+        { hash: image_hash_vertical, adlabels: [{ name: 'AR_9x16' }] }  // stories / reels
+      ],
+      bodies: [{ text: body || '' }],
+      titles: [{ text: headline || '' }],
+      descriptions: [{ text: description || '' }],
+      ad_formats: ['SINGLE_IMAGE'],
+      link_urls: [{ website_url: link_url }],
+      call_to_action_types: [cta || 'SHOP_NOW'],
+      asset_customization_rules: [
+        // 9:16 → historias y reels (FB + IG)
+        { customization_spec: { publisher_platforms: ['facebook', 'instagram'], facebook_positions: ['story', 'facebook_reels'], instagram_positions: ['story', 'reels'] }, image_label: { name: 'AR_9x16' } },
+        // 4:5 → default (feed, marketplace, explore, desktop, audience network…)
+        { customization_spec: { publisher_platforms: ['facebook', 'instagram', 'audience_network', 'messenger'] }, image_label: { name: 'AR_4x5' } }
+      ]
+    };
+
+    const creativeParams = {
+      name: `Creative MF - ${headline || 'multiformat'} - ${new Date().toISOString().split('T')[0]}`,
+      object_story_spec: JSON.stringify({ page_id, instagram_user_id: params.instagram_user_id || '17841404033228624' }),
+      asset_feed_spec: JSON.stringify(assetFeedSpec)
+    };
+    logger.info(`Creando ad creative MULTI-FORMATO (9:16 + 4:5): "${headline}"`);
+    const result = await this.post(`/${this.adAccountId}/adcreatives`, creativeParams);
+    return { creative_id: result.id, name: creativeParams.name };
+  }
+
+  /**
    * Crear un nuevo ad dentro de un ad set existente.
    * Meta API: POST /act_{ad_account_id}/ads
    * El ad se crea PAUSADO por seguridad.
