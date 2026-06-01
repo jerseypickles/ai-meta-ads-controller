@@ -45,7 +45,23 @@ const MOTIONS = [
     vid: 'Two hands hold the jar and slowly twist the lid open; the brine ripples and the top piece shifts slightly.' },
   { key: 'fridge_reveal', selfScene: true,
     img: 'a hand opening a home refrigerator door, revealing several {product} jars neatly lined up on the fridge shelf inside, cool soft fridge light spilling out, light condensation on the jars, POV handheld UGC, the {product} labels readable',
-    vid: 'A hand slowly pulls the refrigerator door open, revealing the {product} jars lined up on the shelf as the cool fridge light spills out; faint condensation, almost no other movement.' }
+    vid: 'A hand slowly pulls the refrigerator door open, revealing the {product} jars lined up on the shelf as the cool fridge light spills out; faint condensation, almost no other movement.' },
+  // ── Composiciones distintas (no la toma típica de mano+chip+drip) ──
+  { key: 'pour_bowl', selfScene: true,
+    img: 'a hand tilting the open {product} jar to pour pickle chips and brine into a white ceramic bowl on a kitchen counter, chips mid-tumble, glossy and fresh, UGC iPhone',
+    vid: 'A hand tilts the {product} jar and the pickle chips with brine tumble slowly out into the bowl.' },
+  { key: 'cooler_grab', selfScene: true,
+    img: "a hand reaching into an ice-filled cooler and pulling out a frosty {product} jar, ice cubes and water droplets all around, condensation on the glass, backyard summer, UGC iPhone",
+    vid: 'A hand lifts the frosty {product} jar up out of the ice; water droplets slide down the glass, ice settles slightly.' },
+  { key: 'pantry_shelf', selfScene: true,
+    img: 'several {product} jars neatly lined up on a wooden pantry shelf at home, a hand reaching toward the front jar, warm soft light, labels readable, UGC iPhone',
+    vid: 'A hand reaches and slides one {product} jar forward off the shelf; the other jars stay still.' },
+  { key: 'on_food', selfScene: true,
+    img: 'a hand placing {unit} on top of a juicy cheeseburger on a plate, the {product} as the hero topping, melty cheese, casual kitchen, mouth-watering UGC iPhone',
+    vid: 'A hand lays {unit} onto the burger; a single drop of brine falls and faint steam rises from the food.' },
+  { key: 'table_spread', selfScene: true,
+    img: "an open {product} jar in the center of a picnic table surrounded by a snack spread (chips, dips, drinks), top-down casual flat-lay, sunny outdoor, UGC iPhone, label readable",
+    vid: 'Almost still — a faint breeze and soft light shift across the {product} jar and the spread; ambient micro-motion only.' }
 ];
 
 // Deriva la "pieza" real del producto a partir del nombre — para no poner un
