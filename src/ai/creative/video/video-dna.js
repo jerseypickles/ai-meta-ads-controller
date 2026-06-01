@@ -42,7 +42,10 @@ const MOTIONS = [
     vid: 'A hand holds {unit} up close as if about to take a bite; a slow drop of brine falls and it glistens.' },
   { key: 'two_hand_open',
     img: 'two hands holding the jar and just twisting the lid open, the product and brine visible at the rim',
-    vid: 'Two hands hold the jar and slowly twist the lid open; the brine ripples and the top piece shifts slightly.' }
+    vid: 'Two hands hold the jar and slowly twist the lid open; the brine ripples and the top piece shifts slightly.' },
+  { key: 'fridge_reveal', selfScene: true,
+    img: 'a hand opening a home refrigerator door, revealing several {product} jars neatly lined up on the fridge shelf inside, cool soft fridge light spilling out, light condensation on the jars, POV handheld UGC, the {product} labels readable',
+    vid: 'A hand slowly pulls the refrigerator door open, revealing the {product} jars lined up on the shelf as the cool fridge light spills out; faint condensation, almost no other movement.' }
 ];
 
 // Deriva la "pieza" real del producto a partir del nombre — para no poner un
@@ -156,21 +159,30 @@ async function getDimensionStats(dim) {
   return out;
 }
 
-/** Prompt de la IMAGEN-fuente (gpt-image): interacción (con la pieza REAL) + escena. */
+// Reemplaza {unit} (una pieza del producto) y {product} (el frasco/nombre entero).
+function _fill(text, productName) {
+  const unit = productUnit(productName);
+  return text.replace(/\{unit\}/g, unit).replace(/\{product\}/g, productName || 'the product');
+}
+
+/** Prompt de la IMAGEN-fuente (gpt-image): interacción (con la pieza REAL) + escena.
+ *  Si el motion trae escena propia (selfScene, ej. heladera), NO se le pega otra. */
 function buildImageScene(motionKey, sceneKey, productName) {
   const m = get('motion', motionKey);
-  const s = get('scene', sceneKey);
-  const unit = productUnit(productName);
-  return `${m.img.replace(/\{unit\}/g, unit)}, ${s.img}`;
+  let img = _fill(m.img, productName);
+  if (!m.selfScene) {
+    const s = get('scene', sceneKey);
+    img += `, ${s.img}`;
+  }
+  return img;
 }
 
 /** Prompt del VIDEO (Seedance): motion (con pieza real) + cámara + estilo base. */
 function buildVideoPrompt(productName, motionKey, cameraKey) {
   const m = get('motion', motionKey);
   const c = get('camera', cameraKey);
-  const unit = productUnit(productName);
   const readable = `Keep the ${productName || 'product'} label readable and undistorted at all times.`;
-  return `${m.vid.replace(/\{unit\}/g, unit)} ${c.vid} ${BASE_STYLE} ${readable}`;
+  return `${_fill(m.vid, productName)} ${c.vid} ${BASE_STYLE} ${readable}`;
 }
 
 module.exports = {
