@@ -45,42 +45,43 @@ class KillSwitch {
         return { triggered: false, reason: 'Sin datos para evaluar' };
       }
 
-      // Calcular métricas de la cuenta
       const totalSpend7d = snapshots.reduce((sum, s) => sum + (s.metrics?.last_7d?.spend || 0), 0);
       const totalRevenue7d = snapshots.reduce((sum, s) => sum + (s.metrics?.last_7d?.purchase_value || 0), 0);
-      const accountROAS = totalSpend7d > 0 ? totalRevenue7d / totalSpend7d : 0;
+      const metaROAS = totalSpend7d > 0 ? totalRevenue7d / totalSpend7d : 0;
 
-      const totalSpendToday = snapshots.reduce((sum, s) => sum + (s.metrics?.today?.spend || 0), 0);
-      const totalRevenueToday = snapshots.reduce((sum, s) => sum + (s.metrics?.today?.purchase_value || 0), 0);
-      const dailyLoss = totalSpendToday - totalRevenueToday;
+      // ═══ El kill switch decide por CASH-ROAS REAL (Demeter), NO por Meta-ROAS ═══
+      // El Meta-ROAS sub-atribuye fuerte con un pixel NUEVO → da falsas alarmas (paga
+      // bien al banco pero Meta "ve" 0.18x). Filosofía del negocio: cash > Meta.
+      let cashRoas = null;
+      try {
+        const { getAccountCashSignal } = require('../ai/agent/demeter-cash-signal');
+        const cs = await getAccountCashSignal();
+        if (cs.available) cashRoas = (cs.cash_roas_7d != null ? cs.cash_roas_7d : cs.cash_roas_14d);
+      } catch (e) { logger.warn(`[KILL-SWITCH] cash signal falló: ${e.message}`); }
 
-      const totalPurchases7d = snapshots.reduce((sum, s) => sum + (s.metrics?.last_7d?.purchases || 0), 0);
-      const accountCPA = totalPurchases7d > 0 ? totalSpend7d / totalPurchases7d : 0;
+      const CASH_FLOOR = parseFloat(process.env.KILL_SWITCH_CASH_FLOOR || '1.0');
 
-      // CHECK 1: ROAS por debajo del umbral crítico — requiere $1000+ spend 7d
-      if (accountROAS > 0 && totalSpend7d >= 1000 && accountROAS < safetyGuards.kill_switch.account_roas_below) {
+      // Sin señal de cash → NO pausar por Meta-ROAS (evita falsos en cuenta/pixel nuevo).
+      if (cashRoas == null) {
+        logger.warn(`[KILL-SWITCH] sin señal de cash de Demeter — NO evalúo pausa de emergencia (Meta-ROAS ${metaROAS.toFixed(2)}x no es confiable con pixel nuevo)`);
+        return { triggered: false, reason: 'Sin cash signal — no se evalúa pausa' };
+      }
+
+      // Cash-ROAS sano → el negocio gana plata real aunque Meta diga lo contrario.
+      if (cashRoas >= CASH_FLOOR) {
+        logger.debug(`[KILL-SWITCH] OK — cash-ROAS ${cashRoas}x (≥${CASH_FLOOR}); Meta-ROAS ${metaROAS.toFixed(2)}x se ignora (sub-atribución de pixel)`);
+        return { triggered: false, reason: `Cash-ROAS ${cashRoas}x sano` };
+      }
+
+      // Cash-ROAS REALMENTE bajo + spend material → emergencia genuina.
+      if (totalSpend7d >= 1000) {
         return this.triggerEmergencyPause(
-          `ROAS de la cuenta en ${accountROAS.toFixed(2)}x con $${totalSpend7d.toFixed(0)} spend — debajo del umbral de ${safetyGuards.kill_switch.account_roas_below}x`
+          `Cash-ROAS REAL en ${cashRoas}x (Demeter) con $${totalSpend7d.toFixed(0)} spend 7d — debajo de ${CASH_FLOOR}x. Pérdida real al banco.`
         );
       }
 
-      // CHECK 2: CPA demasiado alto — requiere mínimo 100 compras 7d para disparar
-      // (evita falsos positivos cuando el data collector aún no procesó todos los snapshots)
-      if (accountCPA > 0 && totalPurchases7d >= 100 && accountCPA > kpiTargets.cpa_target * safetyGuards.kill_switch.account_cpa_above_multiplier) {
-        return this.triggerEmergencyPause(
-          `CPA de la cuenta en $${accountCPA.toFixed(2)} con ${totalPurchases7d} compras 7d — ${safetyGuards.kill_switch.account_cpa_above_multiplier}x por encima del objetivo de $${kpiTargets.cpa_target}`
-        );
-      }
-
-      // CHECK 3: Pérdida diaria excesiva
-      if (dailyLoss > safetyGuards.kill_switch.daily_loss_threshold) {
-        return this.triggerEmergencyPause(
-          `Pérdida diaria de $${dailyLoss.toFixed(2)} — excede el umbral de $${safetyGuards.kill_switch.daily_loss_threshold}`
-        );
-      }
-
-      logger.debug(`Kill switch monitor OK — ROAS: ${accountROAS.toFixed(2)}x, CPA: $${accountCPA.toFixed(2)}`);
-      return { triggered: false, reason: 'Métricas dentro de rango seguro' };
+      logger.debug(`Kill switch OK — cash-ROAS ${cashRoas}x, spend7d $${totalSpend7d.toFixed(0)}`);
+      return { triggered: false, reason: 'Cash dentro de rango' };
     } catch (error) {
       logger.error('Error en kill switch monitor:', error);
       return { triggered: false, reason: `Error: ${error.message}` };
