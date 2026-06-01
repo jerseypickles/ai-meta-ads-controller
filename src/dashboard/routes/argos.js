@@ -46,6 +46,90 @@ router.get('/history', async (req, res) => {
   }
 });
 
+// GET /capi-stats — salud del envío server-side (Meta Conversions API).
+// Lee la colección CapiEvent: totales por estado, últimas 24h, match quality
+// (qué señal lleva cada evento) y las últimas compras enviadas.
+router.get('/capi-stats', async (req, res) => {
+  try {
+    const config = require('../../../config');
+    const CapiEvent = require('../../db/models/CapiEvent');
+    const since24h = new Date(Date.now() - 24 * 3600 * 1000);
+
+    // Totales por estado (toda la colección viva — TTL 30d).
+    const byStatus = await CapiEvent.aggregate([
+      { $group: { _id: '$status', n: { $sum: 1 } } }
+    ]);
+    const totals = { sent: 0, pending: 0, failed: 0 };
+    for (const r of byStatus) if (r._id in totals) totals[r._id] = r.n;
+    totals.total = totals.sent + totals.pending + totals.failed;
+
+    // Enviados últimas 24h + valor.
+    const sent24 = await CapiEvent.find({ status: 'sent', sent_at: { $gte: since24h } })
+      .select('payload sent_at').lean();
+    const sentToday = sent24.length;
+    const valueToday = sent24.reduce((s, d) => s + (d.payload?.custom_data?.value || 0), 0);
+
+    // Match Quality — sobre los últimos 200 enviados: qué % llevó cada señal.
+    const recentSent = await CapiEvent.find({ status: 'sent' })
+      .sort({ sent_at: -1 }).limit(200).select('payload').lean();
+    const mqKeys = { em: 'em', ph: 'ph', fn: 'fn', ln: 'ln', ct: 'ct', zp: 'zp',
+                     external_id: 'external_id', fbp: 'fbp', fbc: 'fbc',
+                     ip: 'client_ip_address', ua: 'client_user_agent' };
+    const mqCount = {}; Object.keys(mqKeys).forEach(k => mqCount[k] = 0);
+    let keySum = 0;
+    for (const d of recentSent) {
+      const ud = d.payload?.user_data || {};
+      let n = 0;
+      for (const [k, src] of Object.entries(mqKeys)) {
+        if (ud[src] != null && (!Array.isArray(ud[src]) || ud[src].length)) { mqCount[k]++; n++; }
+      }
+      keySum += n;
+    }
+    const denom = recentSent.length || 1;
+    const match_quality = {};
+    Object.keys(mqKeys).forEach(k => match_quality[k] = Math.round((mqCount[k] / denom) * 100));
+    match_quality.avg_keys = recentSent.length ? +(keySum / recentSent.length).toFixed(1) : 0;
+    match_quality.sample = recentSent.length;
+
+    // Últimas 20 compras (cualquier estado) para el feed.
+    const recent = await CapiEvent.find().sort({ created_at: -1 }).limit(20)
+      .select('order_id event_id status events_received fbtrace_id last_error attempts created_at sent_at payload').lean();
+    const recentOut = recent.map(d => {
+      const ud = d.payload?.user_data || {};
+      return {
+        order_id: d.order_id,
+        value: d.payload?.custom_data?.value || 0,
+        currency: d.payload?.custom_data?.currency || 'USD',
+        status: d.status,
+        events_received: d.events_received,
+        fbtrace_id: d.fbtrace_id || '',
+        last_error: d.last_error || '',
+        attempts: d.attempts,
+        sent_at: d.sent_at,
+        created_at: d.created_at,
+        has_fbp: ud.fbp != null,
+        has_fbc: ud.fbc != null,
+        dedup_ok: typeof d.event_id === 'string' && d.event_id.startsWith('purchase_')
+      };
+    });
+
+    const lastSent = await CapiEvent.findOne({ status: 'sent' }).sort({ sent_at: -1 }).select('sent_at').lean();
+
+    res.json({
+      enabled: !!config.capi.enabled,
+      configured: !!config.capi.accessToken,
+      pixel_id: config.capi.pixelId,
+      test_mode: !!config.capi.testEventCode,
+      totals, sent_today: sentToday, value_today: valueToday,
+      match_quality, recent: recentOut,
+      last_sent_at: lastSent?.sent_at || null
+    });
+  } catch (e) {
+    logger.error(`[ARGOS] capi-stats falló: ${e.message}`);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /run — fuerza análisis + persiste (async)
 router.post('/run', async (req, res) => {
   try {
