@@ -1507,6 +1507,17 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'argos' });
   logger.info('  [*] Argos — cada 3h (análisis del pixel: funnel + salud)');
 
+  // Meta CAPI — sweeper de reintentos de eventos Purchase que fallaron el POST.
+  cron.schedule('*/5 * * * *', async () => {
+    try {
+      const { retryFailedCapiEvents } = require('./integrations/meta-capi');
+      await retryFailedCapiEvents();
+    } catch (err) {
+      logger.error(`[CRON] CAPI sweeper falló: ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'capi-retry' });
+  logger.info('  [*] CAPI retry sweeper — cada 5 min');
+
   // Hermes Agent — 5x/día (9am, 12pm, 3pm, 6pm, 9pm ET) — foot traffic NJ store
   // Aumentado de 2x → 5x el 14-may-2026 para acelerar inyección de creativos
   // los primeros 7d. Solo registra el cron si HERMES_ENABLED=true.
