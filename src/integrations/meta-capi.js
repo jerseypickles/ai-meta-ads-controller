@@ -118,7 +118,8 @@ async function sendCapiEvent(doc) {
   if (r.ok) {
     doc.status = 'sent'; doc.sent_at = new Date(); doc.events_received = r.events_received; doc.fbtrace_id = r.fbtrace_id || ''; doc.last_error = '';
     await doc.save();
-    logger.info(`[CAPI] ✅ Purchase enviado order=${doc.order_id} · events_received=${r.events_received} · fbtrace=${r.fbtrace_id}`);
+    const testTag = config.capi.testEventCode ? ` · 🧪 TEST(${config.capi.testEventCode})` : ' · LIVE';
+    logger.info(`[CAPI] ✅ Purchase enviado order=${doc.order_id} · events_received=${r.events_received} · fbtrace=${r.fbtrace_id}${testTag}`);
     return { ok: true, order_id: doc.order_id, events_received: r.events_received };
   }
   // backoff exponencial: 1m, 2m, 4m, 8m… cap 1h
