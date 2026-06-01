@@ -37,4 +37,22 @@ router.post('/orders-paid', (req, res) => {
     .catch(e => logger.error(`[CAPI] processOrderPaid order=${order?.id} falló: ${e.message}`));
 });
 
+// POST /webhooks/shopify/checkouts-create → InitiateCheckout
+router.post('/checkouts-create', (req, res) => {
+  const raw = req.body;
+  const hmac = req.get('X-Shopify-Hmac-Sha256');
+  if (!verifyHmac(raw, hmac)) {
+    logger.warn('[CAPI] webhook checkouts/create: HMAC inválido — rechazado');
+    return res.status(401).send('invalid hmac');
+  }
+  res.status(200).send('ok');
+  let checkout;
+  try { checkout = JSON.parse(raw.toString('utf8')); }
+  catch (e) { return logger.error(`[CAPI] checkout body no parseable: ${e.message}`); }
+  const { processCheckoutCreated } = require('../../integrations/meta-capi');
+  processCheckoutCreated(checkout)
+    .then(r => { if (r && !r.skipped) logger.debug(`[CAPI] checkout ${checkout.token} procesado: ${JSON.stringify(r)}`); })
+    .catch(e => logger.error(`[CAPI] processCheckoutCreated checkout=${checkout?.token} falló: ${e.message}`));
+});
+
 module.exports = router;

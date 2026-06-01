@@ -54,23 +54,35 @@ router.get('/capi-stats', async (req, res) => {
     const config = require('../../../config');
     const CapiEvent = require('../../db/models/CapiEvent');
     const since24h = new Date(Date.now() - 24 * 3600 * 1000);
+    // event_name ausente en docs viejos = Purchase (era el default). Matchea ambos.
+    const PURCHASE = { $or: [{ event_name: 'Purchase' }, { event_name: { $exists: false } }] };
 
-    // Totales por estado (toda la colección viva — TTL 30d).
+    // Totales por estado — solo Purchase (los KPIs de plata son de compras).
     const byStatus = await CapiEvent.aggregate([
+      { $match: PURCHASE },
       { $group: { _id: '$status', n: { $sum: 1 } } }
     ]);
     const totals = { sent: 0, pending: 0, failed: 0 };
     for (const r of byStatus) if (r._id in totals) totals[r._id] = r.n;
     totals.total = totals.sent + totals.pending + totals.failed;
 
-    // Enviados últimas 24h + valor.
-    const sent24 = await CapiEvent.find({ status: 'sent', sent_at: { $gte: since24h } })
+    // Enviados últimas 24h + valor (Purchase).
+    const sent24 = await CapiEvent.find({ ...PURCHASE, status: 'sent', sent_at: { $gte: since24h } })
       .select('payload sent_at').lean();
     const sentToday = sent24.length;
     const valueToday = sent24.reduce((s, d) => s + (d.payload?.custom_data?.value || 0), 0);
 
-    // Match Quality — sobre los últimos 200 enviados: qué % llevó cada señal.
-    const recentSent = await CapiEvent.find({ status: 'sent' })
+    // InitiateCheckout — totales por estado + enviados 24h.
+    const icByStatus = await CapiEvent.aggregate([
+      { $match: { event_name: 'InitiateCheckout' } },
+      { $group: { _id: '$status', n: { $sum: 1 } } }
+    ]);
+    const ic = { sent: 0, pending: 0, failed: 0 };
+    for (const r of icByStatus) if (r._id in ic) ic[r._id] = r.n;
+    ic.sent_today = await CapiEvent.countDocuments({ event_name: 'InitiateCheckout', status: 'sent', sent_at: { $gte: since24h } });
+
+    // Match Quality — sobre los últimos 200 Purchase enviados: qué % llevó cada señal.
+    const recentSent = await CapiEvent.find({ ...PURCHASE, status: 'sent' })
       .sort({ sent_at: -1 }).limit(200).select('payload').lean();
     const mqKeys = { em: 'em', ph: 'ph', fn: 'fn', ln: 'ln', ct: 'ct', zp: 'zp',
                      external_id: 'external_id', fbp: 'fbp', fbc: 'fbc',
@@ -92,7 +104,7 @@ router.get('/capi-stats', async (req, res) => {
     match_quality.sample = recentSent.length;
 
     // Últimas 20 compras (cualquier estado) para el feed.
-    const recent = await CapiEvent.find().sort({ created_at: -1 }).limit(20)
+    const recent = await CapiEvent.find(PURCHASE).sort({ created_at: -1 }).limit(20)
       .select('order_id event_id status events_received fbtrace_id last_error attempts created_at sent_at payload').lean();
     const recentOut = recent.map(d => {
       const ud = d.payload?.user_data || {};
@@ -113,7 +125,7 @@ router.get('/capi-stats', async (req, res) => {
       };
     });
 
-    const lastSent = await CapiEvent.findOne({ status: 'sent' }).sort({ sent_at: -1 }).select('sent_at').lean();
+    const lastSent = await CapiEvent.findOne({ ...PURCHASE, status: 'sent' }).sort({ sent_at: -1 }).select('sent_at').lean();
 
     res.json({
       enabled: !!config.capi.enabled,
@@ -121,6 +133,7 @@ router.get('/capi-stats', async (req, res) => {
       pixel_id: config.capi.pixelId,
       test_mode: !!config.capi.testEventCode,
       totals, sent_today: sentToday, value_today: valueToday,
+      initiate_checkout: ic,
       match_quality, recent: recentOut,
       last_sent_at: lastSent?.sent_at || null
     });

@@ -85,7 +85,7 @@ function CapiView() {
       </div>
 
       {/* KPIs */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 10 }}>
         {kpis.map(k => (
           <div key={k.label} style={{ ...card, padding: '14px 12px', textAlign: 'center' }}>
             <div style={{ fontSize: 26, fontWeight: 800, color: k.color }}>{k.val}</div>
@@ -93,6 +93,19 @@ function CapiView() {
           </div>
         ))}
       </div>
+
+      {/* InitiateCheckout server-side (upper-funnel) */}
+      {d.initiate_checkout && (
+        <div style={{ ...card, padding: '9px 12px', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
+          <span style={{ fontWeight: 700 }}>🛒 InitiateCheckout server-side</span>
+          <span style={{ opacity: 0.75 }}>{d.initiate_checkout.sent_today || 0} hoy · {d.initiate_checkout.sent || 0} enviados</span>
+          {d.initiate_checkout.pending > 0 && <span style={{ color: '#fbbf24' }}>· {d.initiate_checkout.pending} en cola</span>}
+          {d.initiate_checkout.failed > 0 && <span style={{ color: '#f87171' }}>· {d.initiate_checkout.failed} fallidos</span>}
+          {(d.initiate_checkout.sent || 0) === 0 && (d.initiate_checkout.pending || 0) === 0 && (
+            <span style={{ marginLeft: 'auto', opacity: 0.5, fontSize: 11 }}>esperando el webhook checkouts/create…</span>
+          )}
+        </div>
+      )}
 
       {/* Match Quality */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0 8px' }}>

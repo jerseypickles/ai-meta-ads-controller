@@ -79,6 +79,29 @@ function buildPurchasePayload(order) {
   };
 }
 
+/** Construye el evento InitiateCheckout desde el webhook checkouts/create. */
+function buildInitiateCheckoutPayload(checkout) {
+  const items = checkout.line_items || [];
+  const numItems = items.reduce((s, li) => s + (parseInt(li.quantity) || 0), 0);
+  const eventTime = Math.floor(new Date(checkout.created_at || Date.now()).getTime() / 1000);
+  const token = checkout.token || checkout.id;
+  return {
+    event_name: 'InitiateCheckout',
+    event_time: eventTime,
+    event_id: `ic_${token}`,   // estable por checkout → dedup si el navegador usa el mismo
+    action_source: 'website',
+    event_source_url: checkout.abandoned_checkout_url || 'https://jerseypickles.com/',
+    user_data: buildUserData(checkout),   // buildUserData es genérico (lee customer/shipping/note_attributes)
+    custom_data: {
+      currency: checkout.currency || 'USD',
+      value: parseFloat(checkout.total_price || checkout.subtotal_price || 0),
+      content_ids: items.map(li => String(li.product_id)).filter(Boolean),
+      contents: items.map(li => ({ id: String(li.product_id), quantity: parseInt(li.quantity) || 1 })),
+      num_items: numItems
+    }
+  };
+}
+
 /** POST del payload a Meta. Devuelve {ok, events_received, fbtrace_id, error}. */
 async function postToMeta(eventPayload) {
   if (!config.capi.accessToken) return { ok: false, error: 'META_CAPI_ACCESS_TOKEN no configurado' };
@@ -111,6 +134,24 @@ async function processOrderPaid(order) {
   return sendCapiEvent(doc);
 }
 
+/** Procesa un checkout creado (InitiateCheckout): upsert idempotente por token + envío. */
+async function processCheckoutCreated(checkout) {
+  if (!config.capi.enabled) return { skipped: 'disabled' };
+  const token = String(checkout.token || checkout.id || '');
+  if (!token) return { skipped: 'no_token' };
+  const dedupKey = `ic_${token}`;   // se guarda en order_id (campo de clave única genérica)
+  const payload = buildInitiateCheckoutPayload(checkout);
+
+  let doc = await CapiEvent.findOne({ order_id: dedupKey });
+  if (doc && doc.status === 'sent') return { skipped: 'already_sent', key: dedupKey };
+  if (!doc) {
+    doc = await CapiEvent.create({ order_id: dedupKey, event_id: payload.event_id, event_name: 'InitiateCheckout', payload, status: 'pending' });
+  } else {
+    doc.payload = payload; await doc.save();
+  }
+  return sendCapiEvent(doc);
+}
+
 /** Envía un CapiEvent (nuevo o reintento) y actualiza su estado. */
 async function sendCapiEvent(doc) {
   doc.attempts += 1;
@@ -119,7 +160,7 @@ async function sendCapiEvent(doc) {
     doc.status = 'sent'; doc.sent_at = new Date(); doc.events_received = r.events_received; doc.fbtrace_id = r.fbtrace_id || ''; doc.last_error = '';
     await doc.save();
     const testTag = config.capi.testEventCode ? ` · 🧪 TEST(${config.capi.testEventCode})` : ' · LIVE';
-    logger.info(`[CAPI] ✅ Purchase enviado order=${doc.order_id} · events_received=${r.events_received} · fbtrace=${r.fbtrace_id}${testTag}`);
+    logger.info(`[CAPI] ✅ ${doc.event_name || 'Purchase'} enviado ${doc.order_id} · events_received=${r.events_received} · fbtrace=${r.fbtrace_id}${testTag}`);
     return { ok: true, order_id: doc.order_id, events_received: r.events_received };
   }
   // backoff exponencial: 1m, 2m, 4m, 8m… cap 1h
@@ -128,7 +169,7 @@ async function sendCapiEvent(doc) {
   doc.next_retry_at = new Date(Date.now() + backoffMin * 60000);
   doc.last_error = r.error || 'unknown'; doc.fbtrace_id = r.fbtrace_id || doc.fbtrace_id;
   await doc.save();
-  logger.warn(`[CAPI] ⚠ Purchase falló order=${doc.order_id} intento ${doc.attempts}/${MAX_ATTEMPTS}: ${r.error} → ${doc.status === 'failed' ? 'FAILED' : `retry en ${backoffMin}m`}`);
+  logger.warn(`[CAPI] ⚠ ${doc.event_name || 'Purchase'} falló ${doc.order_id} intento ${doc.attempts}/${MAX_ATTEMPTS}: ${r.error} → ${doc.status === 'failed' ? 'FAILED' : `retry en ${backoffMin}m`}`);
   return { ok: false, order_id: doc.order_id, error: r.error };
 }
 
@@ -142,4 +183,4 @@ async function retryFailedCapiEvents() {
   return { retried: due.length, ok };
 }
 
-module.exports = { processOrderPaid, retryFailedCapiEvents, buildPurchasePayload, sendCapiEvent };
+module.exports = { processOrderPaid, processCheckoutCreated, retryFailedCapiEvents, buildPurchasePayload, buildInitiateCheckoutPayload, sendCapiEvent };
