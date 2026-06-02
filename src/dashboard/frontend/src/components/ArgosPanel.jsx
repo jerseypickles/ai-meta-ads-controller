@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getArgosCapiStats } from '../api';
+import { getArgosCapiStats, getArgosCampaignConfig } from '../api';
 
 const ARGOS = '#22d3ee'; // cyan — "el que todo lo ve"
 
@@ -23,12 +23,16 @@ function ArgosPanel() {
 // 📡 Server-side / CAPI — salud del envío de conversiones por servidor a Meta.
 function CapiView() {
   const [d, setD] = useState(null);
+  const [cc, setCc] = useState(null);   // config de anuncios (pixel + evento)
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setD(await getArgosCapiStats()); }
-    catch (e) { console.error(e); }
+    try {
+      const [stats, cfg] = await Promise.allSettled([getArgosCapiStats(), getArgosCampaignConfig()]);
+      if (stats.status === 'fulfilled') setD(stats.value);
+      if (cfg.status === 'fulfilled') setCc(cfg.value);
+    } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
@@ -83,6 +87,28 @@ function CapiView() {
         </span>
         <button onClick={load} style={{ padding: '5px 10px', borderRadius: 6, border: `1px solid ${ARGOS}55`, background: 'transparent', color: ARGOS, fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>↻</button>
       </div>
+
+      {/* Config de anuncios — ¿optimizan Purchase sobre el pixel correcto? */}
+      {cc && !cc.error && (
+        <div style={{ ...card, padding: '11px 14px', marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: cc.issues ? 8 : 0 }}>
+            <span style={{ fontWeight: 700, fontSize: 12.5 }}>🎯 Config de anuncios</span>
+            <span style={{ fontSize: 11, opacity: 0.6 }}>{cc.total} adsets activos · deben optimizar PURCHASE sobre pixel {cc.target_pixel}</span>
+            <span style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 700, color: cc.issues ? '#f87171' : '#34d399' }}>
+              {cc.issues ? `⚠ ${cc.issues} con problema` : '✅ todo correcto'}
+            </span>
+          </div>
+          {cc.issues > 0 && (
+            <div style={{ display: 'grid', gap: 4 }}>
+              {cc.rows.filter(r => !r.ok).map((r, i) => (
+                <div key={i} style={{ fontSize: 11, color: '#fca5a5' }}>
+                  ⚠ <b>{r.adset}</b> <span style={{ opacity: 0.6 }}>({r.campaign})</span> — {!r.pixel_ok && <>pixel <code>{r.pixel || 'ninguno'}</code> </>}{!r.event_ok && <>evento <code>{r.event || 'ninguno'}</code></>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* KPIs */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: 10 }}>

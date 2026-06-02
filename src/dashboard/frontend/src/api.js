@@ -345,6 +345,10 @@ export const getArgosCapiStats = async () => {
   const { data } = await api.get('/api/argos/capi-stats');
   return data;
 };
+export const getArgosCampaignConfig = async () => {
+  const { data } = await api.get('/api/argos/campaign-config');
+  return data;
+};
 export const approveDionysusVideo = async (id) => {
   const { data } = await api.post(`/api/dionysus/${id}/approve`, {});
   return data;

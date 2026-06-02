@@ -143,6 +143,52 @@ router.get('/capi-stats', async (req, res) => {
   }
 });
 
+// GET /campaign-config — verifica que los adsets ACTIVOS optimicen PURCHASE
+// sobre el pixel correcto (el de CAPI). Cacheado 5min. Loguea problemas.
+let _ccCache = null;
+router.get('/campaign-config', async (req, res) => {
+  try {
+    if (_ccCache && Date.now() - _ccCache.ts < CACHE_TTL) return res.json({ ..._ccCache.data, cached: true });
+    const config = require('../../../config');
+    const { getMetaClient } = require('../../meta/client');
+    let isExcludedCampaignId = () => false;
+    try { ({ isExcludedCampaignId } = require('../../config/excluded-entities')); } catch (_) {}
+    const meta = getMetaClient();
+    const targetPixel = config.capi.pixelId;
+
+    const activeFilter = JSON.stringify([{ field: 'effective_status', operator: 'IN', value: ['ACTIVE'] }]);
+    const adsets = await meta.getAllAdSets('id,name,effective_status,campaign_id,optimization_goal,promoted_object', activeFilter);
+    const campaigns = await meta.getCampaigns('id,name,objective,effective_status');
+    const campMap = {}; for (const c of campaigns) campMap[c.id] = c;
+
+    const rows = [];
+    for (const a of adsets) {
+      if (isExcludedCampaignId(a.campaign_id)) continue;
+      const po = a.promoted_object || {};
+      const pixel = po.pixel_id || null;
+      const event = po.custom_event_type || null;
+      const pixel_ok = pixel === targetPixel;
+      const event_ok = event === 'PURCHASE';
+      rows.push({
+        adset: a.name, campaign: campMap[a.campaign_id]?.name || a.campaign_id,
+        objective: campMap[a.campaign_id]?.objective || null,
+        optimization_goal: a.optimization_goal || null,
+        pixel, event, pixel_ok, event_ok, ok: pixel_ok && event_ok
+      });
+    }
+    const issues = rows.filter(r => !r.ok);
+    logger.info(`[ARGOS] campaign-config: ${rows.length} adsets activos · ${issues.length} con problema · target pixel ${targetPixel}`);
+    for (const r of issues) logger.warn(`[ARGOS] ⚠ adset "${r.adset}" (camp "${r.campaign}"): pixel=${r.pixel} event=${r.event} optg=${r.optimization_goal} obj=${r.objective}`);
+
+    const data = { target_pixel: targetPixel, total: rows.length, issues: issues.length, rows, cached: false };
+    _ccCache = { data, ts: Date.now() };
+    res.json(data);
+  } catch (e) {
+    logger.error(`[ARGOS] campaign-config falló: ${e.message}`);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /run — fuerza análisis + persiste (async)
 router.post('/run', async (req, res) => {
   try {
