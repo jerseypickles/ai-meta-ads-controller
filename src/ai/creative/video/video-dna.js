@@ -57,8 +57,8 @@ const MOTIONS = [
     img: 'several {product} jars neatly lined up on a wooden pantry shelf at home, a hand reaching toward the front jar, warm soft light, labels readable, UGC iPhone',
     vid: 'A hand reaches and slides one {product} jar forward off the shelf; the other jars stay still.' },
   { key: 'on_food', selfScene: true,
-    img: 'a hand placing {unit} on top of a juicy cheeseburger on a plate, the {product} as the hero topping, melty cheese, casual kitchen, mouth-watering UGC iPhone',
-    vid: 'A hand lays {unit} onto the burger; a single drop of brine falls and faint steam rises from the food.' },
+    img: 'a hand placing {unit_food} on top of a juicy cheeseburger on a plate, the {product} as the hero topping, melty cheese, casual kitchen, mouth-watering UGC iPhone',
+    vid: 'A hand lays {unit_food} onto the burger; a single drop of brine falls and faint steam rises from the food.' },
   { key: 'table_spread', selfScene: true,
     img: "an open {product} jar in the center of a picnic table surrounded by a snack spread (chips, dips, drinks), top-down casual flat-lay, sunny outdoor, UGC iPhone, label readable",
     vid: 'Almost still — a faint breeze and soft light shift across the {product} jar and the spread; ambient micro-motion only.' }
@@ -69,12 +69,25 @@ const MOTIONS = [
 function productUnit(name = '') {
   const n = name.toLowerCase();
   if (n.includes('onion')) return 'a single pickled red onion slice';
-  if (n.includes('tomato')) return 'a single pickled cherry tomato';
+  if (n.includes('tomato')) return 'a single whole pickled tomato (plump, golf-ball size)';
   if (n.includes('bean')) return 'a single pickled green bean';
   if (n.includes('okra')) return 'a single pickled okra pod';
   if (n.includes('jalap') || n.includes('pepper')) return 'a single pickled jalapeño slice';
   if (n.includes('chip') || n.includes('chili') || n.includes('chamoy') || n.includes('pickle') || n.includes('horseradish') || n.includes('cucumber')) return 'a single pickle chip';
   return 'a single piece of the pickled product (matching what is inside the jar)';
+}
+
+// Forma del producto cuando va EN COMIDA (sobre hamburguesa, etc): RODAJA/slice,
+// no la pieza entera — un tomate entero sobre un burger se ve raro. Lo que ya es
+// plano (chips, rodajas) se deja igual.
+function productUnitFood(name = '') {
+  const n = name.toLowerCase();
+  if (n.includes('onion')) return 'a pickled red onion slice';
+  if (n.includes('tomato')) return 'a thick slice of pickled tomato';
+  if (n.includes('jalap') || n.includes('pepper')) return 'a few pickled jalapeño slices';
+  if (n.includes('bean')) return 'a couple of pickled green beans';
+  if (n.includes('okra')) return 'a couple of pickled okra slices';
+  return productUnit(name); // chips / pepinillos ya son planos → sirven en comida
 }
 
 // CAMERA — movimiento de cámara (Seedance).
@@ -178,7 +191,11 @@ async function getDimensionStats(dim) {
 // Reemplaza {unit} (una pieza del producto) y {product} (el frasco/nombre entero).
 function _fill(text, productName) {
   const unit = productUnit(productName);
-  return text.replace(/\{unit\}/g, unit).replace(/\{product\}/g, productName || 'the product');
+  const unitFood = productUnitFood(productName);
+  return text
+    .replace(/\{unit_food\}/g, unitFood)   // primero el más específico
+    .replace(/\{unit\}/g, unit)
+    .replace(/\{product\}/g, productName || 'the product');
 }
 
 /** Prompt de la IMAGEN-fuente (gpt-image): interacción (con la pieza REAL) + escena.
@@ -202,6 +219,6 @@ function buildVideoPrompt(productName, motionKey, cameraKey) {
 }
 
 module.exports = {
-  MOTIONS, CAMERAS, SCENES, DIMS, BASE_STYLE, productUnit,
+  MOTIONS, CAMERAS, SCENES, DIMS, BASE_STYLE, productUnit, productUnitFood,
   get, keys, pickWeighted, getDimensionStats, buildImageScene, buildVideoPrompt
 };
