@@ -92,6 +92,8 @@ export default function AthenaPanel({ focusRequest, onFocused } = {}) {
   const winners = adsets.filter(a => (a.metrics_7d?.roas || 0) >= 3 && (a.metrics_7d?.spend || 0) >= 50);
   const watching = adsets.filter(a => (a.metrics_7d?.roas || 0) >= 1.5 && (a.metrics_7d?.roas || 0) < 3 && (a.metrics_7d?.spend || 0) >= 30);
   const risk = adsets.filter(a => (a.metrics_7d?.roas || 0) < 1.5 && (a.metrics_7d?.spend || 0) >= 50);
+  // Graduados de Prometheus — los que le pasaron a Athena para escalar (nombre con [Prometheus]).
+  const graduates = adsets.filter(a => /\[Prometheus\]/i.test(a.adset_name || ''));
   const learningAdsets = adsets.filter(a => a.learning_stage === 'LEARNING');
   const recentActions = adsets
     .flatMap(a => (a.recent_actions || []).map(act => ({ ...act, adset_name: a.adset_name, adset_id: a.adset_id })))
@@ -287,7 +289,7 @@ export default function AthenaPanel({ focusRequest, onFocused } = {}) {
           transition={{ duration: 0.25 }}
         >
           {activeSection === 'overview' && (
-            <OverviewSection winners={winners} risk={risk} expandedAdSet={expandedAdSet} setExpandedAdSet={setExpandedAdSet} />
+            <OverviewSection winners={winners} risk={risk} graduates={graduates} expandedAdSet={expandedAdSet} setExpandedAdSet={setExpandedAdSet} />
           )}
           {activeSection === 'actions' && (
             <ActionsTimeline actions={recentActions} />
@@ -314,8 +316,22 @@ export default function AthenaPanel({ focusRequest, onFocused } = {}) {
 // OVERVIEW — side by side winners + risk
 // ═══════════════════════════════════════════════════════════════════════════
 
-function OverviewSection({ winners, risk, expandedAdSet, setExpandedAdSet }) {
+function OverviewSection({ winners, risk, graduates = [], expandedAdSet, setExpandedAdSet }) {
   return (
+    <div>
+    {/* 🎓 Graduados de Prometheus — el hand-off Prometheus → Athena */}
+    {graduates.length > 0 && (
+      <div style={{ marginBottom: 18, padding: 14, borderRadius: 12, background: 'rgba(167,139,250,0.06)', border: '1px solid rgba(167,139,250,0.25)' }}>
+        <SectionHeader label="🎓 Graduados de Prometheus" count={graduates.length} color="#a78bfa" />
+        <div style={{ fontSize: '0.72rem', color: 'var(--bos-text-muted)', margin: '4px 0 10px' }}>
+          Winners que Prometheus le pasó a Athena para escalar. Si ves <b>0.00x</b> es <b>atribución</b> (pixel nuevo sub-contando ventas), no que sean malos — por eso Athena todavía no los escala.
+        </div>
+        {graduates.sort((a, b) => (b.metrics_7d?.roas || 0) - (a.metrics_7d?.roas || 0)).map(a => (
+          <AdSetRow key={a.adset_id} adset={a} expanded={expandedAdSet === a.adset_id} onToggle={() => setExpandedAdSet(expandedAdSet === a.adset_id ? null : a.adset_id)} />
+        ))}
+      </div>
+    )}
+
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
       <div>
         <SectionHeader label="Top Winners" count={winners.length} color="#10b981" />
@@ -337,6 +353,7 @@ function OverviewSection({ winners, risk, expandedAdSet, setExpandedAdSet }) {
           ))
         )}
       </div>
+    </div>
     </div>
   );
 }
