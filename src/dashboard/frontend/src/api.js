@@ -328,19 +328,6 @@ export const getDionysusStats = async () => {
   const { data } = await api.get('/api/dionysus/stats');
   return data;
 };
-// ── Argos (pixel analysis) ──
-export const getArgosIntelligence = async (days = 30) => {
-  const { data } = await api.get(`/api/argos/intelligence?days=${days}`);
-  return data;
-};
-export const runArgosApi = async () => {
-  const { data } = await api.post('/api/argos/run', {});
-  return data;
-};
-export const getArgosHistory = async (limit = 30) => {
-  const { data } = await api.get(`/api/argos/history?limit=${limit}`);
-  return data;
-};
 export const approveDionysusVideo = async (id) => {
   const { data } = await api.post(`/api/dionysus/${id}/approve`, {});
   return data;

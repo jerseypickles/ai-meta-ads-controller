@@ -1495,18 +1495,6 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'dionysus' });
   logger.info('  [*] Dionisio — 2x/día (9am, 5pm ET) genera videos → review MANUAL');
 
-  // Argos — análisis del pixel cada 3h: funnel + salud de eventos. Detecta eventos
-  // rotos (pixel/CAPI) y cuellos de botella del funnel. Read-only (diagnostica).
-  cron.schedule('0 */3 * * *', async () => {
-    try {
-      const { runArgos } = require('./ai/agent/argos-agent');
-      await runArgos();
-    } catch (err) {
-      logger.error(`[CRON] Argos falló: ${err.message}`);
-    }
-  }, { timezone: TIMEZONE, name: 'argos' });
-  logger.info('  [*] Argos — cada 3h (análisis del pixel: funnel + salud)');
-
   // Hermes Agent — 5x/día (9am, 12pm, 3pm, 6pm, 9pm ET) — foot traffic NJ store
   // Aumentado de 2x → 5x el 14-may-2026 para acelerar inyección de creativos
   // los primeros 7d. Solo registra el cron si HERMES_ENABLED=true.
