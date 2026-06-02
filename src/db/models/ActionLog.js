@@ -13,7 +13,8 @@ const actionLogSchema = new mongoose.Schema({
     enum: [
       'scale_up', 'scale_down', 'pause', 'pause_adset', 'reactivate', 'kill_switch',
       'duplicate_adset', 'fast_track_duplicate', 'create_ad', 'add_ad', 'update_bid_strategy',
-      'update_ad_status', 'move_budget', 'update_ad_creative', 'delete', 'create_campaign'
+      'update_ad_status', 'move_budget', 'update_ad_creative', 'delete', 'create_campaign',
+      'create_adset'
     ],
     required: true
   },
@@ -31,7 +32,7 @@ const actionLogSchema = new mongoose.Schema({
   evidence_points: [{ type: String }],
   research_context: { type: String, default: '' },
   confidence: { type: String, enum: ['high', 'medium', 'low'] },
-  agent_type: { type: String, enum: ['scaling', 'performance', 'creative', 'pacing', 'ai_manager', 'brain', 'manual', 'unified_agent', 'creative_agent', 'ares_agent', 'ares_portfolio', 'ares_brain', 'zeus_agent', 'manual_script', 'warehouse_throttle', 'hermes'], default: null, index: true },
+  agent_type: { type: String, enum: ['scaling', 'performance', 'creative', 'pacing', 'ai_manager', 'brain', 'manual', 'unified_agent', 'creative_agent', 'testing_agent', 'ares_agent', 'ares_portfolio', 'ares_brain', 'zeus_agent', 'manual_script', 'warehouse_throttle', 'hermes'], default: null, index: true },
   // Follow-up verdict para Account Agent
   follow_up_verdict: { type: String, enum: ['positive', 'negative', 'neutral', 'pending'], default: 'pending' },
   follow_up_deltas: {
