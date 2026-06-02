@@ -63,6 +63,20 @@ function DionysusPanel() {
     finally { setBusy(null); }
   };
 
+  // Descarga el video. Intenta blob (fuerza descarga); si CORS lo impide, abre en pestaña.
+  const downloadVideo = async (url, name) => {
+    if (!url) return;
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (name || 'dionisio-video').replace(/[^a-z0-9_\-]+/gi, '_') + '.mp4';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    } catch (e) { window.open(url, '_blank'); }
+  };
+
   const card = { background: 'rgba(192,38,211,0.06)', border: `1px solid rgba(192,38,211,0.2)`, borderRadius: 12 };
 
   return (
@@ -136,22 +150,25 @@ function DionysusPanel() {
             </div>
           );
         }
+        const CAP = 5;
         return (
-          <div style={{ display: 'grid', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 10, alignItems: 'start' }}>
             {dims.map(dim => {
-              const rows = byDim[dim.key] || [];
-              if (!rows.length) return null;
+              const all = (byDim[dim.key] || []).slice().sort((a, b) => (b.tested || 0) - (a.tested || 0));
+              if (!all.length) return null;
+              const rows = all.slice(0, CAP);
+              const extra = all.length - rows.length;
               return (
                 <div key={dim.key} style={{ ...card, padding: 6 }}>
                   <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.7, padding: '4px 8px' }}>{dim.label}</div>
-                  <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                  <table style={{ width: '100%', fontSize: 11.5, borderCollapse: 'collapse', tableLayout: 'fixed' }}>
                     <thead><tr style={{ opacity: 0.55, textAlign: 'left' }}>
-                      <th style={{ padding: 8 }}>Valor</th><th>Test</th><th>CTR</th><th title="% que ve el video completo">Hold</th><th>ROAS</th><th>Win</th>
+                      <th style={{ padding: '5px 6px' }}>Valor</th><th style={{ width: 34 }}>Test</th><th style={{ width: 44 }}>CTR</th><th style={{ width: 42 }} title="% que ve el video completo">Hold</th><th style={{ width: 44 }}>ROAS</th><th style={{ width: 38 }}>Win</th>
                     </tr></thead>
                     <tbody>
                       {rows.map(d => (
                         <tr key={d.variant} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                          <td style={{ padding: 8, fontWeight: 600, color: FUCHSIA }}>{d.variant}</td>
+                          <td style={{ padding: '5px 6px', fontWeight: 600, color: FUCHSIA, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={d.variant}>{d.variant}</td>
                           <td>{d.tested}</td>
                           <td>{d.avg_ctr}%</td>
                           <td style={{ color: d.avg_hold >= 10 ? '#34d399' : '#cbd5e1' }}>{d.avg_hold ?? 0}%</td>
@@ -161,6 +178,7 @@ function DionysusPanel() {
                       ))}
                     </tbody>
                   </table>
+                  {extra > 0 && <div style={{ fontSize: 10, opacity: 0.45, padding: '4px 8px' }}>+{extra} más</div>}
                 </div>
               );
             })}
@@ -210,6 +228,8 @@ function DionysusPanel() {
                     style={{ flex: 1, padding: '7px 0', borderRadius: 6, border: 'none', background: '#22c55e', color: '#fff', cursor: 'pointer', fontWeight: 600 }}>
                     {busy === v._id ? '…' : '✓ Aprobar'}
                   </button>
+                  <button onClick={() => downloadVideo(v.video_url, `${v.product_name || 'dionisio'}-${v.motion_variant || ''}`)} title="Descargar video"
+                    style={{ padding: '7px 12px', borderRadius: 6, border: '1px solid rgba(192,38,211,0.4)', background: 'transparent', color: FUCHSIA, cursor: 'pointer' }}>⬇</button>
                   <button onClick={() => decide(v._id, 'reject')} disabled={busy === v._id}
                     style={{ padding: '7px 12px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#f87171', cursor: 'pointer' }}>✗</button>
                 </div>
