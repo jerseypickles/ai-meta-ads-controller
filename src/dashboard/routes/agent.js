@@ -6,6 +6,7 @@ const BrainMemory = require('../../db/models/BrainMemory');
 const BrainInsight = require('../../db/models/BrainInsight');
 const MetricSnapshot = require('../../db/models/MetricSnapshot');
 const { getLatestSnapshots, getAdsForAdSet } = require('../../db/queries');
+const { isExcludedEntity } = require('../../config/excluded-entities');
 
 // ═══ In-memory job tracking for async agent runs ═══
 const _agentJobs = {};
@@ -26,9 +27,15 @@ router.get('/activity', async (req, res) => {
     }
 
     // 1. Get all active ad set snapshots
+    // Mismo criterio que el agente Athena (account-agent.js): SOLO ABO de producción.
+    // Excluye CBO (daily_budget 0 = budget a nivel campaña → de Ares, no Athena),
+    // tests, clones de Ares, Hermes, y campañas manual-only.
     const allSnapshots = await getLatestSnapshots('adset');
-    const excludeNames = ['[TEST]', '[Ares]', 'AI -', 'AMAZON', 'DONT TOUCH', 'DONT_TOUCH', 'EXCLUDE', 'MANUAL ONLY'];
-    const activeAdSets = allSnapshots.filter(s => s.status === 'ACTIVE' && !excludeNames.some(ex => (s.entity_name || '').toUpperCase().includes(ex.toUpperCase())));
+    const excludeNames = ['[TEST]', '[Ares]', '[HERMES]', '[Hermes]', 'AI -', 'AMAZON', 'DONT TOUCH', 'DONT_TOUCH', 'EXCLUDE', 'MANUAL ONLY'];
+    const activeAdSets = allSnapshots.filter(s => s.status === 'ACTIVE'
+      && (s.daily_budget || 0) > 0
+      && !excludeNames.some(ex => (s.entity_name || '').toUpperCase().includes(ex.toUpperCase()))
+      && !isExcludedEntity({ campaign_id: s.campaign_id, entity_name: s.entity_name }));
 
     // 2. Get all BrainMemory with agent assessments
     const entityIds = activeAdSets.map(s => s.entity_id);
