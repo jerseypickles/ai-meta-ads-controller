@@ -154,6 +154,14 @@ async function processCheckoutCreated(checkout) {
 
 /** Envía un CapiEvent (nuevo o reintento) y actualiza su estado. */
 async function sendCapiEvent(doc) {
+  // Meta exige ≥1 parámetro de user_data. Eventos sin user_data (típico de
+  // un "test notification" vacío de Shopify) se descartan sin reintentar.
+  if (!doc.payload || !doc.payload.user_data || !Object.keys(doc.payload.user_data).length) {
+    doc.status = 'failed'; doc.last_error = 'sin user_data (no enviable)';
+    await doc.save();
+    logger.debug(`[CAPI] ${doc.event_name || 'Purchase'} ${doc.order_id} descartado: sin user_data (payload vacío / test notification)`);
+    return { ok: false, order_id: doc.order_id, skipped: 'no_user_data' };
+  }
   doc.attempts += 1;
   const r = await postToMeta(doc.payload);
   if (r.ok) {
