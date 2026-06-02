@@ -120,20 +120,7 @@ module.exports = {
     apiVersion: process.env.SHOPIFY_API_VERSION || '2025-01',
     // Shopify Payments standard fees (US). Si tu plan es distinto, override.
     feePercent: parseFloat(process.env.SHOPIFY_FEE_PERCENT) || 0.029,
-    feeFlat: parseFloat(process.env.SHOPIFY_FEE_FLAT) || 0.30,
-    // Secret del webhook (Shopify → X-Shopify-Hmac-Sha256). Requerido para CAPI.
-    webhookSecret: process.env.SHOPIFY_WEBHOOK_SECRET || ''
-  },
-
-  // Meta Conversions API (CAPI) — envío server-side de eventos (Fase 1: Purchase).
-  capi: {
-    pixelId: process.env.META_CAPI_PIXEL_ID || '1688731775779687',
-    // Token dedicado de CAPI (System User). Fallback al token de ads si no se setea.
-    accessToken: process.env.META_CAPI_ACCESS_TOKEN || process.env.META_ACCESS_TOKEN || '',
-    apiVersion: process.env.META_CAPI_API_VERSION || process.env.META_API_VERSION || 'v25.0',
-    // test_event_code de Events Manager → Test events (solo para dev). Vacío = prod.
-    testEventCode: process.env.META_CAPI_TEST_CODE || '',
-    enabled: process.env.META_CAPI_ENABLED !== 'false'
+    feeFlat: parseFloat(process.env.SHOPIFY_FEE_FLAT) || 0.30
   },
 
   mongodb: {

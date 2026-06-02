@@ -52,9 +52,6 @@ app.use(cors({
   },
   credentials: true
 }));
-// Webhook de Shopify (CAPI) — ANTES de express.json (HMAC necesita el body crudo)
-// y FUERA de /api (Shopify no manda JWT). Solo este path recibe raw body.
-app.use('/webhooks/shopify', express.raw({ type: 'application/json', limit: '2mb' }), require('./routes/webhooks-shopify'));
 
 app.use(express.json());
 
