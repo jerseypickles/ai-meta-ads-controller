@@ -113,7 +113,7 @@ async function postToMeta(eventPayload) {
     return { ok: true, events_received: data.events_received, fbtrace_id: data.fbtrace_id };
   } catch (e) {
     const err = e.response?.data?.error;
-    return { ok: false, error: err ? `${err.message} (code ${err.code})` : e.message, fbtrace_id: err?.fbtrace_id };
+    return { ok: false, error: err ? `${err.message} (code ${err.code})` : e.message, code: err?.code, fbtrace_id: err?.fbtrace_id };
   }
 }
 
@@ -171,13 +171,14 @@ async function sendCapiEvent(doc) {
     logger.info(`[CAPI] ✅ ${doc.event_name || 'Purchase'} enviado ${doc.order_id} · events_received=${r.events_received} · fbtrace=${r.fbtrace_id}${testTag}`);
     return { ok: true, order_id: doc.order_id, events_received: r.events_received };
   }
-  // backoff exponencial: 1m, 2m, 4m, 8m… cap 1h
+  // code 100 = Invalid parameter (payload inválido) → permanente, no reintentar.
+  const permanent = r.code === 100;
   const backoffMin = Math.min(60, Math.pow(2, doc.attempts - 1));
-  doc.status = doc.attempts >= MAX_ATTEMPTS ? 'failed' : 'pending';
-  doc.next_retry_at = new Date(Date.now() + backoffMin * 60000);
+  doc.status = (permanent || doc.attempts >= MAX_ATTEMPTS) ? 'failed' : 'pending';
+  if (!permanent) doc.next_retry_at = new Date(Date.now() + backoffMin * 60000);
   doc.last_error = r.error || 'unknown'; doc.fbtrace_id = r.fbtrace_id || doc.fbtrace_id;
   await doc.save();
-  logger.warn(`[CAPI] ⚠ ${doc.event_name || 'Purchase'} falló ${doc.order_id} intento ${doc.attempts}/${MAX_ATTEMPTS}: ${r.error} → ${doc.status === 'failed' ? 'FAILED' : `retry en ${backoffMin}m`}`);
+  logger.warn(`[CAPI] ⚠ ${doc.event_name || 'Purchase'} falló ${doc.order_id} intento ${doc.attempts}/${MAX_ATTEMPTS}: ${r.error} → ${doc.status === 'failed' ? (permanent ? 'PERMANENTE (no retry)' : 'FAILED') : `retry en ${backoffMin}m`}`);
   return { ok: false, order_id: doc.order_id, error: r.error };
 }
 
