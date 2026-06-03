@@ -337,8 +337,8 @@ async function runCreativeAgent() {
   //   >= SOFT_MAX: skip reactive, permite mínimo proactive (rotación temática)
   //   < SOFT_MAX:  generate normal segun ad sets que necesitan
   //   < MIN:       generate agresivo para levantar pool
-  const HARD_MAX_POOL_SIZE = 100;  // freeze completo (60→100 el 28-may: cold-start, pool grande para alimentar ~50 tests)
-  const SOFT_MAX_POOL_SIZE = 70;   // freeze reactive, mínimo proactive (40→70 el 28-may)
+  const HARD_MAX_POOL_SIZE = 40;  // 2026-06-03: 100→40 — bajar generación de imágenes >50% (menos testing)
+  const SOFT_MAX_POOL_SIZE = 28;  // 2026-06-03: 70→28
   const currentPool = await CreativeProposal.countDocuments({ status: 'ready' });
   const skipReactive = currentPool >= SOFT_MAX_POOL_SIZE;
   const skipEverything = currentPool >= HARD_MAX_POOL_SIZE;

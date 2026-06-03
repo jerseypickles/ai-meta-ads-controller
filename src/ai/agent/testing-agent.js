@@ -14,15 +14,15 @@ const { getAdsForAdSet } = require('../../db/queries');
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURACION
 // ═══════════════════════════════════════════════════════════════════════════════
-const MAX_CONCURRENT_TESTS = 100;
+const MAX_CONCURRENT_TESTS = 40; // 2026-06-03: 100→40 — bajar volumen de testing >50% (cold-start, menos quema)
 const TEST_DAILY_BUDGET = 20; // $20/dia (10→20 el 30-may: más delivery/señal por test + kills más rápidos)
 const VIDEO_TEST_DAILY_BUDGET = 25; // $25/dia ABO para tests de VIDEO (Dionisio), campaña aparte. (2026-05-30)
 // Track de VIDEO con caps PROPIOS — no compite por los slots/budget de las fotos
-// (campaña separada). Si no, los 100 tests de foto bloquean los videos. (2026-05-30)
-const MAX_CONCURRENT_VIDEO_TESTS = 30;
-const MAX_DAILY_VIDEO_TESTING_BUDGET = 750; // 30 × $25
-const MAX_DAILY_TESTING_BUDGET = 1000; // Cap diario total. 2026-05-28: 200→500. 2026-05-29: 500→1000 — la entrega rampeaba contra el techo de $500, el creador subió el cap para acelerar señal del pixel. Acoplado a MAX_CONCURRENT_TESTS (100 × $10). Bajar cuando haya señal estable.
-const MAX_LAUNCHES_PER_CYCLE = 8; // Max tests nuevos por ciclo (5→8 el 28-may para ramp rápido en cold-start)
+// (campaña separada). Si no, los tests de foto bloquean los videos. (2026-05-30)
+const MAX_CONCURRENT_VIDEO_TESTS = 12; // 2026-06-03: 30→12 (>50% menos)
+const MAX_DAILY_VIDEO_TESTING_BUDGET = 300; // 2026-06-03: 750→300 (12 × $25)
+const MAX_DAILY_TESTING_BUDGET = 400; // Cap diario total. 2026-06-03: 1000→400 — bajar la quema de madrugada >50% mientras madura el pixel. Subir cuando haya señal estable.
+const MAX_LAUNCHES_PER_CYCLE = 3; // 2026-06-03: 8→3 (menos tests nuevos por ciclo)
 const TEST_MAX_DAYS = 7;
 const KILL_MIN_SPEND = 25;     // Kill si $25+ spend y 0 compras
 const GRADUATED_BUDGET = 20;   // Budget al promover test ad set graduado ($20/dia)
