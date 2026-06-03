@@ -182,11 +182,19 @@ router.get('/activity', async (req, res) => {
     const positiveActions = allAgentActions.filter(a => a.learned_reward > 0.1).length;
     const winRate = allAgentActions.length > 0 ? Math.round(positiveActions / allAgentActions.length * 100) : 0;
 
-    // Last cycle info
-    const lastAction = await ActionLog.findOne({
-      agent_type: 'unified_agent',
-      success: true
-    }).sort({ executed_at: -1 }).lean();
+    // Last cycle info — usar el assessment MÁS RECIENTE (agent_last_check de BrainMemory),
+    // que refleja cuándo Athena corrió su ciclo (cada 2h). Antes usaba la última ACCIÓN
+    // (scale/pause), que puede ser de hace días si no hubo acciones → mostraba "7d" aunque
+    // el agente corre y evalúa cada 2h. Fallback a la última acción si no hay assessments.
+    const lastAssessmentMs = memories.reduce((max, m) => {
+      const t = m.agent_last_check ? new Date(m.agent_last_check).getTime() : 0;
+      return t > max ? t : max;
+    }, 0);
+    let lastCycle = lastAssessmentMs ? new Date(lastAssessmentMs) : null;
+    if (!lastCycle) {
+      const lastAction = await ActionLog.findOne({ agent_type: 'unified_agent', success: true }).sort({ executed_at: -1 }).lean();
+      lastCycle = lastAction?.executed_at || null;
+    }
 
     const responseData = {
       adsets: adsets.sort((a, b) => (b.metrics_7d.spend || 0) - (a.metrics_7d.spend || 0)),
@@ -194,7 +202,7 @@ router.get('/activity', async (req, res) => {
         total_adsets: activeAdSets.length,
         win_rate: winRate,
         total_measured: allAgentActions.length,
-        last_cycle: lastAction?.executed_at || null
+        last_cycle: lastCycle
       }
     };
 
