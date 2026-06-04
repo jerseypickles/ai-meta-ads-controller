@@ -1251,6 +1251,16 @@ async function updateGraduatedMetrics() {
       const oldHadData = (oldMetrics.spend || 0) > 0;
       if (newIsZero && oldHadData) { skipped++; continue; }
 
+      // VIDEO: mergear engagement (hold/thumbstop) — si no, el refresh PISARÍA el
+      // hold_rate con un objeto sin él. Mantiene viva la señal de retención del DNA.
+      if (test.media_type === 'video') {
+        try {
+          const { getMetaClient } = require('../../meta/client');
+          const ve = await getVideoEngagement(getMetaClient(), test.test_adset_id, test.launched_at);
+          if (ve) Object.assign(metrics, ve);
+        } catch (_) { /* engagement opcional */ }
+      }
+
       await TestRun.findByIdAndUpdate(test._id, {
         $set: { metrics: { ...metrics, updated_at: new Date() } }
       });

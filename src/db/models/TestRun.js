@@ -53,6 +53,13 @@ const testRunSchema = new mongoose.Schema({
     ctr: { type: Number, default: 0 },
     impressions: { type: Number, default: 0 },
     frequency: { type: Number, default: 0 },
+    // VIDEO engagement (Dionisio): señal TEMPRANA de retención — llega antes que
+    // las compras. Antes el schema NO tenía estos campos → Mongoose los STRIPEABA al
+    // guardar → el DNA de video aprendía con hold=0 siempre. (fix 2026-06-04)
+    hold_rate: { type: Number, default: 0 },        // % que ve el video completo (p100/impr)
+    thumbstop_rate: { type: Number, default: 0 },   // % que se queda a verlo (p25/impr)
+    thruplay_rate: { type: Number, default: 0 },
+    video_impressions: { type: Number, default: 0 },
     updated_at: { type: Date, default: null }
   },
 
