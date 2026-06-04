@@ -94,7 +94,15 @@ export default function AthenaPanel({ focusRequest, onFocused } = {}) {
   const risk = adsets.filter(a => (a.metrics_7d?.roas || 0) < 1.5 && (a.metrics_7d?.spend || 0) >= 50);
   // Graduados de Prometheus — los que le pasaron a Athena para escalar (nombre con [Prometheus]).
   const graduates = adsets.filter(a => /\[Prometheus\]/i.test(a.adset_name || ''));
-  const learningAdsets = adsets.filter(a => a.learning_stage === 'LEARNING');
+  // En learning si: Meta lo dice (LEARNING o FAIL=learning-limited), O es un adset NUEVO
+  // (<7d, <50 conversiones) — Meta a veces no puebla learning_stage en ads recién creados
+  // aunque Ads Manager ya muestre "Learning". Excluye los que ya salieron (SUCCESS).
+  const learningAdsets = adsets.filter(a => {
+    if (a.learning_stage === 'LEARNING' || a.learning_stage === 'FAIL') return true;
+    if (a.learning_stage === 'SUCCESS') return false;
+    const ageMs = a.created_time ? (Date.now() - new Date(a.created_time).getTime()) : Infinity;
+    return ageMs < 7 * 86400000 && (a.learning_conversions || 0) < 50;
+  });
   const recentActions = adsets
     .flatMap(a => (a.recent_actions || []).map(act => ({ ...act, adset_name: a.adset_name, adset_id: a.adset_id })))
     .sort((a, b) => new Date(b.executed_at) - new Date(a.executed_at))

@@ -463,7 +463,7 @@ class MetaClient {
       'id', 'name', 'status', 'effective_status',
       'daily_budget', 'lifetime_budget', 'budget_remaining',
       'bid_strategy', 'optimization_goal',
-      'campaign_id', 'created_time', 'updated_time'
+      'campaign_id', 'created_time', 'updated_time', 'learning_stage_info'
     ].join(',');
 
     const defaultFilters = JSON.stringify([

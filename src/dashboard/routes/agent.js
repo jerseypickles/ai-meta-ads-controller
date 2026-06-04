@@ -128,6 +128,7 @@ router.get('/activity', async (req, res) => {
         },
         learning_stage: snap.learning_stage || null,
         learning_conversions: snap.learning_stage_conversions || 0,
+        created_time: snap.meta_created_time || null,
         active_ads_count: activeAdsByAdSet[snap.entity_id] || 0,
         agent: memory.agent_last_check ? {
           assessment: memory.agent_assessment || null,
