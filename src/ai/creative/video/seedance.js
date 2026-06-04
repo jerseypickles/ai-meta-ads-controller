@@ -28,8 +28,10 @@ const POLL_MAX_DELAY_MS = 20000;
 // 25min para no marcar failed videos que en realidad iban a salir bien. Override por env.
 const POLL_TIMEOUT_MS = parseInt(process.env.SEEDANCE_POLL_TIMEOUT_MS || String(25 * 60 * 1000), 10);
 // Mandar `seed` para que dos jobs con mismo prompt+imagen no salgan idénticos (diversidad).
-// Gated por env por si la cuenta/tier de PiAPI rechaza el campo → SEEDANCE_SEND_SEED=false lo apaga.
-const SEND_SEED = process.env.SEEDANCE_SEND_SEED !== 'false';
+// OPT-IN (default OFF): no está verificado contra la API live de PiAPI; si el tier rechaza
+// el campo `seed`, rompería TODA la generación. Activar con SEEDANCE_SEND_SEED=true tras
+// confirmar que PiAPI lo acepta. La diversidad principal ya viene del explore + rotación de estilo.
+const SEND_SEED = process.env.SEEDANCE_SEND_SEED === 'true';
 
 function _key() {
   const k = process.env.PIAPI_KEY;
