@@ -655,12 +655,42 @@ function DNALabSection({ dna, dnaSpace }) {
   const dnas = dna?.dnas || [];
   const distributions = dna?.distributions || {};
 
+  // Lente de cash transparente: el dato del DNA está en Meta-ROAS crudo (medido por
+  // creativo). El haircut de Demeter es corrección a nivel cuenta — se muestra aparte
+  // para reflejar la realidad sin inflar el dato. Color = valor cash real (si hay lente).
+  const cashLens = dna?.cash_lens || { available: false, haircut: 1 };
+  const hc = cashLens.available && cashLens.haircut > 0 ? cashLens.haircut : 1;
+  const MONO = 'JetBrains Mono, monospace';
+  const roasColor = (metaRoas) => {
+    if (cashLens.available) {
+      const cr = metaRoas * hc; // colorea por cash real: ≥3 target, ≥1.5 mínimo
+      return cr >= 3 ? '#10b981' : cr >= 1.5 ? '#fbbf24' : '#ef4444';
+    }
+    return metaRoas >= 5 ? '#10b981' : metaRoas >= 2 ? '#fbbf24' : '#ef4444';
+  };
+
   if (dnas.length === 0) {
     return <Empty>Sin DNAs aún. Se poblarán con cada test resuelto.</Empty>;
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Lente de cash — banner explicativo */}
+      {cashLens.available && (
+        <div style={{
+          background: 'rgba(16, 185, 129, 0.06)',
+          border: '1px solid rgba(16, 185, 129, 0.2)',
+          borderRadius: 10,
+          padding: '8px 14px',
+          fontSize: '0.62rem',
+          lineHeight: 1.5,
+          color: 'var(--bos-text-muted)'
+        }}>
+          <span style={{ color: '#10b981', fontWeight: 700 }}>Lente cash · Meta sub-atribuye ×{hc.toFixed(2)}</span>
+          {'  '}— Meta dice <span style={{ fontFamily: MONO }}>{cashLens.meta_roas_14d}x</span>, cash real al banco <span style={{ fontFamily: MONO, color: '#10b981' }}>{cashLens.cash_roas_14d}x</span> (cuenta, 14d).
+          Los ROAS muestran <span style={{ fontFamily: MONO }}>meta</span> → <span style={{ fontFamily: MONO, color: '#10b981' }}>est. cash</span>. Estimación de cuenta, no atribución por creativo.
+        </div>
+      )}
       {/* Space metrics */}
       {dnaSpace.normalized_entropy != null && (
         <div style={{
@@ -706,7 +736,7 @@ function DNALabSection({ dna, dnaSpace }) {
                 <div style={{ fontSize: '0.58rem', color: 'var(--bos-text-muted)', marginBottom: 4, textTransform: 'capitalize' }}>{dim}:</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                   {top.map((item, i) => {
-                    const c = item.avg_roas >= 5 ? '#10b981' : item.avg_roas >= 2 ? '#fbbf24' : '#ef4444';
+                    const c = roasColor(item.avg_roas);
                     return (
                       <span key={i} style={{
                         padding: '2px 8px',
@@ -717,7 +747,8 @@ function DNALabSection({ dna, dnaSpace }) {
                       }}>
                         <span style={{ color: 'var(--bos-text)' }}>{(item.value || '?').substring(0, 24)}</span>
                         <span style={{ color: 'var(--bos-text-muted)', marginLeft: 4 }}>{item.tests}t</span>
-                        <span style={{ color: c, marginLeft: 4, fontFamily: 'JetBrains Mono, monospace' }}>{item.avg_roas}x</span>
+                        <span style={{ color: cashLens.available ? 'var(--bos-text-dim)' : c, marginLeft: 4, fontFamily: MONO }}>{item.avg_roas}x</span>
+                        {cashLens.available && <span style={{ color: c, marginLeft: 3, fontWeight: 700, fontFamily: MONO }}>→{(item.avg_roas * hc).toFixed(1)}x</span>}
                       </span>
                     );
                   })}
@@ -733,7 +764,8 @@ function DNALabSection({ dna, dnaSpace }) {
         <SectionHeader label={`Top ${Math.min(dnas.length, 15)} DNAs`} count={dnas.length} color="#8b5cf6" />
         {dnas.slice(0, 15).map((d, i) => {
           const f = d.fitness || {};
-          const roasColor = f.avg_roas >= 5 ? '#10b981' : f.avg_roas >= 2 ? '#fbbf24' : '#ef4444';
+          const metaR = f.avg_roas || 0;
+          const col = roasColor(metaR);
           return (
             <motion.div
               key={d.dna_hash || i}
@@ -742,17 +774,20 @@ function DNALabSection({ dna, dnaSpace }) {
               transition={{ delay: i * 0.03 }}
               style={{
                 background: 'rgba(17, 21, 51, 0.5)',
-                borderLeft: `3px solid ${roasColor}`,
+                borderLeft: `3px solid ${col}`,
                 borderRadius: 8,
                 padding: '10px 14px',
                 marginBottom: 5
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
-                <span style={{ fontSize: '0.62rem', color: 'var(--bos-text-dim)', fontFamily: 'JetBrains Mono, monospace' }}>#{i + 1}</span>
-                <span style={{ fontSize: '1rem', fontWeight: 700, color: roasColor, fontFamily: 'JetBrains Mono, monospace' }}>
-                  {f.avg_roas}x
+                <span style={{ fontSize: '0.62rem', color: 'var(--bos-text-dim)', fontFamily: MONO }}>#{i + 1}</span>
+                <span style={{ fontSize: '1rem', fontWeight: 700, color: col, fontFamily: MONO }}>
+                  {cashLens.available ? `${(metaR * hc).toFixed(1)}x` : `${metaR}x`}
                 </span>
+                {cashLens.available && (
+                  <span style={{ fontSize: '0.58rem', color: 'var(--bos-text-dim)', fontFamily: MONO }}>{metaR}x meta</span>
+                )}
                 <span style={{ fontSize: '0.6rem', color: 'var(--bos-text)' }}>
                   {f.tests_graduated || 0}/{f.tests_total || 0} wins
                 </span>

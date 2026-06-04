@@ -2,6 +2,7 @@ const CreativeDNA = require('../../db/models/CreativeDNA');
 const SystemConfig = require('../../db/models/SystemConfig');
 const logger = require('../../utils/logger');
 const { computeDNAHash, STYLES, ANGLES, HOOK_TYPES } = require('./dna-helper');
+const { buildFitnessContext, shrunkRoas, hierarchicalScore, rankDimensionValues, winnerThreshold } = require('./dna-fitness');
 
 /**
  * Evolution Engine — selecciona / muta / cruza DNAs para Apollo evolutivo.
@@ -31,7 +32,9 @@ const DEFAULT_CONFIG = {
   // Umbrales de elegibilidad
   min_samples_for_exploit: 3,      // DNA necesita 3+ tests para ser exploit target
   min_samples_for_parent: 2,       // mutation/crossover necesita al menos 2 samples
-  min_roas_for_winner: 3.0,        // ROAS minimo para ser "winner" elegible
+  min_roas_for_winner: 3.0,        // (legacy) superseded por umbral relativo al baseline
+  winner_profit_floor: 1.8,        // piso absoluto de rentabilidad para ser winner
+  winner_baseline_mult: 1.5,       // winner = shrunk >= max(piso, baseline × este mult)
   max_age_days_for_winner: 60,     // DNAs mas viejos pierden elegibilidad
 
   // Diversidad (anti-colapso)
@@ -112,23 +115,26 @@ function computeFitnessScore(dna, config) {
 /**
  * EXPLOIT — sample weighted por fitness score desde top DNAs ganadores.
  * Retorna el DNA completo (dimensions + hash).
+ *
+ * Pilar A: la elegibilidad usa ROAS SHRUNK (combo + prior de dimensiones), no el
+ * avg_roas crudo. Así un combo con pocos samples pero dimensiones probadas (marginal
+ * fuerte) califica — el exploit deja de starvearse. Sigue exigiendo samples reales
+ * (min_samples_for_exploit) para que exploit signifique "explotar lo probado".
  */
-async function exploitSample(config) {
-  const candidates = await CreativeDNA.find({
-    'fitness.tests_total': { $gte: config.min_samples_for_exploit },
-    'fitness.avg_roas': { $gte: config.min_roas_for_winner }
+async function exploitSample(config, ctx) {
+  const threshold = winnerThreshold(ctx, config);
+  const pool = await CreativeDNA.find({
+    'fitness.tests_total': { $gte: config.min_samples_for_exploit }
   }).lean();
 
+  const candidates = pool.filter(d => shrunkRoas(d, ctx) >= threshold);
   if (candidates.length === 0) {
-    logger.debug('[EVOLUTION] No exploit candidates — fallback a explore');
+    logger.debug(`[EVOLUTION] No exploit candidates (shrunk >= ${threshold.toFixed(2)}x) — fallback a explore`);
     return null;
   }
 
-  // Weighted random por fitness score
-  const scored = candidates.map(d => ({
-    dna: d,
-    score: computeFitnessScore(d, config)
-  }));
+  // Weighted random por score jerárquico (shrunk roas + confianza + recencia)
+  const scored = candidates.map(d => ({ dna: d, score: hierarchicalScore(d, ctx, config.fitness_score_weights) }));
   const totalScore = scored.reduce((s, x) => s + x.score, 0);
   if (totalScore <= 0) return null;
 
@@ -136,7 +142,7 @@ async function exploitSample(config) {
   for (const { dna, score } of scored) {
     pick -= score;
     if (pick <= 0) {
-      return { strategy: 'exploit', source_dna: dna, dimensions: dna.dimensions, rationale: `Exploit ${dna.dna_hash.substring(0, 30)}: ${dna.fitness.avg_roas}x ROAS, ${dna.fitness.tests_total} samples` };
+      return { strategy: 'exploit', source_dna: dna, dimensions: dna.dimensions, rationale: `Exploit ${dna.dna_hash.substring(0, 30)}: ${shrunkRoas(dna, ctx).toFixed(2)}x shrunk (${(dna.fitness.avg_roas || 0).toFixed(2)}x crudo, ${dna.fitness.tests_total} samples)` };
     }
   }
   const last = scored[scored.length - 1].dna;
@@ -147,15 +153,19 @@ async function exploitSample(config) {
  * MUTATE — toma un parent winner, cambia 1 dimension al azar.
  * Retorna DNA nuevo (no existe necesariamente en DB aun).
  */
-async function mutateFrom(parentOverride, config) {
+async function mutateFrom(parentOverride, config, ctx) {
   let parent = parentOverride;
 
   if (!parent) {
-    const candidates = await CreativeDNA.find({
-      'fitness.tests_total': { $gte: config.min_samples_for_parent },
-      'fitness.avg_roas': { $gte: config.min_roas_for_winner }
-    }).sort({ 'fitness.avg_roas': -1 }).limit(20).lean();
-
+    // Pool de padres por ROAS shrunk (no crudo) — Pilar A.
+    const pool = await CreativeDNA.find({
+      'fitness.tests_total': { $gte: config.min_samples_for_parent }
+    }).lean();
+    const threshold = winnerThreshold(ctx, config);
+    const candidates = pool
+      .filter(d => shrunkRoas(d, ctx) >= threshold)
+      .sort((a, b) => shrunkRoas(b, ctx) - shrunkRoas(a, ctx))
+      .slice(0, 20);
     if (candidates.length === 0) return null;
     parent = candidates[Math.floor(Math.random() * candidates.length)];
   }
@@ -164,20 +174,22 @@ async function mutateFrom(parentOverride, config) {
   const dimKeys = ['scene', 'style', 'copy_angle', 'product', 'hook_type'];
   const mutateDim = dimKeys[Math.floor(Math.random() * dimKeys.length)];
 
-  // Valores posibles por dimension — leer del pool existente (mas natural que hardcoded)
-  const allDnas = await CreativeDNA.find({}).select('dimensions').lean();
-  const valuePool = {};
-  for (const k of dimKeys) valuePool[k] = new Set();
-  for (const d of allDnas) {
-    for (const k of dimKeys) {
-      if (d.dimensions?.[k]) valuePool[k].add(d.dimensions[k]);
-    }
+  // Nuevo valor: 70% sesgado a la MEJOR marginal de esa dimensión (exploit del
+  // aprendizaje marginal), 30% random del pool (exploración). Pilar A.
+  const ranked = rankDimensionValues(mutateDim, ctx).filter(r => r.value !== parent.dimensions[mutateDim]);
+  let newValue = null;
+  if (ranked.length && Math.random() < 0.7) {
+    const top = ranked.slice(0, Math.max(1, Math.ceil(ranked.length / 3)));
+    newValue = top[Math.floor(Math.random() * top.length)].value;
+  } else {
+    const allDnas = await CreativeDNA.find({}).select('dimensions').lean();
+    const pool = new Set();
+    for (const d of allDnas) { const v = d.dimensions?.[mutateDim]; if (v) pool.add(v); }
+    const possible = Array.from(pool).filter(v => v !== parent.dimensions[mutateDim]);
+    if (possible.length === 0) return null;
+    newValue = possible[Math.floor(Math.random() * possible.length)];
   }
-
-  const possibleValues = Array.from(valuePool[mutateDim] || []).filter(v => v !== parent.dimensions[mutateDim]);
-  if (possibleValues.length === 0) return null;
-
-  const newValue = possibleValues[Math.floor(Math.random() * possibleValues.length)];
+  if (!newValue) return null;
 
   const mutatedDims = { ...parent.dimensions, [mutateDim]: newValue };
   return {
@@ -185,7 +197,7 @@ async function mutateFrom(parentOverride, config) {
     source_dna: parent,
     mutated_dimension: mutateDim,
     dimensions: mutatedDims,
-    rationale: `Mutate parent ${parent.dna_hash.substring(0, 30)} (${parent.fitness.avg_roas}x) changing ${mutateDim}: ${parent.dimensions[mutateDim]} → ${newValue}`
+    rationale: `Mutate parent ${parent.dna_hash.substring(0, 30)} (${shrunkRoas(parent, ctx).toFixed(2)}x shrunk) changing ${mutateDim}: ${parent.dimensions[mutateDim]} → ${newValue}`
   };
 }
 
@@ -193,11 +205,15 @@ async function mutateFrom(parentOverride, config) {
  * CROSSOVER — toma 2 winners, combina dimensions 50/50.
  * Retorna DNA hybrid nuevo.
  */
-async function crossoverFrom(config) {
-  const candidates = await CreativeDNA.find({
-    'fitness.tests_total': { $gte: config.min_samples_for_parent },
-    'fitness.avg_roas': { $gte: config.min_roas_for_winner }
-  }).sort({ 'fitness.avg_roas': -1 }).limit(20).lean();
+async function crossoverFrom(config, ctx) {
+  const pool = await CreativeDNA.find({
+    'fitness.tests_total': { $gte: config.min_samples_for_parent }
+  }).lean();
+  const threshold = winnerThreshold(ctx, config);
+  const candidates = pool
+    .filter(d => shrunkRoas(d, ctx) >= threshold)
+    .sort((a, b) => shrunkRoas(b, ctx) - shrunkRoas(a, ctx))
+    .slice(0, 20);
 
   if (candidates.length < 2) return null;
 
@@ -279,10 +295,13 @@ async function evolveNextDNA(options = {}) {
     const forcedStrategy = options.strategy;
     const strategy = forcedStrategy || chooseStrategy(config);
 
+    // Contexto de fitness jerárquico (marginales + baseline), 1 sola vez por ciclo. Pilar A.
+    const ctx = await buildFitnessContext();
+
     let result = null;
-    if (strategy === 'exploit') result = await exploitSample(config);
-    else if (strategy === 'mutate') result = await mutateFrom(options.parent, config);
-    else if (strategy === 'crossover') result = await crossoverFrom(config);
+    if (strategy === 'exploit') result = await exploitSample(config, ctx);
+    else if (strategy === 'mutate') result = await mutateFrom(options.parent, config, ctx);
+    else if (strategy === 'crossover') result = await crossoverFrom(config, ctx);
     else result = await exploreRandom();
 
     // Fallback chain: si estrategia elegida falla (no hay candidatos), bajar a explore

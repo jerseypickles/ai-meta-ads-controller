@@ -478,6 +478,25 @@ router.get('/dna', async (req, res) => {
     const evolutionRatio = await getEvolutionRatio();
     const dnaSpaceMetrics = await computeDNASpaceMetrics();
 
+    // LENTE DE CASH (transparente, no se hornea en el dato). El fitness del DNA está en
+    // Meta-ROAS crudo (medido por creativo). El haircut de Demeter es corrección a nivel
+    // CUENTA — se muestra aparte para que el panel refleje la realidad sin inflar el dato.
+    let cashLens = { available: false, haircut: 1 };
+    try {
+      const { getAccountCashSignal } = require('../../ai/agent/demeter-cash-signal');
+      const sig = await getAccountCashSignal();
+      if (sig && sig.available && sig.haircut_factor > 0) {
+        cashLens = {
+          available: true,
+          haircut: sig.haircut_factor,           // ×N: cuánto sub-atribuye Meta vs cash real
+          meta_roas_14d: sig.meta_roas_14d,
+          cash_roas_14d: sig.cash_roas_14d,
+          zone: sig.zone,
+          note: 'estimación a nivel cuenta — no atribución por creativo'
+        };
+      }
+    } catch (_) { /* fail-open: sin lente, el panel muestra Meta crudo */ }
+
     // Breakdown de proposals por estrategia (ultimos 7d)
     const CreativeProposal = require('../../db/models/CreativeProposal');
     const sevenDaysAgo = new Date(Date.now() - 7 * 86400000);
@@ -519,6 +538,7 @@ router.get('/dna', async (req, res) => {
         total_revenue: Math.round(totalRevenue),
         aggregate_roas: totalSpend > 0 ? Math.round((totalRevenue / totalSpend) * 100) / 100 : 0
       },
+      cash_lens: cashLens,   // lente transparente Meta→cash (nivel cuenta)
       // Fase 4 — evolution metrics
       evolution: {
         active_ratio: evolutionRatio,                        // 0.0 - 1.0 feature flag actual
