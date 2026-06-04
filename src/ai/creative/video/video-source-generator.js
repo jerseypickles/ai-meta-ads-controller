@@ -20,13 +20,22 @@ const CreativeProposal = require('../../../db/models/CreativeProposal');
 const { generateCreativeImage } = require('../image-engine');
 const dna = require('./video-dna');
 
-const POOL_TARGET = parseInt(process.env.VIDEO_SOURCE_POOL_TARGET || '12', 10); // 2026-06-03: 30→12 (>50% menos)
-const PER_CYCLE_CAP = parseInt(process.env.VIDEO_SOURCE_PER_CYCLE || '3', 10);  // 2026-06-03: 6→3
+const POOL_TARGET = parseInt(process.env.VIDEO_SOURCE_POOL_TARGET || '16', 10); // 2026-06-04: 12→16 (más variedad)
+const PER_CYCLE_CAP = parseInt(process.env.VIDEO_SOURCE_PER_CYCLE || '4', 10);  // 2026-06-04: 3→4
 const ENABLED = process.env.VIDEO_SOURCE_ENABLED !== 'false';
 
 const FIDELITY = 'The product container and its LABEL must remain a pixel-perfect match to the reference photo — same shape, same label design, same text, same colors, same proportions. Do NOT redraw, re-render, or restyle the packaging or the label. CRITICAL COLOR FIDELITY: replicate the EXACT colors of the product and its contents from the reference; do not shift them toward what this food "usually" looks like.';
 
-const STYLE = 'Authentic UGC iPhone photo, handheld, natural daylight, shallow casual framing. Photorealistic and appetizing — looks shot by a real person, NOT AI. Real skin tones on the hand, realistic glossy sauce texture, natural shadows. No text overlays, no graphics, no filters, no color grading.';
+// MOODS de estilo de IMAGEN — se rota uno por imagen para que las fuentes (y por
+// ende los videos) no salgan todas con el mismo look. Core: UGC real, NO-IA, fieles.
+const STYLE_MOODS = [
+  'Authentic UGC iPhone photo, handheld, natural daylight, shallow casual framing. Photorealistic and appetizing — looks shot by a real person, NOT AI. Real skin tones on the hand, realistic glossy sauce texture, natural shadows. No text overlays, no graphics, no filters, no color grading.',
+  'Real iPhone UGC photo in warm late-afternoon light, cozy and appetizing, true-to-life colors (no heavy grading), handheld casual angle, natural soft shadows, looks shot by a real person NOT AI, no text overlays, no graphics, no filters.',
+  'Bright clean iPhone photo in fresh daylight, crisp and mouth-watering, true neutral colors, close casual handheld framing, real skin tones, realistic glossy texture, NOT AI, no text overlays, no graphics, no color grading.'
+];
+function pickImageStyle() {
+  return STYLE_MOODS[Math.floor(Math.random() * STYLE_MOODS.length)];
+}
 
 /** Construye el prompt de imagen para un producto + (motion, scene) del DNA. */
 function buildSourcePrompt(productName, motionKey, sceneKey) {
@@ -40,7 +49,7 @@ function buildSourcePrompt(productName, motionKey, sceneKey) {
   const matchPiece = `CRITICAL: the pickled item shown must be ${unit} — the SAME pickled food that is inside this "${productName}" jar (same type, same color as the contents visible in the reference). Do NOT substitute a generic pickle chip or any different food.`;
   return `Create a vertical photograph of ${interaction}, for the product "${productName}". ` +
     `The jar/tub from the reference photo is clearly visible in the shot with its label readable. ` +
-    `${matchPiece} ${FIDELITY} ${STYLE} The hand and the dripping brine should be the hero of the shot, mouth-watering and in sharp focus.`;
+    `${matchPiece} ${FIDELITY} ${pickImageStyle()} The hand and the dripping brine should be the hero of the shot, mouth-watering and in sharp focus.`;
 }
 
 /** Genera un headline + copy corto para el creativo (en inglés, mercado US). */

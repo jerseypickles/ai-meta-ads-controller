@@ -27,9 +27,10 @@ Penalize HEAVILY (score 0-35):
 - Static jar just sitting there with nothing to animate, or cluttered/busy scenes that would morph/warp.
 - Product small, cut off, blurry, label unreadable, or heavy text/graphics overlays.
 
-suggested_motion: pick the interaction the image best supports:
-- "lift_drip" = a hand can lift a chip out with sauce dripping (BEST).
-- "dip_drip" = a held chip with sauce can drip back into the tub.
+suggested_motion: pick the interaction the image GENUINELY best supports based on what is
+actually visible (no default preference — choose whichever fits the image):
+- "lift_drip" = a hand lifting a chip out with sauce dripping.
+- "dip_drip" = a held chip with sauce dripping back into the tub.
 - "pull_up" = a hand pulling a sauced chip up.
 - "drip" = no hand/chip, only a passive brine drip (jar-only fallback).
 - "none" = not suitable.

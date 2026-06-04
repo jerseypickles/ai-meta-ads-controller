@@ -27,6 +27,9 @@ const POLL_MAX_DELAY_MS = 20000;
 // más cómputo); observado 24min+ con la cola congestionada. Subimos el timeout a
 // 25min para no marcar failed videos que en realidad iban a salir bien. Override por env.
 const POLL_TIMEOUT_MS = parseInt(process.env.SEEDANCE_POLL_TIMEOUT_MS || String(25 * 60 * 1000), 10);
+// Mandar `seed` para que dos jobs con mismo prompt+imagen no salgan idénticos (diversidad).
+// Gated por env por si la cuenta/tier de PiAPI rechaza el campo → SEEDANCE_SEND_SEED=false lo apaga.
+const SEND_SEED = process.env.SEEDANCE_SEND_SEED !== 'false';
 
 function _key() {
   const k = process.env.PIAPI_KEY;
@@ -38,19 +41,17 @@ function _headers() {
 }
 
 /** Submit del job image-to-video. Devuelve task_id. */
-async function _submit({ imageUrl, prompt, durationSeconds, aspectRatio }) {
-  const body = {
-    model: MODEL,
-    task_type: TASK_TYPE,
-    input: {
-      mode: 'first_last_frames',     // imagen = primer frame → preserva fidelidad del producto
-      prompt,
-      duration: durationSeconds,
-      aspect_ratio: aspectRatio,
-      resolution: RESOLUTION,        // 1080p (solo lo respeta el tier VIP)
-      image_urls: [imageUrl]
-    }
+async function _submit({ imageUrl, prompt, durationSeconds, aspectRatio, seed }) {
+  const input = {
+    mode: 'first_last_frames',     // imagen = primer frame → preserva fidelidad del producto
+    prompt,
+    duration: durationSeconds,
+    aspect_ratio: aspectRatio,
+    resolution: RESOLUTION,        // 1080p (solo lo respeta el tier VIP)
+    image_urls: [imageUrl]
   };
+  if (SEND_SEED && Number.isFinite(seed)) input.seed = seed;
+  const body = { model: MODEL, task_type: TASK_TYPE, input };
   const res = await axios.post(`${BASE_URL}/task`, body, { headers: _headers(), timeout: 30000 });
   if (res.data?.code !== 200) {
     throw new Error(`PiAPI submit: ${res.data?.message || JSON.stringify(res.data).slice(0, 200)}`);
@@ -95,10 +96,11 @@ async function generateVideoFromImage(opts) {
   const { imageUrl, prompt, durationSeconds = 5, aspectRatio = '9:16' } = opts;
   if (!imageUrl) throw new Error('Seedance: falta imageUrl (URL pública)');
   if (!prompt) throw new Error('Seedance: falta motion prompt');
+  const seed = Number.isFinite(opts.seed) ? opts.seed : Math.floor(Math.random() * 1e9);
 
   const t0 = Date.now();
-  logger.info(`[SEEDANCE] ${MODEL}/${TASK_TYPE} image-to-video · ${durationSeconds}s ${aspectRatio} · ${RESOLUTION}`);
-  const taskId = await _submit({ imageUrl, prompt, durationSeconds, aspectRatio });
+  logger.info(`[SEEDANCE] ${MODEL}/${TASK_TYPE} image-to-video · ${durationSeconds}s ${aspectRatio} · ${RESOLUTION}${SEND_SEED ? ` · seed ${seed}` : ''}`);
+  const taskId = await _submit({ imageUrl, prompt, durationSeconds, aspectRatio, seed });
   logger.info(`[SEEDANCE] task ${taskId} en cola, pooleando...`);
   // Avisar el task_id apenas se emite (para persistirlo y poder reconciliar si el
   // proceso muere mid-render).

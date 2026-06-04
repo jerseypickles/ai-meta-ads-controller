@@ -16,15 +16,18 @@ const ENABLED = process.env.DIONYSUS_ENABLED !== 'false';
 const MAX_VIDEOS_PER_CYCLE = parseInt(process.env.DIONYSUS_MAX_PER_CYCLE || '3', 10); // control de costo
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://ai-meta-ads-controller.onrender.com';
 
-/** Mapea la sugerencia del judge a un motion del DNA (fallback si la fuente no lo trae). */
+/** Mapea la sugerencia del judge a un motion del DNA. Fallback raro: la imagen-fuente
+ *  casi siempre trae su motion baked, así que esto solo aplica a fuentes legacy. NO
+ *  colapsar todo a lift_drip (era la causa de que todos los videos se vieran igual);
+ *  ante desconocido, elegir un motion válido al azar. */
 function motionVariantFor(suggested) {
   const map = {
     lift_drip: 'lift_drip', dip_drip: 'dip_drip', pull_up: 'pull_up', drip: 'lift_drip',
-    pinch: 'pinch_twirl', bite: 'bite_tease',
-    // back-compat con vocabulario viejo
-    breeze: 'lift_drip', shimmer: 'lift_drip', hand_hold: 'lift_drip'
+    pinch: 'pinch_twirl', bite: 'bite_tease'
   };
-  return map[suggested] || 'lift_drip'; // default = el hero
+  if (map[suggested]) return map[suggested];
+  const all = dna.keys('motion');
+  return all[Math.floor(Math.random() * all.length)];
 }
 
 /**

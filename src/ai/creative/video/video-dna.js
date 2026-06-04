@@ -21,6 +21,21 @@ const BASE_STYLE =
   'neutral white balance, NO color grading, NO oversaturation, preserve the exact original colors, ' +
   'real skin tones, natural film grain, realistic textures, no glossy CGI look, no slow-motion, no zoom.';
 
+// MOODS de estilo de VIDEO — se rota uno por video para romper la mismidad de "efecto".
+// Todos preservan el core: realismo, NO-IA, colores fieles, label legible, sin zoom/slow-mo.
+const VIDEO_STYLE_MOODS = [
+  BASE_STYLE,
+  'Real handheld iPhone footage in warm natural late-afternoon light, soft golden tones but ' +
+  'TRUE-to-life colors (no heavy grading), authentic UGC feel, real skin tones, natural film grain, ' +
+  'NOT AI-generated, no glossy CGI look, no slow-motion, no zoom.',
+  'Authentic iPhone video shot in bright clean daylight, crisp and fresh, true neutral colors, ' +
+  'natural window light, real handheld micro-shake, looks shot by a real person NOT AI, realistic ' +
+  'textures, no oversaturation, no glossy CGI look, no slow-motion, no zoom.'
+];
+function pickVideoStyle() {
+  return VIDEO_STYLE_MOODS[Math.floor(Math.random() * VIDEO_STYLE_MOODS.length)];
+}
+
 // MOTION — interacción con el producto. `{unit}` = la pieza real del producto
 // (rodaja de cebolla, tomate, pickle chip, etc — se reemplaza por producto).
 // `img` = qué hace la mano en la foto (gpt-image), `vid` = cómo se anima (Seedance).
@@ -121,21 +136,38 @@ function keys(dim) {
 }
 
 /**
- * Exploit/explore: pick ponderado de un valor de la dimensión.
- * Cada valor arranca con `floor` (explore) y suma bonus por avg_roas si tiene
- * muestra suficiente (exploit). Sin data → todos parejos (explore puro).
+ * Exploit/explore: pick de un valor de la dimensión.
+ * - `exploreRate` (40% default): EXPLORE forzado entre los valores MENOS usados →
+ *   rompe el colapso a un solo motion (la causa de que "todos los videos se vean igual").
+ * - resto: EXPLOIT ponderado por ROAS + hold, PENALIZADO por rechazos (desfiguración):
+ *   el "no" del creador en la review manual baja el peso de ese combo (loop de animabilidad).
  */
-function pickWeighted(dim, statsByKey = {}, { minSamples = 2, floor = 1, k = 1.2, kHold = 3 } = {}) {
+function pickWeighted(dim, statsByKey = {}, opts = {}) {
+  const { minSamples = 2, floor = 1, k = 1.2, kHold = 3, exploreRate = 0.4 } = opts;
   const values = DIMS[dim] || [];
   if (!values.length) return null;
+
+  // EXPLORE forzado (40%): favorece lo menos usado (cobertura), sin sesgo de exploit.
+  if (Math.random() < exploreRate) {
+    const ranked = values
+      .map(v => { const s = statsByKey[v.key] || {}; return { key: v.key, used: (s.n || 0) + (s.reject_n || 0) }; })
+      .sort((a, b) => a.used - b.used);
+    const pool = ranked.slice(0, Math.max(1, Math.ceil(ranked.length / 3))); // tercio menos usado
+    return pool[Math.floor(Math.random() * pool.length)].key;
+  }
+
+  // EXPLOIT (60%): ponderado por rendimiento, penalizado por desfiguración/rechazo.
   const weights = values.map(v => {
     const s = statsByKey[v.key];
     let w = floor;
     if (s && s.n >= minSamples) {
-      // ROAS = verdad de negocio (domina). hold_rate = señal TEMPRANA de retención
-      // (llega antes que las compras) → nudge mientras el ROAS junta muestra.
+      // ROAS = verdad de negocio (domina). hold_rate = señal TEMPRANA de retención.
       if (s.avg_roas > 0) w += s.avg_roas * k;
       if (s.avg_hold > 0) w += s.avg_hold * kHold;
+    }
+    if (s && (s.reject_n || 0) > 0) {
+      const tot = (s.n || 0) + s.reject_n;
+      w *= Math.max(0.15, 1 - (s.reject_n / tot)); // rechazos bajan el peso; nunca a cero del todo
     }
     return w;
   });
@@ -154,35 +186,48 @@ function pickWeighted(dim, statsByKey = {}, { minSamples = 2, floor = 1, k = 1.2
  */
 async function getDimensionStats(dim) {
   const field = dim === 'motion' ? 'motion_variant' : dim;
+  // Videos que CORRIERON → señal de rendimiento (ROAS/hold).
   const vids = await CreativeProposal.find({
     media_type: 'video', status: { $in: ['testing', 'graduated', 'killed', 'expired'] }
   }).select(`${field} status`).lean();
-  if (!vids.length) return {};
-  const ids = vids.map(v => v._id);
-  const runs = await TestRun.find({ proposal_id: { $in: ids } }).select('proposal_id metrics').lean();
-  const byProp = {};
-  for (const t of runs) byProp[String(t.proposal_id)] = t.metrics || {};
+  // Videos RECHAZADOS en review manual → señal NEGATIVA (desfiguración / "se nota IA" /
+  // no apto). El "no" del creador enseña al DNA a evitar ese combo (loop de animabilidad).
+  const rejected = await CreativeProposal.find({
+    media_type: 'video', status: 'rejected'
+  }).select(`${field}`).lean();
+
   const agg = {};
-  for (const v of vids) {
-    const key = v[field];
-    if (!key) continue;
-    const m = byProp[String(v._id)] || {};
-    agg[key] = agg[key] || { n: 0, roas_sum: 0, ctr_sum: 0, hold_sum: 0, thumb_sum: 0, graduated: 0, killed: 0 };
-    agg[key].n++;
-    agg[key].roas_sum += (m.roas || 0);
-    agg[key].ctr_sum += (m.ctr || 0);
-    agg[key].hold_sum += (m.hold_rate || 0);    // % que ve el video completo
-    agg[key].thumb_sum += (m.thumbstop_rate || 0); // % que se queda a verlo
-    if (v.status === 'graduated') agg[key].graduated++;
-    if (v.status === 'killed') agg[key].killed++;
+  const ensure = (key) => (agg[key] = agg[key] || { n: 0, roas_sum: 0, ctr_sum: 0, hold_sum: 0, thumb_sum: 0, graduated: 0, killed: 0, reject_n: 0 });
+
+  if (vids.length) {
+    const ids = vids.map(v => v._id);
+    const runs = await TestRun.find({ proposal_id: { $in: ids } }).select('proposal_id metrics').lean();
+    const byProp = {};
+    for (const t of runs) byProp[String(t.proposal_id)] = t.metrics || {};
+    for (const v of vids) {
+      const key = v[field];
+      if (!key) continue;
+      const m = byProp[String(v._id)] || {};
+      const a = ensure(key);
+      a.n++;
+      a.roas_sum += (m.roas || 0);
+      a.ctr_sum += (m.ctr || 0);
+      a.hold_sum += (m.hold_rate || 0);    // % que ve el video completo
+      a.thumb_sum += (m.thumbstop_rate || 0); // % que se queda a verlo
+      if (v.status === 'graduated') a.graduated++;
+      if (v.status === 'killed') a.killed++;
+    }
   }
+  for (const v of rejected) { const key = v[field]; if (key) ensure(key).reject_n++; }
+
   const out = {};
   for (const key in agg) {
     const a = agg[key];
     out[key] = {
-      n: a.n, avg_roas: a.roas_sum / a.n, avg_ctr: a.ctr_sum / a.n,
-      avg_hold: a.hold_sum / a.n, avg_thumbstop: a.thumb_sum / a.n,
-      graduated: a.graduated, killed: a.killed
+      n: a.n,
+      avg_roas: a.n ? a.roas_sum / a.n : 0, avg_ctr: a.n ? a.ctr_sum / a.n : 0,
+      avg_hold: a.n ? a.hold_sum / a.n : 0, avg_thumbstop: a.n ? a.thumb_sum / a.n : 0,
+      graduated: a.graduated, killed: a.killed, reject_n: a.reject_n
     };
   }
   return out;
@@ -210,15 +255,18 @@ function buildImageScene(motionKey, sceneKey, productName) {
   return img;
 }
 
-/** Prompt del VIDEO (Seedance): motion (con pieza real) + cámara + estilo base. */
-function buildVideoPrompt(productName, motionKey, cameraKey) {
+/** Prompt del VIDEO (Seedance): motion (con pieza real) + cámara + estilo ROTADO.
+ *  styleOverride opcional (para tests deterministas); si no, rota un mood. */
+function buildVideoPrompt(productName, motionKey, cameraKey, styleOverride) {
   const m = get('motion', motionKey);
   const c = get('camera', cameraKey);
+  const style = styleOverride || pickVideoStyle();
   const readable = `Keep the ${productName || 'product'} label readable and undistorted at all times.`;
-  return `${_fill(m.vid, productName)} ${c.vid} ${BASE_STYLE} ${readable}`;
+  return `${_fill(m.vid, productName)} ${c.vid} ${style} ${readable}`;
 }
 
 module.exports = {
-  MOTIONS, CAMERAS, SCENES, DIMS, BASE_STYLE, productUnit, productUnitFood,
+  MOTIONS, CAMERAS, SCENES, DIMS, BASE_STYLE, VIDEO_STYLE_MOODS, pickVideoStyle,
+  productUnit, productUnitFood,
   get, keys, pickWeighted, getDimensionStats, buildImageScene, buildVideoPrompt
 };
