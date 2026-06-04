@@ -87,6 +87,19 @@ const testRunSchema = new mongoose.Schema({
   // Si ya se guardo feedback para Creative Agent
   feedback_saved: { type: Boolean, default: false },
 
+  // Contribución ya aplicada al CreativeDNA (Pilar C — fitness reconciliable).
+  // Cuando las métricas finales llegan con lag de atribución, el refresh recomputa
+  // el fitness aplicando el DELTA (next - prev) en vez de re-sumar → no doble-cuenta.
+  // revenue es Meta-ROAS crudo (el cash es lente de display, no se hornea). Solo foto.
+  dna_recorded: {
+    hash: { type: String, default: '' },
+    outcome: { type: String, default: '' },   // graduated | killed | expired
+    spend: { type: Number, default: 0 },
+    revenue: { type: Number, default: 0 },     // meta (crudo)
+    purchases: { type: Number, default: 0 },
+    recorded_at: { type: Date, default: null }
+  },
+
   // Meta context — timing + cohorte + concurrencia al momento del launch
   meta_context: {
     hour_et: Number,

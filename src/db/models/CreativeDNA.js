@@ -94,4 +94,42 @@ creativeDNASchema.methods.recordOutcome = function(outcome, metrics) {
   this.updated_at = new Date();
 };
 
+/**
+ * Reconcilia la contribución de UN test al fitness (Pilar C).
+ * - prev = null  → primer registro: incrementa contadores + suma agregados.
+ * - prev != null → reconciliación: aplica el DELTA (next - prev) a los agregados
+ *   sin volver a incrementar tests_total. Si el outcome cambió, mueve el contador.
+ * Permite re-medir un test cuando sus métricas finales llegan con lag de atribución,
+ * sin doble-contar. `next`/`prev` = { outcome, spend, revenue (meta crudo), purchases }.
+ */
+creativeDNASchema.methods.reconcileContribution = function(prev, next) {
+  const f = this.fitness;
+  const bump = (outcome, dir) => {
+    if (outcome === 'graduated') f.tests_graduated = Math.max(0, f.tests_graduated + dir);
+    else if (outcome === 'killed') f.tests_killed = Math.max(0, f.tests_killed + dir);
+    else if (outcome === 'expired') f.tests_expired = Math.max(0, f.tests_expired + dir);
+  };
+
+  if (!prev) {
+    f.tests_total += 1;
+    bump(next.outcome, +1);
+    f.total_spend += next.spend || 0;
+    f.total_revenue += next.revenue || 0;
+    f.total_purchases += next.purchases || 0;
+  } else {
+    if (prev.outcome !== next.outcome) { bump(prev.outcome, -1); bump(next.outcome, +1); }
+    f.total_spend = Math.max(0, f.total_spend + ((next.spend || 0) - (prev.spend || 0)));
+    f.total_revenue = Math.max(0, f.total_revenue + ((next.revenue || 0) - (prev.revenue || 0)));
+    f.total_purchases = Math.max(0, f.total_purchases + ((next.purchases || 0) - (prev.purchases || 0)));
+  }
+
+  f.avg_roas = f.total_spend > 0 ? Math.round((f.total_revenue / f.total_spend) * 100) / 100 : 0;
+  f.win_rate = f.tests_total > 0 ? Math.round((f.tests_graduated / f.tests_total) * 100) / 100 : 0;
+  f.avg_cpa = f.total_purchases > 0 ? Math.round((f.total_spend / f.total_purchases) * 100) / 100 : 0;
+  f.sample_confidence = Math.min(1, f.tests_total / 12);
+  f.last_test_at = new Date();
+  f.last_outcome = next.outcome;
+  this.updated_at = new Date();
+};
+
 module.exports = mongoose.model('CreativeDNA', creativeDNASchema);

@@ -513,15 +513,28 @@ async function monitorTests() {
 
       // ── Dia 3+: Evaluacion activa ──
 
+      // VIDEO que engancha (hold alto): el lag ver→clic→compra es más largo que en foto.
+      // Con atribución 7-day-click la compra se retro-atribuye DESPUÉS del día 3, así que
+      // matar por "0 compras" al día 3 sobre-mata video que sí convierte (8/20 kills
+      // históricos terminaron vendiendo, ~$679). Le damos runway completo hasta día 6 igual
+      // que el kill agresivo de abajo; ahí el bloque de decisión final (día 6-7) lo expira si
+      // sigue sin señal. Foto NO tiene este lag: muere al día 3 como siempre.
+      const videoEngages = test.media_type === 'video' && videoEng && videoEng.hold_rate >= VIDEO_HOLD_GOOD;
+      const videoGetsRunway = videoEngages && daysActive < 6;
+
       // KILL: 0 compras + gasto suficiente
-      if (metrics.purchases === 0 && metrics.spend >= KILL_MIN_SPEND) {
+      if (metrics.purchases === 0 && metrics.spend >= KILL_MIN_SPEND && !videoGetsRunway) {
         await killOrExpireTest(test, `0 compras con $${metrics.spend.toFixed(2)} spend, ${metrics.clicks || 0} clicks, ${metrics.add_to_cart || 0} ATC`, 'killed');
         killed++;
         continue;
       }
+      if (videoGetsRunway && metrics.purchases === 0 && metrics.spend >= KILL_MIN_SPEND) {
+        logger.info(`[TESTING-AGENT] ${test.test_adset_name}: 0 compras ($${metrics.spend.toFixed(2)}) pero video engancha (hold ${(videoEng.hold_rate * 100).toFixed(0)}%) — runway hasta día 6 por lag de atribución video`);
+      }
 
-      // KILL TEMPRANO: alto spend + clicks pero 0 ATC (funnel roto — el creativo atrae pero no convierte)
-      if (metrics.spend >= 15 && metrics.clicks >= 20 && metrics.add_to_cart === 0 && metrics.purchases === 0 && daysActive >= 3) {
+      // KILL TEMPRANO: alto spend + clicks pero 0 ATC (funnel roto — el creativo atrae pero no convierte).
+      // Mismo runway para video que engancha: ATC/compra también llegan con lag.
+      if (metrics.spend >= 15 && metrics.clicks >= 20 && metrics.add_to_cart === 0 && metrics.purchases === 0 && daysActive >= 3 && !videoGetsRunway) {
         await killOrExpireTest(test, `Funnel roto: $${metrics.spend.toFixed(2)} spend, ${metrics.clicks} clicks, 0 ATC — creativo atrae pero no convierte`, 'killed');
         killed++;
         continue;
@@ -566,7 +579,7 @@ async function monitorTests() {
       // Dia 3-5: Kill agresivo — 1 compra + $40+ spend + ROAS < 2x = no va a mejorar.
       // EXCEPCIÓN video: si engancha fuerte (hold alto), le damos el runway completo
       // hasta día 6-7 — el creativo gusta, dale tiempo a que las compras maduren.
-      const videoEngages = test.media_type === 'video' && videoEng && videoEng.hold_rate >= VIDEO_HOLD_GOOD;
+      // (videoEngages ya definido arriba, en el bloque de kill de 0 compras.)
       if (daysActive >= 3 && metrics.purchases <= 1 && metrics.spend >= 40 && metrics.roas < 2.0 && !videoEngages) {
         await killOrExpireTest(test, `${metrics.purchases} compras con $${metrics.spend.toFixed(0)} spend, ROAS ${metrics.roas.toFixed(2)}x — CPA demasiado alto, no mejorara`, 'killed');
         killed++;
@@ -738,7 +751,7 @@ async function graduateTest(test, metrics) {
       spend: metrics.spend || 0,
       revenue: (metrics.roas || 0) * (metrics.spend || 0),
       purchases: metrics.purchases || 0
-    });
+    }, test._id);
   } catch (dnaErr) {
     logger.warn(`[TESTING-AGENT] DNA fitness update failed (non-fatal): ${dnaErr.message}`);
   }
@@ -814,7 +827,7 @@ async function killOrExpireTest(test, reason, phase) {
         spend: m.spend || 0,
         revenue: (m.roas || 0) * (m.spend || 0),
         purchases: m.purchases || 0
-      });
+      }, test._id);
     }
   } catch (dnaErr) {
     logger.warn(`[TESTING-AGENT] DNA fitness update failed (non-fatal): ${dnaErr.message}`);
@@ -1208,41 +1221,62 @@ async function runTestingAgent() {
  * graduados en últimos 30 días (después no vale la pena, lifecycle expira).
  */
 async function updateGraduatedMetrics() {
-  const since = new Date(Date.now() - 30 * 86400000);
-  const graduatedTests = await TestRun.find({
-    phase: 'graduated',
-    graduated_at: { $gte: since }
+  // Graduados últimos 30d (para el panel "ROAS al graduar vs hoy") +
+  // killed/expired últimos 7d (Pilar C: capturar conversiones que llegan con lag
+  // de atribución DESPUÉS de la decisión, y re-alimentar el aprendizaje con la verdad).
+  const grad30 = new Date(Date.now() - 30 * 86400000);
+  const dec7 = new Date(Date.now() - 7 * 86400000);
+  const tests = await TestRun.find({
+    $or: [
+      { phase: 'graduated', graduated_at: { $gte: grad30 } },
+      { phase: 'killed', killed_at: { $gte: dec7 } },
+      { phase: 'expired', expired_at: { $gte: dec7 } }
+    ]
   }).lean();
 
-  if (graduatedTests.length === 0) return { updated: 0, skipped: 0 };
+  if (tests.length === 0) return { updated: 0, skipped: 0, reconciled: 0, total: 0 };
 
-  let updated = 0, skipped = 0;
-  for (const test of graduatedTests) {
+  const { updateDNAFitness } = require('../creative/dna-helper');
+  // Sólo reconciliamos DNA en la ventana donde el lag importa (decisión ≤7d).
+  const decidedAt = t => t.graduated_at || t.killed_at || t.expired_at || null;
+
+  let updated = 0, skipped = 0, reconciled = 0;
+  for (const test of tests) {
     try {
       const metrics = await getTestMetrics(test.test_adset_id);
-      if (!metrics) {
-        skipped++;
-        continue;
-      }
+      if (!metrics) { skipped++; continue; }
       // Misma protección anti-zero que monitorTests
       const oldMetrics = test.metrics || {};
       const newIsZero = (metrics.spend || 0) === 0 && (metrics.impressions || 0) === 0;
       const oldHadData = (oldMetrics.spend || 0) > 0;
-      if (newIsZero && oldHadData) {
-        skipped++;
-        continue;
-      }
+      if (newIsZero && oldHadData) { skipped++; continue; }
+
       await TestRun.findByIdAndUpdate(test._id, {
         $set: { metrics: { ...metrics, updated_at: new Date() } }
       });
       updated++;
+
+      // Reconciliar fitness con las métricas frescas (foto; video lo hace
+      // solo vía getDimensionStats, que lee metrics en vivo). Sólo decisión ≤7d.
+      const d = decidedAt(test);
+      if (test.media_type !== 'video' && d && d >= dec7 && test.proposal_id) {
+        const proposal = await CreativeProposal.findById(test.proposal_id).lean();
+        if (proposal) {
+          await updateDNAFitness(proposal, test.phase, {
+            spend: metrics.spend || 0,
+            revenue: (metrics.roas || 0) * (metrics.spend || 0),
+            purchases: metrics.purchases || 0
+          }, test._id);
+          reconciled++;
+        }
+      }
     } catch (err) {
-      logger.warn(`[TESTING-AGENT] update graduated ${test.test_adset_id} falló: ${err.message}`);
+      logger.warn(`[TESTING-AGENT] refresh ${test.test_adset_id} falló: ${err.message}`);
       skipped++;
     }
   }
-  logger.info(`[TESTING-AGENT] graduated metrics refresh: ${updated} actualizados, ${skipped} skipped (de ${graduatedTests.length})`);
-  return { updated, skipped, total: graduatedTests.length };
+  logger.info(`[TESTING-AGENT] metrics refresh: ${updated} actualizados, ${reconciled} DNA reconciliados, ${skipped} skipped (de ${tests.length})`);
+  return { updated, skipped, reconciled, total: tests.length };
 }
 
 module.exports = { runTestingAgent, updateGraduatedMetrics, launchTests };

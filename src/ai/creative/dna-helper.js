@@ -1,5 +1,13 @@
 const CreativeDNA = require('../../db/models/CreativeDNA');
+const TestRun = require('../../db/models/TestRun');
 const logger = require('../../utils/logger');
+
+// NOTA DE VERDAD (decidido 2026-06-04): el fitness se guarda en Meta-ROAS CRUDO —
+// el dato medido por creativo. El cash (haircut de Demeter) NO se hornea acá: es una
+// corrección a nivel CUENTA, no un número por creativo (Shopify nativo no atribuye
+// ventas a un adset). Hornearlo sería inflar dato con una suposición. El haircut se
+// aplica como LENTE transparente sólo en display/contexto. Apollo rankea relativo,
+// que es haircut-invariante → la inteligencia no necesita el cash inflado.
 
 /**
  * Creative DNA helpers — extractores e inferencia para las 5 dimensiones
@@ -162,11 +170,21 @@ function buildDNA(dimensions) {
  *
  * @param proposal — CreativeProposal populated con el DNA guardado
  * @param outcome — 'graduated' | 'killed' | 'expired'
- * @param metrics — { spend, revenue, purchases }
+ * @param metrics — { spend, revenue, purchases } (revenue = Meta; se ajusta a cash acá)
+ * @param testId — _id del TestRun (Pilar C: reconciliar via test.dna_recorded). Opcional.
  */
-async function updateDNAFitness(proposal, outcome, metrics) {
+async function updateDNAFitness(proposal, outcome, metrics, testId = null) {
   try {
     if (!proposal) return null;
+
+    // VIDEO tiene su propio sistema de DNA (motion/camera/scene en video-dna.js, aprendido
+    // vía getDimensionStats). Los proposals de video NO traen dna_hash 5D, así que reconstruir
+    // uno acá colapsa decenas de videos distintos en baldes basura "unknown|unknown|unknown|
+    // <producto>|<hook>" que contaminan el DNA de foto. No tocar el 5D para video.
+    if (proposal.media_type === 'video') {
+      logger.debug(`[DNA] skip 5D fitness para video ${proposal._id} (usa su propio DNA en video-dna.js)`);
+      return null;
+    }
 
     // Si el proposal no tiene dna_hash guardado (legacy), infiere on-the-fly
     let dnaHash = proposal.dna_hash;
@@ -192,7 +210,23 @@ async function updateDNAFitness(proposal, outcome, metrics) {
       };
     }
 
-    // Upsert + record outcome
+    // Meta-ROAS crudo (dato medido). El cash es lente de display, no se hornea (ver nota arriba).
+    const next = {
+      outcome,
+      spend: metrics.spend || 0,
+      revenue: metrics.revenue || 0,
+      purchases: metrics.purchases || 0
+    };
+
+    // Pilar C — prev = lo ya contado para ESTE test (si hay testId). Permite
+    // reconciliar cuando las métricas finales llegan con lag, sin doble-contar.
+    let prev = null, test = null;
+    if (testId) {
+      test = await TestRun.findById(testId).select('dna_recorded').lean();
+      const r = test && test.dna_recorded;
+      if (r && r.recorded_at && r.hash === dnaHash) prev = r; // mismo balde → reconciliar
+    }
+
     let dnaDoc = await CreativeDNA.findOne({ dna_hash: dnaHash });
     if (!dnaDoc) {
       dnaDoc = new CreativeDNA({
@@ -204,10 +238,18 @@ async function updateDNAFitness(proposal, outcome, metrics) {
       });
     }
 
-    dnaDoc.recordOutcome(outcome, metrics);
+    dnaDoc.reconcileContribution(prev, next);
     await dnaDoc.save();
 
-    logger.info(`[DNA] ${dnaHash} → ${outcome} | ROAS ${dnaDoc.fitness.avg_roas}x | samples ${dnaDoc.fitness.tests_total} | win rate ${(dnaDoc.fitness.win_rate * 100).toFixed(0)}%`);
+    // Persistir la contribución aplicada para futuras reconciliaciones
+    if (testId) {
+      await TestRun.findByIdAndUpdate(testId, {
+        $set: { dna_recorded: { hash: dnaHash, outcome, spend: next.spend, revenue: next.revenue, purchases: next.purchases, recorded_at: new Date() } }
+      });
+    }
+
+    const tag = prev ? 'reconcile' : outcome;
+    logger.info(`[DNA] ${dnaHash} → ${tag} | ROAS ${dnaDoc.fitness.avg_roas}x (meta) | samples ${dnaDoc.fitness.tests_total} | win rate ${(dnaDoc.fitness.win_rate * 100).toFixed(0)}%`);
     return dnaDoc;
   } catch (err) {
     logger.warn(`[DNA] Error updating fitness (non-fatal): ${err.message}`);
