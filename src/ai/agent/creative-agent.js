@@ -830,6 +830,26 @@ async function runCreativeAgent() {
   const readyCount = await CreativeProposal.countDocuments({ status: 'ready' });
   const poolNeeded = Math.max(0, TARGET_POOL_SIZE - readyCount - generated);
 
+  // ═══ CADENCIA DE FRESCURA POR PRODUCTO (2026-06-05) ═══
+  // Garantiza que NINGÚN producto con PNG se quede sin creativos. Señal: "días desde el
+  // último creativo" por producto. El más rancio va primero; si alguno cruza el umbral se
+  // refresca AUNQUE el pool esté lleno. Productos nuevos (0 creativos) = ∞ rancios → arrancan
+  // ya. Esto mantiene frescos a los viejos (que hoy se saltean si sus adsets están llenos).
+  const FRESHNESS_MAX_DAYS = 2.5;       // ningún producto debería pasar de esto sin creativo
+  const FRESHNESS_MAX_PER_CYCLE = 4;    // tope de refrescos garantizados por ciclo (anti-quema)
+  const lastByProduct = {};
+  const lastAgg = await CreativeProposal.aggregate([
+    { $group: { _id: '$product_id', last: { $max: '$created_at' } } }
+  ]);
+  for (const r of lastAgg) if (r._id) lastByProduct[r._id.toString()] = r.last;
+  const daysSince = (p) => {
+    const last = lastByProduct[p._id.toString()];
+    return last ? (Date.now() - new Date(last).getTime()) / 86400000 : Infinity; // sin creativo = ∞ rancio
+  };
+  const pngProducts = rankedProducts.filter(p => p.png_references && p.png_references.length > 0);
+  const byStaleness = [...pngProducts].sort((a, b) => daysSince(b) - daysSince(a)); // más rancio primero
+  const staleProducts = byStaleness.filter(p => daysSince(p) > FRESHNESS_MAX_DAYS);
+
   let proactiveNeeded;
   if (readyCount >= SOFT_MAX_POOL_SIZE) {
     proactiveNeeded = 0; // pool lleno, no generar más
@@ -840,24 +860,28 @@ async function runCreativeAgent() {
     proactiveNeeded = Math.min(5, poolNeeded); // normal, max 5 per ciclo (2→5 el 28-may)
   }
 
+  // GARANTÍA DE FRESCURA: si hay productos rancios, refrescarlos aunque el pool esté ok/lleno.
+  if (staleProducts.length > 0) {
+    const guaranteed = Math.min(staleProducts.length, FRESHNESS_MAX_PER_CYCLE);
+    if (guaranteed > proactiveNeeded) {
+      logger.info(`[CREATIVE-AGENT] Cadencia: ${staleProducts.length} producto(s) rancio(s) (>${FRESHNESS_MAX_DAYS}d sin creativo) → garantizo ${guaranteed} refresco(s): ${staleProducts.slice(0, guaranteed).map(p => p.product_name).join(', ')}`);
+      proactiveNeeded = guaranteed;
+    }
+  }
+
   if (proactiveNeeded > 0 && rankedProducts.length > 0 && rankedScenes.length > 0) {
     logger.info(`[CREATIVE-AGENT] Pool bajo (${readyCount} + ${generated} generados). Generando ${proactiveNeeded} proactivos para escalar.`);
 
-    // Distribucion PAREJA: rotar todos los productos en round-robin
-    // Ciclo 1: BYB, Hot Tomatoes | Ciclo 2: Half Sour, Texas Chili | Ciclo 3: BYB, Hot Tomatoes...
-    const bybProduct = rankedProducts.find(p => p.prompt_type === 'custom');
-    const otherProducts = rankedProducts.filter(p => p.prompt_type !== 'custom');
-    const allProductsRotation = bybProduct ? [bybProduct, ...otherProducts] : [...otherProducts];
-
-    // Usar timestamp para rotar — cada ciclo empieza en un producto diferente
-    const rotationOffset = Math.floor(Date.now() / 3600000) % allProductsRotation.length;
-
+    // Selección por FRESCURA: el más rancio primero (antigüedad real, no rotación por hora
+    // que dejaba huecos). Cap inherente: cada producto recibe 1 slot antes de cualquier
+    // repetición → ningún producto acapara, ninguno queda sin cobertura. Reemplaza el
+    // round-robin por hora (2026-06-05).
+    const rotation = byStaleness.length > 0 ? byStaleness : rankedProducts;
     const productSlots = [];
     for (let i = 0; i < proactiveNeeded; i++) {
-      const idx = (rotationOffset + i) % allProductsRotation.length;
-      productSlots.push(allProductsRotation[idx]);
+      productSlots.push(rotation[i % rotation.length]);
     }
-    logger.info(`[CREATIVE-AGENT] Proactivos: ${productSlots.map(p => p.product_name).join(', ')}`);
+    logger.info(`[CREATIVE-AGENT] Proactivos (por frescura): ${productSlots.map(p => `${p.product_name}(${daysSince(p) === Infinity ? 'nuevo' : daysSince(p).toFixed(1) + 'd'})`).join(', ')}`);
 
     for (let p = 0; p < proactiveNeeded; p++) {
       try {
