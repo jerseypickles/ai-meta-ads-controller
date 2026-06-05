@@ -316,6 +316,19 @@ async function launchTests() {
   let launched = 0;
 
   for (const { proposal } of prioritized) {
+    // CLAIM ATÓMICO anti-doble-launch (fix 2026-06-05): tomar el proposal flippeando
+    // 'ready'→'testing' de forma ATÓMICA ANTES de crear nada en Meta. Si otra corrida
+    // concurrente (ej. el cron + "RUN TESTING" manual a la misma hora) ya lo tomó → null
+    // → skip. Antes el status flippeaba recién TRAS crear el adset (~segundos de Meta API)
+    // → ventana de race → el mismo creativo se lanzaba 2-3 veces (gastando plata duplicada).
+    const claimed = await CreativeProposal.findOneAndUpdate(
+      { _id: proposal._id, status: 'ready' },
+      { $set: { status: 'testing' } }
+    ).lean();
+    if (!claimed) {
+      logger.info(`[TESTING-AGENT] "${proposal.headline}" ya tomado por otra corrida — skip (anti-doble-launch)`);
+      continue;
+    }
     // Tracking para limpiar el adset si la creación del ad falla (evita orphans).
     let createdAdsetId = null;
     let adCreated = false;
