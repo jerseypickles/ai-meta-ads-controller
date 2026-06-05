@@ -25,9 +25,12 @@ const MIN_DAYS_BETWEEN_DUPLICATES = 7;
 const CLONE_DAILY_BUDGET = 30;
 const MAX_DUPLICATES_PER_CYCLE = 3;
 
-// Fast-track ELIMINADO (abril 2026): 100% fail rate en produccion.
-// El criterio original (ROAS 5x + 3 purch en testing) no predice performance en CBO.
-const FAST_TRACK_DISABLED = true;
+// Fast-track RE-HABILITADO 2026-06-05 ("Dionisio extremo"). Se había desactivado (abril)
+// por 100% fail rate — pero la causa era graduar FLUKES (problema Snack Break). Hoy la
+// graduación está arreglada (anti-fluke $30, cash corregido, de-lag, guard de desinflado),
+// así que re-enganchamos el winner→escala, ACOTADO a VIDEO (el lever probado, 4.85x) y con
+// bar de calidad por ventana RECIENTE cash-adj (no lifetime). Env ARES_FAST_TRACK=false apaga.
+const FAST_TRACK_DISABLED = process.env.ARES_FAST_TRACK === 'false';
 
 // Patrones a excluir de duplicacion
 // [HERMES] excluido porque tiene su propia campaign (foot traffic NJ store) que
@@ -493,10 +496,11 @@ async function processZeusDirectives(aresCampaignId) {
 // "ROAS >= 5x + 3 purchases en testing" no predice performance en CBO.
 // Los graduates deben probar 21+ dias en ABO produccion antes de ser considerados.
 
-const FAST_TRACK_MIN_ROAS = 5.0;      // Deprecated
-const FAST_TRACK_MIN_PURCHASES = 3;    // Deprecated
-const FAST_TRACK_LOOKBACK_HOURS = 12;  // Deprecated
-const FAST_TRACK_MAX_PER_CYCLE = 2;    // Deprecated
+// Re-habilitado 2026-06-05 — bar por ventana RECIENTE cash-adj (no lifetime de testing).
+const FAST_TRACK_MIN_ROAS = 3.0;       // cash-adj ROAS 3d mínimo (winner que SIGUE convirtiendo)
+const FAST_TRACK_MIN_PURCHASES = 3;    // compras en 3d (señal real, no fluke)
+const FAST_TRACK_LOOKBACK_HOURS = 24;  // graduados en las últimas 24h
+const FAST_TRACK_MAX_PER_CYCLE = 3;
 
 async function processFastTrackGraduates(aresCampaignId) {
   if (FAST_TRACK_DISABLED) {
@@ -514,11 +518,25 @@ async function processFastTrackGraduates(aresCampaignId) {
 
   if (recentGrads.length === 0) return { tracked: 0, results: [] };
 
-  // Filtrar por umbral alto
-  const qualifying = recentGrads.filter(t => {
-    const m = t.metrics || {};
-    return (m.roas || 0) >= FAST_TRACK_MIN_ROAS && (m.purchases || 0) >= FAST_TRACK_MIN_PURCHASES;
-  });
+  // Bar de calidad por ventana RECIENTE (3d) cash-adj: SOLO video, sigue convirtiendo
+  // fuerte, no desinflado. Evita escalar flukes/graduates que ya cayeron.
+  const MetricSnapshot = require('../../db/models/MetricSnapshot');
+  let haircut = 1;
+  try {
+    const { getAccountCashSignal } = require('./demeter-cash-signal');
+    const cs = await getAccountCashSignal();
+    if (cs.available) haircut = cs.haircut_factor;
+  } catch (_) { /* fail-open */ }
+
+  const qualifying = [];
+  for (const t of recentGrads) {
+    if (t.media_type !== 'video') continue;   // fast-track SOLO video (el lever probado)
+    if (t.deflated_at) continue;              // ya se desinfló → no escalar
+    const snap = await MetricSnapshot.findOne({ entity_type: 'adset', entity_id: t.test_adset_id }).sort({ snapshot_at: -1 }).lean();
+    const m3 = snap?.metrics?.last_3d || {};
+    const cashAdj3 = (m3.roas || 0) * haircut;
+    if (cashAdj3 >= FAST_TRACK_MIN_ROAS && (m3.purchases || 0) >= FAST_TRACK_MIN_PURCHASES) qualifying.push(t);
+  }
 
   if (qualifying.length === 0) return { tracked: 0, results: [] };
 

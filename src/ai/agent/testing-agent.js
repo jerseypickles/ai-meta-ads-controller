@@ -19,10 +19,13 @@ const TEST_DAILY_BUDGET = 20; // $20/dia (10→20 el 30-may: más delivery/seña
 const VIDEO_TEST_DAILY_BUDGET = 25; // $25/dia ABO para tests de VIDEO (Dionisio), campaña aparte. (2026-05-30)
 // Track de VIDEO con caps PROPIOS — no compite por los slots/budget de las fotos
 // (campaña separada). Si no, los tests de foto bloquean los videos. (2026-05-30)
-const MAX_CONCURRENT_VIDEO_TESTS = 12; // 2026-06-03: 30→12 (>50% menos)
-const MAX_DAILY_VIDEO_TESTING_BUDGET = 300; // 2026-06-03: 750→300 (12 × $25)
-const MAX_DAILY_TESTING_BUDGET = 400; // Cap diario total. 2026-06-03: 1000→400 — bajar la quema de madrugada >50% mientras madura el pixel. Subir cuando haya señal estable.
-const MAX_LAUNCHES_PER_CYCLE = 3; // 2026-06-03: 8→3 (menos tests nuevos por ciclo)
+// 2026-06-05 "Dionisio extremo": el video probó ser el lever más fuerte (4.85x ROAS,
+// CPM $14, 76% de las ventas). Subimos los caps de VIDEO fuerte (la economía lo justifica).
+// Foto queda igual (1.96x, no merece más volumen).
+const MAX_CONCURRENT_VIDEO_TESTS = 24; // 2026-06-05: 12→24 (extremo video)
+const MAX_DAILY_VIDEO_TESTING_BUDGET = 600; // 2026-06-05: 300→600 (24 × $25)
+const MAX_DAILY_TESTING_BUDGET = 400; // Cap diario total de FOTO. 2026-06-03: 1000→400 (foto sigue flojo).
+const MAX_LAUNCHES_PER_CYCLE = 6; // 2026-06-05: 3→6 (más tests nuevos/ciclo; el video lo aprovecha)
 const TEST_MAX_DAYS = 7;
 const KILL_MIN_SPEND = 25;     // Kill si $25+ spend y 0 compras
 const GRADUATED_BUDGET = 20;   // Budget al promover test ad set graduado ($20/dia)

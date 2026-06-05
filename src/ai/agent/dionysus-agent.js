@@ -13,8 +13,16 @@ const dna = require('../creative/video/video-dna');
 const seedance = require('../creative/video/seedance');
 
 const ENABLED = process.env.DIONYSUS_ENABLED !== 'false';
-const MAX_VIDEOS_PER_CYCLE = parseInt(process.env.DIONYSUS_MAX_PER_CYCLE || '3', 10); // control de costo
+const MAX_VIDEOS_PER_CYCLE = parseInt(process.env.DIONYSUS_MAX_PER_CYCLE || '6', 10); // 2026-06-05: 3→6 (extremo; costo ~$0.12/video, trivial vs revenue)
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://ai-meta-ads-controller.onrender.com';
+// AUTO-APROBAR (2026-06-05, "extremo"): desclava el cuello de la aprobación manual.
+// Los videos de ALTA confianza (source judge alto + motion sin historial de rechazo)
+// pasan directo a 'ready' (→ Prometheus); los dudosos siguen a review manual. Honesto:
+// el judge mira la IMAGEN-fuente, no el video de salida — por eso solo auto-aprueba los
+// muy seguros + el loop de rechazo (DNA) sigue penalizando motions que desfiguran.
+const AUTO_APPROVE = process.env.DIONYSUS_AUTO_APPROVE !== 'false';
+const AUTO_APPROVE_MIN_SCORE = parseInt(process.env.DIONYSUS_AUTO_APPROVE_MIN_SCORE || '80', 10);
+const AUTO_APPROVE_MAX_MOTION_REJECT = parseFloat(process.env.DIONYSUS_AUTO_APPROVE_MAX_REJECT || '0.4');
 
 /** Mapea la sugerencia del judge a un motion del DNA. Fallback raro: la imagen-fuente
  *  casi siempre trae su motion baked, así que esto solo aplica a fuentes legacy. NO
@@ -116,6 +124,8 @@ async function runDionysus() {
 
   // DNA de cámara — exploit/explore: qué movimiento de cámara rinde mejor.
   const cameraStats = await dna.getDimensionStats('camera').catch(() => ({}));
+  // DNA de motion — para el auto-approve: no auto-aprobar motions con historial de rechazo.
+  const motionStats = await dna.getDimensionStats('motion').catch(() => ({}));
 
   let judged = 0, generated = 0, rejected = 0;
   const results = [];
@@ -158,12 +168,17 @@ async function runDionysus() {
         // mid-render, reconcileStuckVideos puede recuperarlo desde PiAPI.
         onSubmit: (taskId) => CreativeProposal.findByIdAndUpdate(placeholder._id, { $set: { video_task_id: taskId } })
       });
+      // AUTO-APROBAR alta confianza → directo a 'ready' (Prometheus); dudosos → review manual.
+      const ms = motionStats[variant] || {};
+      const motionReject = ((ms.n || 0) + (ms.reject_n || 0)) > 0 ? (ms.reject_n || 0) / ((ms.n || 0) + (ms.reject_n || 0)) : 0;
+      const autoOk = AUTO_APPROVE && verdict.score >= AUTO_APPROVE_MIN_SCORE && motionReject < AUTO_APPROVE_MAX_MOTION_REJECT;
+      const newStatus = autoOk ? 'ready' : 'pending_video_review';
       await CreativeProposal.findByIdAndUpdate(placeholder._id, {
-        $set: { status: 'pending_video_review', video_url: vid.video_url, video_task_id: vid.task_id }
+        $set: { status: newStatus, video_url: vid.video_url, video_task_id: vid.task_id, ...(autoOk ? { auto_approved_at: new Date() } : {}) }
       });
       generated++;
-      results.push({ source: c._id, headline: c.headline, score: verdict.score, video_url: vid.video_url, variant });
-      logger.info(`[DIONISIO] 🎬 video listo "${(c.headline||'').slice(0,30)}" (score ${verdict.score}, ${variant}) → pendiente de review`);
+      results.push({ source: c._id, headline: c.headline, score: verdict.score, video_url: vid.video_url, variant, auto_approved: autoOk });
+      logger.info(`[DIONISIO] 🎬 ${autoOk ? '⚡ AUTO-APROBADO → ready (Prometheus)' : 'pendiente review'}: "${(c.headline || '').slice(0, 30)}" (score ${verdict.score}, ${variant}, motion-reject ${(motionReject * 100).toFixed(0)}%)`);
     } catch (e) {
       await CreativeProposal.findByIdAndUpdate(placeholder._id, {
         $set: { status: 'failed', rejection_reason: `video gen failed: ${e.message}` }

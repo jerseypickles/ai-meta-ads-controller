@@ -20,8 +20,8 @@ const CreativeProposal = require('../../../db/models/CreativeProposal');
 const { generateCreativeImage } = require('../image-engine');
 const dna = require('./video-dna');
 
-const POOL_TARGET = parseInt(process.env.VIDEO_SOURCE_POOL_TARGET || '16', 10); // 2026-06-04: 12→16 (más variedad)
-const PER_CYCLE_CAP = parseInt(process.env.VIDEO_SOURCE_PER_CYCLE || '4', 10);  // 2026-06-04: 3→4
+const POOL_TARGET = parseInt(process.env.VIDEO_SOURCE_POOL_TARGET || '40', 10); // 2026-06-05: 16→40 (Dionisio extremo — el video manda)
+const PER_CYCLE_CAP = parseInt(process.env.VIDEO_SOURCE_PER_CYCLE || '8', 10);  // 2026-06-05: 4→8
 const ENABLED = process.env.VIDEO_SOURCE_ENABLED !== 'false';
 
 const FIDELITY = 'The product container and its LABEL must remain a pixel-perfect match to the reference photo — same shape, same label design, same text, same colors, same proportions. Do NOT redraw, re-render, or restyle the packaging or the label. CRITICAL COLOR FIDELITY: replicate the EXACT colors of the product and its contents from the reference; do not shift them toward what this food "usually" looks like.';
