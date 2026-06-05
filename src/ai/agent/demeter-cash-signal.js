@@ -23,9 +23,18 @@ const DemeterSnapshot = require('../../db/models/DemeterSnapshot');
 const CASH_SCALE_GATE = 2.5;       // cash-adjusted ROAS mínimo para justificar scale_up
 const CASH_GOVERNOR_FLOOR = 2.0;   // cash_roas_14d de cuenta debajo de esto → no escalar nada
 const CASH_HEALTHY = 2.5;          // por encima → un scale_down de Meta sería discutible
-const HAIRCUT_MIN = 0.3;           // clamps para evitar ajustes absurdos por ruido/poca data
-const HAIRCUT_MAX = 3.0;
-const MIN_SNAPSHOTS = 7;           // días mínimos para una señal 14d confiable
+// Clamp del haircut: post-iOS14 un pixel sub-atribuye típicamente 1.2–1.8x; >2x es
+// casi siempre artefacto (blended revenue / pixel cold). Bajado de 3.0 → 2.0 (2026-06-05)
+// porque el 3.0 viejo se pinneaba al cap por los días de recovery con pixel roto.
+const HAIRCUT_MIN = 0.5;
+const HAIRCUT_MAX = 2.0;
+const MIN_SNAPSHOTS = 3;           // días REPRESENTATIVOS mínimos (el filtro ya garantiza calidad)
+// Filtro de día representativo (2026-06-05): el cash_roas es BLENDED (toda la revenue
+// de Shopify / spend de Meta), así que los días de casi-cero gasto o pixel roto inflaban
+// el haircut a ~3x falso (ratios de 27x a 1190x). Un día cuenta solo si el spend es real
+// y el ratio cash/Meta de ESE día es plausible (pixel atribuyó).
+const MIN_DAY_SPEND = 200;         // < esto = día no representativo (junk / casi sin Meta)
+const MAX_DAY_RATIO = 4;           // cash/Meta del día > esto = pixel roto ese día → fuera
 
 const sum = (arr, k) => arr.reduce((a, s) => a + (s[k] || 0), 0);
 
@@ -47,10 +56,20 @@ async function getAccountCashSignal() {
       date_et: { $gte: sinceDateEt, $lte: todayEt }
     }).sort({ date_et: -1 }).lean();
 
-    // Filtrar días sin actividad (spend 0) para no diluir los ratios.
-    const active = snaps.filter(s => (s.meta_spend || 0) > 0);
+    // Solo días REPRESENTATIVOS: spend Meta real Y ratio cash/Meta plausible (pixel
+    // atribuyó). Excluye los días de recovery con pixel roto (meta_roas ~0 → ratios
+    // 27x-1190x) y los de casi-cero gasto, que inflaban el haircut a ~3x falso.
+    const active = snaps.filter(s => {
+      const spend = s.meta_spend || 0;
+      if (spend < MIN_DAY_SPEND) return false;
+      const mRoas = (s.meta_purchase_value || 0) / spend;
+      const cRoas = (s.net_for_merchant || 0) / spend;
+      return mRoas > 0 && (cRoas / mRoas) <= MAX_DAY_RATIO;
+    });
     if (active.length < MIN_SNAPSHOTS) {
-      return { available: false, reason: `Demeter insuficiente (${active.length}/${MIN_SNAPSHOTS} días con spend)` };
+      // Sin suficientes días limpios → señal DARK. Todos los consumidores fail-open a
+      // Meta-crudo (honesto: no aplicar un haircut que no podemos confiar).
+      return { available: false, reason: `Demeter: solo ${active.length}/${MIN_SNAPSHOTS} días representativos (spend≥$${MIN_DAY_SPEND} + pixel sano) — fail-open a Meta` };
     }
 
     const last14 = active.slice(0, 14);
