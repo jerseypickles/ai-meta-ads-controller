@@ -16,18 +16,33 @@ const TREND_CLAMP = 0.15;      // ±15% semanal máx (evita proyecciones explosi
 const DOW_NAMES = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
 
 function dowOf(dateEt) { return new Date(dateEt + 'T12:00:00Z').getUTCDay(); }
+function median(arr) {
+  if (!arr.length) return 0;
+  const s = [...arr].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
 
 /** Computa el forecast y persiste un snapshot. */
 async function computeDemandForecast() {
   const snaps = await DemeterSnapshot.find({})
     .sort({ date_et: -1 }).limit(HISTORY_DAYS)
     .select('date_et total_sales orders_count').lean();
-  // serie ascendente, solo días con venta real (descarta días basura/recovery a $0)
-  const series = snaps
+  // serie ascendente, solo días con venta real (descarta días a $0)
+  let series = snaps
     .map(s => ({ date: s.date_et, rev: s.total_sales || 0, orders: s.orders_count || 0 }))
     .filter(s => s.rev > 0)
     .reverse();
   if (series.length < 14) { logger.warn(`[DEMAND-FORECAST] poca data (${series.length}d) — skip`); return null; }
+
+  // Excluir días INCOMPLETOS: el snapshot del día EN CURSO es parcial (casi $0, ej. $48/1
+  // orden a media tarde) y envenena momentum/trend. Filtro robusto: descarta lo claramente
+  // incompleto (< 15% de la mediana) — un día real flojo (ej. martes lento) SÍ se conserva.
+  const medRev = median(series.map(s => s.rev));
+  const dropped = series.filter(s => s.rev < 0.15 * medRev);
+  series = series.filter(s => s.rev >= 0.15 * medRev);
+  if (dropped.length) logger.info(`[DEMAND-FORECAST] descarto ${dropped.length} día(s) incompleto(s): ${dropped.map(d => `${d.date}($${Math.round(d.rev)})`).join(', ')}`);
+  if (series.length < 14) { logger.warn(`[DEMAND-FORECAST] poca data tras filtro (${series.length}d) — skip`); return null; }
 
   const n = series.length;
   const overallAvg = series.reduce((s, d) => s + d.rev, 0) / n;
@@ -51,15 +66,23 @@ async function computeDemandForecast() {
   recent.forEach((d, i) => { const w = i + 1; wSum += d.rev * w; wTot += w; });
   const baseline = wTot ? wSum / wTot : overallAvg;
 
-  // ── Tendencia: WoW growth (media de ratios de las últimas ~6 semanas), clamp ──
-  const weeks = [];
-  for (let i = n; i >= 7; i -= 7) weeks.unshift(series.slice(i - 7, i).reduce((s, d) => s + d.rev, 0));
-  let gSum = 0, gN = 0;
-  for (let i = Math.max(1, weeks.length - 6); i < weeks.length; i++) {
-    if (weeks[i - 1] > 0) { gSum += (weeks[i] / weeks[i - 1] - 1); gN++; }
-  }
-  let weeklyGrowth = gN ? gSum / gN : 0;
+  // ── Tendencia: regresión lineal sobre los últimos 14 días limpios → growth semanal.
+  // CLAVE (honestidad): con un quiebre estructural reciente (ej. el hack del 27-may: la
+  // serie cae de $13k a $3k y se recupera) NINGUNA tendencia es confiable. Por eso medimos
+  // también la VOLATILIDAD (coef. de variación) y, si es alta, reportamos baja confianza en
+  // vez de un "cayendo" engañoso. Se auto-normaliza cuando el quiebre sale de la ventana. ──
+  const trendWin = series.slice(-Math.min(14, n));
+  const tn = trendWin.length;
+  const xMean = (tn - 1) / 2;
+  const yMean = trendWin.reduce((s, d) => s + d.rev, 0) / tn;
+  let num = 0, den = 0, varSum = 0;
+  trendWin.forEach((d, i) => { num += (i - xMean) * (d.rev - yMean); den += (i - xMean) ** 2; varSum += (d.rev - yMean) ** 2; });
+  const slopePerDay = den ? num / den : 0; // $/día
+  let weeklyGrowth = yMean > 0 ? (slopePerDay * 7) / yMean : 0;
   weeklyGrowth = Math.max(-TREND_CLAMP, Math.min(TREND_CLAMP, weeklyGrowth));
+  const cv = yMean > 0 ? Math.sqrt(varSum / tn) / yMean : 0; // coef. de variación
+  const volatile = cv > 0.35; // serie muy volátil → tendencia poco confiable (ej. quiebre)
+  const trendConfidence = volatile ? 'baja' : 'normal';
 
   // ── Forecast día a día ──
   const forecastDay = (offset) => {
@@ -104,13 +127,18 @@ async function computeDemandForecast() {
     last_7d_actual: Math.round(last7),
     momentum_pct: momentumPct,
     weekly_growth_pct: +(weeklyGrowth * 100).toFixed(1),
-    trend: weeklyGrowth > 0.02 ? 'creciendo' : weeklyGrowth < -0.02 ? 'cayendo' : 'estable',
+    trend: volatile ? 'volátil (quiebre/recuperación reciente)' : (weeklyGrowth > 0.02 ? 'creciendo' : weeklyGrowth < -0.02 ? 'cayendo' : 'estable'),
+    trend_confidence: trendConfidence,
+    volatility_cv: +cv.toFixed(2),
     forecast: { next_7d: Math.round(next7), next_30d: Math.round(next30), next_90d: Math.round(next90) },
     forecast_vs_last7_pct: last7 > 0 ? +(((next7 / last7) - 1) * 100).toFixed(1) : 0,
     dow_pattern: { peak: dowRanked[0], low: dowRanked[dowRanked.length - 1], all: dowRanked },
     daily_14d: daily14,
     upcoming_events: events,
-    note: 'Pronóstico heurístico (baseline reciente × estacionalidad DoW × tendencia). Usar para PRE-POSICIONAR budget/creativos, no como certeza. Escalar antes de los picos (DoW + eventos), no después.'
+    note: (volatile
+      ? 'OJO: trend_confidence BAJA — la serie está muy volátil (quiebre/recuperación reciente, ej. post-hack). NO confiar en el número de tendencia; guiarse por la trayectoria reciente (los daily_14d y last_7d) y los eventos. '
+      : '') +
+      'Pronóstico heurístico (baseline reciente × estacionalidad DoW × tendencia). Usar para PRE-POSICIONAR budget/creativos, no como certeza. Escalar ANTES de los picos (DoW + eventos), no después.'
   };
 
   try { await DemandForecast.create({ computed_at: new Date(), data }); }
