@@ -1371,6 +1371,71 @@ function _getAgentMode() {
  *
  * @returns {Object} { managed, actions_taken, results, elapsed, cycle_id, mode }
  */
+/**
+ * AUTO-REVERT (2026-06-05): rollback de scale_ups que CRASHEARON post-scale. Ataca de
+ * forma directa y per-adset el win-rate de scale_up bajo (~32% revierten), donde el
+ * cash-gate (account-level) no llega. Lag-robusto: solo revierte scales con ≥48h
+ * (atribución asentada) cuyo cash-adj ROAS 3d quedó claramente perdiendo (<1.0x) sobre
+ * spend real post-scale. Es un rollback de BUDGET (no pausa) → bajo riesgo aunque se
+ * equivoque (el adset sigue corriendo al budget original y puede re-escalarse).
+ */
+async function revertDegradedScales(meta, allSnapshots) {
+  const LOOKBACK_D = 5, MIN_AGE_H = 48, CASH_FLOOR = 1.0;
+  try {
+    const since = new Date(Date.now() - LOOKBACK_D * 86400000);
+    const maxAge = new Date(Date.now() - MIN_AGE_H * 3600000);
+    const scales = await ActionLog.find({
+      action: 'scale_up', success: true, agent_type: 'unified_agent',
+      executed_at: { $gte: since, $lte: maxAge }
+    }).sort({ executed_at: -1 }).lean();
+    if (!scales.length) return 0;
+
+    let haircut = 1;
+    try {
+      const { getAccountCashSignal } = require('./demeter-cash-signal');
+      const cs = await getAccountCashSignal();
+      if (cs.available) haircut = cs.haircut_factor;
+    } catch (_) { /* fail-open: haircut 1 (Meta crudo) */ }
+
+    const byId = new Map(allSnapshots.map(s => [s.entity_id, s]));
+    let reverted = 0;
+    for (const sc of scales) {
+      if (!sc.before_value || !sc.after_value || sc.before_value >= sc.after_value) continue;
+      // Idempotencia: ya revertido, o hubo otra decisión de budget después (no pisar).
+      const already = await ActionLog.findOne({ 'metadata.revert_of': String(sc._id) }).select('_id').lean();
+      if (already) continue;
+      const newer = await ActionLog.findOne({ entity_id: sc.entity_id, action: { $in: ['scale_up', 'scale_down', 'move_budget'] }, executed_at: { $gt: sc.executed_at } }).select('_id').lean();
+      if (newer) continue;
+
+      const snap = byId.get(sc.entity_id);
+      if (!snap) continue;
+      const m3 = snap.metrics?.last_3d || {};
+      const cashAdj3 = (m3.roas || 0) * haircut;
+      const spend3 = m3.spend || 0;
+      // Degradó: cash-adj 3d perdiendo (<1.0x) Y gastó post-scale (≥~1 día del budget nuevo
+      // en la ventana 3d → hay data real, no es solo lag).
+      if (cashAdj3 >= CASH_FLOOR || spend3 < sc.after_value) continue;
+
+      await meta.updateBudget(sc.entity_id, sc.before_value);
+      await ActionLog.create({
+        entity_type: 'adset', entity_id: sc.entity_id, entity_name: snap.entity_name || sc.entity_id,
+        action: 'scale_down', before_value: sc.after_value, after_value: sc.before_value,
+        change_percent: Math.round((sc.before_value - sc.after_value) / sc.after_value * 100),
+        reasoning: `[AUTO-REVERT] scale_up del ${new Date(sc.executed_at).toISOString().slice(0, 10)} crasheó: cash-adj ROAS 3d ${cashAdj3.toFixed(2)}x (<${CASH_FLOOR}x), ${m3.purchases || 0} compras, $${spend3.toFixed(0)} spend post-scale. Rollback $${sc.after_value}→$${sc.before_value}.`,
+        confidence: 'high', agent_type: 'unified_agent', success: true, executed_at: new Date(),
+        metadata: { auto_revert: true, revert_of: String(sc._id) }
+      });
+      reverted++;
+      logger.info(`[ACCOUNT-AGENT] ↩️ AUTO-REVERT ${snap.entity_name || sc.entity_id}: $${sc.after_value}→$${sc.before_value} (cash-adj 3d ${cashAdj3.toFixed(2)}x crasheó post-scale)`);
+    }
+    if (reverted) logger.info(`[ACCOUNT-AGENT] auto-revert: ${reverted} scale_ups degradados revertidos`);
+    return reverted;
+  } catch (e) {
+    logger.warn(`[ACCOUNT-AGENT] auto-revert falló (no crítico): ${e.message}`);
+    return 0;
+  }
+}
+
 async function runAccountAgent() {
   const startTime = Date.now();
   const cycleId = `agent_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
@@ -1423,6 +1488,12 @@ async function runAccountAgent() {
 
   // Get ALL active ad set snapshots
   const allSnapshots = await getLatestSnapshots('adset');
+
+  // AUTO-REVERT: antes de decidir scales nuevos, revertir los scale_ups que crashearon.
+  if (mode === 'full') {
+    await revertDegradedScales(getMetaClient(), allSnapshots).catch(e => logger.warn(`[ACCOUNT-AGENT] auto-revert error: ${e.message}`));
+  }
+
   // Athena = ABO. Excluye: tests activos de Prometheus ([TEST]), clones de Ares,
   // Hermes, y adsets de CBO (daily_budget 0 = budget a nivel campaña → de Ares,
   // no de Athena). Solo deja adsets ABO de producción + graduados [Prometheus].

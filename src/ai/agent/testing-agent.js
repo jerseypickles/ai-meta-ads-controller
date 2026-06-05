@@ -29,6 +29,10 @@ const GRADUATED_BUDGET = 20;   // Budget al promover test ad set graduado ($20/d
 const GRADUATE_MIN_ROAS = 2.0;
 const GRADUATE_EARLY_ROAS = 3.0;
 const GRADUATE_EARLY_PURCHASES = 2;
+// 2026-06-05: piso de spend para graduación TEMPRANA. 2 compras sobre $8.90 (ROAS 14x)
+// es un fluke frontloaded, no un winner (caso "Snack Break 🥒": graduó así y murió).
+// Exigir spend real garantiza que la señal se sostuvo sobre volumen, no 2 ventas de suerte.
+const GRADUATE_EARLY_MIN_SPEND = 30;
 const GRADUATE_MIN_PURCHASES = 2;  // 2026-05-26: 1→2. Graduar con 1 compra era ruido (fluke) → graduates débiles que Ares escalaba y revertían. Ahora exigido en AMBOS paths (antes meetsRoas no pedía mínimo).
 const GRADUATE_MAX_CPA = 35;
 const MIN_READY_POOL = 5;
@@ -553,11 +557,17 @@ async function monitorTests() {
       // Cash-adjusted ROAS: ajusta el Meta-ROAS por el haircut de cuenta (cash real).
       const cashAdjRoas = metrics.roas * cashHaircut;
 
-      // GRADUATE EARLY: rendimiento excepcional (cash-adjusted)
-      if (cashAdjRoas >= GRADUATE_EARLY_ROAS && metrics.purchases >= GRADUATE_EARLY_PURCHASES) {
+      // GRADUATE EARLY: rendimiento excepcional (cash-adjusted) — con piso de spend para
+      // que sea señal real sostenida, no un fluke frontloaded de 2 ventas en $9.
+      if (cashAdjRoas >= GRADUATE_EARLY_ROAS && metrics.purchases >= GRADUATE_EARLY_PURCHASES
+          && metrics.spend >= GRADUATE_EARLY_MIN_SPEND) {
         await graduateTest(test, metrics);
         graduated++;
         continue;
+      }
+      if (cashAdjRoas >= GRADUATE_EARLY_ROAS && metrics.purchases >= GRADUATE_EARLY_PURCHASES
+          && metrics.spend < GRADUATE_EARLY_MIN_SPEND) {
+        logger.info(`[TESTING-AGENT] ${test.test_adset_name}: ${cashAdjRoas.toFixed(1)}x cash / ${metrics.purchases} compras pero solo $${metrics.spend.toFixed(2)} spend (<$${GRADUATE_EARLY_MIN_SPEND}) — espero más volumen antes de graduar (anti-fluke)`);
       }
 
       // Dia 6-7: Decision final
