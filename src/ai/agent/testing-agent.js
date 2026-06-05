@@ -1220,6 +1220,27 @@ async function runTestingAgent() {
  * Se llama desde el cron principal (cada 30 min). Solo actualiza tests
  * graduados en últimos 30 días (después no vale la pena, lifecycle expira).
  */
+/**
+ * RESCATE post-decisión (Hilo de-lag): un test killed/expired que ahora resulta ser
+ * winner real — la atribución llegó DESPUÉS de la decisión. Reactiva el adset y lo
+ * gradúa. Distingue winner real (3d convierte) de loser real (3d en cero) usando la
+ * ventana RECIENTE, así NO revive un adset que de verdad se murió (ej. 7d inflado por
+ * ventas frontloaded pero 3d en 0).
+ */
+async function rescueExpiredWinner(test, freshMetrics) {
+  const { getMetaClient } = require('../../meta/client');
+  try {
+    await getMetaClient().updateStatus(test.test_adset_id, 'ACTIVE');
+  } catch (e) {
+    logger.warn(`[TESTING-AGENT] rescate: no se pudo reactivar ${test.test_adset_id}: ${e.message}`);
+    return false;
+  }
+  await TestRun.findByIdAndUpdate(test._id, { $unset: { expired_at: '', killed_at: '', kill_reason: '' } });
+  await graduateTest({ ...test, expired_at: null, killed_at: null, phase: 'evaluating' }, freshMetrics);
+  logger.info(`[TESTING-AGENT] 🛟 RESCATE: "${test.test_adset_name}" reactivado + graduado — era falso negativo por lag (${freshMetrics.purchases} compras, ROAS ${(freshMetrics.roas || 0).toFixed(2)}x)`);
+  return true;
+}
+
 async function updateGraduatedMetrics() {
   // Graduados últimos 30d (para el panel "ROAS al graduar vs hoy") +
   // killed/expired últimos 7d (Pilar C: capturar conversiones que llegan con lag
@@ -1240,7 +1261,15 @@ async function updateGraduatedMetrics() {
   // Sólo reconciliamos DNA en la ventana donde el lag importa (decisión ≤7d).
   const decidedAt = t => t.graduated_at || t.killed_at || t.expired_at || null;
 
-  let updated = 0, skipped = 0, reconciled = 0;
+  // Cash haircut para el bar de rescate (mismo criterio que graduación).
+  let cashHaircut = 1;
+  try {
+    const { getAccountCashSignal } = require('./demeter-cash-signal');
+    const cs = await getAccountCashSignal();
+    if (cs.available) cashHaircut = cs.haircut_factor;
+  } catch (_) { /* fail-open: haircut 1 */ }
+
+  let updated = 0, skipped = 0, reconciled = 0, rescued = 0;
   for (const test of tests) {
     try {
       const metrics = await getTestMetrics(test.test_adset_id);
@@ -1266,9 +1295,26 @@ async function updateGraduatedMetrics() {
       });
       updated++;
 
+      const d = decidedAt(test);
+
+      // RESCATE: killed/expired ≤7d que AHORA resulta winner real (la atribución
+      // llegó tarde). El bar usa la ventana RECIENTE (3d) para distinguir un winner
+      // que sigue convirtiendo de un loser cuyo 7d quedó inflado por ventas viejas.
+      if ((test.phase === 'killed' || test.phase === 'expired') && d && d >= dec7) {
+        const snap = await MetricSnapshot.findOne({ entity_type: 'adset', entity_id: test.test_adset_id }).sort({ snapshot_at: -1 }).lean();
+        const m3 = snap?.metrics?.last_3d || {};
+        const m7 = snap?.metrics?.last_7d || {};
+        const recentWinner = (m3.purchases || 0) >= 1
+          && ((m3.roas || 0) * cashHaircut) >= GRADUATE_MIN_ROAS
+          && (m7.purchases || 0) >= GRADUATE_MIN_PURCHASES;
+        if (recentWinner) {
+          const ok = await rescueExpiredWinner(test, metrics);
+          if (ok) { rescued++; continue; }
+        }
+      }
+
       // Reconciliar fitness con las métricas frescas (foto; video lo hace
       // solo vía getDimensionStats, que lee metrics en vivo). Sólo decisión ≤7d.
-      const d = decidedAt(test);
       if (test.media_type !== 'video' && d && d >= dec7 && test.proposal_id) {
         const proposal = await CreativeProposal.findById(test.proposal_id).lean();
         if (proposal) {
@@ -1285,8 +1331,8 @@ async function updateGraduatedMetrics() {
       skipped++;
     }
   }
-  logger.info(`[TESTING-AGENT] metrics refresh: ${updated} actualizados, ${reconciled} DNA reconciliados, ${skipped} skipped (de ${tests.length})`);
-  return { updated, skipped, reconciled, total: tests.length };
+  logger.info(`[TESTING-AGENT] metrics refresh: ${updated} actualizados, ${reconciled} DNA reconciliados, ${rescued} rescatados, ${skipped} skipped (de ${tests.length})`);
+  return { updated, skipped, reconciled, rescued, total: tests.length };
 }
 
 module.exports = { runTestingAgent, updateGraduatedMetrics, launchTests };
