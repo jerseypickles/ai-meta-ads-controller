@@ -36,6 +36,13 @@ const GRADUATE_EARLY_MIN_SPEND = 30;
 const GRADUATE_MIN_PURCHASES = 2;  // 2026-05-26: 1→2. Graduar con 1 compra era ruido (fluke) → graduates débiles que Ares escalaba y revertían. Ahora exigido en AMBOS paths (antes meetsRoas no pedía mínimo).
 const GRADUATE_MAX_CPA = 35;
 const MIN_READY_POOL = 5;
+// Post-launch: un test con ≥30h y 0 impresiones/0 gasto NO está entregando (Ad error /
+// link roto / sin delivery). Matarlo libera el slot sin esperar al día 3. (2026-06-05)
+const DELIVERY_MIN_DAYS = 1.25;
+// Post-graduación: un graduate cuyo cash-adj 3d cayó >50% vs su ROAS al graduar Y está
+// bajo el bar (<2x) = winner falso desinflado → pausar antes de que lo escalen.
+const DEFLATE_DROP_RATIO = 0.5;
+const DEFLATE_MIN_AGE_H = 48;
 
 // ── Señales propias de VIDEO (Dionisio) — engagement del creativo ──
 // El video tiene métricas que la foto no: hold rate (% que lo ve completo) y
@@ -240,10 +247,34 @@ async function launchTests() {
 
   // Leer proposals "ready" y partir por tipo; cada track se capa por separado.
   const allReady = await CreativeProposal.find({ status: 'ready' })
-    .sort({ created_at: 1 }) // las mas antiguas primero
+    .sort({ created_at: 1 }) // las mas antiguas primero (base / fallback)
     .lean();
-  const readyVideo = allReady.filter(p => p.media_type === 'video' && p.video_url).slice(0, maxVideoLaunches);
-  const readyPhoto = allReady.filter(p => !(p.media_type === 'video' && p.video_url)).slice(0, maxPhotoLaunches);
+  const readyVideoAll = allReady.filter(p => p.media_type === 'video' && p.video_url);
+  const readyPhotoAll = allReady.filter(p => !(p.media_type === 'video' && p.video_url));
+
+  // PRIORIZACIÓN POR DNA (foto): en vez de FIFO, testear primero los combos con MÁS
+  // potencial — el fitness shrunk de sus dimensiones (un combo nuevo hereda el prior de
+  // sus marginales probadas). Así se encuentran winners más rápido y se gasta menos en
+  // combos que ya sabemos que pierden. Video sigue FIFO (usa su propio DNA). Fail-open.
+  let readyPhotoSorted = readyPhotoAll;
+  try {
+    const { buildFitnessContext, shrunkRoas } = require('../creative/dna-fitness');
+    const ctx = await buildFitnessContext();
+    const dnaScore = (p) => shrunkRoas({
+      dimensions: {
+        scene: p.scene_short || p.scene || 'unknown', style: p.style || 'unknown',
+        copy_angle: p.copy_angle || 'unknown', product: p.product_name || 'unknown',
+        hook_type: p.hook_type || 'unknown'
+      },
+      fitness: { tests_total: 0, avg_roas: 0 }
+    }, ctx);
+    readyPhotoSorted = [...readyPhotoAll].sort((a, b) => dnaScore(b) - dnaScore(a));
+  } catch (e) {
+    logger.warn(`[TESTING-AGENT] priorización DNA falló (FIFO fallback): ${e.message}`);
+  }
+
+  const readyVideo = readyVideoAll.slice(0, maxVideoLaunches);
+  const readyPhoto = readyPhotoSorted.slice(0, maxPhotoLaunches);
   const readyProposals = [...readyVideo, ...readyPhoto]; // video primero (suele haber pocos)
 
   if (readyProposals.length === 0) {
@@ -501,6 +532,15 @@ async function monitorTests() {
       await TestRun.findByIdAndUpdate(test._id, {
         $set: { metrics: { ...metrics, updated_at: new Date() } }
       });
+
+      // ── POST-LAUNCH: ¿entregó? Un test con ≥30h y 0 impresiones/0 gasto no está
+      // corriendo (Ad error / link roto / sin delivery). Matarlo libera el slot ya,
+      // sin esperar al día 3 quemándolo en el limbo. (vale incluso en learning).
+      if (daysActive >= DELIVERY_MIN_DAYS && (metrics.impressions || 0) === 0 && (metrics.spend || 0) === 0) {
+        await killOrExpireTest(test, `No entregó: 0 impresiones / $0 gasto en ${Math.round(daysActive * 24)}h — posible Ad error / link roto / sin delivery`, 'killed');
+        killed++;
+        continue;
+      }
 
       // ── Dia 0-2: Learning — solo observar ──
       if (daysActive <= 2) {
@@ -1279,7 +1319,7 @@ async function updateGraduatedMetrics() {
     if (cs.available) cashHaircut = cs.haircut_factor;
   } catch (_) { /* fail-open: haircut 1 */ }
 
-  let updated = 0, skipped = 0, reconciled = 0, rescued = 0;
+  let updated = 0, skipped = 0, reconciled = 0, rescued = 0, deflated = 0;
   for (const test of tests) {
     try {
       const metrics = await getTestMetrics(test.test_adset_id);
@@ -1323,6 +1363,41 @@ async function updateGraduatedMetrics() {
         }
       }
 
+      // GUARD POST-GRADUACIÓN: un graduate que se DESINFLÓ (cayó >50% vs su ROAS al
+      // graduar Y ahora rinde bajo el bar) = winner falso → pausar antes de que Ares/
+      // Athena lo escalen (corta los reverts en el origen). Lag-safe: ≥48h post-grad +
+      // ventana 3d + spend real. Usa cash-adj (haircut corregido).
+      if (test.phase === 'graduated' && test.graduated_at && !test.deflated_at && test.metrics_at_graduation) {
+        const gradAgeH = (Date.now() - new Date(test.graduated_at).getTime()) / 3600000;
+        if (gradAgeH >= DEFLATE_MIN_AGE_H) {
+          const snap = await MetricSnapshot.findOne({ entity_type: 'adset', entity_id: test.test_adset_id }).sort({ snapshot_at: -1 }).lean();
+          const m3 = snap?.metrics?.last_3d || {};
+          const cashAdj3 = (m3.roas || 0) * cashHaircut;
+          const gradRoas = test.metrics_at_graduation.roas || 0;
+          const isDeflated = gradRoas > 0
+            && (m3.spend || 0) >= GRADUATED_BUDGET            // gastó ≥~1 día post-grad
+            && cashAdj3 < gradRoas * DEFLATE_DROP_RATIO       // cayó >50% vs su ROAS al graduar
+            && cashAdj3 < GRADUATE_MIN_ROAS;                  // y está bajo el bar (<2x)
+          if (isDeflated) {
+            try {
+              const { getMetaClient } = require('../../meta/client');
+              await getMetaClient().updateStatus(test.test_adset_id, 'PAUSED');
+              await TestRun.findByIdAndUpdate(test._id, { $set: { deflated_at: new Date() } });
+              await ActionLog.create({
+                entity_type: 'adset', entity_id: test.test_adset_id, entity_name: test.test_adset_name,
+                action: 'pause_adset', before_value: +gradRoas.toFixed(2), after_value: +cashAdj3.toFixed(2),
+                reasoning: `[POST-GRAD DEFLATE] graduó a ${gradRoas.toFixed(2)}x, ahora cash-adj 3d ${cashAdj3.toFixed(2)}x (cayó >50%, <${GRADUATE_MIN_ROAS}x). Pausado antes de que se escale un winner falso.`,
+                confidence: 'high', agent_type: 'testing_agent', success: true, executed_at: new Date(),
+                metadata: { post_grad_deflation: true }
+              });
+              deflated++;
+              logger.info(`[TESTING-AGENT] 📉 GRADUATE DEFLATÓ: "${test.test_adset_name}" ${gradRoas.toFixed(2)}x→${cashAdj3.toFixed(2)}x cash-adj 3d — pausado`);
+              continue;
+            } catch (e) { logger.warn(`[TESTING-AGENT] deflate pause falló ${test.test_adset_id}: ${e.message}`); }
+          }
+        }
+      }
+
       // Reconciliar fitness con las métricas frescas (foto; video lo hace
       // solo vía getDimensionStats, que lee metrics en vivo). Sólo decisión ≤7d.
       if (test.media_type !== 'video' && d && d >= dec7 && test.proposal_id) {
@@ -1341,8 +1416,8 @@ async function updateGraduatedMetrics() {
       skipped++;
     }
   }
-  logger.info(`[TESTING-AGENT] metrics refresh: ${updated} actualizados, ${reconciled} DNA reconciliados, ${rescued} rescatados, ${skipped} skipped (de ${tests.length})`);
-  return { updated, skipped, reconciled, rescued, total: tests.length };
+  logger.info(`[TESTING-AGENT] metrics refresh: ${updated} actualizados, ${reconciled} DNA reconciliados, ${rescued} rescatados, ${deflated} graduates desinflados pausados, ${skipped} skipped (de ${tests.length})`);
+  return { updated, skipped, reconciled, rescued, deflated, total: tests.length };
 }
 
 module.exports = { runTestingAgent, updateGraduatedMetrics, launchTests };

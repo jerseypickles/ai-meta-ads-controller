@@ -39,6 +39,9 @@ const testRunSchema = new mongoose.Schema({
   graduated_at: { type: Date, default: null },
   killed_at: { type: Date, default: null },
   expired_at: { type: Date, default: null },
+  // Graduate que se desinfló post-graduación (cayó >50% vs su ROAS al graduar) y fue
+  // pausado por Prometheus. Marca para no re-procesarlo. (2026-06-05)
+  deflated_at: { type: Date, default: null },
 
   // Al graduar: ad creado en el ad set original
   graduation_target_ad_id: { type: String, default: null },
