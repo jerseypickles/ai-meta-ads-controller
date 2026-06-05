@@ -9,7 +9,9 @@ const shopify = require('../../integrations/shopify-client');
 const CustomerIntelligence = require('../../db/models/CustomerIntelligence');
 const logger = require('../../utils/logger');
 
-const WINDOW_DAYS = parseInt(process.env.CUSTOMER_INTEL_WINDOW_DAYS || '120', 10);
+// 90d (no 120): tu tienda hace ~167 órdenes/día → 120d = 23k órdenes/~93 páginas/~12 min de
+// pull (riesgo de interrupción por deploy). 90d da cohortes/LTV/RFM igual de sólidos, ~9 min.
+const WINDOW_DAYS = parseInt(process.env.CUSTOMER_INTEL_WINDOW_DAYS || '90', 10);
 const RECENT_DAYS = 30; // recencia para "champion/new"
 
 function median(arr) {
