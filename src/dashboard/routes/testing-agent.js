@@ -51,7 +51,7 @@ router.get('/tests', async (req, res) => {
     // Enriquecer con datos de la propuesta
     const proposalIds = tests.map(t => t.proposal_id);
     const proposals = await CreativeProposal.find({ _id: { $in: proposalIds } })
-      .select('headline primary_text scene_short product_name')
+      .select('headline primary_text scene_short product_name media_type video_url')
       .lean();
     const proposalMap = {};
     for (const p of proposals) proposalMap[p._id.toString()] = p;
@@ -197,9 +197,12 @@ router.get('/tests/:id/image', async (req, res) => {
         const { getMetaClient } = require('../../meta/client');
         const meta = getMetaClient();
         const creative = await meta.get(proposal.meta_creative_id, {
-          fields: 'image_url,thumbnail_url,image_hash'
+          fields: 'image_url,thumbnail_url,image_hash,object_story_spec'
         });
-        imageUrl = creative?.image_url || creative?.thumbnail_url || null;
+        // Para VIDEO el thumbnail vive en object_story_spec.video_data.image_url
+        // (no en image_url/thumbnail_url) — por eso los videos salían "preview no disponible".
+        imageUrl = creative?.image_url || creative?.thumbnail_url
+          || creative?.object_story_spec?.video_data?.image_url || null;
 
         // Cache en la DB para próximas visitas (no re-fetch Meta)
         if (imageUrl) {

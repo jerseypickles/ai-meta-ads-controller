@@ -295,7 +295,9 @@ export default function PrometheusPanel() {
               cursor: 'zoom-out'
             }}
           >
-            <img src={lightbox} alt="" style={{ maxWidth: '90%', maxHeight: '90%', borderRadius: 12 }} />
+            {lightbox && !/\/tests\/.*\/image/.test(lightbox)
+              ? <video src={lightbox} controls autoPlay loop playsInline style={{ maxWidth: '90%', maxHeight: '90%', borderRadius: 12 }} />
+              : <img src={lightbox} alt="" style={{ maxWidth: '90%', maxHeight: '90%', borderRadius: 12 }} />}
           </motion.div>
         )}
       </AnimatePresence>
@@ -445,19 +447,34 @@ function TestCard({ test, index, mode, onKill, setLightbox, setDetail }) {
       }}
     >
       <div
-        onClick={(e) => { e.stopPropagation(); setLightbox(getTestImageUrl(test._id)); }}
+        onClick={(e) => { e.stopPropagation(); setLightbox(p.media_type === 'video' && p.video_url ? p.video_url : getTestImageUrl(test._id)); }}
         style={{ position: 'relative', aspectRatio: '1', overflow: 'hidden' }}
       >
-        <img
-          src={getTestImageUrl(test._id)}
-          alt={p.headline}
-          loading="lazy"
-          onError={(e) => {
-            e.target.style.display = 'none';
-            e.target.nextSibling?.style.setProperty('display', 'flex');
-          }}
-          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-        />
+        {p.media_type === 'video' && p.video_url ? (
+          <video
+            src={p.video_url}
+            poster={getTestImageUrl(test._id)}
+            muted loop playsInline preload="metadata"
+            onMouseOver={(e) => { e.target.play().catch(() => {}); }}
+            onMouseOut={(e) => { try { e.target.pause(); } catch (_) {} }}
+            onError={(e) => {
+              e.target.style.display = 'none';
+              e.target.nextSibling?.style.setProperty('display', 'flex');
+            }}
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+        ) : (
+          <img
+            src={getTestImageUrl(test._id)}
+            alt={p.headline}
+            loading="lazy"
+            onError={(e) => {
+              e.target.style.display = 'none';
+              e.target.nextSibling?.style.setProperty('display', 'flex');
+            }}
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+        )}
         {/* Placeholder visible solo si <img> falla (imagen no recuperable) */}
         <div style={{
           display: 'none',
