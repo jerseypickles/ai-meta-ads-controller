@@ -296,6 +296,11 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'query_demand_forecast',
+    description: 'Pronóstico de DEMANDA (revenue Shopify) próximos 7/30/90d: baseline diario, tendencia (creciendo/estable/cayendo + % semanal), momentum (últimos 7d vs previos), patrón por día de semana (pico/valle), forecast día a día de los próximos 14d, y eventos estacionales próximos. Usar para PRE-POSICIONAR budget/creativos ANTES de los picos (no reaccionar después). Es un pronóstico heurístico, no certeza.',
+    input_schema: { type: 'object', properties: {}, required: [] }
+  },
+  {
     name: 'query_customer_intelligence',
     description: 'Inteligencia de CLIENTE desde Shopify (Pilar 1): recompra, LTV, AOV, días entre órdenes, segmentos RFM (champions/loyal/at_risk/new/one_off), split de revenue new vs returning, top productos por revenue y por ADQUISICIÓN (qué producto es la puerta de entrada de clientes nuevos). Usar para decidir targeting (lookalikes de champions/high-LTV), qué producto empujar (puerta de entrada vs LTV), y dirección de creativo. Es la data REAL de clientes, no las métricas de ads.',
     input_schema: { type: 'object', properties: {}, required: [] }
@@ -2182,6 +2187,7 @@ const TOOL_HANDLERS = {
   query_products: handleQueryProducts,
   query_hermes: handleQueryHermes,
   query_customer_intelligence: handleQueryCustomerIntelligence,
+  query_demand_forecast: handleQueryDemandForecast,
   query_strategic_directives: handleQueryStrategicDirectives,
   query_agent_conversations: handleQueryAgentConversations,
   ask_athena: (input) => handleAskAgent('athena', input),
@@ -2372,6 +2378,13 @@ async function handleQueryCustomerIntelligence() {
     top_acquisition_products: ci.top_acquisition_products,
     note: 'Lookalikes de champions/high-LTV para targeting; empujar la puerta de entrada (top_acquisition) para adquirir + los de alto LTV para retener; alinear creativo con lo que compran.'
   };
+}
+
+async function handleQueryDemandForecast() {
+  const { getLatestDemandForecast } = require('./demand-forecast');
+  const df = await getLatestDemandForecast();
+  if (!df) return { available: false, note: 'Aún no hay snapshot de demand forecast (corre el cron diario o se computa pronto).' };
+  return df;
 }
 
 async function executeTool(toolName, input) {

@@ -1622,6 +1622,18 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'customer-intelligence' });
   logger.info('  [*] Customer Intelligence — diario 01:30 ET (cohortes/LTV/RFM de Shopify)');
 
+  // Demand Forecast — Pilar 2 esteroides: pronostica demanda 7/30/90d (estacionalidad +
+  // tendencia + eventos) desde la serie diaria de Demeter → Zeus anticipa. 02:00 ET (rápido,
+  // lee DemeterSnapshot, no Shopify directo). Pre-posiciona budget/creativos antes del pico.
+  cron.schedule('0 2 * * *', async () => {
+    try {
+      const { computeDemandForecast } = require('./ai/zeus/demand-forecast');
+      const r = await computeDemandForecast();
+      if (r) logger.info(`[CRON] Demand Forecast: baseline $${r.baseline_daily}/d · ${r.trend} (${r.weekly_growth_pct}%/sem) · next7 $${r.forecast?.next_7d} · pico ${r.dow_pattern?.peak?.day}`);
+    } catch (e) { logger.error(`[CRON] Demand Forecast falló: ${e.message}`); }
+  }, { timezone: TIMEZONE, name: 'demand-forecast' });
+  logger.info('  [*] Demand Forecast — diario 02:00 ET (forecast demanda 7/30/90d)');
+
   // AI Ops metrics refresh — cada 15 min, 24/7
   cron.schedule('5,20,35,50 * * * *', jobAIOpsRefresh, {
     timezone: TIMEZONE,

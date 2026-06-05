@@ -365,6 +365,28 @@ async function buildOracleContext(lastSeenAt = null) {
     }
   } catch (_) { /* customer-intel informativo, no crítico */ }
 
+  // DEMAND FORECAST — Pilar 2 esteroides (2026-06-05). Zeus ANTICIPA demanda (próximos
+  // 7/30/90d) con estacionalidad + tendencia + eventos → pre-posiciona budget/creativos
+  // ANTES del pico, no después. query_demand_forecast para el detalle día a día.
+  try {
+    const { getLatestDemandForecast } = require('./demand-forecast');
+    const df = await getLatestDemandForecast();
+    if (df) {
+      ctx.demand_forecast = {
+        trend: df.trend,
+        weekly_growth_pct: df.weekly_growth_pct,
+        momentum_pct: df.momentum_pct,
+        baseline_daily: df.baseline_daily,
+        forecast: df.forecast,
+        forecast_vs_last7_pct: df.forecast_vs_last7_pct,
+        peak_day: df.dow_pattern?.peak,
+        low_day: df.dow_pattern?.low,
+        upcoming_events: df.upcoming_events,
+        note: 'Pronóstico de demanda. Si crece o viene un pico (DoW/evento), pre-posicionar budget/creativos ANTES. query_demand_forecast para el día a día.'
+      };
+    }
+  } catch (_) { /* forecast informativo, no crítico */ }
+
   // Performance / track-record — el "dashboard de CEO" de Zeus. Zeus es el CEO de
   // los agentes, así que el win-rate de SUS AGENTES es su track record. Lo computa
   // de la capa de veredicto (follow_up_verdict, medido a 7d). Antes Zeus no lo veía

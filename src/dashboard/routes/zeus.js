@@ -48,6 +48,24 @@ router.post('/customer-intelligence/compute', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ═══ Demand Forecast (Pilar 2 esteroides) ═══
+router.get('/demand-forecast', async (req, res) => {
+  try {
+    const { getLatestDemandForecast } = require('../../ai/zeus/demand-forecast');
+    const df = await getLatestDemandForecast();
+    res.json(df || { available: false, note: 'Sin snapshot aún — POST /demand-forecast/compute para generar.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+router.post('/demand-forecast/compute', async (req, res) => {
+  try {
+    const { computeDemandForecast } = require('../../ai/zeus/demand-forecast');
+    res.json({ started: true, message: 'Computando demand forecast' });
+    computeDemandForecast()
+      .then(r => logger.info(`[ZEUS] demand-forecast manual: ${r ? r.trend + ' ' + r.weekly_growth_pct + '%' : 'sin data'}`))
+      .catch(e => logger.error(`[ZEUS] demand-forecast manual falló: ${e.message}`));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ═══ GET /run-status/:jobId ═══
 router.get('/run-status/:jobId', (req, res) => {
   const job = _zeusJobs[req.params.jobId];
