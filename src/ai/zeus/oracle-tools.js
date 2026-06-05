@@ -296,6 +296,11 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'query_customer_intelligence',
+    description: 'Inteligencia de CLIENTE desde Shopify (Pilar 1): recompra, LTV, AOV, días entre órdenes, segmentos RFM (champions/loyal/at_risk/new/one_off), split de revenue new vs returning, top productos por revenue y por ADQUISICIÓN (qué producto es la puerta de entrada de clientes nuevos). Usar para decidir targeting (lookalikes de champions/high-LTV), qué producto empujar (puerta de entrada vs LTV), y dirección de creativo. Es la data REAL de clientes, no las métricas de ads.',
+    input_schema: { type: 'object', properties: {}, required: [] }
+  },
+  {
     name: 'query_strategic_directives',
     description: 'Directivas estratégicas de largo plazo + strategic insights que alimentan a Zeus.',
     input_schema: {
@@ -2176,6 +2181,7 @@ const TOOL_HANDLERS = {
   query_recommendations: handleQueryRecommendations,
   query_products: handleQueryProducts,
   query_hermes: handleQueryHermes,
+  query_customer_intelligence: handleQueryCustomerIntelligence,
   query_strategic_directives: handleQueryStrategicDirectives,
   query_agent_conversations: handleQueryAgentConversations,
   ask_athena: (input) => handleAskAgent('athena', input),
@@ -2343,6 +2349,28 @@ async function handleQueryHermes(input = {}) {
       reasoning: a.reasoning,
       at: a.executed_at
     }))
+  };
+}
+
+async function handleQueryCustomerIntelligence() {
+  const { getLatestCustomerIntelligence } = require('./customer-intelligence');
+  const ci = await getLatestCustomerIntelligence();
+  if (!ci) return { available: false, note: 'Aún no hay snapshot de customer intelligence (corre el cron diario o se computa pronto).' };
+  return {
+    computed_at: ci.computed_at,
+    window_days: ci.window_days,
+    orders: ci.orders_count,
+    total_revenue: ci.total_revenue,
+    total_customers: ci.total_customers,
+    repeat_rate_pct: Math.round((ci.repeat_rate || 0) * 100),
+    avg_ltv: ci.avg_ltv,
+    avg_aov: ci.avg_aov,
+    avg_days_between_orders: ci.avg_days_between_orders,
+    revenue_split: ci.revenue_split,
+    rfm_segments: ci.rfm_segments,
+    top_products: ci.top_products,
+    top_acquisition_products: ci.top_acquisition_products,
+    note: 'Lookalikes de champions/high-LTV para targeting; empujar la puerta de entrada (top_acquisition) para adquirir + los de alto LTV para retener; alinear creativo con lo que compran.'
   };
 }
 

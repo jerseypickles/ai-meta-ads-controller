@@ -195,4 +195,31 @@ async function ping() {
   }
 }
 
-module.exports = { getOrdersForDateRange, getRefundsForDateRange, ping };
+/**
+ * Orders DETALLADAS (con customer + line_items) para inteligencia de cliente/demanda
+ * (cohortes, LTV, recompra, RFM, producto). Más pesado que getOrdersForDateRange — usar
+ * solo en el cron de customer-intelligence (diario), no en el hot path. (2026-06-05)
+ */
+async function getOrdersDetailed(startUtc, endUtc, maxPages = 120) {
+  const orders = [];
+  const limit = 250;
+  const fields = 'id,created_at,financial_status,cancelled_at,total_price,subtotal_price,customer,line_items';
+  let { data, headers } = await get('/orders.json', {
+    status: 'any', created_at_min: startUtc.toISOString(), created_at_max: endUtc.toISOString(), limit, fields
+  });
+  orders.push(...(data.orders || []));
+  let pageInfo = parseNextCursor(headers.link);
+  let pageNum = 1;
+  while (pageInfo && pageNum < maxPages) {
+    ({ data, headers } = await get('/orders.json', { limit, page_info: pageInfo }));
+    orders.push(...(data.orders || []));
+    pageInfo = parseNextCursor(headers.link);
+    pageNum++;
+    if (pageNum % 10 === 0) logger.info(`[shopify] detailed page ${pageNum}: total ${orders.length}`);
+  }
+  const valid = orders.filter(o => !o.cancelled_at && o.financial_status !== 'voided');
+  logger.info(`[shopify] detailed fetch: ${orders.length} raw → ${valid.length} valid (${pageNum} pages)`);
+  return valid;
+}
+
+module.exports = { getOrdersForDateRange, getRefundsForDateRange, getOrdersDetailed, ping };

@@ -1610,6 +1610,18 @@ function initCronJobs() {
   });
   logger.info('  [*] Demeter — diario 00:05 ET (cash reconciliation)');
 
+  // Customer Intelligence — Pilar 1 "Zeus con esteroides": mina Shopify diario (cohortes,
+  // LTV, recompra, RFM, producto) → snapshot que entra al contexto de Zeus + tool. 01:30 ET
+  // (después de Demeter, datos del día anterior asentados).
+  cron.schedule('30 1 * * *', async () => {
+    try {
+      const { computeCustomerIntelligence } = require('./ai/zeus/customer-intelligence');
+      const r = await computeCustomerIntelligence();
+      if (r) logger.info(`[CRON] Customer Intel: ${r.total_customers} clientes · repeat ${(r.repeat_rate * 100).toFixed(0)}% · LTV $${r.avg_ltv} · returning ${r.revenue_split?.returning_pct}% del revenue`);
+    } catch (e) { logger.error(`[CRON] Customer Intelligence falló: ${e.message}`); }
+  }, { timezone: TIMEZONE, name: 'customer-intelligence' });
+  logger.info('  [*] Customer Intelligence — diario 01:30 ET (cohortes/LTV/RFM de Shopify)');
+
   // AI Ops metrics refresh — cada 15 min, 24/7
   cron.schedule('5,20,35,50 * * * *', jobAIOpsRefresh, {
     timezone: TIMEZONE,

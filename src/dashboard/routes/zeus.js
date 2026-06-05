@@ -29,6 +29,25 @@ router.post('/run', async (req, res) => {
   }
 });
 
+// ═══ Customer Intelligence (Pilar 1 esteroides) ═══
+// GET → último snapshot · POST /compute → recomputar ahora (mina Shopify)
+router.get('/customer-intelligence', async (req, res) => {
+  try {
+    const { getLatestCustomerIntelligence } = require('../../ai/zeus/customer-intelligence');
+    const ci = await getLatestCustomerIntelligence();
+    res.json(ci || { available: false, note: 'Sin snapshot aún — POST /customer-intelligence/compute para generar.' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+router.post('/customer-intelligence/compute', async (req, res) => {
+  try {
+    const { computeCustomerIntelligence } = require('../../ai/zeus/customer-intelligence');
+    res.json({ started: true, message: 'Computando customer intelligence desde Shopify (puede tardar 1-2 min)' });
+    computeCustomerIntelligence()
+      .then(r => logger.info(`[ZEUS] customer-intel manual: ${r ? r.total_customers + ' clientes' : 'sin data'}`))
+      .catch(e => logger.error(`[ZEUS] customer-intel manual falló: ${e.message}`));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ═══ GET /run-status/:jobId ═══
 router.get('/run-status/:jobId', (req, res) => {
   const job = _zeusJobs[req.params.jobId];

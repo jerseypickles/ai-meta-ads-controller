@@ -343,6 +343,28 @@ async function buildOracleContext(lastSeenAt = null) {
     };
   } catch (_) { /* Hermes informativo, no crítico para el contexto de Zeus */ }
 
+  // CUSTOMER INTELLIGENCE — Pilar 1 esteroides (2026-06-05). Zeus deja de ver SOLO
+  // métricas de ads y ve al CLIENTE: recompra, LTV, RFM, qué producto es la puerta de
+  // entrada, % de revenue de returning. Esto debe informar targeting/creativo/producto.
+  try {
+    const { getLatestCustomerIntelligence } = require('./customer-intelligence');
+    const ci = await getLatestCustomerIntelligence();
+    if (ci) {
+      ctx.customer_intelligence = {
+        window_days: ci.window_days,
+        repeat_rate_pct: Math.round((ci.repeat_rate || 0) * 100),
+        avg_ltv: ci.avg_ltv,
+        avg_aov: ci.avg_aov,
+        avg_days_between_orders: ci.avg_days_between_orders,
+        returning_revenue_pct: ci.revenue_split?.returning_pct,
+        rfm_segments: ci.rfm_segments,
+        top_acquisition_products: ci.top_acquisition_products?.slice(0, 5),
+        top_products: ci.top_products?.slice(0, 5).map(p => ({ name: p.name, revenue: p.revenue })),
+        note: 'Inteligencia de cliente desde Shopify. Usar para decidir targeting (lookalikes de champions), qué producto empujar (puerta de entrada vs LTV), y creativo. query_customer_intelligence para el detalle.'
+      };
+    }
+  } catch (_) { /* customer-intel informativo, no crítico */ }
+
   // Performance / track-record — el "dashboard de CEO" de Zeus. Zeus es el CEO de
   // los agentes, así que el win-rate de SUS AGENTES es su track record. Lo computa
   // de la capa de veredicto (follow_up_verdict, medido a 7d). Antes Zeus no lo veía
