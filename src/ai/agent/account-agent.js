@@ -147,6 +147,11 @@ Evaluate each ad set objectively based on its data. Act when the data justifies 
 - After pause_adset: no revisit. It is dead.
 - After HOLD: next_review_hours = 24. Check again tomorrow.
 
+## TARGET POR-ADSET (cuando aparece en el contexto, MANDA sobre los umbrales globales)
+- Si el contexto trae "TARGET POR-ADSET", juzgá ese adset contra SU baseline y SU piso, no contra el 3x/1.5x global. Un adset que probó rendir 5x y cae a 2.5x está degradando → scale_down, aunque 2.5 > 1.5 global. Un adset modesto estable EN su baseline (ej. 1.8x) está sano → no lo bajes.
+- "BAJO SU PISO" → scale_down (o pausa si además freq/edad lo justifican). "DEGRADANDO" → vigilá, scale_down si 3d confirma. "en línea con su baseline" + freq sana → escalá con confianza.
+- Si NO hay target por-adset (adset nuevo / poca data), usá los umbrales globales de abajo.
+
 ## SCALE UP
 - ROAS 7d >= 3x with $50+ spend 7d → scale +15%. No other criteria needed.
 - ROAS 7d >= account average with improving 3d trend → scale +15%.
@@ -1515,10 +1520,19 @@ async function runAccountAgent() {
   let totalActions = 0;
   const results = [];
 
+  // Haircut de cash UNA vez por ciclo (corregido — ver demeter-cash-blended). Para los
+  // targets por-adset (baseline en cash-adjusted). Fail-open a 1 (Meta crudo).
+  let cycleHaircut = 1;
+  try {
+    const { getAccountCashSignal } = require('./demeter-cash-signal');
+    const cs = await getAccountCashSignal();
+    if (cs.available) cycleHaircut = cs.haircut_factor;
+  } catch (_) { /* fail-open */ }
+
   for (const adSetSnap of activeAdSets) {
     const adSetId = adSetSnap.entity_id;
     try {
-      const result = await _manageAdSet(adSetSnap, cycleId, mode);
+      const result = await _manageAdSet(adSetSnap, cycleId, mode, cycleHaircut);
       totalActions += result.actionsExecuted;
       results.push({
         adset_id: adSetId,
@@ -1592,7 +1606,7 @@ async function runAccountAgent() {
  * @param {string} cycleId
  * @param {string} mode - 'full' (can act) or 'observer' (read-only)
  */
-async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
+async function _manageAdSet(adSetSnap, cycleId, mode = 'full', cashHaircut = 1) {
   const adSetId = adSetSnap.entity_id;
   const adSetName = adSetSnap.entity_name || adSetId;
   const meta = getMetaClient();
@@ -1841,9 +1855,19 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full') {
     ? ` Meta LEARNING phase: ${adSetSnap.learning_stage_conversions || 0}/50 conversions. Scale +15% is safe (does NOT reset learning). Pause DOES reset — avoid pausing.`
     : '';
 
+  // TARGET POR-ADSET: baseline/piso derivados de la historia del propio adset (cash-adj).
+  // Athena juzga contra ESTO, no los umbrales globales. '' si el adset es muy nuevo.
+  let targetContext = '';
+  try {
+    const { computeAdsetTarget, buildTargetContext } = require('./athena-targets');
+    targetContext = buildTargetContext(computeAdsetTarget(adSetSnap, cashHaircut));
+  } catch (e) {
+    logger.warn(`[ACCOUNT-AGENT] target por-adset falló (no crítico): ${e.message}`);
+  }
+
   const userMessage = isObserver
-    ? `[OBSERVER MODE — nighttime, read-only] Analyze ${baseContext} Gather data, analyze trends, and save your assessment. You CANNOT take actions right now — only observe and document what you see.${planContext}`
-    : `Analyze and manage ${baseContext}${learningContext} Gather data, decide actions based on ROAS and data, and save your assessment.${planContext}`;
+    ? `[OBSERVER MODE — nighttime, read-only] Analyze ${baseContext}${targetContext} Gather data, analyze trends, and save your assessment. You CANNOT take actions right now — only observe and document what you see.${planContext}`
+    : `Analyze and manage ${baseContext}${learningContext}${targetContext} Gather data, decide actions based on ROAS and data, and save your assessment.${planContext}`;
 
   let messages = [{ role: 'user', content: userMessage }];
 
