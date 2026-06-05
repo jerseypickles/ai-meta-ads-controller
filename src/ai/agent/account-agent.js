@@ -785,6 +785,26 @@ async function handleScaleBudget(input, ctx) {
     }
   }
 
+  // ── GATE: cash-gate de Demeter EN VIVO (promovido de shadow 2026-06-05, tras
+  // evaluar ~21d de shadow: ~12% de desacuerdo con Meta; cazó scale_ups de adsets a
+  // ~0x ROAS). Para scale_up bloquea si el cash de cuenta dice "hold":
+  //   (a) GOVERNOR — cash_roas_14d de cuenta < 2.0x → no escalar NADA (red de seguridad
+  //       para cuando el cash real de la cuenta cae, aunque Meta se vea bien), o
+  //   (b) el cash-adjusted ROAS del adset (meta_roas_7d × haircut) no llega al piso 2.5x.
+  // Fail-open: sin señal de Demeter, deja pasar (no bloquea por falta de data).
+  if (isScaleUp) {
+    try {
+      const { getAccountCashSignal, buildCashShadow } = require('./demeter-cash-signal');
+      const signal = await getAccountCashSignal();
+      const gate = buildCashShadow(signal, snap.metrics?.last_7d?.roas || 0, 'scale_up');
+      if (gate.available && gate.cash_gate === 'hold') {
+        return { blocked: true, reason: `Cash-gate: ${gate.note}` };
+      }
+    } catch (e) {
+      logger.warn(`[ACCOUNT-AGENT] cash-gate vivo falló (fail-open): ${e.message}`);
+    }
+  }
+
   // ── GATE: Max 25% increase
   if (isScaleUp && prevBudget > 0) {
     const changePct = ((new_budget - prevBudget) / prevBudget) * 100;
@@ -837,9 +857,9 @@ async function handleScaleBudget(input, ctx) {
     ctr: m7d.ctr || 0
   };
 
-  // ── SHADOW: cash-gate de Demeter. Computa qué habría decidido un gate basado
-  // en cash-ROAS real (vs el Meta-ROAS que usó Athena) y lo loguea. NO cambia el
-  // comportamiento — Athena ya ejecutó. Fail-open: si Demeter falla, no afecta nada.
+  // ── SHADOW/registro: cash-gate de Demeter. scale_up ya es GATE VIVO (arriba) — esto
+  // queda como registro en el ActionLog + sigue en shadow para scale_down (que no se
+  // gatea en vivo todavía). Fail-open: si Demeter falla, no afecta nada.
   let cashShadow = null;
   try {
     const { getAccountCashSignal, buildCashShadow } = require('./demeter-cash-signal');
