@@ -62,9 +62,12 @@ const MOTIONS = [
     img: 'a hand opening a home refrigerator door, revealing several {product} jars neatly lined up on the fridge shelf inside, cool soft fridge light spilling out, light condensation on the jars, POV handheld UGC, the {product} labels readable',
     vid: 'A hand slowly pulls the refrigerator door open, revealing the {product} jars lined up on the shelf as the cool fridge light spills out; faint condensation, almost no other movement.' },
   // ── Composiciones distintas (no la toma típica de mano+chip+drip) ──
+  // pour_bowl REESCRITO 2026-06-05: antes "varios chips mid-tumble despacio" → Seedance los
+  // congelaba pegados en el aire (física multi-objeto = lo más difícil de la IA, se nota
+  // artificial). Ahora UN solo chip que cae + drizzle de brine (un hilo, que la IA sí anima).
   { key: 'pour_bowl', selfScene: true,
-    img: 'a hand tilting the open {product} jar to pour pickle chips and brine into a white ceramic bowl on a kitchen counter, chips mid-tumble, glossy and fresh, UGC iPhone',
-    vid: 'A hand tilts the {product} jar and the pickle chips with brine tumble slowly out into the bowl.' },
+    img: 'a hand tilting the open {product} jar over a white ceramic bowl on a kitchen counter, ONE pickle chip sliding off the jar rim about to drop into the bowl, a thin strand of glossy brine drizzling down, a couple of chips already resting in the bowl, UGC iPhone',
+    vid: 'A hand tilts the {product} jar; ONE pickle chip slides off the rim and drops naturally into the bowl with real gravity while a thin strand of glossy brine drizzles down. The chip falls and settles among the ones already there — real-time motion, nothing frozen, floating or stuck.' },
   { key: 'cooler_grab', selfScene: true,
     img: "a hand reaching into an ice-filled cooler and pulling out a frosty {product} jar, ice cubes and water droplets all around, condensation on the glass, backyard summer, UGC iPhone",
     vid: 'A hand lifts the frosty {product} jar up out of the ice; water droplets slide down the glass, ice settles slightly.' },
@@ -255,14 +258,22 @@ function buildImageScene(motionKey, sceneKey, productName) {
   return img;
 }
 
-/** Prompt del VIDEO (Seedance): motion (con pieza real) + cámara + estilo ROTADO.
+// Cláusula de FÍSICA NATURAL (2026-06-05) — a TODOS los videos. La IA de video tiende a
+// congelar/pegar objetos en el aire (se nota artificial); esto fuerza gravedad real.
+const NATURAL_PHYSICS =
+  'CRITICAL realistic physics: everything obeys natural real-world gravity at real-time speed — ' +
+  'pickle pieces and brine fall, drip and settle naturally; nothing floats, freezes mid-air, ' +
+  'clumps, sticks together unnaturally, or moves in rubbery slow-motion. Falling pieces separate ' +
+  'and land realistically.';
+
+/** Prompt del VIDEO (Seedance): motion (con pieza real) + cámara + estilo ROTADO + física.
  *  styleOverride opcional (para tests deterministas); si no, rota un mood. */
 function buildVideoPrompt(productName, motionKey, cameraKey, styleOverride) {
   const m = get('motion', motionKey);
   const c = get('camera', cameraKey);
   const style = styleOverride || pickVideoStyle();
   const readable = `Keep the ${productName || 'product'} label readable and undistorted at all times.`;
-  return `${_fill(m.vid, productName)} ${c.vid} ${style} ${readable}`;
+  return `${_fill(m.vid, productName)} ${c.vid} ${style} ${NATURAL_PHYSICS} ${readable}`;
 }
 
 module.exports = {

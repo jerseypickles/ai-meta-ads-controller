@@ -23,6 +23,10 @@ const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://ai-meta-ads-cont
 const AUTO_APPROVE = process.env.DIONYSUS_AUTO_APPROVE !== 'false';
 const AUTO_APPROVE_MIN_SCORE = parseInt(process.env.DIONYSUS_AUTO_APPROVE_MIN_SCORE || '80', 10);
 const AUTO_APPROVE_MAX_MOTION_REJECT = parseFloat(process.env.DIONYSUS_AUTO_APPROVE_MAX_REJECT || '0.4');
+// Motions con FÍSICA difícil (caída/vertido de objetos) — la IA tiende a pegarlos/congelar
+// en el aire (se nota artificial). NUNCA auto-aprobar estos: siempre review manual (el humano
+// es el mejor juez de física). 2026-06-05, por el reporte de pickles "stuck" al verter.
+const HIGH_PHYSICS_MOTIONS = new Set(['pour_bowl']);
 
 /** Mapea la sugerencia del judge a un motion del DNA. Fallback raro: la imagen-fuente
  *  casi siempre trae su motion baked, así que esto solo aplica a fuentes legacy. NO
@@ -171,7 +175,9 @@ async function runDionysus() {
       // AUTO-APROBAR alta confianza → directo a 'ready' (Prometheus); dudosos → review manual.
       const ms = motionStats[variant] || {};
       const motionReject = ((ms.n || 0) + (ms.reject_n || 0)) > 0 ? (ms.reject_n || 0) / ((ms.n || 0) + (ms.reject_n || 0)) : 0;
-      const autoOk = AUTO_APPROVE && verdict.score >= AUTO_APPROVE_MIN_SCORE && motionReject < AUTO_APPROVE_MAX_MOTION_REJECT;
+      const autoOk = AUTO_APPROVE && verdict.score >= AUTO_APPROVE_MIN_SCORE
+        && motionReject < AUTO_APPROVE_MAX_MOTION_REJECT
+        && !HIGH_PHYSICS_MOTIONS.has(variant); // física de caída → siempre review manual
       const newStatus = autoOk ? 'ready' : 'pending_video_review';
       await CreativeProposal.findByIdAndUpdate(placeholder._id, {
         $set: { status: newStatus, video_url: vid.video_url, video_task_id: vid.task_id, ...(autoOk ? { auto_approved_at: new Date() } : {}) }
