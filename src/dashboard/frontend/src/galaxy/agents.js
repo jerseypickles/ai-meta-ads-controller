@@ -24,10 +24,10 @@ export const agentColor = (id) => `var(--ag-${id})`;
 // Para el slice solo Ares trae kpis reales; el resto cae a actions_today.
 export const AGENT_KPIS = {
   ares:       [{ key: 'cbos_activos', label: 'CBOs' }, { key: 'spend_hoy', label: 'Spend hoy', money: true }],
-  athena:     [{ key: 'actions_today', label: 'Acciones hoy' }],
+  athena:     [{ key: 'performance', label: 'Performance', suffix: 'x' }],
   apollo:     [{ key: 'creativos_7d', label: 'Creativos 7d' }],
   prometheus: [{ key: 'tests_activos', label: 'Tests' }, { key: 'win_rate', label: 'Win rate', suffix: '%' }],
   demeter:    [{ key: 'cash_roas', label: 'Cash ROAS', suffix: 'x' }],
-  dionisio:   [{ key: 'actions_today', label: 'Acciones hoy' }],
-  hermes:     [{ key: 'actions_today', label: 'Publicaciones', awareness: true }]
+  dionisio:   [{ key: 'tests_video', label: 'Tests video' }, { key: 'graduados_7d', label: 'Graduados 7d' }],
+  hermes:     [{ key: 'publicaciones_7d', label: 'Publicaciones 7d', awareness: true }]
 };

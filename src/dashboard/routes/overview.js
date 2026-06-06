@@ -91,6 +91,19 @@ router.get('/', async (req, res) => {
       const cs = await getAccountCashSignal();
       byAgent.demeter.kpis = { cash_roas: cs.available ? +Number(cs.cash_roas_14d).toFixed(2) : null };
     } catch (e) { logger.warn(`[OVERVIEW] demeter kpis: ${e.message}`); }
+    // Athena: "Performance" = ROAS de cuenta (lo que optimiza)
+    byAgent.athena.kpis = { performance: global.roas_today };
+    try {
+      const TestRun = require('../../db/models/TestRun');
+      const [vid, vgrad] = await Promise.all([
+        TestRun.countDocuments({ media_type: 'video', phase: { $in: ['learning', 'evaluating'] } }),
+        TestRun.countDocuments({ media_type: 'video', phase: 'graduated', graduated_at: { $gte: w7 } })
+      ]);
+      byAgent.dionisio.kpis = { tests_video: vid, graduados_7d: vgrad };
+    } catch (e) { logger.warn(`[OVERVIEW] dionisio kpis: ${e.message}`); }
+    try {
+      byAgent.hermes.kpis = { publicaciones_7d: await ActionLog.countDocuments({ agent_type: 'hermes', created_at: { $gte: w7 } }) };
+    } catch (e) { logger.warn(`[OVERVIEW] hermes kpis: ${e.message}`); }
 
     // ── Actividad reciente (timeline + feed) ──
     const activity = recentActions.slice(0, 15).map(a => ({
