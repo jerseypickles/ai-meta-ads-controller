@@ -119,9 +119,14 @@ function productUnitFood(name = '') {
 // on_food para ellos; usan las otras posturas (lift/dip/drip/etc). Caso reportado 2026-06-05.
 function fitsOnFood(productName = '') {
   const n = (productName || '').toLowerCase();
-  if (n.includes('chip')) return true;
-  if (n.includes('onion') || n.includes('jalap') || n.includes('pepper')) return true; // rodajas naturales
-  return false; // spears, pickles enteros, tomates, beans, okra → NO burger
+  // Exclusión explícita: piezas enteras/grandes/no-topping que se ven raras en burger.
+  if (n.includes('spear') || n.includes('whole') || n.includes('tomato') ||
+      n.includes('bean') || n.includes('okra') || n.includes('salsa')) return false;
+  // Chips (planos): chip/chili/chamoy/horseradish son todos chips de pickle → van en burger.
+  if (n.includes('chip') || n.includes('chili') || n.includes('chamoy') || n.includes('horseradish')) return true;
+  // Rodajas naturales que quedan bien en burger.
+  if (n.includes('onion') || n.includes('jalap') || n.includes('pepper')) return true;
+  return false; // default conservador: si no es claramente apto, no on_food
 }
 
 // Motions PERMITIDOS para un producto (excluye los que no le quedan, ej. on_food en spears).
