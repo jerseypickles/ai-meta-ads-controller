@@ -221,8 +221,8 @@ function DionysusPanel() {
                 <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{v.headline}</div>
                 <div style={{ fontSize: 10, opacity: 0.55, marginBottom: 8 }}>
                   {v.product_name} · <span style={{ color: FUCHSIA }}>{v.motion_variant}</span>
-                  {v.video_judge_score != null ? <> · <span style={{ color: '#34d399' }}>score {v.video_judge_score}</span></> : null}
                 </div>
+                <JudgeVerdict v={v} />
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button onClick={() => decide(v._id, 'approve')} disabled={busy === v._id}
                     style={{ flex: 1, padding: '7px 0', borderRadius: 6, border: 'none', background: '#22c55e', color: '#fff', cursor: 'pointer', fontWeight: 600 }}>
@@ -247,6 +247,61 @@ function DionysusPanel() {
         @keyframes dioBar {0%{margin-left:-40%}100%{margin-left:100%}}
         .dio-bar{animation:dioBar 1.4s ease-in-out infinite}
       `}</style>
+    </div>
+  );
+}
+
+// Veredicto del juez de video, expandible (¿la gente real engancha?)
+const VERDICT_DIMS = {
+  fidelidad: 'Fidelidad', freno_scroll: 'Freno scroll', apetito: 'Apetito',
+  autenticidad: 'Autenticidad', calidad: 'Calidad'
+};
+function JudgeVerdict({ v }) {
+  const [open, setOpen] = useState(false);
+  const score = v.video_judge_score;
+  if (score == null) return null;
+  const bd = v.video_judge_breakdown || {};
+  const dims = bd.breakdown || null;
+  const sc = (n) => (n >= 80 ? '#34d399' : n >= 60 ? '#fbbf24' : '#f87171');
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        background: 'rgba(255,255,255,0.04)', border: `1px solid ${sc(score)}40`, borderRadius: 6,
+        padding: '6px 9px', cursor: 'pointer', color: '#e5e7eb'
+      }}>
+        <span style={{ fontSize: 11 }}>Veredicto <span style={{ opacity: 0.5 }}>(¿engancha a la gente?)</span></span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <b style={{ color: sc(score), fontFamily: 'JetBrains Mono, monospace', fontSize: 13 }}>{score}</b>
+          <span style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s', fontSize: 10, opacity: 0.6 }}>▾</span>
+        </span>
+      </button>
+      {open && (
+        <div style={{ marginTop: 6, padding: '8px 10px', background: 'rgba(0,0,0,0.25)', borderRadius: 6, fontSize: 11 }}>
+          {bd.reason && <div style={{ fontStyle: 'italic', opacity: 0.8, marginBottom: 8 }}>“{bd.reason}”</div>}
+          {dims ? Object.keys(VERDICT_DIMS).filter(k => dims[k]).map(k => {
+            const d = dims[k]; const c = sc(d.score);
+            return (
+              <div key={k} style={{ marginBottom: 6 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
+                  <span>{VERDICT_DIMS[k]}</span>
+                  <b style={{ color: c, fontFamily: 'JetBrains Mono, monospace' }}>{d.score}</b>
+                </div>
+                <div style={{ height: 3, background: 'rgba(255,255,255,0.08)', borderRadius: 2, margin: '2px 0 3px' }}>
+                  <div style={{ width: `${Math.max(0, Math.min(100, d.score))}%`, height: '100%', background: c, borderRadius: 2 }} />
+                </div>
+                {d.note && <div style={{ fontSize: 10, opacity: 0.6 }}>{d.note}</div>}
+              </div>
+            );
+          }) : <div style={{ opacity: 0.5 }}>Sin desglose (video previo al fix del juez).</div>}
+          {(bd.que_funciona || []).length > 0 && (
+            <div style={{ marginTop: 6 }}>{bd.que_funciona.map((s, i) => <div key={i} style={{ color: '#34d399', fontSize: 10 }}>✓ {s}</div>)}</div>
+          )}
+          {(bd.que_falla || []).length > 0 && (
+            <div style={{ marginTop: 4 }}>{bd.que_falla.map((s, i) => <div key={i} style={{ color: '#f87171', fontSize: 10 }}>✗ {s}</div>)}</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

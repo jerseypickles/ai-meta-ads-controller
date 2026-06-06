@@ -160,7 +160,14 @@ async function runDionysus() {
       headline: c.headline, primary_text: c.primary_text, link_url: c.link_url,
       media_type: 'video', status: 'generating_video',
       motion_variant: variant, camera, scene: c.scene || '',
-      video_judge_score: verdict.score, source_proposal_id: c._id
+      video_judge_score: verdict.score,
+      video_judge_breakdown: {
+        reason: verdict.reason,
+        breakdown: verdict.breakdown,
+        que_funciona: verdict.que_funciona,
+        que_falla: verdict.que_falla
+      },
+      source_proposal_id: c._id
     });
 
     // 3. Generar el video (image-to-video desde la URL pública del proposal origen).

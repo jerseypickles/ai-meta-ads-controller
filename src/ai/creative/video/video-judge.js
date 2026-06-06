@@ -12,24 +12,25 @@ const logger = require('../../../utils/logger');
 const MIN_SCORE = parseInt(process.env.DIONYSUS_VIDEO_MIN_SCORE || '60', 10);
 const { productUnit } = require('./video-dna');
 
-const PROMPT = (productName, expectedUnit) => `You are a senior DTC food-ad video editor judging whether a STATIC image will make a HIGH-CONVERTING 5-second vertical UGC video ad (image-to-video) for "${productName}".
+const PROMPT = (productName, expectedUnit) => `You are simulating a REAL person scrolling Instagram/TikTok who sees this image as the FIRST FRAME of a 5-second UGC food-ad for "${productName}". Judge honestly whether real people would STOP, crave it, trust it, and want to buy — not whether it is merely "technically fine". The video animates this static frame (image-to-video); it cannot add objects.
 
-The video keeps the image as the FIRST FRAME and animates what is already in it — it CANNOT add objects that aren't there.
+FIDELITY GATE (check FIRST): the hero item the hand holds/shows SHOULD be: ${expectedUnit}. If it shows the WRONG thing (e.g. a solid pickle chip when the product is a chunky salsa/dip, or the wrong food), real people are misled → fidelidad fails and the OVERALL score must be 15-25. A correct jar LABEL is NOT enough — the held/hero item must match.
 
-═══ STEP 1 — PRODUCT FIDELITY (hard gate, check this FIRST) ═══
-For "${productName}", the hero item the hand holds/shows SHOULD be: ${expectedUnit}.
-Look at what is ACTUALLY held / shown. If it does NOT match — e.g. the product is a chunky salsa/relish/dip but the image shows a solid pickle chip held up, or it shows the wrong food — that is a FIDELITY FAIL: return score 15-25, suitable false, reason starting "fidelity:". A beautiful shot of the WRONG item is still a FAIL. A correct jar LABEL is NOT enough — the HELD / HERO item must match the product too.
+Rate each dimension 0-100 as a real viewer would react, each with a SHORT concrete note:
+- fidelidad: does the hero item truly match the product? (the gate)
+- freno_scroll: would a real person actually STOP scrolling on this frame? (hook / visual pull / curiosity)
+- apetito: does it look genuinely mouth-watering / craveable? (gloss, drip, freshness)
+- autenticidad: does it read as REAL handheld UGC, or staged/AI/stocky? (trust)
+- calidad: focus, framing, no warping/artifacts, label readable
 
-═══ STEP 2 — VIDEO SUITABILITY (only if fidelity passes) ═══
-Reward (80-100): a HAND interacting with the CORRECT product unit (lifting / holding / dipping / scooping it), glossy sauce/brine that can DRIP, hero item in sharp focus, authentic handheld UGC daylight.
-Mediocre (45-70): product (jar/tub) clean and in focus but NO hand / no interaction → only a tiny passive drip.
-Penalize (0-35): static jar with nothing to animate, cluttered/busy scenes that would morph/warp, product small / cut off / blurry / unreadable label, heavy text/graphics overlays.
+Also: que_funciona (1-3 concrete things that land) and que_falla (1-3 concrete weaknesses; [] if none).
 
-SCORE WITH SPREAD — reserve 95-100 ONLY for genuinely exceptional shots (perfect focus + dynamic interaction + appetizing drip). A merely-fine hand+product shot is ~80-85, not 95. Do not default to 95.
+OVERALL score = honest blend, gated by fidelidad. SPREAD it — reserve 90-100 only for content real people would genuinely share/stop on; a merely-fine shot is ~70-80. Do NOT default to 95.
 
-suggested_motion: pick what the image GENUINELY supports — "lift_drip", "dip_drip", "pull_up", "drip" (passive jar-only), or "none".
+suggested_motion: "lift_drip" | "dip_drip" | "pull_up" | "drip" | "none".
 
-Return ONLY JSON: {"score": <0-100>, "suitable": <true|false>, "reason": "<one sentence>", "suggested_motion": "<lift_drip|dip_drip|pull_up|drip|none>"}`;
+Return ONLY JSON:
+{"score":<0-100>,"suitable":<true|false>,"reason":"<one sentence verdict>","suggested_motion":"<...>","breakdown":{"fidelidad":{"score":<0-100>,"note":"<...>"},"freno_scroll":{"score":<0-100>,"note":"<...>"},"apetito":{"score":<0-100>,"note":"<...>"},"autenticidad":{"score":<0-100>,"note":"<...>"},"calidad":{"score":<0-100>,"note":"<...>"}},"que_funciona":["<...>"],"que_falla":["<...>"]}`;
 
 /**
  * @param {string} imageBase64 - imagen generada (base64, sin prefijo data:)
@@ -62,7 +63,7 @@ async function judgeVideoSuitability(imageBase64, productName = 'the product') {
   try {
     const resp = await client.messages.create({
       model: config.claude.model,
-      max_tokens: 300,
+      max_tokens: 700,
       messages: [{ role: 'user', content }]
     });
     const text = resp.content?.[0]?.text || '';
@@ -72,7 +73,14 @@ async function judgeVideoSuitability(imageBase64, productName = 'the product') {
     const score = Math.max(0, Math.min(100, r.score || 0));
     // suitable: respeta el del modelo pero gateado por MIN_SCORE
     const suitable = score >= MIN_SCORE && r.suitable !== false;
-    return { score, suitable, reason: r.reason || '', suggested_motion: r.suggested_motion || 'none' };
+    return {
+      score, suitable,
+      reason: r.reason || '',
+      suggested_motion: r.suggested_motion || 'none',
+      breakdown: r.breakdown || null,           // {fidelidad,freno_scroll,apetito,autenticidad,calidad: {score,note}}
+      que_funciona: Array.isArray(r.que_funciona) ? r.que_funciona : [],
+      que_falla: Array.isArray(r.que_falla) ? r.que_falla : []
+    };
   } catch (e) {
     logger.warn(`[VIDEO-JUDGE] falló (fail-closed: no apto): ${e.message}`);
     return { score: 0, suitable: false, reason: `judge error: ${e.message}`, suggested_motion: 'none' };

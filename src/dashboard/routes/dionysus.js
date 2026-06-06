@@ -100,7 +100,7 @@ router.get('/pending', async (req, res) => {
     const [pending, generating] = await Promise.all([
       CreativeProposal.find({ media_type: 'video', status: 'pending_video_review' })
         .sort({ created_at: -1 })
-        .select('headline primary_text product_name video_url motion_variant video_judge_score source_proposal_id created_at')
+        .select('headline primary_text product_name video_url motion_variant video_judge_score video_judge_breakdown source_proposal_id created_at')
         .lean(),
       CreativeProposal.find({ media_type: 'video', status: 'generating_video' })
         .sort({ created_at: -1 })
