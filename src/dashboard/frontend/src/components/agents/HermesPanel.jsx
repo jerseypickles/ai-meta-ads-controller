@@ -14,8 +14,8 @@ import api from '../../api';
 // DESIGN SYSTEM
 // ═══════════════════════════════════════════════════════════════════════
 const COLORS = {
-  hermes: '#f59e0b',          // amber-500
-  hermesSoft: '#f59e0b22',
+  hermes: '#06b6d4',          // cyan — matchea el orbe de Hermes en la galaxia (era amber #f59e0b)
+  hermesSoft: '#06b6d422',
   bg: '#0a0a0f',
   surface: 'rgba(255,255,255,0.025)',
   surfaceHover: 'rgba(255,255,255,0.045)',

@@ -4,7 +4,7 @@ import {
   approveDionysusVideo, rejectDionysusVideo, generateDionysusSources
 } from '../api';
 
-const FUCHSIA = '#c026d3';
+const FUCHSIA = '#ec4899'; // magenta — matchea el orbe de Dionisio en la galaxia (era #c026d3)
 
 // 🎭 Dionisio — cola de videos + DNA (qué motion rinde). Human-in-the-loop.
 function DionysusPanel() {
