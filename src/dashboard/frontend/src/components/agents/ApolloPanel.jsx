@@ -508,7 +508,7 @@ function PipelineSection({ proposals, setLightbox, setFeedbackModal }) {
             style={{ position: 'relative', aspectRatio: '1', overflow: 'hidden' }}
           >
             <img
-              src={getProposalImageUrl(p._id)}
+              src={getProposalImageUrl(p._id, 400)}
               alt={p.headline}
               loading="lazy"
               style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
@@ -620,7 +620,7 @@ function VideoSourceSection({ sources, setLightbox }) {
             style={{ background: 'rgba(17, 21, 51, 0.55)', border: `1px solid ${FUCHSIA}33`, borderRadius: 10, overflow: 'hidden', cursor: 'pointer' }}
           >
             <div onClick={() => setLightbox(getProposalImageUrl(p._id))} style={{ position: 'relative', aspectRatio: '9/16', overflow: 'hidden', background: '#000' }}>
-              <img src={getProposalImageUrl(p._id)} alt={p.headline} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+              <img src={getProposalImageUrl(p._id, 400)} alt={p.headline} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
               {p.motion_variant && (
                 <div style={{ position: 'absolute', top: 6, left: 6, background: `${FUCHSIA}e6`, color: '#fff', padding: '2px 6px', borderRadius: 4, fontSize: '0.55rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                   {p.motion_variant}

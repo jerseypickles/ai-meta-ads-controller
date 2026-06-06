@@ -385,10 +385,10 @@ export const updateProduct = async (productId, data) => {
   return response.data;
 };
 
-export const getProposalImageUrl = (id) => {
+export const getProposalImageUrl = (id, w) => {
   const BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
   const token = localStorage.getItem('auth_token');
-  return `${BASE}/api/creative-agent/proposals/${id}/image?token=${token}`;
+  return `${BASE}/api/creative-agent/proposals/${id}/image?token=${token}${w ? `&w=${w}` : ''}`;
 };
 
 // ═══ ZEUS ═══

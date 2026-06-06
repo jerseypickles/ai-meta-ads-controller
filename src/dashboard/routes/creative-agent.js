@@ -391,16 +391,29 @@ router.get('/proposals/:id/image', async (req, res) => {
     const proposal = await CreativeProposal.findById(req.params.id).lean();
     if (!proposal) return res.status(404).json({ error: 'Not found' });
 
-    // Try file first, fall back to base64 from DB
-    if (proposal.image_path && fs.existsSync(proposal.image_path)) {
-      res.sendFile(proposal.image_path);
-    } else if (proposal.image_base64) {
-      const buffer = Buffer.from(proposal.image_base64, 'base64');
-      res.set('Content-Type', 'image/png');
-      res.send(buffer);
+    // Obtener buffer (archivo o base64 de la DB)
+    let buffer;
+    if (proposal.image_path && fs.existsSync(proposal.image_path)) buffer = fs.readFileSync(proposal.image_path);
+    else if (proposal.image_base64) buffer = Buffer.from(proposal.image_base64, 'base64');
+    else return res.status(404).json({ error: 'Image not found' });
+
+    // Thumbnail on-the-fly (?w=N): la grilla pide ~400px → ~40KB en vez de 2.5MB.
+    // Sin ?w sirve el PNG full (lightbox). Las fuentes de video son PNG de 2.5MB y
+    // cargar 11+ a full-res rompía la grilla en prod (timeout/memoria).
+    const w = parseInt(req.query.w, 10);
+    if (w && w > 0 && w <= 1600) {
+      try {
+        const sharp = require('sharp');
+        buffer = await sharp(buffer).resize({ width: w, withoutEnlargement: true }).webp({ quality: 78 }).toBuffer();
+        res.set('Content-Type', 'image/webp');
+      } catch (e) {
+        res.set('Content-Type', 'image/png'); // fail-open: full si sharp falla
+      }
     } else {
-      res.status(404).json({ error: 'Image not found' });
+      res.set('Content-Type', 'image/png');
     }
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.send(buffer);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
