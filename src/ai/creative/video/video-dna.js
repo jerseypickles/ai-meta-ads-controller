@@ -113,6 +113,23 @@ function productUnitFood(name = '') {
   return productUnit(name);
 }
 
+// ¿El producto queda BIEN en comida (sobre un burger)? Solo lo naturalmente plano/chico:
+// chips y rodajas (cebolla/jalapeño). Spears, pickles enteros, tomates, beans, okra se ven
+// RAROS sobre un burger (un spear parado, un tomate entero) → mejor NO usar el motion
+// on_food para ellos; usan las otras posturas (lift/dip/drip/etc). Caso reportado 2026-06-05.
+function fitsOnFood(productName = '') {
+  const n = (productName || '').toLowerCase();
+  if (n.includes('chip')) return true;
+  if (n.includes('onion') || n.includes('jalap') || n.includes('pepper')) return true; // rodajas naturales
+  return false; // spears, pickles enteros, tomates, beans, okra → NO burger
+}
+
+// Motions PERMITIDOS para un producto (excluye los que no le quedan, ej. on_food en spears).
+function motionsForProduct(productName = '') {
+  const allKeys = MOTIONS.map(m => m.key);
+  return fitsOnFood(productName) ? allKeys : allKeys.filter(k => k !== 'on_food');
+}
+
 // CAMERA — movimiento de cámara (Seedance).
 const CAMERAS = [
   { key: 'static',         vid: 'Locked-off static shot, no camera movement at all.' },
@@ -151,8 +168,11 @@ function keys(dim) {
  *   el "no" del creador en la review manual baja el peso de ese combo (loop de animabilidad).
  */
 function pickWeighted(dim, statsByKey = {}, opts = {}) {
-  const { minSamples = 2, floor = 1, k = 1.2, kHold = 3, exploreRate = 0.4 } = opts;
-  const values = DIMS[dim] || [];
+  const { minSamples = 2, floor = 1, k = 1.2, kHold = 3, exploreRate = 0.4, allowedKeys = null } = opts;
+  let values = DIMS[dim] || [];
+  // allowedKeys: restringe el set candidato (ej. excluir on_food para productos que no
+  // quedan bien en burger). Aplica a explore Y exploit porque ambos usan `values`.
+  if (allowedKeys) values = values.filter(v => allowedKeys.includes(v.key));
   if (!values.length) return null;
 
   // EXPLORE forzado (40%): favorece lo menos usado (cobertura), sin sesgo de exploit.
@@ -283,6 +303,6 @@ function buildVideoPrompt(productName, motionKey, cameraKey, styleOverride) {
 
 module.exports = {
   MOTIONS, CAMERAS, SCENES, DIMS, BASE_STYLE, VIDEO_STYLE_MOODS, pickVideoStyle,
-  productUnit, productUnitFood,
+  productUnit, productUnitFood, fitsOnFood, motionsForProduct,
   get, keys, pickWeighted, getDimensionStats, buildImageScene, buildVideoPrompt
 };

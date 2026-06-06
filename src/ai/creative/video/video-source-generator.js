@@ -131,7 +131,9 @@ async function generateVideoSources() {
   for (let i = 0; i < need; i++) {
     const product = products[i % products.length];
     // Exploit/explore: sesga hacia el motion/scene ganador, sigue probando los otros.
-    const motionKey = dna.pickWeighted('motion', motionStats);
+    // allowedKeys excluye motions que no le quedan al producto (ej. on_food en spears →
+    // un spear sobre un burger se ve raro; esos productos usan las otras posturas).
+    const motionKey = dna.pickWeighted('motion', motionStats, { allowedKeys: dna.motionsForProduct(product.product_name) });
     const sceneKey = dna.pickWeighted('scene', sceneStats);
     try {
       const refImages = product.png_references.map(ref => ({
