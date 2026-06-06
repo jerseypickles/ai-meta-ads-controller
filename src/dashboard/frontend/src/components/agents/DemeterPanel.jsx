@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { LineChart, Line, BarChart, Bar, ResponsiveContainer, Tooltip, XAxis, YAxis, ReferenceLine, Legend } from 'recharts';
 import api from '../../api';
 
-const DEMETER_COLOR = '#14b8a6';
+const DEMETER_COLOR = '#10b981'; // verde (matchea orbe galaxia)
 const COLOR_META = '#60a5fa';
 const COLOR_CASH = '#34d399';
 const COLOR_GAP_OK = '#34d399';

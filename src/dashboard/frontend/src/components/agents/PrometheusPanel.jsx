@@ -8,7 +8,7 @@ import {
   getTestImageUrl
 } from '../../api';
 
-const PROM_COLOR = '#fb923c';
+const PROM_COLOR = '#ef4444'; // rojo (matchea orbe galaxia)
 
 function formatDate(d) {
   if (!d) return '';

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import api from '../../api';
 
-const ATHENA_COLOR = '#60a5fa';
+const ATHENA_COLOR = '#a855f7'; // violeta (matchea orbe galaxia)
 
 const ACTION_LABELS = {
   scale_up: { icon: '↑', label: 'Scale Up', color: '#10b981' },
