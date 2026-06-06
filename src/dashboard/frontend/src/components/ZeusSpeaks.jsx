@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AdSetDetailModal } from './AdSetDetailCard';
+import CustomerIntelPanel from './CustomerIntelPanel';
+import DemandForecastPanel from './DemandForecastPanel';
 
 // react-markdown v10 por defecto sanea URLs con un safelist (http/https/mailto).
 // Nuestros links `zeus://adset/<id>` NO están en ese safelist — el default
@@ -519,6 +521,8 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   const [showConversationList, setShowConversationList] = useState(false);
   const [conversationList, setConversationList] = useState([]);
   const [showCodeRecs, setShowCodeRecs] = useState(false);
+  const [showCustomerIntel, setShowCustomerIntel] = useState(false);
+  const [showDemandForecast, setShowDemandForecast] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
@@ -1236,7 +1240,11 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                     setShowTrackRecord(false);
                     setShowAutoPause(false);
                     setShowNotifications(false);
+                    setShowCustomerIntel(false);
+                    setShowDemandForecast(false);
                     if (key === 'plans') setShowPlans(true);
+                    else if (key === 'customer-intel') setShowCustomerIntel(true);
+                    else if (key === 'demand-forecast') setShowDemandForecast(true);
                     else if (key === 'calendar') setShowCalendar(true);
                     else if (key === 'architecture') setShowArchitecture(true);
                     else if (key === 'memory') setShowMemory(true);
@@ -1257,6 +1265,14 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
             </AnimatePresence>
           </div>
         </div>
+
+        {/* Paneles de inteligencia de negocio (Pilares 1 y 2 "Zeus esteroides") */}
+        <AnimatePresence>
+          {showCustomerIntel && <CustomerIntelPanel onClose={() => setShowCustomerIntel(false)} />}
+        </AnimatePresence>
+        <AnimatePresence>
+          {showDemandForecast && <DemandForecastPanel onClose={() => setShowDemandForecast(false)} />}
+        </AnimatePresence>
 
         {/* Panel de planes estratégicos */}
         <AnimatePresence>
@@ -2052,6 +2068,13 @@ function ZeusPalette({ onClose, onSelect, codeRecsPending, archDrafts, prefDraft
         { key: 'memory', emoji: '💭', label: 'Memoria', desc: 'Preferencias persistentes', badge: prefDrafts },
         { key: 'calendar', emoji: '📅', label: 'Calendario', desc: 'Eventos estacionales' },
         { key: 'conversations', emoji: '📁', label: 'Conversaciones', desc: 'Historial de chats' }
+      ]
+    },
+    {
+      group: 'Inteligencia de negocio',
+      entries: [
+        { key: 'customer-intel', emoji: '👥', label: 'Cliente', desc: 'Cohortes · LTV · recompra · RFM · productos' },
+        { key: 'demand-forecast', emoji: '📈', label: 'Demanda', desc: 'Forecast 7/30/90d · estacionalidad · eventos' }
       ]
     },
     {
