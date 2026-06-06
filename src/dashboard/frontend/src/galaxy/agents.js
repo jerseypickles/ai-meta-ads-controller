@@ -25,9 +25,9 @@ export const agentColor = (id) => `var(--ag-${id})`;
 export const AGENT_KPIS = {
   ares:       [{ key: 'cbos_activos', label: 'CBOs' }, { key: 'spend_hoy', label: 'Spend hoy', money: true }],
   athena:     [{ key: 'actions_today', label: 'Acciones hoy' }],
-  apollo:     [{ key: 'actions_today', label: 'Acciones hoy' }],
-  prometheus: [{ key: 'actions_today', label: 'Acciones hoy' }],
-  demeter:    [{ key: 'actions_today', label: 'Acciones hoy' }],
+  apollo:     [{ key: 'creativos_7d', label: 'Creativos 7d' }],
+  prometheus: [{ key: 'tests_activos', label: 'Tests' }, { key: 'win_rate', label: 'Win rate', suffix: '%' }],
+  demeter:    [{ key: 'cash_roas', label: 'Cash ROAS', suffix: 'x' }],
   dionisio:   [{ key: 'actions_today', label: 'Acciones hoy' }],
   hermes:     [{ key: 'actions_today', label: 'Publicaciones', awareness: true }]
 };

@@ -70,6 +70,28 @@ router.get('/', async (req, res) => {
       spend_hoy: Math.round(aresCbos.reduce((s, c) => s + ((c.metrics?.today || c.metrics?.last_1d || {}).spend || 0), 0))
     };
 
+    // KPIs reales del resto de agentes (fail-soft: cada query en su try)
+    const w7 = new Date(Date.now() - 7 * 86400000);
+    try {
+      const TestRun = require('../../db/models/TestRun');
+      const [testsActivos, grad7, killed7] = await Promise.all([
+        TestRun.countDocuments({ phase: { $in: ['learning', 'evaluating'] } }),
+        TestRun.countDocuments({ phase: 'graduated', graduated_at: { $gte: w7 } }),
+        TestRun.countDocuments({ phase: 'killed', $or: [{ killed_at: { $gte: w7 } }, { updated_at: { $gte: w7 } }] })
+      ]);
+      const wr = (grad7 + killed7) > 0 ? Math.round((grad7 / (grad7 + killed7)) * 100) : 0;
+      byAgent.prometheus.kpis = { tests_activos: testsActivos, win_rate: wr };
+    } catch (e) { logger.warn(`[OVERVIEW] prometheus kpis: ${e.message}`); }
+    try {
+      const CreativeProposal = require('../../db/models/CreativeProposal');
+      byAgent.apollo.kpis = { creativos_7d: await CreativeProposal.countDocuments({ created_at: { $gte: w7 } }) };
+    } catch (e) { logger.warn(`[OVERVIEW] apollo kpis: ${e.message}`); }
+    try {
+      const { getAccountCashSignal } = require('../../ai/agent/demeter-cash-signal');
+      const cs = await getAccountCashSignal();
+      byAgent.demeter.kpis = { cash_roas: cs.available ? +Number(cs.cash_roas_14d).toFixed(2) : null };
+    } catch (e) { logger.warn(`[OVERVIEW] demeter kpis: ${e.message}`); }
+
     // ── Actividad reciente (timeline + feed) ──
     const activity = recentActions.slice(0, 15).map(a => ({
       agent: AGENT_TYPE_MAP[a.agent_type] || 'zeus',

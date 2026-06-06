@@ -10,7 +10,8 @@ function ringPos(angleDeg, radius) {
 
 function fmtKpi(val, kpi) {
   if (val == null) return '—';
-  return kpi.money ? `$${Number(val).toLocaleString()}` : String(val);
+  if (kpi.money) return `$${Number(val).toLocaleString()}`;
+  return `${val}${kpi.suffix || ''}`;
 }
 
 function AgentOrb({ agent, data, selected, compact, onSelect }) {

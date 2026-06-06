@@ -177,7 +177,7 @@ function AgentSummaryPanel({ id, data, onEnter, onClose }) {
           <div key={k.key} style={{ background: 'var(--bg-tertiary)', border: `1px solid color-mix(in srgb, ${color} 25%, transparent)`, borderRadius: 8, padding: '10px 12px' }}>
             <div style={{ fontSize: '0.56rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{k.label}</div>
             <div style={{ fontSize: '1.15rem', fontWeight: 800, color, fontFamily: 'JetBrains Mono, monospace' }}>
-              {(() => { const v = (data?.kpis && data.kpis[k.key]) ?? data?.[k.key]; return v == null ? '—' : (k.money ? `$${Number(v).toLocaleString()}` : v); })()}
+              {(() => { const v = (data?.kpis && data.kpis[k.key]) ?? data?.[k.key]; return v == null ? '—' : (k.money ? `$${Number(v).toLocaleString()}` : `${v}${k.suffix || ''}`); })()}
             </div>
           </div>
         ))}
