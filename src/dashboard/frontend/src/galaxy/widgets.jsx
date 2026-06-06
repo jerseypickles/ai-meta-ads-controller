@@ -10,9 +10,9 @@ function ringPos(angleDeg, radius, cx = 50, cy = 50) {
 export function Legend() {
   const all = [ZEUS, ...AGENTS];
   return (
-    <div style={{ position: 'absolute', right: 14, bottom: 120, background: 'rgba(15,17,23,0.7)', backdropFilter: 'blur(6px)', border: '1px solid var(--border-color)', borderRadius: 10, padding: '10px 12px', pointerEvents: 'none' }}>
-      <div style={{ fontSize: '0.58rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Leyenda</div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 14px' }}>
+    <div style={{ position: 'absolute', right: 12, bottom: 12, background: 'rgba(15,17,23,0.78)', backdropFilter: 'blur(8px)', border: '1px solid var(--border-color)', borderRadius: 10, padding: '8px 11px', pointerEvents: 'none' }}>
+      <div style={{ fontSize: '0.55rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 5 }}>Leyenda</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3px 12px' }}>
         {all.map(a => (
           <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ width: 7, height: 7, borderRadius: '50%', background: `var(--ag-${a.id})`, boxShadow: `0 0 5px var(--ag-${a.id})` }} />
@@ -28,7 +28,7 @@ export function Legend() {
 export function Minimap({ selected, onSelect }) {
   const W = 168, H = 120;
   return (
-    <div style={{ position: 'absolute', left: 14, bottom: 120, width: W, background: 'rgba(15,17,23,0.7)', backdropFilter: 'blur(6px)', border: '1px solid var(--border-color)', borderRadius: 10, padding: 10 }}>
+    <div style={{ position: 'absolute', left: 12, bottom: 12, width: W, background: 'rgba(15,17,23,0.78)', backdropFilter: 'blur(8px)', border: '1px solid var(--border-color)', borderRadius: 10, padding: 10 }}>
       <div style={{ fontSize: '0.58rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Mapa General</div>
       <svg width={W - 20} height={H - 36} viewBox="0 0 100 70" style={{ display: 'block' }}>
         {AGENTS.map(a => {

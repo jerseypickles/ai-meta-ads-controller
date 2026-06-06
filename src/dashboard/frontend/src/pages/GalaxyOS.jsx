@@ -97,7 +97,7 @@ export default function GalaxyOS() {
         {/* GALAXIA / SPLIT */}
         {view === 'red' ? (
           <div style={{ flex: 1, position: 'relative', minWidth: 0 }}>
-            <NeuralCommandCenter onAgentClick={(id) => { setSelected(id); setView('galaxia'); }} />
+            <NeuralCommandCenter hideHeader onAgentClick={(id) => { setSelected(id); setView('galaxia'); }} />
           </div>
         ) : view === 'actividad' ? (
           <ActivityView activity={overview?.activity} />
@@ -210,12 +210,8 @@ function AgentSummaryPanel({ id, data, onEnter, onClose }) {
         </div>
       )}
 
-      {/* Acciones */}
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button onClick={onEnter} style={{ flex: 1, background: `color-mix(in srgb, ${color} 30%, transparent)`, border: `1px solid ${color}`, color: '#fff', borderRadius: 8, padding: '9px 0', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 700 }}>Entrar</button>
-        <button disabled style={{ flex: 1, background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: 8, padding: '9px 0', cursor: 'not-allowed', fontSize: '0.78rem' }}>Chat</button>
-        <button disabled style={{ flex: 1, background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: 8, padding: '9px 0', cursor: 'not-allowed', fontSize: '0.78rem' }}>Logs</button>
-      </div>
+      {/* Acción */}
+      <button onClick={onEnter} style={{ width: '100%', background: `color-mix(in srgb, ${color} 30%, transparent)`, border: `1px solid ${color}`, color: '#fff', borderRadius: 8, padding: '10px 0', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 700 }}>Entrar al panel de {meta.label}</button>
     </div>
   );
 }

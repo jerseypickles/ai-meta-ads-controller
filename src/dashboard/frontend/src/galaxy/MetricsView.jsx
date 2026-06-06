@@ -44,7 +44,7 @@ export default function MetricsView() {
         <Kpi label="ROAS 7d" value={`${(ov?.roas_7d || 0).toFixed(2)}x`} color={roasColor(ov?.roas_7d)} />
         <Kpi label="Revenue hoy" value={fmt$(ov?.today_revenue)} color="#60a5fa" />
         <Kpi label="Spend hoy" value={fmt$(ov?.spend_today)} color="#f59e0b" />
-        <Kpi label="Spend 30d" value={fmt$(ov?.spend_30d)} color="#a78bfa" />
+        <Kpi label="Spend 14d" value={fmt$(ov?.spend_14d)} color="#a78bfa" />
         <Kpi label="Presupuesto" value={fmt$(ov?.daily_budget)} color="#22d3ee" />
       </div>
 
@@ -53,10 +53,10 @@ export default function MetricsView() {
         <SectionLabel>ROAS por ventana</SectionLabel>
         <div style={{ display: 'flex', gap: 8 }}>
           {windows.map(w => {
-            const v = ov?.[w.k] || 0; const c = roasColor(v);
+            const v = ov?.[w.k] || 0; const c = roasColor(v); const noData = !v;
             return (
               <div key={w.k} style={{ flex: 1, background: 'rgba(255,255,255,0.03)', border: `1px solid ${c}33`, borderRadius: 8, padding: '8px 6px', textAlign: 'center' }}>
-                <div style={{ fontSize: '0.95rem', fontWeight: 800, color: c, fontFamily: 'JetBrains Mono, monospace' }}>{v.toFixed(2)}x</div>
+                <div style={{ fontSize: '0.95rem', fontWeight: 800, color: noData ? 'var(--text-muted)' : c, fontFamily: 'JetBrains Mono, monospace' }}>{noData ? '—' : v.toFixed(2) + 'x'}</div>
                 <div style={{ height: 3, background: 'rgba(255,255,255,0.08)', borderRadius: 2, margin: '4px 0' }}>
                   <div style={{ width: `${Math.min(100, (v / 5) * 100)}%`, height: '100%', background: c, borderRadius: 2 }} />
                 </div>

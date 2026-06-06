@@ -46,7 +46,7 @@ class GraphErrorBoundary extends Component {
 // El canvas real ahora vive en NeuralGraphView (force-directed, Obsidian style)
 // ═══════════════════════════════════════════════════════════════════════════
 
-export default function NeuralCommandCenter({ onAgentClick }) {
+export default function NeuralCommandCenter({ onAgentClick, hideHeader = false }) {
   const [account, setAccount] = useState(null);
 
   useEffect(() => {
@@ -66,16 +66,18 @@ export default function NeuralCommandCenter({ onAgentClick }) {
 
   return (
     <div className="neural-command">
-      <div className="neural-command-header">
-        <div className="neural-command-title">
-          🧠 Neural Command Center
+      {!hideHeader && (
+        <div className="neural-command-header">
+          <div className="neural-command-title">
+            🧠 Neural Command Center
+          </div>
+          <div style={{ fontSize: '0.72rem', color: 'var(--bos-text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>
+            ROAS hoy <span style={{ color: 'var(--bos-bio)' }}>{account?.roas_today || '—'}x</span>
+            {' · '}
+            Revenue <span style={{ color: 'var(--bos-synapse)' }}>${account?.revenue_today?.toLocaleString() || 0}</span>
+          </div>
         </div>
-        <div style={{ fontSize: '0.72rem', color: 'var(--bos-text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>
-          ROAS hoy <span style={{ color: 'var(--bos-bio)' }}>{account?.roas_today || '—'}x</span>
-          {' · '}
-          Revenue <span style={{ color: 'var(--bos-synapse)' }}>${account?.revenue_today?.toLocaleString() || 0}</span>
-        </div>
-      </div>
+      )}
       <div className="neural-canvas">
         <GraphErrorBoundary>
           <NeuralGraphView onAgentClick={onAgentClick} />
