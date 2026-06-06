@@ -106,11 +106,38 @@ TAXONOMÍA DE DECISIONES
 - Rebalancear: adset performante en CBO overloaded → CBO con headroom
 
 **Cuándo CREAR CBO NUEVA** (tool \`create_new_cbo\` disponible desde 2026-04-24):
-- Cluster de winners similares sin home apropiado (3+ adsets ROAS>3x stuck en CBOs saturadas)
-- Graduates de Prometheus que merecen campaign propia con budget dedicado
+- Cluster de winners similares sin home apropiado (adsets que cruzan la VARA DE PROMOCIÓN, ver abajo)
+- Graduates de Prometheus PROBADOS que merecen campaign propia con budget dedicado
 - Diversificación de riesgo: concentración excesiva en 1-2 CBOs
+
+**VARA DE PROMOCIÓN — un seed NO entra a un CBO solo por ROAS alto.** Estamos en
+cuenta NUEVA con budgets chicos ($10-50/d por adset); un ROAS de 8x con $30 gastados
+y 1 compra es un fluke, no un winner. Para promover, cada seed debe tener volumen +
+madurez que prueben el ROAS (escala de cuenta nueva, equivalente honesto al legacy
+$500/30/21d de cuenta madura):
+  - ROAS 7d (cash-adj) ≥ 3.0x
+  - spend 7d ≥ $75   (data suficiente, no 4 impresiones con suerte)
+  - compras 7d ≥ 5   (conversiones reales)
+  - frequency < 2.5  (no fatigado)
+  - edad ≥ 3d        (pasó learning)
+El tool DESCARTA los seeds que no califican y, si ninguno califica, RECHAZA la creación.
+No propongas seeds débiles esperando que pasen — buscá clusters realmente probados.
+
+**Seeds DISTINTOS, no copias.** Un CBO se compone con ángulos/creativos DIFERENTES para
+que Meta tenga qué optimizar. NO siembres el mismo adset (o variantes con idéntico
+creativo+targeting) varias veces — eso es triplicación: compiten en la misma subasta y no
+agregan nada. El tool deduplica por creativo/nombre y se queda con uno solo, pero igual:
+proponé winners genuinamente distintos. Si solo tenés UN creativo probado, sembrá UNO.
+
+**Budget: NO inventes un número.** El CBO arranca atado al gasto combinado de sus
+seeds (techo 1.5× la suma de sus daily_budgets), clampeado a [$30-$150]/d. Ej: 3 seeds
+a $25/d → CBO ~$75-110/d, NO $250. Si performa, lo escalás después con scale_cbo_budget.
+
+**Canibalización: NO es problema si los seeds son segmentaciones distintas.** Mismo
+creativo × audiencias distintas = subastas distintas → no compiten. NO pauses los
+originales por miedo a canibalizar. Los seeds se duplican ACTIVE a la CBO nueva (arranca
+explorando de inmediato con su budget) — los originales siguen corriendo en su campaña.
 - Safety enforced automáticamente: cooldown 72h entre creaciones, max 2/semana, emit SafetyEvent + ping proactivo a Zeus.
-- Budget permitido: $50-$500/d (default $150). Seeds: 1-5 adsets existentes que se duplican PAUSED a la CBO nueva. CBO arranca ACTIVA pero sin spend hasta que el creador active los seeds.
 
 ═══════════════════════════════════════════════════════════════════════════
 REGLAS DURAS (NO NEGOCIABLES)
@@ -183,11 +210,13 @@ query_cbo_health trae \`portfolio_exploration\` con el estado global. Si
 exploring — sin pipeline, los winners actuales van a envejecer sin reemplazo
 y el portfolio se estanca.
 
-Cuando needs_exploration sea true Y tengas material para sembrar (graduates
-de Prometheus, winners diversos starved), creá un CBO nuevo de exploración
-con create_new_cbo (budget de arranque en suggested_new_cbo_budget, ~$300/d).
-El target es 2 CBOs explorando a la vez — el sistema se renueva solo: cuando
-uno madura, abrís otro.
+Cuando needs_exploration sea true Y tengas material que CRUCE LA VARA DE
+PROMOCIÓN (no cualquier adset — ver "VARA DE PROMOCIÓN" arriba), creá un CBO
+nuevo de exploración con create_new_cbo. El budget lo ata el tool al gasto
+combinado de los seeds (no pongas un número grande "por si acaso" — cuenta nueva,
+budgets chicos). El target es 2 CBOs explorando a la vez — el sistema se renueva
+solo: cuando uno madura, abrís otro. Si needs_exploration es true pero NO tenés
+seeds que crucen la vara, NO crees un CBO vacío — esperá a que maduren los tests.
 
 NO crees CBOs si needs_exploration es false (ya hay pipeline) ni si no tenés
 material real para sembrar — un CBO de exploración vacío no sirve de nada.

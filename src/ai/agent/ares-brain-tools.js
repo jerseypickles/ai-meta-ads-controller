@@ -41,9 +41,21 @@ const BRAIN_BUDGET_FLOOR = 30;  // no bajar CBO debajo de $30/d (coherente con p
 // Ola 3 — creación autónoma de CBOs
 const CBO_CREATE_COOLDOWN_HOURS = 72;         // Mínimo entre creaciones
 const CBO_CREATE_MAX_PER_WEEK = 2;            // Cap duro semanal
-const CBO_CREATE_BUDGET_MIN = 50;             // $50/d piso
-const CBO_CREATE_BUDGET_MAX = 500;            // $500/d techo inicial (puede escalarse post-creación)
-const CBO_CREATE_BUDGET_DEFAULT = 150;        // $150/d default si el LLM no pide
+const CBO_CREATE_BUDGET_MIN = 30;             // $30/d piso (coherente con cuenta nueva: adsets $10-50/d)
+const CBO_CREATE_BUDGET_MAX = 150;            // $150/d techo INICIAL — cuenta nueva, budgets chicos. Se escala post-creación con scale_cbo_budget si performa.
+const CBO_CREATE_BUDGET_DEFAULT = 60;         // $60/d default si el LLM no pide (≈ 2-3 seeds chicos). El budget real se ata a los seeds (ver handleCreateNewCBO).
+const CBO_CREATE_SEED_BUDGET_MULT = 1.5;      // techo del CBO = 1.5× gasto combinado de los seeds (arranca cerca de su nivel probado, no en un número inventado)
+
+// ─── VARA DE PROMOCIÓN A CBO (gate de seed) ──────────────────────────────────
+// Un seed NO entra a un CBO solo por ROAS alto — debe tener volumen + madurez
+// que prueben que el ROAS es real, no un fluke de pocas impresiones. Misma idea
+// que el legacy ($500/30 compras/21d) pero ESCALADA a cuenta nueva (budgets $10-50/d).
+// El legacy es de cuenta madura; esto es el equivalente honesto para arranque.
+const SEED_MIN_ROAS = 3.0;          // ROAS 7d sostenido (cash-adj si Demeter disponible) — vs legacy 3.0
+const SEED_MIN_SPEND = 75;          // gasto 7d mínimo = data suficiente para confiar el ROAS — vs legacy $500
+const SEED_MIN_PURCHASES = 5;       // compras 7d = conversiones reales, no 1 venta con suerte — vs legacy 30
+const SEED_MIN_AGE_DAYS = 3;        // pasó learning phase (best-effort: solo si created_time existe) — vs legacy 21
+const SEED_MAX_FREQ = 2.5;          // no fatigado (freq alta = audiencia quemada)
 const CBO_CREATE_COOLDOWN_KEY = 'ares_brain_last_cbo_creation';  // SystemConfig key
 
 async function logBrainAction({ entity_id, entity_name, entity_type, action, before_value, after_value, reasoning, metadata, success, error }) {
@@ -1306,15 +1318,10 @@ async function handleCreateNewCBO({ name, daily_budget, objective, seed_adset_id
     return { error: `objective "${resolvedObjective}" inválido. Válidos: ${validObjectives.join(', ')}` };
   }
 
-  // Budget clamp
+  // Budget clamp — clampea en vez de rechazar (operación autónoma robusta). El
+  // budget final se ata además al gasto combinado de los seeds (ver paso 4).
   const budgetNum = typeof daily_budget === 'number' ? daily_budget : CBO_CREATE_BUDGET_DEFAULT;
-  if (budgetNum < CBO_CREATE_BUDGET_MIN || budgetNum > CBO_CREATE_BUDGET_MAX) {
-    return {
-      rejected: true,
-      reason: `daily_budget $${budgetNum} fuera de rango permitido [$${CBO_CREATE_BUDGET_MIN}-$${CBO_CREATE_BUDGET_MAX}]`
-    };
-  }
-  const resolvedBudget = Math.round(budgetNum);
+  let resolvedBudget = Math.round(Math.min(Math.max(budgetNum, CBO_CREATE_BUDGET_MIN), CBO_CREATE_BUDGET_MAX));
 
   // ─── SAFETY OLA 3 ────────────────────────────────────────────────────
 
@@ -1377,14 +1384,87 @@ async function handleCreateNewCBO({ name, daily_budget, objective, seed_adset_id
     logger.warn(`[ARES-BRAIN-TOOLS] directive check falló (fail-open): ${err.message}`);
   }
 
-  // 4. Validar seed adsets existen y están ACTIVE
+  // 4. Validar seed adsets: existen, ACTIVE, y CRUZAN LA VARA DE PROMOCIÓN.
+  // No basta ROAS alto — exigimos volumen + madurez (spend/compras/edad/freq)
+  // para no promover flukes. Los que no califican se DESCARTAN (no matan el CBO),
+  // pero si ninguno califica → rechazo (un CBO sembrado con flukes es ruido).
+  // Cash-adj: si Demeter está disponible, el ROAS se mide en cash, no en Meta crudo.
+  let haircut = 1;
+  try {
+    const { getAccountCashSignal } = require('./demeter-cash-signal');
+    const cs = await getAccountCashSignal();
+    if (cs && cs.available) haircut = cs.haircut_factor;
+  } catch (_) { /* fail-open: sin Demeter, ROAS Meta crudo */ }
+
   const seedSnaps = [];
+  const seedRejections = [];
   for (const sid of seed_adset_ids) {
     const snap = await MetricSnapshot.findOne({ entity_type: 'adset', entity_id: sid })
       .sort({ snapshot_at: -1 }).lean();
     if (!snap) return { error: `seed adset ${sid} no encontrado` };
-    if (snap.status !== 'ACTIVE') return { rejected: true, reason: `seed adset ${sid} en estado ${snap.status}` };
+    if (snap.status !== 'ACTIVE') { seedRejections.push(`${sid}: estado ${snap.status}`); continue; }
+
+    const m = snap.metrics?.last_7d || {};
+    const roasCash = (m.roas || 0) * haircut;
+    const spend = m.spend || 0;
+    const purch = m.purchases || 0;
+    const freq = m.frequency || 0;
+    const created = snap.created_time || snap.entity_created_at;
+    const ageDays = created ? (Date.now() - new Date(created).getTime()) / 86400000 : null;
+
+    const fails = [];
+    if (roasCash < SEED_MIN_ROAS) fails.push(`ROAS ${roasCash.toFixed(2)}x<${SEED_MIN_ROAS}`);
+    if (spend < SEED_MIN_SPEND) fails.push(`spend $${Math.round(spend)}<$${SEED_MIN_SPEND}`);
+    if (purch < SEED_MIN_PURCHASES) fails.push(`compras ${purch}<${SEED_MIN_PURCHASES}`);
+    if (freq && freq > SEED_MAX_FREQ) fails.push(`freq ${freq.toFixed(1)}>${SEED_MAX_FREQ}`);
+    if (ageDays !== null && ageDays < SEED_MIN_AGE_DAYS) fails.push(`edad ${ageDays.toFixed(1)}d<${SEED_MIN_AGE_DAYS}d`);
+
+    if (fails.length) { seedRejections.push(`${sid} (${(snap.entity_name||'').slice(0,24)}): ${fails.join(', ')}`); continue; }
     seedSnaps.push(snap);
+  }
+
+  if (seedSnaps.length === 0) {
+    return {
+      rejected: true,
+      reason: `ningún seed cruza la vara de promoción (cuenta nueva: ROAS≥${SEED_MIN_ROAS}x cash · spend≥$${SEED_MIN_SPEND} · compras≥${SEED_MIN_PURCHASES} · freq<${SEED_MAX_FREQ}). Rechazados: ${seedRejections.join(' | ')}`,
+      seed_rejections: seedRejections
+    };
+  }
+
+  // 4b. DEDUP — no sembrar el MISMO adset N veces. Si varios seeds comparten creativo
+  // (mismo creative_id, o mismo nombre base en la convención de la cuenta), es triplicación
+  // redundante: Meta no tiene qué diferenciar y compiten en la misma subasta. Un CBO se
+  // compone con ángulos DISTINTOS, no con copias. Quedate con el de mejor ROAS por grupo.
+  const seedSig = (s) => {
+    if (s.creative_id) return `cr:${s.creative_id}`;
+    const base = (s.entity_name || '')
+      .replace(/\[[^\]]*\]/g, '')      // saca [Seed] [Prometheus] etc
+      .replace(/\s+/g, ' ').trim().toLowerCase();
+    return `nm:${base}`;
+  };
+  const seedRoas = (s) => (s.metrics?.last_7d?.roas || 0);
+  const bySig = new Map();
+  for (const s of seedSnaps) {
+    const sig = seedSig(s);
+    const cur = bySig.get(sig);
+    if (!cur || seedRoas(s) > seedRoas(cur)) bySig.set(sig, s);
+  }
+  const dropped = seedSnaps.length - bySig.size;
+  if (dropped > 0) {
+    logger.info(`[ARES-BRAIN] dedup seeds: ${seedSnaps.length}→${bySig.size} (descartados ${dropped} adsets idénticos — mismo creativo/targeting). Un CBO no necesita el mismo adset repetido.`);
+    seedSnaps.length = 0;
+    seedSnaps.push(...bySig.values());
+  }
+
+  // Budget atado a la escala de los seeds que CALIFICAN — el CBO arranca cerca de
+  // su gasto combinado probado, no en un número inventado (cuenta nueva = budgets chicos).
+  const seedBudgetSum = seedSnaps.reduce((s, x) => s + (Number(x.daily_budget) || 0), 0);
+  if (seedBudgetSum > 0) {
+    const seedCap = Math.max(Math.round(seedBudgetSum * CBO_CREATE_SEED_BUDGET_MULT), CBO_CREATE_BUDGET_MIN);
+    if (resolvedBudget > seedCap) {
+      logger.info(`[ARES-BRAIN] budget $${resolvedBudget} > ${CBO_CREATE_SEED_BUDGET_MULT}× seeds ($${seedBudgetSum}/d combinado) → capeado a $${seedCap}/d`);
+      resolvedBudget = seedCap;
+    }
   }
 
   // ─── EJECUCIÓN ───────────────────────────────────────────────────────
@@ -1574,4 +1654,14 @@ async function executeTool(name, input) {
   }
 }
 
-module.exports = { TOOL_DEFINITIONS, executeTool };
+// Vara de promoción exportada para que el panel (tab Candidatos) muestre el MISMO
+// criterio que usa el Brain al crear CBO — fuente única de verdad.
+const PROMOTION_BAR = {
+  min_roas: SEED_MIN_ROAS,
+  min_spend: SEED_MIN_SPEND,
+  min_purchases: SEED_MIN_PURCHASES,
+  max_freq: SEED_MAX_FREQ,
+  min_age_days: SEED_MIN_AGE_DAYS
+};
+
+module.exports = { TOOL_DEFINITIONS, executeTool, PROMOTION_BAR };

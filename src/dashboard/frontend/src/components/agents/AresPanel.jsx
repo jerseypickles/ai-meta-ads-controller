@@ -22,6 +22,7 @@ export default function AresPanel() {
   const [data, setData] = useState(null);
   const [cboHealth, setCboHealth] = useState(null);
   const [portfolioActions, setPortfolioActions] = useState(null);
+  const [cboCandidates, setCboCandidates] = useState(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [activeSection, setActiveSection] = useState('overview');
@@ -34,14 +35,16 @@ export default function AresPanel() {
 
   async function loadData() {
     try {
-      const [aresRes, healthRes, actionsRes] = await Promise.all([
+      const [aresRes, healthRes, actionsRes, candsRes] = await Promise.all([
         getAresIntelligence().catch(() => null),
         api.get('/api/ares/cbo-health').then(r => r.data).catch(() => null),
-        api.get('/api/ares/portfolio-actions?hours=72').then(r => r.data).catch(() => null)
+        api.get('/api/ares/portfolio-actions?hours=72').then(r => r.data).catch(() => null),
+        api.get('/api/ares/cbo-candidates').then(r => r.data).catch(() => null)
       ]);
       setData(aresRes || {});
       setCboHealth(healthRes);
       setPortfolioActions(actionsRes);
+      setCboCandidates(candsRes);
     } catch (err) {
       console.error('Ares load error:', err);
     } finally {
@@ -198,10 +201,7 @@ export default function AresPanel() {
           { k: 'overview', l: 'Resumen', c: ARES_COLOR },
           { k: 'actions', l: 'Acciones', c: '#10b981', n: portfolioActions?.summary?.total },
           { k: 'health', l: 'Salud CBOs', c: '#10b981', n: cboHealth?.summary?.total },
-          { k: 'cbo1', l: 'CBO 1 · Probados', c: '#ef4444', n: cbo1.active_clones },
-          { k: 'cbo2', l: 'CBO 2 · Nuevos', c: '#f59e0b', n: cbo2.active_clones },
-          { k: 'cbo3', l: 'CBO 3 · Rescate', c: '#8b5cf6', n: cbo3.active_clones },
-          { k: 'candidates', l: 'Candidatos', c: '#10b981', n: candidates.length },
+          { k: 'candidates', l: 'Candidatos', c: '#10b981', n: cboCandidates?.ready_count },
           { k: 'history', l: 'Historial', c: '#6b7280', n: dups.length },
           { k: 'criteria', l: 'Criterios', c: '#60a5fa' }
         ].map(t => {
@@ -242,10 +242,9 @@ export default function AresPanel() {
         >
           {activeSection === 'overview' && (
             <OverviewSection
-              cbo1={cbo1} cbo2={cbo2} cbo3={cbo3}
-              candidates={candidates}
+              cboHealth={cboHealth}
+              candidates={(cboCandidates?.candidates || []).filter(c => c.ready)}
               recentDups={dups.slice(0, 5)}
-              hasCBO3={!!data?.campaign_3_id}
             />
           )}
           {activeSection === 'health' && (
@@ -254,17 +253,8 @@ export default function AresPanel() {
           {activeSection === 'actions' && (
             <PortfolioActionsSection data={portfolioActions} />
           )}
-          {activeSection === 'cbo1' && (
-            <CBODetailSection label="CBO 1 — Ganadores Probados" color="#ef4444" stats={cbo1} campaignId={data?.campaign_id} />
-          )}
-          {activeSection === 'cbo2' && (
-            <CBODetailSection label="CBO 2 — Nuevos Ganadores" color="#f59e0b" stats={cbo2} campaignId={data?.campaign_2_id} />
-          )}
-          {activeSection === 'cbo3' && (
-            <CBODetailSection label="CBO 3 — Medición / Rescate" color="#8b5cf6" stats={cbo3} campaignId={data?.campaign_3_id} />
-          )}
           {activeSection === 'candidates' && (
-            <CandidatesSection candidates={candidates} />
+            <CandidatesSection data={cboCandidates} />
           )}
           {activeSection === 'history' && (
             <HistorySection dups={dups} />
@@ -297,15 +287,47 @@ export default function AresPanel() {
 // OVERVIEW — 3 CBO cards + candidates preview
 // ═══════════════════════════════════════════════════════════════════════════
 
-function OverviewSection({ cbo1, cbo2, cbo3, candidates, recentDups, hasCBO3 }) {
+function OverviewSection({ cboHealth, candidates, recentDups }) {
+  // CBOs REALES del portfolio (dinámicos, del monitor de salud) — ya no hay
+  // CBO 1/2/3 fijos: Ares construye los CBOs que necesita y aquí se listan.
+  const cbos = cboHealth?.snapshots || [];
+  const exp = cboHealth?.portfolio_exploration;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {/* 3 CBO summary cards side-by-side */}
-      <div style={{ display: 'grid', gridTemplateColumns: hasCBO3 ? 'repeat(3, 1fr)' : 'repeat(2, 1fr)', gap: 10 }}>
-        <CBOSummaryCard label="CBO 1" sublabel="Probados" color="#ef4444" stats={cbo1} />
-        <CBOSummaryCard label="CBO 2" sublabel="Nuevos" color="#f59e0b" stats={cbo2} />
-        {hasCBO3 && <CBOSummaryCard label="CBO 3" sublabel="Rescate" color="#8b5cf6" stats={cbo3} />}
-      </div>
+      {/* Portfolio real de CBOs */}
+      {cbos.length > 0 ? (
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(cbos.length, 3)}, 1fr)`, gap: 10 }}>
+          {cbos.slice(0, 6).map(s => (
+            <CBOSummaryCard
+              key={s._id || s.campaign_id}
+              label={(s.campaign_name || 'CBO').replace(/^\[[^\]]*\]\s*/, '').slice(0, 18)}
+              sublabel={s.lifecycle_phase || '—'}
+              color={s.is_zombie ? '#a78bfa' : (s.cbo_roas_7d >= 2 ? '#10b981' : '#f59e0b')}
+              stats={{
+                active_clones: s.active_adsets_count,
+                roas: s.cbo_roas_7d ? +Number(s.cbo_roas_7d).toFixed(2) : 0,
+                spend_7d: Math.round(s.cbo_spend_7d || 0),
+                revenue_7d: Math.round((s.cbo_spend_7d || 0) * (s.cbo_roas_7d || 0)),
+                purchases_7d: s.cbo_purchases_7d || 0,
+                adsets: []
+              }}
+            />
+          ))}
+        </div>
+      ) : (
+        <div style={{
+          background: 'rgba(17, 21, 51, 0.4)',
+          border: '1px solid rgba(255,255,255,0.06)',
+          borderRadius: 12,
+          padding: '18px 16px',
+          textAlign: 'center',
+          color: 'var(--bos-text-muted)',
+          fontSize: '0.72rem'
+        }}>
+          Sin CBOs activos. Ares construye un CBO cuando hay winners que cruzan la vara de promoción
+          {exp?.needs_exploration ? ` · ${exp.slots_open} slot(s) de exploración libre(s)` : ''}.
+        </div>
+      )}
 
       {/* Candidates ready to duplicate */}
       {candidates.length > 0 && (
@@ -551,52 +573,110 @@ function CBODetailSection({ label, color, stats, campaignId }) {
 // CANDIDATES — ad sets ready for duplication
 // ═══════════════════════════════════════════════════════════════════════════
 
-function CandidatesSection({ candidates }) {
-  if (candidates.length === 0) {
-    return <Empty>Sin candidatos — ningún ad set cumple los criterios endurecidos aún</Empty>;
+function CandidatesSection({ data }) {
+  if (!data) return <div style={{ padding: 30, textAlign: 'center', color: 'var(--bos-text-dim)' }}>Cargando pipeline...</div>;
+  const cands = data.candidates || [];
+  const bar = data.bar || {};
+  if (cands.length === 0) {
+    return <Empty>Sin adsets activos para evaluar</Empty>;
   }
   return (
     <div>
-      <SectionHeader label="Ad sets cumplen criterios de Ares" count={candidates.length} color="#10b981" />
-      {candidates.map((c, i) => <CandidateRow key={i} c={c} index={i} />)}
+      {/* Encabezado: la vara + estado */}
+      <div style={{
+        background: 'linear-gradient(135deg, rgba(16,185,129,0.08), rgba(16,185,129,0.02))',
+        border: '1px solid rgba(16,185,129,0.25)',
+        borderRadius: 10,
+        padding: '10px 14px',
+        marginBottom: 12
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+          <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Pipeline hacia CBO
+          </span>
+          <span style={{ fontSize: '0.7rem', fontFamily: 'JetBrains Mono, monospace', color: 'var(--bos-text)' }}>
+            <b style={{ color: '#10b981' }}>{data.ready_count}</b> listos · {cands.length} evaluados
+          </span>
+        </div>
+        <div style={{ fontSize: '0.6rem', color: 'var(--bos-text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>
+          Vara: ROAS{data.cash_adjusted ? ' cash' : ''}≥{bar.min_roas}x · ${bar.min_spend} · {bar.min_purchases}c · freq&lt;{bar.max_freq} · {bar.min_age_days}d
+          {data.cash_adjusted && <span> · haircut {data.haircut}</span>}
+        </div>
+      </div>
+      {cands.map((c, i) => <CandidateRow key={c.adset_id || i} c={c} index={i} />)}
+    </div>
+  );
+}
+
+function CritPill({ crit }) {
+  const ok = crit.pass;
+  const color = ok ? '#10b981' : (crit.pct >= 0.6 ? '#f59e0b' : '#6b7280');
+  const valTxt = crit.value == null ? '—' : `${crit.unit === '$' ? '$' : ''}${crit.value}${crit.unit && crit.unit !== '$' ? crit.unit : ''}`;
+  return (
+    <div style={{
+      flex: '1 1 0',
+      minWidth: 0,
+      background: ok ? 'rgba(16,185,129,0.1)' : 'rgba(255,255,255,0.03)',
+      border: `1px solid ${color}40`,
+      borderRadius: 6,
+      padding: '4px 6px',
+      textAlign: 'center'
+    }}>
+      <div style={{ fontSize: '0.52rem', color: 'var(--bos-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{crit.label}</div>
+      <div style={{ fontSize: '0.66rem', fontWeight: 700, color, fontFamily: 'JetBrains Mono, monospace', whiteSpace: 'nowrap' }}>
+        {ok ? '✓' : ''}{valTxt}
+      </div>
+      {/* barra de progreso fina */}
+      {!crit.inverse && (
+        <div style={{ height: 2, background: 'rgba(255,255,255,0.08)', borderRadius: 2, marginTop: 3, overflow: 'hidden' }}>
+          <div style={{ width: `${Math.round((crit.pct || 0) * 100)}%`, height: '100%', background: color }} />
+        </div>
+      )}
     </div>
   );
 }
 
 function CandidateRow({ c, index }) {
+  const accent = c.ready ? '#10b981' : (c.passed >= 3 ? '#f59e0b' : '#6b7280');
   return (
     <motion.div
       initial={{ opacity: 0, x: -6 }}
       animate={{ opacity: 1, x: 0 }}
-      transition={{ delay: Math.min(index * 0.03, 0.4) }}
+      transition={{ delay: Math.min(index * 0.025, 0.4) }}
       style={{
         background: 'rgba(17, 21, 51, 0.5)',
-        borderLeft: '3px solid #10b981',
-        borderRadius: 6,
-        padding: '10px 14px',
-        marginBottom: 5,
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        gap: 10
+        borderLeft: `3px solid ${accent}`,
+        borderRadius: 8,
+        padding: '10px 12px',
+        marginBottom: 6
       }}
     >
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: '0.78rem', color: 'var(--bos-text)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {c.entity_name}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 7 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: '0.76rem', color: 'var(--bos-text)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {c.adset_name}
+          </div>
+          <div style={{ fontSize: '0.58rem', color: 'var(--bos-text-muted)', fontFamily: 'JetBrains Mono, monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {c.campaign_name} · ${c.daily_budget}/d
+          </div>
         </div>
-        <div style={{ fontSize: '0.62rem', color: 'var(--bos-text-muted)', marginTop: 3, fontFamily: 'JetBrains Mono, monospace' }}>
-          ${c.spend_7d} · {c.purchases_7d}c · freq {c.frequency}
+        <div style={{
+          flexShrink: 0,
+          fontSize: '0.6rem',
+          fontWeight: 700,
+          padding: '3px 8px',
+          borderRadius: 20,
+          textTransform: 'uppercase',
+          letterSpacing: '0.05em',
+          color: accent,
+          background: `${accent}1a`,
+          border: `1px solid ${accent}40`
+        }}>
+          {c.ready ? '✅ Listo' : `${c.passed}/${c.total}`}
         </div>
       </div>
-      <div style={{
-        fontSize: '1.15rem',
-        fontWeight: 700,
-        color: '#10b981',
-        fontFamily: 'JetBrains Mono, monospace',
-        filter: 'drop-shadow(0 0 8px rgba(16, 185, 129, 0.3))'
-      }}>
-        {c.roas_7d}x
+      <div style={{ display: 'flex', gap: 4 }}>
+        {(c.criteria || []).map(crit => <CritPill key={crit.key} crit={crit} />)}
       </div>
     </motion.div>
   );

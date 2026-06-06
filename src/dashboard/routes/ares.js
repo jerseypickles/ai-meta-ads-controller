@@ -285,4 +285,90 @@ router.post('/cbo-health/run', async (req, res) => {
   }
 });
 
+// ═══ GET /cbo-candidates — pipeline LIVE hacia la vara de promoción ═══
+// Rankea TODOS los adsets activos por cercanía a la vara que el Brain usa para
+// crear CBO (ROAS cash / spend / compras / freq / edad). Permite ver visualmente
+// cuáles se están calentando hacia un futuro CBO. Misma vara que create_new_cbo.
+router.get('/cbo-candidates', async (req, res) => {
+  try {
+    const { PROMOTION_BAR } = require('../../ai/agent/ares-brain-tools');
+    const { isExcludedEntity } = require('../../config/excluded-entities');
+
+    // Haircut de cash (mismo que el gate del Brain) — fail-open a Meta crudo
+    let haircut = 1, cashAvailable = false;
+    try {
+      const { getAccountCashSignal } = require('../../ai/agent/demeter-cash-signal');
+      const cs = await getAccountCashSignal();
+      if (cs && cs.available) { haircut = cs.haircut_factor; cashAvailable = true; }
+    } catch (_) { /* fail-open */ }
+
+    const snaps = await getLatestSnapshots('adset');
+    const EXCLUDE_NS = ['[HERMES]', '[Hermes]', '[TEST]', '[ARES]', '[Ares', '[Seed]'];
+    const now = Date.now();
+
+    const rows = [];
+    for (const s of snaps) {
+      if (s.status !== 'ACTIVE') continue;
+      const name = s.entity_name || '';
+      if (isExcludedEntity({ campaign_id: s.campaign_id, entity_name: name })) continue;
+      if (EXCLUDE_NS.some(ns => name.includes(ns))) continue;
+
+      const m = s.metrics?.last_7d || {};
+      const roasMeta = m.roas || 0;
+      const roasCash = roasMeta * haircut;
+      const spend = m.spend || 0;
+      const purch = m.purchases || 0;
+      const freq = m.frequency || 0;
+      const created = s.created_time || s.entity_created_at;
+      const ageDays = created ? (now - new Date(created).getTime()) / 86400000 : null;
+
+      // Progreso por criterio (0-1, capeado). freq es inverso (menor es mejor).
+      const crit = [
+        { key: 'roas', label: 'ROAS', value: +roasCash.toFixed(2), target: PROMOTION_BAR.min_roas, unit: 'x', pass: roasCash >= PROMOTION_BAR.min_roas, pct: Math.min(1, roasCash / PROMOTION_BAR.min_roas) },
+        { key: 'spend', label: 'Spend', value: Math.round(spend), target: PROMOTION_BAR.min_spend, unit: '$', pass: spend >= PROMOTION_BAR.min_spend, pct: Math.min(1, spend / PROMOTION_BAR.min_spend) },
+        { key: 'purchases', label: 'Compras', value: purch, target: PROMOTION_BAR.min_purchases, unit: '', pass: purch >= PROMOTION_BAR.min_purchases, pct: Math.min(1, purch / PROMOTION_BAR.min_purchases) },
+        { key: 'freq', label: 'Freq', value: +freq.toFixed(2), target: PROMOTION_BAR.max_freq, unit: '', pass: !freq || freq <= PROMOTION_BAR.max_freq, pct: 1, inverse: true },
+        { key: 'age', label: 'Edad', value: ageDays != null ? +ageDays.toFixed(1) : null, target: PROMOTION_BAR.min_age_days, unit: 'd', pass: ageDays == null || ageDays >= PROMOTION_BAR.min_age_days, pct: ageDays == null ? 1 : Math.min(1, ageDays / PROMOTION_BAR.min_age_days) }
+      ];
+      const passed = crit.filter(c => c.pass).length;
+      const ready = passed === crit.length;
+      // Score: criterios pasados + fracción del que más falta (para ordenar dentro del mismo nivel)
+      const score = passed + crit.reduce((a, c) => a + (c.pass ? 0 : c.pct), 0) / crit.length;
+
+      rows.push({
+        adset_id: s.entity_id,
+        adset_name: name,
+        campaign_name: s.campaign_name || '',
+        daily_budget: s.daily_budget || 0,
+        roas_meta: +roasMeta.toFixed(2),
+        roas_cash: +roasCash.toFixed(2),
+        spend_7d: Math.round(spend),
+        purchases_7d: purch,
+        frequency: +freq.toFixed(2),
+        age_days: ageDays != null ? +ageDays.toFixed(1) : null,
+        criteria: crit,
+        passed,
+        total: crit.length,
+        ready,
+        score: +score.toFixed(3)
+      });
+    }
+
+    // Orden: listos primero, luego por score desc (más cerca de la vara arriba)
+    rows.sort((a, b) => (b.ready - a.ready) || (b.score - a.score) || (b.roas_cash - a.roas_cash));
+
+    res.json({
+      bar: PROMOTION_BAR,
+      cash_adjusted: cashAvailable,
+      haircut: +haircut.toFixed(3),
+      ready_count: rows.filter(r => r.ready).length,
+      candidates: rows.slice(0, 40),
+      generated_at: new Date()
+    });
+  } catch (err) {
+    logger.error(`[ARES-API] Error en /cbo-candidates: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

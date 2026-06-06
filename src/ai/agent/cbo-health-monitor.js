@@ -67,7 +67,7 @@ function classifyCBOPhase(m) {
 // El portfolio necesita SIEMPRE capacidad de exploración: si todos los CBOs
 // maduran, no hay pipeline de winners nuevos para cuando los actuales decaen.
 const TARGET_EXPLORING_CBOS = 2;          // CBOs en 'exploring' a mantener
-const NEW_EXPLORATION_CBO_BUDGET = 300;   // budget de arranque de un CBO nuevo ($/d)
+const NEW_EXPLORATION_CBO_BUDGET = 75;    // budget SUGERIDO de arranque de un CBO nuevo ($/d) — cuenta nueva, budgets chicos. El budget REAL lo ata el Brain al gasto de los seeds (create_new_cbo). Era $300 (cuenta madura).
 const PORTFOLIO_BUDGET_CEILING = 3500;    // techo holgado de daily_budget total
 
 /**
