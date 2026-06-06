@@ -43,10 +43,14 @@ function buildSourcePrompt(productName, motionKey, sceneKey) {
   // En escenas EN COMIDA la pieza va en slice (un tomate entero sobre un burger se ve raro);
   // en el resto, la pieza entera que se sostiene/moja.
   const FOOD_MOTIONS = ['on_food'];
-  const unit = FOOD_MOTIONS.includes(motionKey) ? dna.productUnitFood(productName) : dna.productUnit(productName);
-  // CRÍTICO: la pieza debe ser EL MISMO alimento que hay en el frasco
-  // (no un pickle chip genérico si el producto es cebolla/tomate/etc).
-  const matchPiece = `CRITICAL: the pickled item shown must be ${unit} — the SAME pickled food that is inside this "${productName}" jar (same type, same color as the contents visible in the reference). Do NOT substitute a generic pickle chip or any different food.`;
+  const isFood = FOOD_MOTIONS.includes(motionKey);
+  const unit = isFood ? dna.productUnitFood(productName) : dna.productUnit(productName);
+  // CRÍTICO: la pieza debe ser EL MISMO alimento del frasco (mismo tipo/color). PERO en
+  // COMIDA va SLICED y PLANO — un spear entero parado sobre un burger se ve antinatural/IA
+  // (caso reportado 2026-06-05). El matchPiece es food-aware para no forzar la pieza entera.
+  const matchPiece = isFood
+    ? `CRITICAL: on the burger show ${unit} — round coin slices cut from the SAME pickled food as inside this "${productName}" jar (same type and color as the reference contents), lying FLAT as a topping. Do NOT stand a whole pickle spear upright on the burger, and do NOT substitute a different food.`
+    : `CRITICAL: the pickled item shown must be ${unit} — the SAME pickled food that is inside this "${productName}" jar (same type, same color as the contents visible in the reference). Do NOT substitute a generic pickle chip or any different food.`;
   return `Create a vertical photograph of ${interaction}, for the product "${productName}". ` +
     `The jar/tub from the reference photo is clearly visible in the shot with its label readable. ` +
     `${matchPiece} ${FIDELITY} ${pickImageStyle()} The hand and the dripping brine should be the hero of the shot, mouth-watering and in sharp focus.`;

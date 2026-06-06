@@ -75,8 +75,8 @@ const MOTIONS = [
     img: 'several {product} jars neatly lined up on a wooden pantry shelf at home, a hand reaching toward the front jar, warm soft light, labels readable, UGC iPhone',
     vid: 'A hand reaches and slides one {product} jar forward off the shelf; the other jars stay still.' },
   { key: 'on_food', selfScene: true,
-    img: 'a hand placing {unit_food} on top of a juicy cheeseburger on a plate, the {product} as the hero topping, melty cheese, casual kitchen, mouth-watering UGC iPhone',
-    vid: 'A hand lays {unit_food} onto the burger; a single drop of brine falls and faint steam rises from the food.' },
+    img: 'a hand laying {unit_food} FLAT on top of a juicy cheeseburger on a plate as the hero topping — the pickle slices lying flat on the patty/cheese, NOT a whole pickle standing upright — melty cheese, casual kitchen, mouth-watering UGC iPhone',
+    vid: 'A hand lays {unit_food} flat onto the burger; a single drop of brine falls and faint steam rises from the food.' },
   { key: 'table_spread', selfScene: true,
     img: "an open {product} jar in the center of a picnic table surrounded by a snack spread (chips, dips, drinks), top-down casual flat-lay, sunny outdoor, UGC iPhone, label readable",
     vid: 'Almost still — a faint breeze and soft light shift across the {product} jar and the spread; ambient micro-motion only.' }
@@ -103,9 +103,14 @@ function productUnitFood(name = '') {
   if (n.includes('onion')) return 'a pickled red onion slice';
   if (n.includes('tomato')) return 'a thick slice of pickled tomato';
   if (n.includes('jalap') || n.includes('pepper')) return 'a few pickled jalapeño slices';
-  if (n.includes('bean')) return 'a couple of pickled green beans';
+  if (n.includes('bean')) return 'a couple of pickled green beans laid flat';
   if (n.includes('okra')) return 'a couple of pickled okra slices';
-  return productUnit(name); // chips / pepinillos ya son planos → sirven en comida
+  if (n.includes('chip')) return 'a pickle chip laid flat'; // ya es plano
+  // spears / pepinillos ENTEROS → en comida van en RODAJAS (coins) planas, NO el spear
+  // entero parado (se ve antinatural/IA sobre un burger, caso reportado 2026-06-05).
+  if (n.includes('spear') || n.includes('whole') || n.includes('cucumber') || n.includes('pickle'))
+    return 'a few round pickle coin slices (cut crosswise from the spear) laid flat';
+  return productUnit(name);
 }
 
 // CAMERA — movimiento de cámara (Seedance).
