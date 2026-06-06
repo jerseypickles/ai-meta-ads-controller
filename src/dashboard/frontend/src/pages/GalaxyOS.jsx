@@ -38,9 +38,13 @@ export default function GalaxyOS() {
   const [selected, setSelected] = useState(null);
   const [entered, setEntered] = useState(false);
   const [view, setView] = useState('galaxia');
+  const [schedule, setSchedule] = useState(null);
 
   useEffect(() => {
-    const load = () => api.get('/api/overview').then(r => setOverview(r.data)).catch(() => {});
+    const load = () => {
+      api.get('/api/overview').then(r => setOverview(r.data)).catch(() => {});
+      api.get('/api/overview/schedule').then(r => setSchedule(r.data)).catch(() => {});
+    };
     load();
     const t = setInterval(load, 60000);
     return () => clearInterval(t);
@@ -135,7 +139,7 @@ export default function GalaxyOS() {
                 <Minimap selected={selected} onSelect={setSelected} />
                 <Legend />
               </div>
-              <Timeline activity={overview?.activity} />
+              <Timeline upcoming={schedule?.upcoming} nowEt={schedule?.now_et} recentCount={overview?.activity?.length || 0} />
             </div>
             <AnimatePresence>
               {selected && (

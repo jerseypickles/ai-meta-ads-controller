@@ -1,5 +1,5 @@
 import React from 'react';
-import { AGENTS, ZEUS } from './agents';
+import { AGENTS, ZEUS, AGENT_MAP } from './agents';
 
 function ringPos(angleDeg, radius, cx = 50, cy = 50) {
   const r = (angleDeg - 90) * (Math.PI / 180);
@@ -45,40 +45,48 @@ export function Minimap({ selected, onSelect }) {
   );
 }
 
-// ── Timeline inferior (actividad del sistema, últimas 12h) ──
-export function Timeline({ activity = [] }) {
-  const now = Date.now();
-  const span = 12 * 3600 * 1000; // 12h
-  const ticks = [-12, -9, -6, -3, 0];
-  const items = (activity || []).filter(a => a.at && (now - new Date(a.at).getTime()) <= span);
+// ── Timeline inferior — forward-looking: quién viene ahora (próximos agentes) ──
+const relTime = m => (m < 60 ? `en ${m}m` : `en ${Math.floor(m / 60)}h ${m % 60}m`);
+
+export function Timeline({ upcoming = [], nowEt, recentCount = 0 }) {
   return (
-    <div style={{ height: 104, flexShrink: 0, borderTop: '1px solid var(--border-color)', padding: '10px 22px', position: 'relative', background: 'rgba(15,17,23,0.4)' }}>
-      <div style={{ fontSize: '0.6rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
-        Línea de Tiempo · Actividad del Sistema {items.length > 0 && <span style={{ color: 'var(--text-muted)' }}>· {items.length} eventos</span>}
+    <div style={{ height: 104, flexShrink: 0, borderTop: '1px solid var(--border-color)', padding: '10px 22px', background: 'rgba(15,17,23,0.4)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+        <span style={{ fontSize: '0.6rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Línea de Tiempo · Próximos agentes
+          {recentCount > 0 && <span style={{ color: 'var(--text-muted)' }}> · {recentCount} acciones hoy</span>}
+        </span>
+        {nowEt && <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>ahora {nowEt} ET</span>}
       </div>
-      <div style={{ position: 'relative', height: 52 }}>
-        {/* baseline */}
-        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 16, height: 1, background: 'rgba(255,255,255,0.08)' }} />
-        {/* stems de actividad */}
-        {items.map((a, i) => {
-          const ageFrac = (now - new Date(a.at).getTime()) / span; // 0 = ahora, 1 = -12h
-          const x = (1 - ageFrac) * 100;
-          const h = 14 + ((i * 7) % 26);
+      {/* riel de próximos */}
+      <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 10, overflowX: 'auto', paddingBottom: 4 }}>
+        {/* ancla "ahora" */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#fff', boxShadow: '0 0 8px #fff' }} />
+          <span style={{ fontSize: '0.5rem', color: 'var(--text-muted)', marginTop: 3, textTransform: 'uppercase', letterSpacing: '0.06em' }}>ahora</span>
+        </div>
+        {upcoming.length === 0 && <span style={{ fontSize: '0.66rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Cargando agenda…</span>}
+        {upcoming.map((u, i) => {
+          const col = `var(--ag-${u.agent})`;
+          const nm = AGENT_MAP[u.agent]?.label || u.agent;
+          const first = i === 0;
           return (
-            <div key={i} style={{ position: 'absolute', left: `${x}%`, bottom: 16, width: 1.5, height: h, background: `var(--ag-${a.agent})`, boxShadow: `0 0 5px var(--ag-${a.agent})` }}>
-              <div style={{ position: 'absolute', top: -3, left: -2, width: 5, height: 5, borderRadius: '50%', background: `var(--ag-${a.agent})` }} />
-            </div>
+            <React.Fragment key={u.agent}>
+              <span style={{ flexShrink: 0, width: 18, height: 1, background: 'rgba(255,255,255,0.12)' }} />
+              <div style={{
+                flexShrink: 0, display: 'flex', alignItems: 'center', gap: 7, padding: '5px 10px', borderRadius: 8,
+                background: first ? `color-mix(in srgb, ${col} 18%, transparent)` : 'rgba(255,255,255,0.03)',
+                border: `1px solid ${first ? col : 'rgba(255,255,255,0.08)'}`
+              }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: col, boxShadow: first ? `0 0 7px ${col}` : 'none', flexShrink: 0 }} />
+                <div style={{ lineHeight: 1.25 }}>
+                  <div style={{ fontSize: '0.68rem', fontWeight: first ? 700 : 600, color: first ? '#fff' : 'var(--text-secondary)' }}>{nm} <span style={{ fontFamily: 'JetBrains Mono, monospace', color: col }}>{u.at}</span></div>
+                  <div style={{ fontSize: '0.54rem', color: 'var(--text-muted)' }}>{relTime(u.in_minutes)}{first ? ' · próximo' : ''}</div>
+                </div>
+              </div>
+            </React.Fragment>
           );
         })}
-        {items.length === 0 && (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '0.66rem', fontStyle: 'italic' }}>
-            Sin actividad en las últimas 12h
-          </div>
-        )}
-        {/* eje */}
-        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, display: 'flex', justifyContent: 'space-between' }}>
-          {ticks.map(t => <span key={t} style={{ fontSize: '0.55rem', color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>{t === 0 ? 'ahora' : `${t}h`}</span>)}
-        </div>
       </div>
     </div>
   );

@@ -188,4 +188,43 @@ router.get('/history', async (req, res) => {
   }
 });
 
+// ═══ GET /api/overview/schedule — próximos runs agendados de cada agente (ET) ═══
+// Schedules reales de los crones (timezone America/New_York). minute + horas.
+const AGENT_SCHEDULES = [
+  { agent: 'athena', minute: 0, hours: [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22] },
+  { agent: 'apollo', minute: 0, hours: [6, 8, 10, 12, 14, 16, 18, 20, 22] },
+  { agent: 'prometheus', minute: 30, hours: [6, 8, 10, 12, 14, 16, 18, 20, 22] },
+  { agent: 'ares', minute: 0, hours: [1, 7, 13, 19] },
+  { agent: 'dionisio', minute: 0, hours: [9, 17] },
+  { agent: 'hermes', minute: 0, hours: [9, 12, 15, 18, 21] },
+  { agent: 'demeter', minute: 5, hours: [0] },
+  { agent: 'zeus', minute: 0, hours: [5, 11, 17, 23] }
+];
+
+router.get('/schedule', async (req, res) => {
+  try {
+    // Hora actual en ET (wall-clock)
+    const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const curMin = etNow.getHours() * 60 + etNow.getMinutes();
+
+    const upcoming = AGENT_SCHEDULES.map(s => {
+      const slots = s.hours.map(h => h * 60 + s.minute).sort((a, b) => a - b);
+      let slot = slots.find(sl => sl > curMin);
+      let inMin;
+      if (slot != null) { inMin = slot - curMin; }
+      else { slot = slots[0]; inMin = (24 * 60 - curMin) + slot; } // mañana
+      const h = Math.floor(slot / 60) % 24, m = slot % 60;
+      return { agent: s.agent, in_minutes: inMin, at: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}` };
+    }).sort((a, b) => a.in_minutes - b.in_minutes);
+
+    res.json({
+      now_et: `${String(etNow.getHours()).padStart(2, '0')}:${String(etNow.getMinutes()).padStart(2, '0')}`,
+      upcoming
+    });
+  } catch (err) {
+    logger.error(`[OVERVIEW-API] /schedule: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
