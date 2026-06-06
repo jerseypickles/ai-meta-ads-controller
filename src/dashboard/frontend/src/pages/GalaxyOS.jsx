@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import api from '../api';
 import GalaxyCanvas from '../galaxy/GalaxyCanvas';
 import { Timeline, Minimap, Legend } from '../galaxy/widgets';
 import { AGENT_MAP, AGENT_KPIS, agentColor } from '../galaxy/agents';
+import NeuralCommandCenter from '../components/NeuralCommandCenter';
 import ZeusPanel from '../components/agents/ZeusPanel';
 import AthenaPanel from '../components/agents/AthenaPanel';
 import ApolloPanel from '../components/agents/ApolloPanel';
@@ -28,6 +30,7 @@ const RAIL = [
 ];
 
 export default function GalaxyOS() {
+  const navigate = useNavigate();
   const [overview, setOverview] = useState(null);
   const [selected, setSelected] = useState(null);
   const [entered, setEntered] = useState(false);
@@ -51,7 +54,7 @@ export default function GalaxyOS() {
     <div style={{ position: 'fixed', inset: 0, background: 'var(--bg-primary)', color: 'var(--text-primary)', display: 'flex', flexDirection: 'column', overflow: 'hidden', fontFamily: 'Inter, system-ui, sans-serif' }}>
       {/* ── TOP BAR ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 24, padding: '12px 20px', borderBottom: '1px solid var(--border-color)', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div onClick={() => navigate('/')} style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }} title="Salir a la vista clásica">
           <div style={{ width: 38, height: 38, borderRadius: 10, background: 'radial-gradient(circle at 35% 30%, #93c5fd, var(--ag-zeus))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem', boxShadow: '0 0 16px rgba(59,130,246,0.5)' }}>🧠</div>
           <div>
             <div style={{ fontSize: '1.05rem', fontWeight: 800, letterSpacing: '0.02em' }}>Neural Command Center</div>
@@ -89,9 +92,15 @@ export default function GalaxyOS() {
         </div>
 
         {/* GALAXIA / SPLIT */}
-        {view !== 'galaxia' ? (
+        {view === 'red' ? (
+          <div style={{ flex: 1, position: 'relative', minWidth: 0 }}>
+            <NeuralCommandCenter onAgentClick={(id) => { setSelected(id); setView('galaxia'); }} />
+          </div>
+        ) : view === 'actividad' ? (
+          <ActivityView activity={overview?.activity} />
+        ) : view !== 'galaxia' ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-            Vista «{RAIL.find(r => r.k === view)?.label}» — próximamente (reusa componentes existentes).
+            Vista «{RAIL.find(r => r.k === view)?.label}» — próximamente.
           </div>
         ) : entered && selected ? (
           // SPLIT: mini-galaxia + panel denso
@@ -200,6 +209,25 @@ function AgentSummaryPanel({ id, data, onEnter, onClose }) {
         <button disabled style={{ flex: 1, background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: 8, padding: '9px 0', cursor: 'not-allowed', fontSize: '0.78rem' }}>Chat</button>
         <button disabled style={{ flex: 1, background: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', color: 'var(--text-muted)', borderRadius: 8, padding: '9px 0', cursor: 'not-allowed', fontSize: '0.78rem' }}>Logs</button>
       </div>
+    </div>
+  );
+}
+
+function ActivityView({ activity = [] }) {
+  return (
+    <div style={{ flex: 1, overflow: 'auto', padding: 24 }}>
+      <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 14 }}>Actividad del Sistema · hoy</div>
+      {activity.length === 0 ? (
+        <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontStyle: 'italic' }}>Sin actividad registrada hoy.</div>
+      ) : activity.map((a, i) => (
+        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderBottom: '1px solid var(--border-color)' }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: `var(--ag-${a.agent})`, boxShadow: `0 0 6px var(--ag-${a.agent})`, flexShrink: 0 }} />
+          <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <b style={{ color: `var(--ag-${a.agent})`, textTransform: 'capitalize' }}>{a.agent}</b> · {a.action}{a.entity_name ? ` · ${a.entity_name}` : ''}
+          </span>
+          <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace', flexShrink: 0 }}>{a.at ? new Date(a.at).toLocaleTimeString('es', { hour12: false, hour: '2-digit', minute: '2-digit' }) : ''}</span>
+        </div>
+      ))}
     </div>
   );
 }

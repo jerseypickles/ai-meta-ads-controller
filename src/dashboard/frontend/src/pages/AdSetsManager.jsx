@@ -1403,6 +1403,10 @@ export default function AdSetsManager() {
             className="btn btn-sm btn-secondary" title="Brain Intelligence">
             <Brain size={13} /> Intel
           </button>
+          <button onClick={() => navigate('/galaxy')}
+            className="btn btn-sm btn-secondary" title="Neural Command Center (Galaxia)">
+            <span style={{ fontSize: 13 }}>🌌</span> Galaxia
+          </button>
           <div className="header-divider" />
           <button onClick={handleForceRefresh} disabled={running != null}
             className={`btn btn-sm ${running === 'refresh' ? 'btn-success' : 'btn-secondary'}`}
