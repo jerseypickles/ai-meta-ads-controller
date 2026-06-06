@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { motion } from 'framer-motion';
 import { AGENTS, ZEUS, AGENT_KPIS, agentColor } from './agents';
+
+const StarField = lazy(() => import('./StarField'));
 
 // Posición de un orbe en el anillo (angle 0 = arriba, horario)
 function ringPos(angleDeg, radius) {
@@ -80,6 +82,8 @@ export default function GalaxyCanvas({ agentsData = {}, selected, onSelect, comp
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
+      {/* Campo de estrellas 3D (Three.js) detrás de todo */}
+      {!compact && <Suspense fallback={null}><StarField /></Suspense>}
       {/* Nebulosa de fondo */}
       <div className="galaxy-nebula" style={{
         position: 'absolute', inset: 0,

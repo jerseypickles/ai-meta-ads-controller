@@ -14,6 +14,12 @@ export const AGENTS = [
 
 export const ZEUS = { id: 'zeus', label: 'Zeus', role: 'Cerebro', icon: '🧠' };
 
+// Hex por agente (para Three.js, que no entiende var(--ag-*))
+export const AGENT_HEX = {
+  zeus: '#3b82f6', athena: '#a855f7', apollo: '#fbbf24', prometheus: '#ef4444',
+  demeter: '#10b981', dionisio: '#ec4899', ares: '#f97316', hermes: '#06b6d4'
+};
+
 // Mapa id → metadata (incluye Zeus)
 export const AGENT_MAP = Object.fromEntries([ZEUS, ...AGENTS].map(a => [a.id, a]));
 
