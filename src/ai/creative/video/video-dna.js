@@ -86,6 +86,11 @@ const MOTIONS = [
 // "pickle chip" genérico cuando el producto es cebolla, tomate, etc.
 function productUnit(name = '') {
   const n = name.toLowerCase();
+  // Dips/salsas/relishes: NO son una pieza sólida — van en CUCHARA, no como chip.
+  // CRÍTICO: este branch va ANTES del catch de 'pickle', porque "pickled salsa"
+  // incluye "pickle" y caía a "a single pickle chip" (bug reportado 2026-06-06:
+  // video de Pickled Salsa salía con un pickle chip en mano en vez de la salsa).
+  if (isDip(n)) return 'a generous heaping spoonful of the chunky pickled salsa/relish on a spoon, the chunks clearly visible (this product is a chunky dip, NOT a pickle chip)';
   if (n.includes('onion')) return 'a single pickled red onion slice';
   if (n.includes('tomato')) return 'a single whole pickled tomato (plump, golf-ball size)';
   if (n.includes('bean')) return 'a single pickled green bean';
@@ -129,10 +134,23 @@ function fitsOnFood(productName = '') {
   return false; // default conservador: si no es claramente apto, no on_food
 }
 
+// ¿El producto es un DIP (salsa/relish/sauce)? Va en cuchara, no es pieza sólida.
+function isDip(name = '') {
+  const n = (name || '').toLowerCase();
+  return n.includes('salsa') || n.includes('relish') || n.includes('sauce') || n.includes('chow') || n.includes('dip');
+}
+
+// Motions que asumen una PIEZA SÓLIDA sostenida en mano — no aplican a un dip:
+// no se pellizca/gira ni se muerde una cucharada de salsa. (lift/dip/pull SÍ aplican:
+// "lift a spoonful out of the jar" se ve bien.)
+const SOLID_PIECE_MOTIONS = new Set(['pinch_twirl', 'bite_tease']);
+
 // Motions PERMITIDOS para un producto (excluye los que no le quedan, ej. on_food en spears).
 function motionsForProduct(productName = '') {
   const allKeys = MOTIONS.map(m => m.key);
-  return fitsOnFood(productName) ? allKeys : allKeys.filter(k => k !== 'on_food');
+  let keys = fitsOnFood(productName) ? allKeys : allKeys.filter(k => k !== 'on_food');
+  if (isDip(productName)) keys = keys.filter(k => !SOLID_PIECE_MOTIONS.has(k));
+  return keys;
 }
 
 // CAMERA — movimiento de cámara (Seedance).
@@ -308,6 +326,6 @@ function buildVideoPrompt(productName, motionKey, cameraKey, styleOverride) {
 
 module.exports = {
   MOTIONS, CAMERAS, SCENES, DIMS, BASE_STYLE, VIDEO_STYLE_MOODS, pickVideoStyle,
-  productUnit, productUnitFood, fitsOnFood, motionsForProduct,
+  productUnit, productUnitFood, fitsOnFood, isDip, motionsForProduct,
   get, keys, pickWeighted, getDimensionStats, buildImageScene, buildVideoPrompt
 };
