@@ -1399,12 +1399,8 @@ export default function AdSetsManager() {
             className={`btn btn-sm ${running === 'brain' ? 'btn-primary' : 'btn-secondary'}`}>
             {running === 'brain' ? <RefreshCw size={13} className="loading-spin" /> : <Brain size={13} />} Brain
           </button>
-          <button onClick={() => navigate('/brain')}
-            className="btn btn-sm btn-secondary" title="Brain Intelligence">
-            <Brain size={13} /> Intel
-          </button>
           <button onClick={() => navigate('/galaxy')}
-            className="btn btn-sm btn-secondary" title="Neural Command Center (Galaxia)">
+            className="btn btn-sm btn-primary" title="Neural Command Center — galaxia (frontend nuevo)">
             <span style={{ fontSize: 13 }}>🌌</span> Galaxia
           </button>
           <div className="header-divider" />
