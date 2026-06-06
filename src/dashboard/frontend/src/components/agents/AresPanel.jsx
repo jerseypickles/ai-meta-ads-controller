@@ -4,7 +4,13 @@ import { getAresIntelligence, runAresApi } from '../../api';
 import api from '../../api';
 import { ResponsiveContainer, LineChart, Line, YAxis } from 'recharts';
 
-const ARES_COLOR = '#ef4444';
+// Color de IDENTIDAD del panel — lo provee la clase .ag-<id> del shell (galaxia).
+// Standalone (BrainOS) cae al naranja de Ares. Los colores SEMÁNTICOS (roasColor,
+// verde=bueno/rojo=malo) NO usan esto.
+const ARES_COLOR = 'var(--accent, #f97316)';
+const ARES_BG = 'color-mix(in srgb, var(--accent, #f97316) 8%, transparent)';
+const ARES_BORDER = 'color-mix(in srgb, var(--accent, #f97316) 25%, transparent)';
+const ARES_DARK = 'color-mix(in srgb, var(--accent, #f97316) 60%, #000)';
 
 function formatDate(d) {
   if (!d) return '';
@@ -88,9 +94,9 @@ export default function AresPanel() {
             transition={{ type: 'spring' }}
             style={{
               width: 64, height: 64, borderRadius: '50%',
-              background: `${ARES_COLOR}15`,
+              background: ARES_BG,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              border: `2px solid ${ARES_COLOR}40`,
+              border: `2px solid ${ARES_BORDER}`,
               filter: `drop-shadow(0 0 20px ${ARES_COLOR})`,
               fontSize: '2rem'
             }}
@@ -101,7 +107,7 @@ export default function AresPanel() {
             <div style={{
               fontSize: '1.7rem',
               fontWeight: 800,
-              background: 'linear-gradient(135deg, #ef4444, #dc2626, #f59e0b)',
+              background: 'linear-gradient(135deg, var(--accent, #f97316), color-mix(in srgb, var(--accent, #f97316) 55%, #fff))',
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
               lineHeight: 1
@@ -136,7 +142,7 @@ export default function AresPanel() {
             disabled={running}
             style={{
               padding: '8px 20px',
-              background: `linear-gradient(90deg, ${ARES_COLOR}, #dc2626)`,
+              background: `linear-gradient(90deg, ${ARES_COLOR}, ${ARES_DARK})`,
               border: 'none',
               borderRadius: 8,
               color: 'white',

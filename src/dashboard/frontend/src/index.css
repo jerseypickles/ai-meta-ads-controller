@@ -48,6 +48,15 @@
 @keyframes galaxy-drift { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(1.5%, -1%) scale(1.04); } }
 .galaxy-line { stroke-dasharray: 2 7; animation: galaxy-flow 1.3s linear infinite; }
 .galaxy-nebula { animation: galaxy-drift 22s ease-in-out infinite; }
+/* Reskin de paneles por agente: --accent lo consume el panel (ver AresPanel) */
+.ag-zeus       { --accent: #3b82f6; }
+.ag-athena     { --accent: #a855f7; }
+.ag-apollo     { --accent: #fbbf24; }
+.ag-prometheus { --accent: #ef4444; }
+.ag-demeter    { --accent: #10b981; }
+.ag-dionisio   { --accent: #ec4899; }
+.ag-ares       { --accent: #f97316; }
+.ag-hermes     { --accent: #06b6d4; }
 :root {
   /* ── Galaxia: color base por agente (fuente única, mockup Neural Command Center) ── */
   --ag-zeus:       #3b82f6;   /* azul    */
