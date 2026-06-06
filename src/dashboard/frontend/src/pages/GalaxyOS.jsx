@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import api from '../api';
 import GalaxyCanvas from '../galaxy/GalaxyCanvas';
+import { Timeline, Minimap, Legend } from '../galaxy/widgets';
 import { AGENT_MAP, AGENT_KPIS, agentColor } from '../galaxy/agents';
 import ZeusPanel from '../components/agents/ZeusPanel';
 import AthenaPanel from '../components/agents/AthenaPanel';
@@ -112,8 +113,13 @@ export default function GalaxyOS() {
         ) : (
           // OVERVIEW: canvas + panel resumen
           <div style={{ flex: 1, display: 'flex', minWidth: 0 }}>
-            <div style={{ flex: 1, position: 'relative' }}>
-              <GalaxyCanvas agentsData={agentsData} selected={selected} onSelect={setSelected} />
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+              <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
+                <GalaxyCanvas agentsData={agentsData} selected={selected} onSelect={setSelected} />
+                <Minimap selected={selected} onSelect={setSelected} />
+                <Legend />
+              </div>
+              <Timeline activity={overview?.activity} />
             </div>
             <AnimatePresence>
               {selected && (

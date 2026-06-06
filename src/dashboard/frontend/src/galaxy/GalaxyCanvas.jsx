@@ -80,7 +80,7 @@ export default function GalaxyCanvas({ agentsData = {}, selected, onSelect, comp
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
       {/* Nebulosa de fondo */}
-      <div style={{
+      <div className="galaxy-nebula" style={{
         position: 'absolute', inset: 0,
         background: 'radial-gradient(ellipse at 50% 45%, rgba(59,130,246,0.10), transparent 55%), radial-gradient(ellipse at 70% 75%, rgba(168,85,247,0.06), transparent 50%), radial-gradient(ellipse at 25% 70%, rgba(16,185,129,0.05), transparent 50%)',
         pointerEvents: 'none'
@@ -89,9 +89,9 @@ export default function GalaxyCanvas({ agentsData = {}, selected, onSelect, comp
       {/* Líneas de conexión Zeus → agentes */}
       <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }} preserveAspectRatio="none">
         {positions.map(({ a, p }) => (
-          <line key={a.id} x1="50%" y1="50%" x2={`${p.x}%`} y2={`${p.y}%`}
-            stroke={`var(--ag-${a.id})`} strokeOpacity={selected === a.id ? 0.55 : 0.18}
-            strokeWidth={selected === a.id ? 1.6 : 1} strokeDasharray={a.awareness ? '4 5' : 'none'} />
+          <line key={a.id} className="galaxy-line" x1="50%" y1="50%" x2={`${p.x}%`} y2={`${p.y}%`}
+            stroke={`var(--ag-${a.id})`} strokeOpacity={selected === a.id ? 0.6 : 0.22}
+            strokeWidth={selected === a.id ? 1.8 : 1} />
         ))}
       </svg>
 

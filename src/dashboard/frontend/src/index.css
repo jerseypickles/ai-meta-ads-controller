@@ -42,6 +42,13 @@
   --yellow-light: #fbbf24;
   --yellow-dark: #d97706;
 
+  /* ── Galaxia: animaciones ── */
+}
+@keyframes galaxy-flow { to { stroke-dashoffset: -22; } }
+@keyframes galaxy-drift { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(1.5%, -1%) scale(1.04); } }
+.galaxy-line { stroke-dasharray: 2 7; animation: galaxy-flow 1.3s linear infinite; }
+.galaxy-nebula { animation: galaxy-drift 22s ease-in-out infinite; }
+:root {
   /* ── Galaxia: color base por agente (fuente única, mockup Neural Command Center) ── */
   --ag-zeus:       #3b82f6;   /* azul    */
   --ag-athena:     #a855f7;   /* violeta */
