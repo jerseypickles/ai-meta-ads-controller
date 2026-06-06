@@ -1483,7 +1483,7 @@ export default function AdSetsManager() {
           </div>
 
           {/* Brain Summary mini-card */}
-          <div className="kpi-card-v2 kpi-card-brain" onClick={() => navigate('/brain')}>
+          <div className="kpi-card-v2 kpi-card-brain" onClick={() => navigate('/galaxy')}>
             <div className="kpi-card-v2-glow" style={{ background: 'radial-gradient(circle at 30% 30%, rgba(139,92,246,0.15), transparent 70%)' }} />
             <div className="kpi-card-v2-header">
               <span className="kpi-card-v2-label">Brain Intel</span>
