@@ -4,6 +4,7 @@ import { getToken } from './api';
 import Login from './pages/Login';
 import AdSetsManager from './pages/AdSetsManager';
 import BrainOS from './pages/BrainOS';
+import GalaxyOS from './pages/GalaxyOS';
 
 // AuthContext
 const AuthContext = createContext();
@@ -84,6 +85,14 @@ function App() {
             element={
               <ProtectedRoute>
                 <BrainOS />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/galaxy"
+            element={
+              <ProtectedRoute>
+                <GalaxyOS />
               </ProtectedRoute>
             }
           />

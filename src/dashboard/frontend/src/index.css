@@ -42,6 +42,16 @@
   --yellow-light: #fbbf24;
   --yellow-dark: #d97706;
 
+  /* ── Galaxia: color base por agente (fuente única, mockup Neural Command Center) ── */
+  --ag-zeus:       #3b82f6;   /* azul    */
+  --ag-athena:     #a855f7;   /* violeta */
+  --ag-apollo:     #fbbf24;   /* dorado  */
+  --ag-prometheus: #ef4444;   /* rojo    */
+  --ag-demeter:    #10b981;   /* verde   */
+  --ag-dionisio:   #ec4899;   /* magenta */
+  --ag-ares:       #f97316;   /* naranja */
+  --ag-hermes:     #06b6d4;   /* cyan    */
+
   /* Colores de agentes */
   --athena-color: #3b82f6;
   --athena-light: #60a5fa;

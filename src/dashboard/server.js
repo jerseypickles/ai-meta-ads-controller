@@ -26,6 +26,7 @@ const testingAgentRoutes = require('./routes/testing-agent');
 const zeusRoutes = require('./routes/zeus');
 const zeusChatRoutes = require('./routes/zeus-chat');
 const aresRoutes = require('./routes/ares');
+const overviewRoutes = require('./routes/overview');
 const authRoutes = require('./routes/auth');
 const metaAuthRoutes = require('./routes/meta-auth');
 
@@ -145,6 +146,7 @@ app.use('/api/testing-agent', testingAgentRoutes);
 app.use('/api/zeus', zeusRoutes);
 app.use('/api/zeus', zeusChatRoutes);
 app.use('/api/ares', aresRoutes);
+app.use('/api/overview', overviewRoutes);
 app.use('/api/demeter', require('./routes/demeter'));
 app.use('/api/hermes', require('./routes/hermes'));
 app.use('/api/system/warehouse-throttle', require('./routes/warehouse-throttle'));
