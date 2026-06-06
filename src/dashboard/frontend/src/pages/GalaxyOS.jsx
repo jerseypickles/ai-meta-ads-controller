@@ -8,6 +8,7 @@ import { Timeline, Minimap, Legend } from '../galaxy/widgets';
 import { AGENT_MAP, AGENT_KPIS, agentColor } from '../galaxy/agents';
 import NeuralCommandCenter from '../components/NeuralCommandCenter';
 import HistoryView from '../galaxy/HistoryView';
+import MetricsView from '../galaxy/MetricsView';
 import ZeusPanel from '../components/agents/ZeusPanel';
 import AthenaPanel from '../components/agents/AthenaPanel';
 import ApolloPanel from '../components/agents/ApolloPanel';
@@ -102,6 +103,8 @@ export default function GalaxyOS() {
           <ActivityView activity={overview?.activity} />
         ) : view === 'historial' ? (
           <HistoryView />
+        ) : view === 'metricas' ? (
+          <MetricsView />
         ) : view !== 'galaxia' ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
             Vista «{RAIL.find(r => r.k === view)?.label}» — próximamente.
