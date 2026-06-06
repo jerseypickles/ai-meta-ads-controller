@@ -10,30 +10,24 @@ const config = require('../../../../config');
 const logger = require('../../../utils/logger');
 
 const MIN_SCORE = parseInt(process.env.DIONYSUS_VIDEO_MIN_SCORE || '60', 10);
+const { productUnit } = require('./video-dna');
 
-const PROMPT = (productName) => `You are a senior DTC food-ad video editor judging whether a STATIC image will make a HIGH-CONVERTING 5-second vertical UGC video ad (image-to-video) for "${productName}".
+const PROMPT = (productName, expectedUnit) => `You are a senior DTC food-ad video editor judging whether a STATIC image will make a HIGH-CONVERTING 5-second vertical UGC video ad (image-to-video) for "${productName}".
 
-The video keeps the image as the FIRST FRAME and animates what is already in it — it CANNOT add objects that aren't there. So a hand or a held chip must already be visible to animate an interaction.
+The video keeps the image as the FIRST FRAME and animates what is already in it — it CANNOT add objects that aren't there.
 
-What sells for this brand (reward HEAVILY, score 80-100):
-- A HAND interacting with the product: lifting / picking up / holding a single pickle chip, dipping a chip, pulling a chip out of the jar or tub.
-- Visible glossy sauce / chamoy / brine on the chip that can DRIP (appetizing, mouth-watering).
-- The product/chip in sharp focus, authentic handheld UGC look, natural daylight.
+═══ STEP 1 — PRODUCT FIDELITY (hard gate, check this FIRST) ═══
+For "${productName}", the hero item the hand holds/shows SHOULD be: ${expectedUnit}.
+Look at what is ACTUALLY held / shown. If it does NOT match — e.g. the product is a chunky salsa/relish/dip but the image shows a solid pickle chip held up, or it shows the wrong food — that is a FIDELITY FAIL: return score 15-25, suitable false, reason starting "fidelity:". A beautiful shot of the WRONG item is still a FAIL. A correct jar LABEL is NOT enough — the HELD / HERO item must match the product too.
 
-Mediocre (score 40-65):
-- Product (jar/tub) clean and in focus but NO hand and NO chip held → can only do a tiny passive drip. Lower video potential.
+═══ STEP 2 — VIDEO SUITABILITY (only if fidelity passes) ═══
+Reward (80-100): a HAND interacting with the CORRECT product unit (lifting / holding / dipping / scooping it), glossy sauce/brine that can DRIP, hero item in sharp focus, authentic handheld UGC daylight.
+Mediocre (45-70): product (jar/tub) clean and in focus but NO hand / no interaction → only a tiny passive drip.
+Penalize (0-35): static jar with nothing to animate, cluttered/busy scenes that would morph/warp, product small / cut off / blurry / unreadable label, heavy text/graphics overlays.
 
-Penalize HEAVILY (score 0-35):
-- Static jar just sitting there with nothing to animate, or cluttered/busy scenes that would morph/warp.
-- Product small, cut off, blurry, label unreadable, or heavy text/graphics overlays.
+SCORE WITH SPREAD — reserve 95-100 ONLY for genuinely exceptional shots (perfect focus + dynamic interaction + appetizing drip). A merely-fine hand+product shot is ~80-85, not 95. Do not default to 95.
 
-suggested_motion: pick the interaction the image GENUINELY best supports based on what is
-actually visible (no default preference — choose whichever fits the image):
-- "lift_drip" = a hand lifting a chip out with sauce dripping.
-- "dip_drip" = a held chip with sauce dripping back into the tub.
-- "pull_up" = a hand pulling a sauced chip up.
-- "drip" = no hand/chip, only a passive brine drip (jar-only fallback).
-- "none" = not suitable.
+suggested_motion: pick what the image GENUINELY supports — "lift_drip", "dip_drip", "pull_up", "drip" (passive jar-only), or "none".
 
 Return ONLY JSON: {"score": <0-100>, "suitable": <true|false>, "reason": "<one sentence>", "suggested_motion": "<lift_drip|dip_drip|pull_up|drip|none>"}`;
 
@@ -59,9 +53,10 @@ async function judgeVideoSuitability(imageBase64, productName = 'the product') {
     : imageBase64.startsWith('R0lGOD') ? 'image/gif'
     : 'image/jpeg';
 
+  const expectedUnit = productUnit(productName);
   const content = [
     { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBase64 } },
-    { type: 'text', text: PROMPT(productName) }
+    { type: 'text', text: PROMPT(productName, expectedUnit) }
   ];
 
   try {
