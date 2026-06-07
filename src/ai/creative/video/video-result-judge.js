@@ -37,8 +37,11 @@ async function judgeVideoResult(videoUrl, productName = 'the product', motion = 
   const apiKey = process.env.GOOGLE_AI_API_KEY;
   if (!apiKey || !videoUrl) return null;
   try {
-    // Descargar el mp4 → base64 inline
-    const res = await fetch(videoUrl);
+    // Descargar el mp4 → base64 inline (con timeout: URLs ephemeral muertas pueden colgar)
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 15000);
+    let res;
+    try { res = await fetch(videoUrl, { signal: ctrl.signal }); } finally { clearTimeout(to); }
     if (!res.ok) throw new Error(`fetch video ${res.status}`);
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.length > MAX_MB * 1024 * 1024) { logger.warn(`[VIDEO-RESULT-JUDGE] video ${(buf.length / 1048576).toFixed(1)}MB > ${MAX_MB}MB — skip`); return null; }

@@ -163,7 +163,8 @@ router.post('/backfill-video-judge', async (req, res) => {
     try {
       const { judgeVideoResult } = require('../../ai/creative/video/video-result-judge');
       const limit = Math.min(parseInt(req.body?.limit, 10) || 40, 60);
-      const vids = await CreativeProposal.find({ media_type: 'video', video_url: { $regex: /^http/ }, video_result_verdict: null }).limit(limit).lean();
+      // recientes primero — sus URLs ephemeral siguen vivas (las viejas ya expiraron)
+      const vids = await CreativeProposal.find({ media_type: 'video', video_url: { $regex: /^http/ }, video_result_verdict: null }).sort({ created_at: -1 }).limit(limit).lean();
       let done = 0, reject = 0, fail = 0;
       for (const v of vids) {
         const verdict = await judgeVideoResult(v.video_url, v.product_name, v.motion_variant);
