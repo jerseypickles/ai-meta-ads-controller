@@ -1343,6 +1343,18 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'zeus-plan-evaluator' });
   logger.info('  [*] Zeus plan evaluator — diario 4am ET');
 
+  // Dionisio video learning — reconciliador diario 4:45am: cruza predicción del juez
+  // vs outcome real (enganche+conversión) → calibra el juez + arma directivas de prompt.
+  cron.schedule('45 4 * * *', async () => {
+    try {
+      const { reconcile } = require('./ai/creative/video/video-learning');
+      await reconcile();
+    } catch (err) {
+      logger.error(`[VIDEO-LEARNING-CRON] ${err.message}`);
+    }
+  }, { timezone: TIMEZONE, name: 'video-learning' });
+  logger.info('  [*] Dionisio video learning — diario 4:45am ET');
+
   // Lunes 8am ET: plan semanal
   cron.schedule('0 8 * * 1', async () => {
     try {

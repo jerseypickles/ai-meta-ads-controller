@@ -316,12 +316,13 @@ const NATURAL_PHYSICS =
 
 /** Prompt del VIDEO (Seedance): motion (con pieza real) + cámara + estilo ROTADO + física.
  *  styleOverride opcional (para tests deterministas); si no, rota un mood. */
-function buildVideoPrompt(productName, motionKey, cameraKey, styleOverride) {
+function buildVideoPrompt(productName, motionKey, cameraKey, styleOverride, learnDirective = '') {
   const m = get('motion', motionKey);
   const c = get('camera', cameraKey);
   const style = styleOverride || pickVideoStyle();
   const readable = `Keep the ${productName || 'product'} label readable and undistorted at all times.`;
-  return `${_fill(m.vid, productName)} ${c.vid} ${style} ${NATURAL_PHYSICS} ${readable}`;
+  const learned = learnDirective ? ` ${learnDirective}` : '';
+  return `${_fill(m.vid, productName)} ${c.vid} ${style} ${NATURAL_PHYSICS} ${readable}${learned}`;
 }
 
 module.exports = {

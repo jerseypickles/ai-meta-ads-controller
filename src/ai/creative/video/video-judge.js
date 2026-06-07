@@ -55,9 +55,12 @@ async function judgeVideoSuitability(imageBase64, productName = 'the product') {
     : 'image/jpeg';
 
   const expectedUnit = productUnit(productName);
+  // Calibración aprendida: qué de su criterio histórico SÍ predijo el resultado real
+  let calibration = '';
+  try { calibration = await require('./video-learning').getJudgeCalibration(); } catch (_) { /* fail-open */ }
   const content = [
     { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBase64 } },
-    { type: 'text', text: PROMPT(productName, expectedUnit) }
+    { type: 'text', text: PROMPT(productName, expectedUnit) + calibration }
   ];
 
   try {

@@ -154,7 +154,10 @@ async function runDionysus() {
     // camera = exploit/explore del DNA. scene = heredada de la fuente.
     const variant = c.motion_variant || motionVariantFor(verdict.suggested_motion);
     const camera = dna.pickWeighted('camera', cameraStats);
-    const prompt = dna.buildVideoPrompt(c.product_name || 'the product', variant, camera);
+    // Directiva APRENDIDA del loop (reconciliador) — '' si aún no hay data
+    let learnDirective = '';
+    try { learnDirective = await require('../creative/video/video-learning').getPromptLearning(variant); } catch (_) { /* fail-open */ }
+    const prompt = dna.buildVideoPrompt(c.product_name || 'the product', variant, camera, undefined, learnDirective);
     const placeholder = await CreativeProposal.create({
       adset_id: c.adset_id, product_id: c.product_id, product_name: c.product_name,
       headline: c.headline, primary_text: c.primary_text, link_url: c.link_url,
