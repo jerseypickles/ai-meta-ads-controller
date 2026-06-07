@@ -12,20 +12,28 @@ const logger = require('../../../utils/logger');
 const MODEL = process.env.GEMINI_VIDEO_MODEL || 'gemini-2.5-flash';
 const MAX_MB = 18; // límite inline de Gemini (~20MB request); 5s suele ser < 10MB
 
-const PROMPT = (productName, motion) => `You are a senior DTC food-ad video editor watching this 5-second UGC video ad for "${productName}". The intended interaction was "${motion}". Judge HONESTLY whether a real person scrolling would find it believable and appetizing — and whether the AI animation broke.
+const PROMPT = (productName, motion) => `You are a BRUTALLY CRITICAL senior video editor reviewing this 5-second AI-generated UGC food ad for "${productName}" (intended interaction: "${motion}"). Your job is to find what's WRONG. Every AI video (Seedance) has flaws — if you think it's flawless, you are NOT looking hard enough. Watch the MOTION across the whole clip, frame by frame.
 
-Watch the MOTION across the whole clip (this is video, not a photo). Check:
-- motion_ok: did the intended interaction actually happen and look natural? (not a still that barely moves)
-- artifacts: warping/morphing/melting, hands or product deforming, impossible physics → "none" | "minor" | "severe"
-- frozen: are objects stuck/frozen/floating in the air instead of moving with real gravity?
-- fidelity_ok: does the product (jar, label, the food) stay CONSISTENT and recognizable the whole clip (not morphing into something else)?
-- appetizing: does it look genuinely mouth-watering / craveable in motion? (0-100)
-- overall: overall video quality a real viewer would perceive (0-100). A clip with severe artifacts or a frozen/morphing product is LOW even if pretty.
+HUNT for these (almost always present at some level):
+- product/label MORPHING or shifting between frames (text warps, jar changes shape mid-clip)
+- hands/fingers warping, extra fingers, rubbery/melting deformation
+- unnatural drip/physics (drip that doesn't fall right, liquid that snaps, floats or teleports)
+- frozen / stuck / floating objects instead of real gravity
+- the "AI look": too-smooth plasticky surfaces, staged/stocky background, uncanny lighting
+- the intended motion NOT actually happening (a barely-moving near-still frame)
 
-verdict: "good" (ship it) | "weak" (meh, low overall) | "reject" (broken: severe artifacts / frozen / product morphs / wrong item).
+SCORE WITH REAL SPREAD — do NOT default to 90:
+- 90-100: genuinely flawless AND scroll-stopping. RARE — reserve it.
+- 75-89: good but has at least one visible minor flaw.
+- 55-74: watchable but a real problem a viewer would notice.
+- 0-54: broken — morphing product, severe artifacts, frozen, or wrong item.
+A competent-but-unremarkable clip is ~70-78, NOT 90. Be strict.
+
+verdict: "good" (overall ≥80 AND no severe issue) | "weak" (overall 55-79, real flaw) | "reject" (overall <55 / severe artifacts / product morphs / frozen / motion didn't happen).
+You MUST name the single biggest weakness in "weakness" — every clip has one, find it.
 
 Return ONLY JSON:
-{"overall":<0-100>,"motion_ok":<true|false>,"artifacts":"<none|minor|severe>","frozen":<true|false>,"fidelity_ok":<true|false>,"appetizing":<0-100>,"verdict":"<good|weak|reject>","notes":"<one sentence, concrete>"}`;
+{"overall":<0-100>,"motion_ok":<true|false>,"artifacts":"<none|minor|severe>","frozen":<true|false>,"fidelity_ok":<true|false>,"appetizing":<0-100>,"verdict":"<good|weak|reject>","weakness":"<the single biggest flaw, concrete>","notes":"<one sentence>"}`;
 
 /**
  * @param {string} videoUrl - URL pública del mp4 (PiAPI ephemeral)
@@ -68,6 +76,7 @@ async function judgeVideoResult(videoUrl, productName = 'the product', motion = 
       fidelity_ok: r.fidelity_ok !== false,
       appetizing: Math.max(0, Math.min(100, r.appetizing || 0)),
       verdict: ['good', 'weak', 'reject'].includes(r.verdict) ? r.verdict : 'weak',
+      weakness: r.weakness || '',
       notes: r.notes || '',
       model: MODEL,
       judged_at: new Date()
