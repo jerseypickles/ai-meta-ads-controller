@@ -402,42 +402,13 @@ async function launchTests() {
         }
         creative = await meta.createAdCreative({ ...creativeBase, video_id: vup.video_id, thumbnail_hash });
       } else {
-        // IMAGEN (Apollo): la fuente es 9:16. Subimos el 9:16 (Stories/Reels) Y un
-        // recorte 4:5 centrado (Feed/desktop) → ad multi-formato por placement.
-        const sharp = require('sharp');
-        const vertBuf = Buffer.from(proposal.image_base64, 'base64');
-        const tmpVert = path.join(tmpDir, `test_${proposal._id}_v.png`);
-        fs.writeFileSync(tmpVert, vertBuf);
-        const upVert = await meta.uploadImage(tmpVert);
-        try { fs.unlinkSync(tmpVert); } catch (_) {}
-
-        // Recorte 4:5 centrado para feed/desktop.
-        let upFeed = null;
-        try {
-          const meta2 = await sharp(vertBuf).metadata();
-          const w = meta2.width, h = meta2.height;
-          const targetH = Math.round(w * 5 / 4); // 4:5 a partir del ancho
-          if (h > targetH) {
-            const top = Math.round((h - targetH) / 2);
-            const feedBuf = await sharp(vertBuf).extract({ left: 0, top, width: w, height: targetH }).png().toBuffer();
-            const tmpFeed = path.join(tmpDir, `test_${proposal._id}_f.png`);
-            fs.writeFileSync(tmpFeed, feedBuf);
-            upFeed = await meta.uploadImage(tmpFeed);
-            try { fs.unlinkSync(tmpFeed); } catch (_) {}
-          }
-        } catch (cropErr) { logger.warn(`[TESTING-AGENT] recorte 4:5 falló: ${cropErr.message}`); }
-
-        if (upFeed) {
-          // Multi-formato (9:16 + 4:5). Fallback a single 9:16 si Meta lo rechaza.
-          try {
-            creative = await meta.createAdCreativeMultiFormat({ ...creativeBase, image_hash_vertical: upVert.image_hash, image_hash_feed: upFeed.image_hash });
-          } catch (mfErr) {
-            logger.warn(`[TESTING-AGENT] multi-formato falló (${mfErr.response?.data?.error?.message || mfErr.message}) → single 9:16`);
-            creative = await meta.createAdCreative({ ...creativeBase, image_hash: upVert.image_hash });
-          }
-        } else {
-          creative = await meta.createAdCreative({ ...creativeBase, image_hash: upVert.image_hash });
-        }
+        // IMAGEN (Apollo/gpt-image): la fuente es 2:3 (1024x1536), NO 9:16 real. En
+        // Reels/Stories Meta recortaría el 2:3 para llenar el 9:16 → corta la imagen.
+        // Helper compartido: padea a 9:16 real (fondo desenfocado) + recorte 4:5 feed
+        // → multi-formato por placement, sin cortar nada. Fallback single 9:16.
+        const { createMultiFormatCreative } = require('../../meta/creative-formats');
+        const srcBuf = Buffer.from(proposal.image_base64, 'base64');
+        creative = await createMultiFormatCreative(meta, srcBuf, creativeBase, `test_${proposal._id}`);
       }
 
       // 4. Crear ad

@@ -192,28 +192,26 @@ async function uploadToMeta(adsetId, imagePath, headline, primaryText, linkUrl) 
   const { getMetaClient } = require('../../meta/client');
   const meta = getMetaClient();
 
-  // 1. Upload image to Meta (expects file path)
+  // 1. Crear creative MULTI-FORMATO por placement (helper compartido). gpt-image da
+  // 2:3 → padea a 9:16 real para Reels/Stories (sin cortar) + 4:5 para feed.
   if (!fs.existsSync(imagePath)) throw new Error(`Image file not found: ${imagePath}`);
-  const upload = await meta.uploadImage(imagePath);
-  const imageHash = upload.image_hash;
-
-  // 2. Create ad creative using existing meta client method
+  const { createMultiFormatCreative } = require('../../meta/creative-formats');
+  const srcBuf = fs.readFileSync(imagePath);
   const pageId = process.env.META_PAGE_ID;
-  const creative = await meta.createAdCreative({
+  const creative = await createMultiFormatCreative(meta, srcBuf, {
     page_id: pageId,
-    image_hash: imageHash,
     headline: headline,
     body: primaryText,
     description: '',
     cta: 'SHOP_NOW',
     link_url: linkUrl
-  });
+  }, 'apollo');
 
-  // 3. Create ad in the ad set
+  // 2. Create ad in the ad set
   const adName = `${headline} [AI Creative Agent]`;
   const ad = await meta.createAd(adsetId, creative.creative_id, adName, 'ACTIVE');
 
-  return { adId: ad.ad_id, creativeId: creative.creative_id, adName, imageHash };
+  return { adId: ad.ad_id, creativeId: creative.creative_id, adName, imageHash: creative.image_hash };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
