@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import {
   getDionysusPending, getDionysusStats, runDionysusApi,
-  approveDionysusVideo, rejectDionysusVideo, generateDionysusSources
+  approveDionysusVideo, rejectDionysusVideo, generateDionysusSources, backfillDionysusVideoJudge
 } from '../api';
 
 const FUCHSIA = '#ec4899'; // magenta — matchea el orbe de Dionisio en la galaxia (era #c026d3)
@@ -273,6 +273,22 @@ function DNASection({ stats }) {
   );
 }
 
+function BackfillButton() {
+  const [state, setState] = useState('idle'); // idle | running | done
+  const run = async () => {
+    setState('running');
+    try { await backfillDionysusVideoJudge(); setState('done'); } catch { setState('idle'); }
+  };
+  if (state === 'done') {
+    return <div style={{ fontSize: '0.66rem', marginTop: 8, color: '#34d399' }}>✓ Backfill corriendo en background — Gemini está juzgando los videos existentes. Refrescá (↻) en unos minutos y vas a ver el juez de video poblarse.</div>;
+  }
+  return (
+    <button onClick={run} disabled={state === 'running'} style={{ marginTop: 10, padding: '8px 14px', borderRadius: 8, border: `1px solid ${FUCHSIA}`, background: `color-mix(in srgb, ${FUCHSIA} 18%, transparent)`, color: '#fff', fontWeight: 600, fontSize: '0.74rem', cursor: state === 'running' ? 'default' : 'pointer' }}>
+      {state === 'running' ? '🎬 Lanzando…' : '🎬 Correr juez de video (Gemini) sobre los existentes'}
+    </button>
+  );
+}
+
 // ── TAB: Calibración del juez (el reconciliador) ──
 function CalibracionSection({ learnings }) {
   if (!learnings) {
@@ -318,6 +334,7 @@ function CalibracionSection({ learnings }) {
             {vcorr > corr ? `✓ El juez de video predice mejor (+${(vcorr - corr).toFixed(2)}) — ver el mp4 real ayuda` : 'Aún parejos — más data lo va a definir'}
           </div>
         )}
+        {vcorr == null && <BackfillButton />}
       </div>
 
       {/* dimensiones */}

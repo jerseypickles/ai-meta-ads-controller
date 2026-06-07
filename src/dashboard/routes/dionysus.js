@@ -154,6 +154,30 @@ router.post('/generate-sources', async (req, res) => {
   }
 });
 
+// POST /backfill-video-judge — juzga con Gemini los videos EXISTENTES (que tienen
+// video_url) para tener data ya (sin esperar generaciones nuevas). Async + recalcula
+// el reconciliador al terminar → llena la comparación Claude vs Gemini.
+router.post('/backfill-video-judge', async (req, res) => {
+  res.json({ started: true, message: 'Juzgando videos existentes con Gemini en background — refrescá Calibración en unos minutos' });
+  (async () => {
+    try {
+      const { judgeVideoResult } = require('../../ai/creative/video/video-result-judge');
+      const limit = Math.min(parseInt(req.body?.limit, 10) || 40, 60);
+      const vids = await CreativeProposal.find({ media_type: 'video', video_url: { $regex: /^http/ }, video_result_verdict: null }).limit(limit).lean();
+      let done = 0, reject = 0, fail = 0;
+      for (const v of vids) {
+        const verdict = await judgeVideoResult(v.video_url, v.product_name, v.motion_variant);
+        if (!verdict) { fail++; continue; }
+        await CreativeProposal.updateOne({ _id: v._id }, { $set: { video_result_verdict: verdict } });
+        done++; if (verdict.verdict === 'reject') reject++;
+        logger.info(`[BACKFILL-VIDEO-JUDGE] ${done}/${vids.length} ${verdict.verdict} ${verdict.overall} — "${(v.headline || '').slice(0, 30)}"`);
+      }
+      try { await require('../../ai/creative/video/video-learning').reconcile(); } catch (_) {}
+      logger.info(`[BACKFILL-VIDEO-JUDGE] DONE: ${done} juzgados · ${reject} rotos · ${fail} fallaron (URL expirada?) de ${vids.length}`);
+    } catch (e) { logger.error(`[BACKFILL-VIDEO-JUDGE] ${e.message}`); }
+  })();
+});
+
 // POST /run — gatillar un ciclo de Dionisio (async)
 router.post('/run', async (req, res) => {
   try {
