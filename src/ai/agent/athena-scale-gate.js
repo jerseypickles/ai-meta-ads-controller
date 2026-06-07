@@ -18,9 +18,14 @@ const ActionLog = require('../../db/models/ActionLog');
 const logger = require('../../utils/logger');
 
 const MARGINAL_DECLINE = 0.85;   // ROAS 3d < 7d*0.85 (cae ≥15%) → no escalar
-const DEFAULT_STEP = 0.15;       // paso normal +15%
-const STEP_MID = 0.10;           // win-rate 40-60% → +10%
-const STEP_LOW = 0.07;           // win-rate <40% → +7%
+// Modo AGRESIVO (2026-06-07): Athena pisa fuerte a los ganadores probados. El techo
+// sube a +30% para win-rate alto (antes el cap era +15% incluso para ganadores). La
+// seguridad real la dan el freno marginal + el cash-gate de Demeter, no el step chico.
+const DEFAULT_STEP = 0.20;       // baseline / sample chico → +20% (era +15%)
+const STEP_HIGH = 0.30;          // win-rate ≥60% (ganador probado) → +30%
+const STEP_GOOD = 0.25;          // win-rate ≥50% → +25%
+const STEP_MID = 0.15;           // win-rate 40-50% → +15%
+const STEP_LOW = 0.10;           // win-rate <40% (mal track) → +10%
 const MIN_SAMPLE = 6;            // mínimo de scales decididos para confiar en el win-rate
 
 /**
@@ -53,9 +58,11 @@ async function getAdaptiveScaleStep() {
       return { maxStepPct: DEFAULT_STEP, win_rate: null, reason: `sample chico (${decided}) — step default` };
     }
     const wr = r.pos / decided;
-    let maxStep = DEFAULT_STEP;
-    if (wr < 0.40) maxStep = STEP_LOW;
-    else if (wr < 0.60) maxStep = STEP_MID;
+    let maxStep;
+    if (wr >= 0.60) maxStep = STEP_HIGH;        // ganador probado → pisa fuerte
+    else if (wr >= 0.50) maxStep = STEP_GOOD;
+    else if (wr >= 0.40) maxStep = STEP_MID;
+    else maxStep = STEP_LOW;                     // mal track → cauto
     return { maxStepPct: maxStep, win_rate: Math.round(wr * 100), reason: `scale_up win-rate ${Math.round(wr * 100)}% (${decided} dec) → step max ${Math.round(maxStep * 100)}%` };
   } catch (err) {
     logger.warn(`[ATHENA-SCALE-GATE] adaptive step falló (fail-open): ${err.message}`);

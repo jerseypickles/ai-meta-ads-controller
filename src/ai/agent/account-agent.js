@@ -810,11 +810,12 @@ async function handleScaleBudget(input, ctx) {
     }
   }
 
-  // ── GATE: Max 25% increase
+  // ── GATE: Max 30% increase (modo agresivo 2026-06-07 — permite el step +30% de
+  // ganadores probados; antes 25%). La seguridad la da el cash-gate, no este cap.
   if (isScaleUp && prevBudget > 0) {
     const changePct = ((new_budget - prevBudget) / prevBudget) * 100;
-    if (changePct > 25) {
-      return { blocked: true, reason: `Budget increase of ${changePct.toFixed(0)}% exceeds 25% max. Max: $${Math.round(prevBudget * 1.25)}.` };
+    if (changePct > 30) {
+      return { blocked: true, reason: `Budget increase of ${changePct.toFixed(0)}% exceeds 30% max. Max: $${Math.round(prevBudget * 1.30)}.` };
     }
   }
 
