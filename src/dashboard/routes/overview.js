@@ -134,6 +134,93 @@ router.get('/', async (req, res) => {
   }
 });
 
+// ═══ GET /api/overview/activity — feed rico de actividad (centro de operaciones) ═══
+// agent_type → bucket de actividad. Las acciones automáticas del sistema (throttle,
+// ai_manager, brain) van a 'sistema'; los agentes del panteón quedan como su orbe.
+const ACTIVITY_MAP = {
+  account_agent: 'athena', athena: 'athena', unified_agent: 'athena', scaling: 'athena', performance: 'athena', pacing: 'athena',
+  creative_agent: 'apollo', apollo: 'apollo',
+  testing_agent: 'prometheus', prometheus: 'prometheus',
+  ares_agent: 'ares', ares_brain: 'ares', ares_portfolio: 'ares',
+  demeter: 'demeter', dionysus: 'dionisio', dionisio: 'dionisio', hermes: 'hermes',
+  zeus: 'zeus', zeus_oracle: 'zeus', zeus_agent: 'zeus',
+  brain: 'sistema', ai_manager: 'sistema', warehouse_throttle: 'sistema', manual: 'sistema', manual_script: 'sistema'
+};
+// follow_up_verdict → impacto HONESTO. 'pending' = aún no medido (no inventamos verde).
+const VERDICT_IMPACT = {
+  positive: { label: 'Positivo', color: '#34d399', key: 'positive' },
+  neutral: { label: 'Neutro', color: '#fbbf24', key: 'neutral' },
+  negative: { label: 'Negativo', color: '#f87171', key: 'negative' },
+  pending: { label: 'Midiendo', color: '#64748b', key: 'pending' }
+};
+
+router.get('/activity', async (req, res) => {
+  try {
+    const agent = req.query.agent && req.query.agent !== 'all' ? req.query.agent : null;
+    const days = Math.min(parseInt(req.query.days, 10) || 14, 90);
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const perPage = 15;
+    const q = (req.query.q || '').trim().toLowerCase();
+    const since = new Date(Date.now() - days * 86400000);
+
+    const raw = await ActionLog.find({ executed_at: { $gte: since } })
+      .sort({ executed_at: -1 }).limit(500)
+      .select('agent_type action entity_name reasoning executed_at success follow_up_verdict expected_impact_pct').lean();
+
+    // Map + limpiar entity ([Agente] sufijo) + impacto honesto
+    let all = raw.map(a => {
+      const v = VERDICT_IMPACT[a.follow_up_verdict] || VERDICT_IMPACT.pending;
+      return {
+        agent: ACTIVITY_MAP[a.agent_type] || 'sistema',
+        agent_raw: a.agent_type,
+        action: a.action,
+        entity_name: (a.entity_name || '').replace(/\s*\[[^\]]+\]\s*$/, '').trim(),
+        reasoning: (a.reasoning || '').slice(0, 220),
+        at: a.executed_at, success: a.success,
+        verdict: v.key, impact_label: v.label, impact_color: v.color,
+        expected_impact_pct: a.expected_impact_pct || 0
+      };
+    });
+    if (q) all = all.filter(e => `${e.entity_name} ${e.action} ${e.agent}`.toLowerCase().includes(q));
+
+    // Contadores por agente (sobre TODOS, para los chips) — antes de filtrar por agente
+    const countsByAgent = {};
+    for (const e of all) countsByAgent[e.agent] = (countsByAgent[e.agent] || 0) + 1;
+
+    // Subset filtrado por agente (para tabla + sidebar)
+    const filtered = agent ? all.filter(e => e.agent === agent) : all;
+
+    // Agregados del sidebar (sobre el subset filtrado)
+    const total = filtered.length;
+    const impact = { positive: 0, neutral: 0, negative: 0, pending: 0 };
+    let scale = 0, newAdsets = 0, pauses = 0;
+    for (const e of filtered) {
+      impact[e.verdict] = (impact[e.verdict] || 0) + 1;
+      if (/scale_up|scale_down|move_budget|redistribut/i.test(e.action)) scale++;
+      if (/create_adset|create_ad|duplicate/i.test(e.action)) newAdsets++;
+      if (/pause/i.test(e.action)) pauses++;
+    }
+    const topAgents = Object.entries(countsByAgent)
+      .map(([a, n]) => ({ agent: a, count: n, pct: all.length ? Math.round((n / all.length) * 100) : 0 }))
+      .sort((x, y) => y.count - x.count);
+
+    const pages = Math.max(1, Math.ceil(total / perPage));
+    const events = filtered.slice((page - 1) * perPage, page * perPage);
+
+    res.json({
+      events, total, page, pages, per_page: perPage,
+      counts_by_agent: countsByAgent, all_count: all.length,
+      summary: { total: all.length, scale, new_adsets: newAdsets, pauses },
+      impact_breakdown: impact,
+      top_agents: topAgents,
+      days
+    });
+  } catch (err) {
+    logger.error(`[OVERVIEW-ACTIVITY] ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ═══ GET /api/overview/history — historial del sistema (plataforma de datos) ═══
 // agent_type crudo → id de orbe de la galaxia (incluye valores legacy del enum)
 const HIST_AGENT_MAP = {

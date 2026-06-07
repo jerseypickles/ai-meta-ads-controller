@@ -9,6 +9,7 @@ import { AGENT_MAP, AGENT_KPIS, agentColor } from '../galaxy/agents';
 import NeuralCommandCenter from '../components/NeuralCommandCenter';
 import HistoryView from '../galaxy/HistoryView';
 import MetricsView from '../galaxy/MetricsView';
+import ActivityView from '../galaxy/ActivityView';
 import ZeusPanel from '../components/agents/ZeusPanel';
 import AthenaPanel from '../components/agents/AthenaPanel';
 import ApolloPanel from '../components/agents/ApolloPanel';
@@ -104,7 +105,7 @@ export default function GalaxyOS() {
             <NeuralCommandCenter hideHeader onAgentClick={(id) => { setSelected(id); setView('galaxia'); }} />
           </div>
         ) : view === 'actividad' ? (
-          <ActivityView activity={overview?.activity} today={overview?.activity_today} />
+          <ActivityView />
         ) : view === 'historial' ? (
           <HistoryView />
         ) : view === 'metricas' ? (
@@ -220,34 +221,3 @@ function AgentSummaryPanel({ id, data, onEnter, onClose }) {
   );
 }
 
-function ActivityView({ activity = [], today = 0 }) {
-  const fmtAt = (at) => {
-    if (!at) return '';
-    const d = new Date(at), now = new Date();
-    const t = d.toLocaleTimeString('es', { hour12: false, hour: '2-digit', minute: '2-digit' });
-    return d.toDateString() === now.toDateString() ? t : `${d.toLocaleDateString('es', { day: '2-digit', month: '2-digit' })} ${t}`;
-  };
-  return (
-    <div style={{ flex: 1, overflow: 'auto', padding: 24 }}>
-      <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 14 }}>
-        Actividad del Sistema · {today > 0 ? `hoy (${today})` : 'reciente'}
-      </div>
-      {activity.length === 0 ? (
-        <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontStyle: 'italic' }}>Sin actividad en los últimos 14 días — los agentes están quietos (revisá directivas activas o el período de recovery).</div>
-      ) : (<>
-        {today === 0 && (
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.72rem', marginBottom: 10, fontStyle: 'italic' }}>Sin acciones hoy — mostrando lo más reciente:</div>
-        )}
-        {activity.map((a, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderBottom: '1px solid var(--border-color)' }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: `var(--ag-${a.agent})`, boxShadow: `0 0 6px var(--ag-${a.agent})`, flexShrink: 0 }} />
-            <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              <b style={{ color: `var(--ag-${a.agent})`, textTransform: 'capitalize' }}>{a.agent}</b> · {a.action}{a.entity_name ? ` · ${a.entity_name}` : ''}
-            </span>
-            <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontFamily: 'JetBrains Mono, monospace', flexShrink: 0 }}>{fmtAt(a.at)}</span>
-          </div>
-        ))}
-      </>)}
-    </div>
-  );
-}
