@@ -182,19 +182,34 @@ async function runDionysus() {
         // mid-render, reconcileStuckVideos puede recuperarlo desde PiAPI.
         onSubmit: (taskId) => CreativeProposal.findByIdAndUpdate(placeholder._id, { $set: { video_task_id: taskId } })
       });
+      // JUEZ DE VIDEO REAL (Gemini mira el mp4) — ve movimiento/artefactos/freezing
+      // que el juez de imagen no puede. Auto-rechaza videos rotos y gatea el auto-aprobado.
+      let videoVerdict = null;
+      try { videoVerdict = await require('../creative/video/video-result-judge').judgeVideoResult(vid.video_url, c.product_name, variant); } catch (_) { /* fail-open */ }
+
+      if (videoVerdict && videoVerdict.verdict === 'reject') {
+        await CreativeProposal.findByIdAndUpdate(placeholder._id, {
+          $set: { status: 'rejected', video_url: vid.video_url, video_task_id: vid.task_id, video_result_verdict: videoVerdict, rejection_reason: `juez de video: ${videoVerdict.notes || 'roto (artefactos/freezing)'}` }
+        });
+        rejected++;
+        logger.info(`[DIONISIO] 🚫 video roto auto-rechazado: "${(c.headline || '').slice(0, 30)}" — ${videoVerdict.notes}`);
+        continue;
+      }
+
       // AUTO-APROBAR alta confianza → directo a 'ready' (Prometheus); dudosos → review manual.
       const ms = motionStats[variant] || {};
       const motionReject = ((ms.n || 0) + (ms.reject_n || 0)) > 0 ? (ms.reject_n || 0) / ((ms.n || 0) + (ms.reject_n || 0)) : 0;
       const autoOk = AUTO_APPROVE && verdict.score >= AUTO_APPROVE_MIN_SCORE
         && motionReject < AUTO_APPROVE_MAX_MOTION_REJECT
-        && !HIGH_PHYSICS_MOTIONS.has(variant); // física de caída → siempre review manual
+        && !HIGH_PHYSICS_MOTIONS.has(variant) // física de caída → siempre review manual
+        && (!videoVerdict || videoVerdict.verdict === 'good'); // el juez de video debe aprobarlo
       const newStatus = autoOk ? 'ready' : 'pending_video_review';
       await CreativeProposal.findByIdAndUpdate(placeholder._id, {
-        $set: { status: newStatus, video_url: vid.video_url, video_task_id: vid.task_id, ...(autoOk ? { auto_approved_at: new Date() } : {}) }
+        $set: { status: newStatus, video_url: vid.video_url, video_task_id: vid.task_id, video_result_verdict: videoVerdict, ...(autoOk ? { auto_approved_at: new Date() } : {}) }
       });
       generated++;
       results.push({ source: c._id, headline: c.headline, score: verdict.score, video_url: vid.video_url, variant, auto_approved: autoOk });
-      logger.info(`[DIONISIO] 🎬 ${autoOk ? '⚡ AUTO-APROBADO → ready (Prometheus)' : 'pendiente review'}: "${(c.headline || '').slice(0, 30)}" (score ${verdict.score}, ${variant}, motion-reject ${(motionReject * 100).toFixed(0)}%)`);
+      logger.info(`[DIONISIO] 🎬 ${autoOk ? '⚡ AUTO-APROBADO → ready (Prometheus)' : 'pendiente review'}: "${(c.headline || '').slice(0, 30)}" (score ${verdict.score}, ${variant}${videoVerdict ? `, video ${videoVerdict.verdict} ${videoVerdict.overall}` : ''})`);
     } catch (e) {
       await CreativeProposal.findByIdAndUpdate(placeholder._id, {
         $set: { status: 'failed', rejection_reason: `video gen failed: ${e.message}` }

@@ -49,7 +49,7 @@ function outcomeScore(status, m = {}) {
 async function reconcile() {
   const vids = await CreativeProposal.find({
     media_type: 'video', status: { $in: ['testing', 'graduated', 'killed', 'expired'] }
-  }).select('motion_variant product_name video_judge_score video_judge_breakdown status').lean();
+  }).select('motion_variant product_name video_judge_score video_judge_breakdown video_result_verdict status').lean();
 
   if (!vids.length) { logger.info('[VIDEO-LEARNING] sin videos con outcome aún'); return null; }
 
@@ -82,6 +82,11 @@ async function reconcile() {
     .map(v => [v.video_judge_score, outcomeScore(v.status, byProp[String(v._id)] || {})]);
   const score_corr = scorePairs.length >= MIN_PAIRS_CORR ? corr(scorePairs) : null;
 
+  // ¿El juez de VIDEO (Gemini, ve el mp4) predice mejor que el de imagen (Claude)?
+  const videoPairs = settled.filter(v => v.video_result_verdict?.overall != null)
+    .map(v => [v.video_result_verdict.overall, outcomeScore(v.status, byProp[String(v._id)] || {})]);
+  const video_score_corr = videoPairs.length >= MIN_PAIRS_CORR ? corr(videoPairs) : null;
+
   const dimCorr = {};
   for (const d of JUDGE_DIMS) {
     const pairs = settled
@@ -94,7 +99,7 @@ async function reconcile() {
     generated_at: new Date(),
     settled_count: settled.length,
     motion_rank: motionRank,
-    judge: { score_corr, dim_corr: dimCorr }
+    judge: { score_corr, video_score_corr, dim_corr: dimCorr }
   };
   await SystemConfig.set(LEARNINGS_KEY, learnings, 'video_learning');
   logger.info(`[VIDEO-LEARNING] reconciliado: ${settled.length} firmes · top motion ${motionRank[0]?.key || '—'} · juez score_corr ${score_corr ?? 'n/a'}`);

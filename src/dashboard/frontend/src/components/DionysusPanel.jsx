@@ -283,25 +283,41 @@ function CalibracionSection({ learnings }) {
     );
   }
   const corr = learnings.judge?.score_corr;
+  const vcorr = learnings.judge?.video_score_corr;
   const dimCorr = learnings.judge?.dim_corr || {};
   const cColor = c => c == null ? '#64748b' : c >= 0.5 ? '#34d399' : c >= 0.3 ? '#fbbf24' : '#f87171';
   const rank = learnings.motion_rank || [];
+  const corrCard = (title, sub, c, hl) => (
+    <div style={{ ...card, padding: '12px 14px', border: hl ? `1px solid color-mix(in srgb, ${FUCHSIA} 40%, transparent)` : card.border }}>
+      <div style={{ fontSize: '0.64rem', fontWeight: 700, color: hl ? FUCHSIA : 'var(--bos-text, #e5e7eb)' }}>{title}</div>
+      <div style={{ fontSize: '0.54rem', opacity: 0.5, marginBottom: 6 }}>{sub}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ fontSize: '1.6rem', fontWeight: 800, color: cColor(c), fontFamily: 'JetBrains Mono, monospace' }}>{c ?? '—'}</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ height: 5, background: 'rgba(255,255,255,0.08)', borderRadius: 3 }}>
+            <div style={{ width: `${Math.max(0, Math.min(1, (c || 0))) * 100}%`, height: '100%', background: cColor(c), borderRadius: 3 }} />
+          </div>
+          <div style={{ fontSize: '0.6rem', color: cColor(c), marginTop: 3 }}>{c == null ? 'sin data aún' : c < 0.35 ? 'débil' : c < 0.5 ? 'razonable' : 'fuerte'}</div>
+        </div>
+      </div>
+    </div>
+  );
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ fontSize: 11, opacity: 0.55 }}>Reconciliado de <b style={{ color: FUCHSIA }}>{learnings.settled_count}</b> videos firmes · cruza predicción del juez ↔ resultado real</div>
 
-      {/* score_corr */}
-      <div style={{ ...card, padding: '14px 16px' }}>
-        <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.6, marginBottom: 6 }}>¿El score del juez predijo el resultado real?</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: cColor(corr), fontFamily: 'JetBrains Mono, monospace' }}>{corr ?? '—'}</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3 }}>
-              <div style={{ width: `${Math.max(0, Math.min(1, (corr || 0))) * 100}%`, height: '100%', background: cColor(corr), borderRadius: 3 }} />
-            </div>
-            <div style={{ fontSize: '0.66rem', color: cColor(corr), marginTop: 4 }}>{corr == null ? 'sin data' : corr < 0.35 ? 'DÉBIL — el juez no discrimina; se le inyecta "sé más exigente"' : 'razonable'}</div>
-          </div>
+      {/* ¿Cuál juez predice mejor? imagen (Claude) vs video (Gemini) */}
+      <div>
+        <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.6, marginBottom: 8 }}>¿Qué juez predice mejor el resultado real? (correlación ↔ outcome)</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          {corrCard('🖼️ Juez de imagen · Claude', 'mira la foto-fuente (predicción)', corr, false)}
+          {corrCard('🎬 Juez de video · Gemini', 'mira el mp4 real (movimiento)', vcorr, true)}
         </div>
+        {corr != null && vcorr != null && (
+          <div style={{ fontSize: '0.64rem', marginTop: 6, color: vcorr > corr ? '#34d399' : '#94a3b8' }}>
+            {vcorr > corr ? `✓ El juez de video predice mejor (+${(vcorr - corr).toFixed(2)}) — ver el mp4 real ayuda` : 'Aún parejos — más data lo va a definir'}
+          </div>
+        )}
       </div>
 
       {/* dimensiones */}
