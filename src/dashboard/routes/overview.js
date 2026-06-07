@@ -5,15 +5,18 @@ const ActionLog = require('../../db/models/ActionLog');
 const { getLatestSnapshots } = require('../../db/queries');
 
 // Mapa agent_type (ActionLog) → id de orbe de la galaxia
+// Cubre TODOS los agent_type que ActionLog realmente usa (Athena loguea como
+// 'unified_agent'/'scaling'; hay 'ai_manager', 'warehouse_throttle', etc.). Sin esto
+// las acciones caían a 'zeus' o se saltaban → el feed no mostraba a todos.
 const AGENT_TYPE_MAP = {
-  account_agent: 'athena', athena: 'athena',
+  account_agent: 'athena', athena: 'athena', unified_agent: 'athena', scaling: 'athena', performance: 'athena', pacing: 'athena',
   creative_agent: 'apollo', apollo: 'apollo',
   testing_agent: 'prometheus', prometheus: 'prometheus',
   ares_agent: 'ares', ares_brain: 'ares', ares_portfolio: 'ares',
   demeter: 'demeter',
   dionysus: 'dionisio', dionisio: 'dionisio',
   hermes: 'hermes',
-  zeus: 'zeus', zeus_oracle: 'zeus'
+  zeus: 'zeus', zeus_oracle: 'zeus', zeus_agent: 'zeus', brain: 'zeus', ai_manager: 'zeus', warehouse_throttle: 'zeus', manual: 'zeus', manual_script: 'zeus'
 };
 
 const AGENT_IDS = ['zeus', 'athena', 'apollo', 'prometheus', 'demeter', 'dionisio', 'ares', 'hermes'];
@@ -22,11 +25,16 @@ const AGENT_IDS = ['zeus', 'athena', 'apollo', 'prometheus', 'demeter', 'dionisi
 router.get('/', async (req, res) => {
   try {
     const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+    const feed14d = new Date(Date.now() - 14 * 86400000);
 
-    const [campaigns, adsets, recentActions] = await Promise.all([
+    const [campaigns, adsets, recentActions, recentFeed] = await Promise.all([
       getLatestSnapshots('campaign'),
       getLatestSnapshots('adset'),
-      ActionLog.find({ created_at: { $gte: startOfDay } }).sort({ created_at: -1 }).limit(200).lean()
+      // ActionLog usa executed_at (NO created_at) — ese es el campo canónico indexado.
+      ActionLog.find({ executed_at: { $gte: startOfDay } }).sort({ executed_at: -1 }).limit(200).lean(),
+      // Feed: últimas acciones de los últimos 14 días (no solo HOY) — así no se ve
+      // vacío cuando los agentes están quietos (recovery / pocas acciones/día).
+      ActionLog.find({ executed_at: { $gte: feed14d } }).sort({ executed_at: -1 }).limit(20).lean()
     ]);
 
     // ── KPIs globales (hoy) ── spend/revenue desde campañas; budget desde adsets
@@ -58,7 +66,7 @@ router.get('/', async (req, res) => {
         byAgent[id].last_action = {
           action: a.action, entity_name: a.entity_name,
           reasoning: (a.reasoning || '').slice(0, 160),
-          at: a.created_at, success: a.success
+          at: a.executed_at, success: a.success
         };
       }
     }
@@ -102,20 +110,22 @@ router.get('/', async (req, res) => {
       byAgent.dionisio.kpis = { tests_video: vid, graduados_7d: vgrad };
     } catch (e) { logger.warn(`[OVERVIEW] dionisio kpis: ${e.message}`); }
     try {
-      byAgent.hermes.kpis = { publicaciones_7d: await ActionLog.countDocuments({ agent_type: 'hermes', created_at: { $gte: w7 } }) };
+      byAgent.hermes.kpis = { publicaciones_7d: await ActionLog.countDocuments({ agent_type: 'hermes', executed_at: { $gte: w7 } }) };
     } catch (e) { logger.warn(`[OVERVIEW] hermes kpis: ${e.message}`); }
 
-    // ── Actividad reciente (timeline + feed) ──
-    const activity = recentActions.slice(0, 15).map(a => ({
+    // ── Actividad reciente (timeline + feed) — últimos 14d, no solo hoy ──
+    const activity = recentFeed.slice(0, 15).map(a => ({
       agent: AGENT_TYPE_MAP[a.agent_type] || 'zeus',
       action: a.action, entity_name: a.entity_name,
-      at: a.created_at, success: a.success
+      at: a.executed_at, success: a.success
     }));
+    const activityToday = recentActions.length; // cuántas fueron hoy (para el label)
 
     res.json({
       global,
       agents: AGENT_IDS.map(id => byAgent[id]),
       activity,
+      activity_today: activityToday,
       generated_at: new Date()
     });
   } catch (err) {
@@ -131,7 +141,8 @@ const HIST_AGENT_MAP = {
   creative: 'apollo', creative_agent: 'apollo', apollo: 'apollo',
   testing_agent: 'prometheus', prometheus: 'prometheus',
   ares_agent: 'ares', ares_portfolio: 'ares', ares_brain: 'ares', ares: 'ares',
-  zeus_agent: 'zeus', brain: 'zeus', unified_agent: 'zeus', ai_manager: 'zeus', warehouse_throttle: 'zeus',
+  unified_agent: 'athena', // Athena loguea scale_up/budget como unified_agent
+  zeus_agent: 'zeus', brain: 'zeus', ai_manager: 'zeus', warehouse_throttle: 'zeus',
   hermes: 'hermes', demeter: 'demeter', dionysus: 'dionisio', dionisio: 'dionisio',
   manual: 'manual', manual_script: 'manual'
 };
