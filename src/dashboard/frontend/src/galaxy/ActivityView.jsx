@@ -169,7 +169,9 @@ export default function ActivityView() {
               { v: sum.total, l: 'Eventos', c: '#a78bfa' },
               { v: sum.scale, l: 'Escalas', c: '#34d399' },
               { v: sum.new_adsets, l: 'Nuevos adsets', c: '#60a5fa' },
-              { v: sum.pauses, l: 'Pausas', c: '#f87171' }
+              { v: sum.pauses, l: 'Pausas', c: '#f87171' },
+              { v: sum.images, l: 'Imágenes (Apollo)', c: '#fb923c' },
+              { v: sum.videos, l: 'Videos (Dionisio)', c: '#ec4899' }
             ].map(s => (
               <div key={s.l}>
                 <div style={{ fontSize: '1.5rem', fontWeight: 800, color: s.c, fontFamily: 'JetBrains Mono, monospace', lineHeight: 1 }}>{s.v ?? 0}</div>

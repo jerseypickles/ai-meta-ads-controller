@@ -154,6 +154,23 @@ const VERDICT_IMPACT = {
   pending: { label: 'Midiendo', color: '#64748b', key: 'pending' }
 };
 
+// Agrupa proposals por ciclo (gap > 45min = nuevo ciclo cron) → 1 evento por ciclo.
+function clusterProposals(props, agent, action, labeler, gapMin = 45) {
+  const sorted = props.slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  const clusters = []; const gap = gapMin * 60000;
+  for (const p of sorted) {
+    const t = new Date(p.created_at).getTime();
+    const last = clusters[clusters.length - 1];
+    if (last && t - last.endT <= gap) { last.n++; last.endT = t; }
+    else clusters.push({ n: 1, endT: t });
+  }
+  return clusters.map(c => ({
+    agent, agent_raw: agent, action, entity_name: labeler(c.n),
+    reasoning: '', at: new Date(c.endT), success: true,
+    verdict: 'info', impact_label: 'Creativo', impact_color: '#a78bfa', expected_impact_pct: 0
+  }));
+}
+
 router.get('/activity', async (req, res) => {
   try {
     const agent = req.query.agent && req.query.agent !== 'all' ? req.query.agent : null;
@@ -163,12 +180,16 @@ router.get('/activity', async (req, res) => {
     const q = (req.query.q || '').trim().toLowerCase();
     const since = new Date(Date.now() - days * 86400000);
 
-    const raw = await ActionLog.find({ executed_at: { $gte: since } })
-      .sort({ executed_at: -1 }).limit(500)
-      .select('agent_type action entity_name reasoning executed_at success follow_up_verdict expected_impact_pct').lean();
+    const CreativeProposal = require('../../db/models/CreativeProposal');
+    const [raw, imgs, vids] = await Promise.all([
+      ActionLog.find({ executed_at: { $gte: since } }).sort({ executed_at: -1 }).limit(500)
+        .select('agent_type action entity_name reasoning executed_at success follow_up_verdict expected_impact_pct').lean(),
+      CreativeProposal.find({ media_type: 'image', created_at: { $gte: since } }).select('created_at').lean(),
+      CreativeProposal.find({ media_type: 'video', created_at: { $gte: since } }).select('created_at').lean()
+    ]);
 
-    // Map + limpiar entity ([Agente] sufijo) + impacto honesto
-    let all = raw.map(a => {
+    // Map ActionLog + limpiar entity ([Agente] sufijo) + impacto honesto
+    const actionEvents = raw.map(a => {
       const v = VERDICT_IMPACT[a.follow_up_verdict] || VERDICT_IMPACT.pending;
       return {
         agent: ACTIVITY_MAP[a.agent_type] || 'sistema',
@@ -181,6 +202,14 @@ router.get('/activity', async (req, res) => {
         expected_impact_pct: a.expected_impact_pct || 0
       };
     });
+
+    // Eventos de GENERACIÓN (Apollo imágenes / Dionisio videos) — por ciclo cron
+    const genEvents = [
+      ...clusterProposals(imgs, 'apollo', 'generate_images', n => `${n} ${n > 1 ? 'imágenes generadas' : 'imagen generada'}`),
+      ...clusterProposals(vids, 'dionisio', 'generate_video', n => `${n} ${n > 1 ? 'videos generados' : 'video generado'}`)
+    ];
+
+    let all = [...actionEvents, ...genEvents].sort((a, b) => new Date(b.at) - new Date(a.at));
     if (q) all = all.filter(e => `${e.entity_name} ${e.action} ${e.agent}`.toLowerCase().includes(q));
 
     // Contadores por agente (sobre TODOS, para los chips) — antes de filtrar por agente
@@ -195,7 +224,7 @@ router.get('/activity', async (req, res) => {
     const impact = { positive: 0, neutral: 0, negative: 0, pending: 0 };
     let scale = 0, newAdsets = 0, pauses = 0;
     for (const e of filtered) {
-      impact[e.verdict] = (impact[e.verdict] || 0) + 1;
+      if (impact[e.verdict] != null) impact[e.verdict]++; // solo verdicts reales (no 'info' de generación)
       if (/scale_up|scale_down|move_budget|redistribut/i.test(e.action)) scale++;
       if (/create_adset|create_ad|duplicate/i.test(e.action)) newAdsets++;
       if (/pause/i.test(e.action)) pauses++;
@@ -210,7 +239,7 @@ router.get('/activity', async (req, res) => {
     res.json({
       events, total, page, pages, per_page: perPage,
       counts_by_agent: countsByAgent, all_count: all.length,
-      summary: { total: all.length, scale, new_adsets: newAdsets, pauses },
+      summary: { total: all.length, scale, new_adsets: newAdsets, pauses, images: imgs.length, videos: vids.length },
       impact_breakdown: impact,
       top_agents: topAgents,
       days
