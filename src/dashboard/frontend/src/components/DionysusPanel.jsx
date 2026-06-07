@@ -14,6 +14,7 @@ function DionysusPanel() {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [busy, setBusy] = useState(null);
+  const [tab, setTab] = useState('cola');
   const pollRef = useRef(null);
 
   const load = useCallback(async () => {
@@ -77,167 +78,87 @@ function DionysusPanel() {
     } catch (e) { window.open(url, '_blank'); }
   };
 
-  const card = { background: 'rgba(192,38,211,0.06)', border: `1px solid rgba(192,38,211,0.2)`, borderRadius: 12 };
+  const queueCount = pending.length + genVideos.length;
+  const TABS = [
+    { k: 'cola', l: '📋 Cola de review', n: queueCount || null },
+    { k: 'aprendizaje', l: '🧬 Aprendizaje', n: null },
+    { k: 'calibracion', l: '🎯 Calibración del juez', n: null }
+  ];
 
   return (
-    <div className="dionysus-panel" style={{ padding: 4 }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingBottom: 14, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-        <span style={{ fontSize: 26 }}>🎭</span>
-        <div>
-          <div style={{ fontWeight: 700, fontSize: 18, color: FUCHSIA }}>Dionisio</div>
-          <div style={{ fontSize: 11, opacity: 0.55 }}>Video · Seedance 2.0</div>
+    <div className="dionysus-panel ag-dionisio" style={{ padding: 2 }}>
+      {/* ── HERO ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '16px 18px', borderRadius: 14, marginBottom: 14,
+        background: `linear-gradient(135deg, color-mix(in srgb, ${FUCHSIA} 16%, transparent), transparent 70%)`,
+        border: `1px solid color-mix(in srgb, ${FUCHSIA} 28%, transparent)` }}>
+        <div style={{ width: 54, height: 54, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28,
+          background: `radial-gradient(circle at 35% 30%, #f9a8d4, ${FUCHSIA})`, boxShadow: `0 0 22px color-mix(in srgb, ${FUCHSIA} 55%, transparent)` }}>🎭</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: '1.5rem', fontWeight: 800, lineHeight: 1,
+            background: `linear-gradient(135deg, ${FUCHSIA}, #f9a8d4)`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>DIONISIO</div>
+          <div style={{ fontSize: '0.68rem', color: 'var(--bos-text-muted, #94a3b8)', textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: 4 }}>Video Creator · Seedance 2.0 · human-in-the-loop</div>
         </div>
         <button onClick={onGenSources} disabled={genSources} title="Generar imágenes de interacción (mano+chip+salsa) que Dionisio anima"
-          style={{ marginLeft: 'auto', padding: '9px 14px', borderRadius: 8, border: '1px solid rgba(192,38,211,0.4)', fontWeight: 600, cursor: genSources ? 'default' : 'pointer',
-                   background: 'transparent', color: FUCHSIA }}>
+          style={{ padding: '8px 13px', borderRadius: 8, border: `1px solid color-mix(in srgb, ${FUCHSIA} 40%, transparent)`, fontWeight: 600, cursor: genSources ? 'default' : 'pointer', background: 'transparent', color: FUCHSIA, fontSize: '0.78rem' }}>
           {genSources ? '🎨 Generando…' : '🎨 Fuentes'}
         </button>
         <button onClick={onRun} disabled={running}
-          style={{ padding: '9px 18px', borderRadius: 8, border: 'none', fontWeight: 700, cursor: running ? 'default' : 'pointer',
-                   background: running ? 'rgba(192,38,211,0.3)' : FUCHSIA, color: '#fff' }}>
+          style={{ padding: '8px 16px', borderRadius: 8, border: 'none', fontWeight: 700, cursor: running ? 'default' : 'pointer', fontSize: '0.8rem',
+            background: running ? `color-mix(in srgb, ${FUCHSIA} 30%, transparent)` : `linear-gradient(135deg, ${FUCHSIA}, color-mix(in srgb, ${FUCHSIA} 65%, #000))`, color: '#fff' }}>
           {running ? '🎬 Generando…' : '✨ Generar videos'}
         </button>
-        <button onClick={load} title="Refrescar" style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#fff', cursor: 'pointer' }}>↻</button>
+        <button onClick={load} title="Refrescar" style={{ padding: '8px 11px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#fff', cursor: 'pointer' }}>↻</button>
       </div>
 
-      {/* Stat strip */}
+      {/* ── KPI strip ── */}
       {stats && (
-        <div style={{ display: 'flex', gap: 10, margin: '14px 0' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 14 }}>
           {[
             { label: 'Pool fuentes', value: `${stats.source_pool ?? 0}/${stats.source_pool_target ?? 30}`, color: '#f0abfc' },
             { label: 'Pendientes', value: stats.pending, color: FUCHSIA },
             { label: 'Videos totales', value: stats.total_videos, color: '#a78bfa' },
             { label: 'Testeados', value: stats.tested_count, color: '#34d399' }
           ].map(s => (
-            <div key={s.label} style={{ ...card, flex: 1, padding: '12px 14px' }}>
-              <div style={{ fontSize: 22, fontWeight: 800, color: s.color }}>{s.value}</div>
-              <div style={{ fontSize: 11, opacity: 0.6 }}>{s.label}</div>
+            <div key={s.label} style={{ background: `color-mix(in srgb, ${s.color} 8%, rgba(17,21,51,0.5))`, border: `1px solid color-mix(in srgb, ${s.color} 25%, transparent)`, borderRadius: 12, padding: '12px 14px' }}>
+              <div style={{ fontSize: '1.5rem', fontWeight: 800, color: s.color, fontFamily: 'JetBrains Mono, monospace', lineHeight: 1 }}>{s.value}</div>
+              <div style={{ fontSize: '0.58rem', opacity: 0.65, textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 4 }}>{s.label}</div>
             </div>
           ))}
         </div>
       )}
 
-      {/* Generando — banner animado */}
+      {/* ── Generando banner ── */}
       {(running || genVideos.length > 0) && (
-        <div style={{ ...card, padding: '16px 18px', margin: '12px 0', display: 'flex', alignItems: 'center', gap: 14 }}>
+        <div style={{ padding: '14px 18px', marginBottom: 14, borderRadius: 12, display: 'flex', alignItems: 'center', gap: 14,
+          background: `color-mix(in srgb, ${FUCHSIA} 8%, transparent)`, border: `1px solid color-mix(in srgb, ${FUCHSIA} 25%, transparent)` }}>
           <div className="dio-pulse" style={{ width: 14, height: 14, borderRadius: '50%', background: FUCHSIA }} />
           <div>
-            <div style={{ fontWeight: 600 }}>
-              Dionisio está generando{genVideos.length > 0 ? ` ${genVideos.length} video${genVideos.length > 1 ? 's' : ''}` : ' videos'}…
-            </div>
-            <div style={{ fontSize: 12, opacity: 0.6 }}>Juzga tus mejores imágenes → anima 5s con Seedance 1080p. Puede tardar varios minutos por video (HD); van apareciendo abajo a medida que terminan.</div>
+            <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>Dionisio está generando{genVideos.length > 0 ? ` ${genVideos.length} video${genVideos.length > 1 ? 's' : ''}` : ' videos'}…</div>
+            <div style={{ fontSize: '0.72rem', opacity: 0.6 }}>Juzga tus mejores imágenes → anima 5s con Seedance 1080p. Puede tardar varios minutos por video; aparecen en la Cola al terminar.</div>
           </div>
         </div>
       )}
 
-      {/* DNA — qué aprende (3 dimensiones: motion / cámara / escena) */}
-      <div style={{ margin: '18px 0 10px', fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
-        🧬 Lo que Dionisio aprende <span style={{ fontWeight: 400, opacity: 0.5, fontSize: 11 }}>(qué rinde mejor en cada dimensión · exploit/explore)</span>
-      </div>
-      {(() => {
-        const dims = [
-          { key: 'motion', label: 'Motion (interacción)' },
-          { key: 'camera', label: 'Cámara' },
-          { key: 'scene', label: 'Escena' }
-        ];
-        const byDim = stats?.dna_by_dimension;
-        const hasAny = byDim && dims.some(d => (byDim[d.key] || []).length);
-        if (!hasAny) {
+      {/* ── TABS ── */}
+      <div style={{ display: 'flex', gap: 4, padding: 4, background: 'rgba(10,14,39,0.4)', borderRadius: 10, marginBottom: 16 }}>
+        {TABS.map(t => {
+          const active = tab === t.k;
           return (
-            <div style={{ ...card, padding: 14, fontSize: 12, opacity: 0.6 }}>
-              Todavía sin data — el DNA se construye a medida que los videos se testean. Cuando Prometheus testee los primeros, vas a ver acá qué <b>motion</b>, qué <b>cámara</b> y qué <b>escena</b> traen mejor CTR/ROAS, y Dionisio va a generar más del ganador.
-            </div>
+            <button key={t.k} onClick={() => setTab(t.k)} style={{
+              flex: 1, padding: '8px 6px', borderRadius: 6, cursor: 'pointer', fontSize: '0.72rem', fontWeight: active ? 700 : 500, whiteSpace: 'nowrap',
+              background: active ? `color-mix(in srgb, ${FUCHSIA} 20%, transparent)` : 'transparent',
+              border: active ? `1px solid color-mix(in srgb, ${FUCHSIA} 50%, transparent)` : '1px solid transparent',
+              color: active ? '#fff' : 'var(--bos-text-muted, #94a3b8)' }}>
+              {t.l}{t.n != null && <span style={{ opacity: 0.6, marginLeft: 4 }}>{t.n}</span>}
+            </button>
           );
-        }
-        const CAP = 5;
-        return (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 10, alignItems: 'start' }}>
-            {dims.map(dim => {
-              const all = (byDim[dim.key] || []).slice().sort((a, b) => (b.tested || 0) - (a.tested || 0));
-              if (!all.length) return null;
-              const rows = all.slice(0, CAP);
-              const extra = all.length - rows.length;
-              return (
-                <div key={dim.key} style={{ ...card, padding: 6 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.7, padding: '4px 8px' }}>{dim.label}</div>
-                  <table style={{ width: '100%', fontSize: 11.5, borderCollapse: 'collapse', tableLayout: 'fixed' }}>
-                    <thead><tr style={{ opacity: 0.55, textAlign: 'left' }}>
-                      <th style={{ padding: '5px 6px' }}>Valor</th><th style={{ width: 34 }}>Test</th><th style={{ width: 44 }}>CTR</th><th style={{ width: 42 }} title="% que ve el video completo">Hold</th><th style={{ width: 44 }}>ROAS</th><th style={{ width: 38 }}>Win</th>
-                    </tr></thead>
-                    <tbody>
-                      {rows.map(d => (
-                        <tr key={d.variant} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                          <td style={{ padding: '5px 6px', fontWeight: 600, color: FUCHSIA, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={d.variant}>{d.variant}</td>
-                          <td>{d.tested}</td>
-                          <td>{d.avg_ctr}%</td>
-                          <td style={{ color: d.avg_hold >= 10 ? '#34d399' : '#cbd5e1' }}>{d.avg_hold ?? 0}%</td>
-                          <td style={{ color: d.avg_roas >= 2 ? '#34d399' : '#f87171' }}>{d.avg_roas}x</td>
-                          <td>{d.win_rate}%</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {extra > 0 && <div style={{ fontSize: 10, opacity: 0.45, padding: '4px 8px' }}>+{extra} más</div>}
-                </div>
-              );
-            })}
-          </div>
-        );
-      })()}
+        })}
+      </div>
 
-      {/* Cola de review */}
-      <div style={{ margin: '20px 0 10px', fontWeight: 700, fontSize: 13 }}>📋 Cola de aprobación</div>
-      {loading ? (
-        <p style={{ opacity: 0.5 }}>Cargando…</p>
-      ) : (pending.length === 0 && genVideos.length === 0) ? (
-        <div style={{ ...card, padding: 20, textAlign: 'center', opacity: 0.6 }}>
-          <div style={{ fontSize: 32, marginBottom: 8 }}>🎬</div>
-          Sin videos pendientes. Dale <b>"Generar videos"</b> para crear desde tus winners.
-        </div>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 14 }}>
-          {/* Skeletons de los que se están generando */}
-          {genVideos.map(g => (
-            <div key={g._id} style={{ ...card, overflow: 'hidden', padding: 0 }}>
-              <div style={{ width: '100%', aspectRatio: '9/16', background: 'linear-gradient(135deg, rgba(192,38,211,0.15), rgba(192,38,211,0.04))', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
-                <div style={{ fontSize: 26 }} className="dio-spin">🎬</div>
-                <div style={{ fontSize: 11, color: FUCHSIA, fontWeight: 600 }}>generando…</div>
-                <div style={{ width: '60%', height: 4, borderRadius: 4, background: 'rgba(255,255,255,0.1)', overflow: 'hidden' }}>
-                  <div className="dio-bar" style={{ height: '100%', background: FUCHSIA, width: '40%' }} />
-                </div>
-              </div>
-              <div style={{ padding: 10 }}>
-                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{g.headline}</div>
-                <div style={{ fontSize: 10, opacity: 0.55 }}>{g.product_name} · <span style={{ color: FUCHSIA }}>{g.motion_variant}</span>{g.video_judge_score != null ? ` · score ${g.video_judge_score}` : ''}</div>
-              </div>
-            </div>
-          ))}
-          {pending.map(v => (
-            <div key={v._id} style={{ ...card, overflow: 'hidden', padding: 0 }}>
-              <video src={v.video_url} controls loop muted playsInline
-                style={{ width: '100%', display: 'block', aspectRatio: '9/16', objectFit: 'cover', background: '#000' }} />
-              <div style={{ padding: 10 }}>
-                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{v.headline}</div>
-                <div style={{ fontSize: 10, opacity: 0.55, marginBottom: 8 }}>
-                  {v.product_name} · <span style={{ color: FUCHSIA }}>{v.motion_variant}</span>
-                </div>
-                <JudgeVerdict v={v} />
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={() => decide(v._id, 'approve')} disabled={busy === v._id}
-                    style={{ flex: 1, padding: '7px 0', borderRadius: 6, border: 'none', background: '#22c55e', color: '#fff', cursor: 'pointer', fontWeight: 600 }}>
-                    {busy === v._id ? '…' : '✓ Aprobar'}
-                  </button>
-                  <button onClick={() => downloadVideo(v.video_url, `${v.product_name || 'dionisio'}-${v.motion_variant || ''}`)} title="Descargar video"
-                    style={{ padding: '7px 12px', borderRadius: 6, border: '1px solid rgba(192,38,211,0.4)', background: 'transparent', color: FUCHSIA, cursor: 'pointer' }}>⬇</button>
-                  <button onClick={() => decide(v._id, 'reject')} disabled={busy === v._id}
-                    style={{ padding: '7px 12px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#f87171', cursor: 'pointer' }}>✗</button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* ── CONTENT ── */}
+      {tab === 'cola' && <ColaSection loading={loading} pending={pending} genVideos={genVideos} busy={busy} decide={decide} downloadVideo={downloadVideo} />}
+      {tab === 'aprendizaje' && <DNASection stats={stats} />}
+      {tab === 'calibracion' && <CalibracionSection learnings={stats?.learnings} />}
 
       <style>{`
         @keyframes dioPulse {0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(1.4)}}
@@ -247,6 +168,182 @@ function DionysusPanel() {
         @keyframes dioBar {0%{margin-left:-40%}100%{margin-left:100%}}
         .dio-bar{animation:dioBar 1.4s ease-in-out infinite}
       `}</style>
+    </div>
+  );
+}
+
+const card = { background: 'rgba(236,72,153,0.06)', border: '1px solid rgba(236,72,153,0.2)', borderRadius: 12 };
+
+// ── TAB: Cola de review ──
+function ColaSection({ loading, pending, genVideos, busy, decide, downloadVideo }) {
+  if (loading) return <p style={{ opacity: 0.5 }}>Cargando…</p>;
+  if (pending.length === 0 && genVideos.length === 0) {
+    return (
+      <div style={{ ...card, padding: 28, textAlign: 'center', opacity: 0.6 }}>
+        <div style={{ fontSize: 36, marginBottom: 10 }}>🎬</div>
+        Sin videos pendientes. Dale <b>"Generar videos"</b> para crear desde tus winners.
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 14 }}>
+      {genVideos.map(g => (
+        <div key={g._id} style={{ ...card, overflow: 'hidden', padding: 0 }}>
+          <div style={{ width: '100%', aspectRatio: '9/16', background: `linear-gradient(135deg, color-mix(in srgb, ${FUCHSIA} 18%, transparent), transparent)`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+            <div style={{ fontSize: 26 }} className="dio-spin">🎬</div>
+            <div style={{ fontSize: 11, color: FUCHSIA, fontWeight: 600 }}>generando…</div>
+            <div style={{ width: '60%', height: 4, borderRadius: 4, background: 'rgba(255,255,255,0.1)', overflow: 'hidden' }}>
+              <div className="dio-bar" style={{ height: '100%', background: FUCHSIA, width: '40%' }} />
+            </div>
+          </div>
+          <div style={{ padding: 10 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{g.headline}</div>
+            <div style={{ fontSize: 10, opacity: 0.55 }}>{g.product_name} · <span style={{ color: FUCHSIA }}>{g.motion_variant}</span>{g.video_judge_score != null ? ` · score ${g.video_judge_score}` : ''}</div>
+          </div>
+        </div>
+      ))}
+      {pending.map(v => (
+        <div key={v._id} style={{ ...card, overflow: 'hidden', padding: 0 }}>
+          <video src={v.video_url} controls loop muted playsInline style={{ width: '100%', display: 'block', aspectRatio: '9/16', objectFit: 'cover', background: '#000' }} />
+          <div style={{ padding: 10 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{v.headline}</div>
+            <div style={{ fontSize: 10, opacity: 0.55, marginBottom: 8 }}>{v.product_name} · <span style={{ color: FUCHSIA }}>{v.motion_variant}</span></div>
+            <JudgeVerdict v={v} />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => decide(v._id, 'approve')} disabled={busy === v._id} style={{ flex: 1, padding: '7px 0', borderRadius: 6, border: 'none', background: '#22c55e', color: '#fff', cursor: 'pointer', fontWeight: 600 }}>{busy === v._id ? '…' : '✓ Aprobar'}</button>
+              <button onClick={() => downloadVideo(v.video_url, `${v.product_name || 'dionisio'}-${v.motion_variant || ''}`)} title="Descargar video" style={{ padding: '7px 12px', borderRadius: 6, border: `1px solid color-mix(in srgb, ${FUCHSIA} 40%, transparent)`, background: 'transparent', color: FUCHSIA, cursor: 'pointer' }}>⬇</button>
+              <button onClick={() => decide(v._id, 'reject')} disabled={busy === v._id} style={{ padding: '7px 12px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#f87171', cursor: 'pointer' }}>✗</button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── TAB: Aprendizaje (DNA por dimensión) ──
+function DNASection({ stats }) {
+  const dims = [{ key: 'motion', label: 'Motion (interacción)' }, { key: 'camera', label: 'Cámara' }, { key: 'scene', label: 'Escena' }];
+  const byDim = stats?.dna_by_dimension;
+  const hasAny = byDim && dims.some(d => (byDim[d.key] || []).length);
+  return (
+    <div>
+      <div style={{ marginBottom: 10, fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+        🧬 Lo que Dionisio aprende <span style={{ fontWeight: 400, opacity: 0.5, fontSize: 11 }}>(qué rinde en cada dimensión · exploit/explore)</span>
+      </div>
+      {!hasAny ? (
+        <div style={{ ...card, padding: 16, fontSize: 12, opacity: 0.65 }}>
+          Todavía sin data — el DNA se construye a medida que Prometheus testea los videos. Vas a ver acá qué <b>motion</b>, <b>cámara</b> y <b>escena</b> traen mejor CTR/hold/ROAS, y Dionisio genera más del ganador.
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10, alignItems: 'start' }}>
+          {dims.map(dim => {
+            const all = (byDim[dim.key] || []).slice().sort((a, b) => (b.tested || 0) - (a.tested || 0));
+            if (!all.length) return null;
+            const rows = all.slice(0, 6); const extra = all.length - rows.length;
+            return (
+              <div key={dim.key} style={{ ...card, padding: 6 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.7, padding: '4px 8px' }}>{dim.label}</div>
+                <table style={{ width: '100%', fontSize: 11.5, borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+                  <thead><tr style={{ opacity: 0.55, textAlign: 'left' }}>
+                    <th style={{ padding: '5px 6px' }}>Valor</th><th style={{ width: 34 }}>Test</th><th style={{ width: 44 }}>CTR</th><th style={{ width: 42 }} title="% que ve el video completo">Hold</th><th style={{ width: 44 }}>ROAS</th><th style={{ width: 38 }}>Win</th>
+                  </tr></thead>
+                  <tbody>
+                    {rows.map(d => (
+                      <tr key={d.variant} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                        <td style={{ padding: '5px 6px', fontWeight: 600, color: FUCHSIA, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={d.variant}>{d.variant}</td>
+                        <td>{d.tested}</td><td>{d.avg_ctr}%</td>
+                        <td style={{ color: d.avg_hold >= 10 ? '#34d399' : '#cbd5e1' }}>{d.avg_hold ?? 0}%</td>
+                        <td style={{ color: d.avg_roas >= 2 ? '#34d399' : '#f87171' }}>{d.avg_roas}x</td>
+                        <td>{d.win_rate}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {extra > 0 && <div style={{ fontSize: 10, opacity: 0.45, padding: '4px 8px' }}>+{extra} más</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── TAB: Calibración del juez (el reconciliador) ──
+function CalibracionSection({ learnings }) {
+  if (!learnings) {
+    return (
+      <div style={{ ...card, padding: 20, fontSize: 12.5, opacity: 0.7, lineHeight: 1.5 }}>
+        🎯 Sin calibración aún. El <b>reconciliador</b> corre diario (4:45am ET): cruza la <b>predicción del juez</b> contra el <b>resultado real</b> (enganche + conversión) y aprende qué de su criterio predijo de verdad. Necesita videos firmes (con señal suficiente) para arrancar.
+      </div>
+    );
+  }
+  const corr = learnings.judge?.score_corr;
+  const dimCorr = learnings.judge?.dim_corr || {};
+  const cColor = c => c == null ? '#64748b' : c >= 0.5 ? '#34d399' : c >= 0.3 ? '#fbbf24' : '#f87171';
+  const rank = learnings.motion_rank || [];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ fontSize: 11, opacity: 0.55 }}>Reconciliado de <b style={{ color: FUCHSIA }}>{learnings.settled_count}</b> videos firmes · cruza predicción del juez ↔ resultado real</div>
+
+      {/* score_corr */}
+      <div style={{ ...card, padding: '14px 16px' }}>
+        <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.6, marginBottom: 6 }}>¿El score del juez predijo el resultado real?</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: cColor(corr), fontFamily: 'JetBrains Mono, monospace' }}>{corr ?? '—'}</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3 }}>
+              <div style={{ width: `${Math.max(0, Math.min(1, (corr || 0))) * 100}%`, height: '100%', background: cColor(corr), borderRadius: 3 }} />
+            </div>
+            <div style={{ fontSize: '0.66rem', color: cColor(corr), marginTop: 4 }}>{corr == null ? 'sin data' : corr < 0.35 ? 'DÉBIL — el juez no discrimina; se le inyecta "sé más exigente"' : 'razonable'}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* dimensiones */}
+      <div>
+        <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.6, marginBottom: 8 }}>Qué dimensión del juez predijo de verdad</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}>
+          {Object.entries(VERDICT_DIMS).map(([k, label]) => {
+            const c = dimCorr[k];
+            return (
+              <div key={k} style={{ ...card, padding: '10px 12px', textAlign: 'center' }}>
+                <div style={{ fontSize: '1.1rem', fontWeight: 800, color: cColor(c), fontFamily: 'JetBrains Mono, monospace' }}>{c == null ? '—' : c}</div>
+                <div style={{ fontSize: '0.58rem', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 2 }}>{label}</div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ fontSize: '0.62rem', opacity: 0.5, marginTop: 6 }}>correlación dimensión↔resultado real · arranca cuando hay ≥6 videos del juez nuevo</div>
+      </div>
+
+      {/* ranking de motions por outcome */}
+      <div>
+        <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.6, marginBottom: 8 }}>Motions por resultado real (lo que vuelve al prompt)</div>
+        {rank.length === 0 ? (
+          <div style={{ ...card, padding: 14, fontSize: 12, opacity: 0.6 }}>Aún sin motions con suficiente data (≥3 videos firmes c/u).</div>
+        ) : (
+          <div style={{ ...card, padding: 6 }}>
+            <table style={{ width: '100%', fontSize: 11.5, borderCollapse: 'collapse' }}>
+              <thead><tr style={{ opacity: 0.55, textAlign: 'left' }}>
+                <th style={{ padding: '5px 8px' }}>Motion</th><th style={{ width: 70 }}>Outcome</th><th style={{ width: 50 }}>Hold</th><th style={{ width: 70 }}>Grad/Test</th><th style={{ width: 50 }}>Kill</th>
+              </tr></thead>
+              <tbody>
+                {rank.map((r, i) => (
+                  <tr key={r.key} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                    <td style={{ padding: '6px 8px', fontWeight: 600, color: i === 0 ? '#34d399' : FUCHSIA }}>{i === 0 ? '👑 ' : ''}{r.key}</td>
+                    <td style={{ fontFamily: 'JetBrains Mono, monospace', color: r.avg_outcome >= 50 ? '#34d399' : r.avg_outcome >= 20 ? '#fbbf24' : '#f87171' }}>{r.avg_outcome}</td>
+                    <td>{r.avg_hold}%</td>
+                    <td style={{ color: '#34d399' }}>{r.graduated}/{r.n}</td>
+                    <td style={{ color: r.killed ? '#f87171' : '#64748b' }}>{r.killed}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -83,7 +83,15 @@ router.get('/stats', async (req, res) => {
       sourcePoolTarget = POOL_TARGET;
     } catch (_) { /* noop */ }
 
-    res.json({ pending, total_videos: totalVideos, tested_count: tested.length, source_pool: sourcePool, source_pool_target: sourcePoolTarget, dna, dna_by_dimension: dnaByDimension, tested });
+    // Learnings del reconciliador (ranking de motions por outcome real + calibración del juez)
+    let learnings = null;
+    try {
+      const SystemConfig = require('../../db/models/SystemConfig');
+      const { LEARNINGS_KEY } = require('../../ai/creative/video/video-learning');
+      learnings = await SystemConfig.get(LEARNINGS_KEY, null);
+    } catch (_) { /* noop */ }
+
+    res.json({ pending, total_videos: totalVideos, tested_count: tested.length, source_pool: sourcePool, source_pool_target: sourcePoolTarget, dna, dna_by_dimension: dnaByDimension, tested, learnings });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
