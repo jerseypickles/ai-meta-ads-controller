@@ -35,6 +35,10 @@ function computeDeltas(action) {
   return d;
 }
 
+// Gasto mínimo en la ventana posterior para poder juzgar (cold-start del pixel da
+// ROAS 0 sin que la acción haya fracasado).
+const MIN_AFTER_SPEND = 30;
+
 // Veredicto: usa la ventana más completa (7d, fallback 3d) + el tipo de acción.
 function computeVerdict(action) {
   const be = action.metrics_at_execution || {};
@@ -43,6 +47,14 @@ function computeVerdict(action) {
 
   const beRoas = be.roas_7d || 0;
   const afRoas = af.roas_7d || 0;
+  const afSpend = af.spend_7d || 0;
+  const afPurch = af.purchases_7d || 0;
+  // GUARD anti-falso-negativo: sin gasto suficiente, o ROAS 0 sin compras → cold-start
+  // del pixel nuevo / aún no atribuido / no medido de verdad → NO se puede juzgar.
+  // Sin esto todo scale_up reciente daba falso 'negative' por afRoas=0 (el campo tiene
+  // default 0). Mismo principio que el kill-switch que dejó de usar Meta-ROAS crudo.
+  if (afSpend < MIN_AFTER_SPEND || (afRoas === 0 && afPurch === 0)) return 'pending';
+
   const roasDelta = pctDelta(beRoas, afRoas);
 
   switch (action.action) {
