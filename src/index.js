@@ -353,6 +353,18 @@ async function jobMeasureImpact() {
       const adMetrics = extractAdMetrics(action, snapshotMap);
       if (adMetrics) updates.ad_metrics_after_3d = adMetrics;
 
+      // Veredicto PROVISIONAL ya a los 3d (se refina a 7d). Antes solo se calculaba
+      // a 7d → las acciones recientes quedaban siempre 'pending'. computeVerdict ya
+      // usa metrics_after_3d como fallback. Fail-open.
+      try {
+        const { computeFollowUp } = require('./ai/zeus/action-verdict');
+        const fu = computeFollowUp({ ...action, ...updates });
+        updates.follow_up_deltas = fu.follow_up_deltas;
+        updates.follow_up_verdict = fu.follow_up_verdict;
+      } catch (e) {
+        logger.warn(`[CRON] verdict 3d falló para ${action._id} (no crítico): ${e.message}`);
+      }
+
       await ActionLog.findByIdAndUpdate(action._id, updates);
       measured3d++;
     }
