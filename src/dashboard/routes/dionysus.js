@@ -84,14 +84,15 @@ router.get('/stats', async (req, res) => {
     } catch (_) { /* noop */ }
 
     // Learnings del reconciliador (ranking de motions por outcome real + calibración del juez)
-    let learnings = null;
+    let learnings = null, weekly = [];
     try {
       const SystemConfig = require('../../db/models/SystemConfig');
-      const { LEARNINGS_KEY } = require('../../ai/creative/video/video-learning');
-      learnings = await SystemConfig.get(LEARNINGS_KEY, null);
+      const VL = require('../../ai/creative/video/video-learning');
+      learnings = await SystemConfig.get(VL.LEARNINGS_KEY, null);
+      weekly = await VL.weeklyTrend(12);
     } catch (_) { /* noop */ }
 
-    res.json({ pending, total_videos: totalVideos, tested_count: tested.length, source_pool: sourcePool, source_pool_target: sourcePoolTarget, dna, dna_by_dimension: dnaByDimension, tested, learnings });
+    res.json({ pending, total_videos: totalVideos, tested_count: tested.length, source_pool: sourcePool, source_pool_target: sourcePoolTarget, dna, dna_by_dimension: dnaByDimension, tested, learnings, weekly });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

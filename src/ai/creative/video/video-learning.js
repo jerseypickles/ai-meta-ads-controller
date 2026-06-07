@@ -101,6 +101,62 @@ async function reconcile() {
   return learnings;
 }
 
+// Etiqueta de semana ISO (YYYY-Www) de una fecha.
+function weekKey(d) {
+  const dt = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = dt.getUTCDay() || 7;
+  dt.setUTCDate(dt.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
+  const wk = Math.ceil((((dt - yearStart) / 86400000) + 1) / 7);
+  return `${dt.getUTCFullYear()}-W${String(wk).padStart(2, '0')}`;
+}
+
+/**
+ * Tendencia SEMANAL — cohorta los videos por semana (cuándo corrieron) y mide
+ * % positivos + win-rate + outcome por semana, con el Δ vs la semana anterior.
+ * Es la prueba de que el loop mejora semana a semana.
+ * "Positivo" = graduó o convirtió (≥1 compra).
+ */
+async function weeklyTrend(weeks = 10) {
+  const vids = await CreativeProposal.find({
+    media_type: 'video', status: { $in: ['testing', 'graduated', 'killed', 'expired'] }
+  }).select('status created_at').lean();
+  if (!vids.length) return [];
+
+  const ids = vids.map(v => v._id);
+  const runs = await TestRun.find({ proposal_id: { $in: ids } }).select('proposal_id metrics launched_at created_at').lean();
+  const byProp = {}; for (const t of runs) byProp[String(t.proposal_id)] = { m: t.metrics || {}, date: t.launched_at || t.created_at };
+
+  const buckets = {};
+  for (const v of vids) {
+    const r = byProp[String(v._id)];
+    const date = r?.date || v.created_at; if (!date) continue;
+    const wk = weekKey(new Date(date));
+    const b = buckets[wk] || (buckets[wk] = { week: wk, n: 0, grad: 0, kill: 0, pos: 0, out: 0, hold: 0 });
+    const m = r?.m || {};
+    b.n++;
+    if (v.status === 'graduated') b.grad++;
+    if (v.status === 'killed') b.kill++;
+    if (v.status === 'graduated' || (m.purchases || 0) > 0) b.pos++;
+    b.out += outcomeScore(v.status, m);
+    b.hold += (m.hold_rate || 0);
+  }
+
+  const arr = Object.values(buckets).map(b => ({
+    week: b.week, n: b.n,
+    pct_positive: Math.round((b.pos / b.n) * 100),
+    win_rate: (b.grad + b.kill) > 0 ? Math.round((b.grad / (b.grad + b.kill)) * 100) : null,
+    avg_outcome: +(b.out / b.n).toFixed(1),
+    avg_hold: +((b.hold / b.n) * 100).toFixed(0)
+  })).sort((a, b) => a.week.localeCompare(b.week));
+
+  for (let i = 1; i < arr.length; i++) {
+    arr[i].delta_positive = arr[i].pct_positive - arr[i - 1].pct_positive;
+    arr[i].delta_outcome = +(arr[i].avg_outcome - arr[i - 1].avg_outcome).toFixed(1);
+  }
+  return arr.slice(-weeks);
+}
+
 async function _get() { try { return await SystemConfig.get(LEARNINGS_KEY, null); } catch { return null; } }
 
 /**
@@ -138,4 +194,4 @@ async function getJudgeCalibration() {
   return note;
 }
 
-module.exports = { reconcile, getPromptLearning, getJudgeCalibration, outcomeScore, LEARNINGS_KEY };
+module.exports = { reconcile, getPromptLearning, getJudgeCalibration, weeklyTrend, outcomeScore, LEARNINGS_KEY };

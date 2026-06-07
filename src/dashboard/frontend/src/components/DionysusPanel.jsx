@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import {
   getDionysusPending, getDionysusStats, runDionysusApi,
   approveDionysusVideo, rejectDionysusVideo, generateDionysusSources
@@ -81,6 +82,7 @@ function DionysusPanel() {
   const queueCount = pending.length + genVideos.length;
   const TABS = [
     { k: 'cola', l: '📋 Cola de review', n: queueCount || null },
+    { k: 'evolucion', l: '📈 Evolución semanal', n: null },
     { k: 'aprendizaje', l: '🧬 Aprendizaje', n: null },
     { k: 'calibracion', l: '🎯 Calibración del juez', n: null }
   ];
@@ -157,6 +159,7 @@ function DionysusPanel() {
 
       {/* ── CONTENT ── */}
       {tab === 'cola' && <ColaSection loading={loading} pending={pending} genVideos={genVideos} busy={busy} decide={decide} downloadVideo={downloadVideo} />}
+      {tab === 'evolucion' && <EvolucionSection weekly={stats?.weekly} />}
       {tab === 'aprendizaje' && <DNASection stats={stats} />}
       {tab === 'calibracion' && <CalibracionSection learnings={stats?.learnings} />}
 
@@ -344,6 +347,88 @@ function CalibracionSection({ learnings }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── TAB: Evolución semanal (la prueba de mejora semana a semana) ──
+function EvolucionSection({ weekly }) {
+  if (!weekly || weekly.length === 0) {
+    return (
+      <div style={{ ...card, padding: 20, fontSize: 12.5, opacity: 0.7, lineHeight: 1.5 }}>
+        📈 Sin data semanal aún. A medida que corran videos por semana, vas a ver acá el <b>% de positivos</b> (graduó o convirtió) semana a semana y el <b>Δ vs la semana anterior</b> — la prueba de que el loop mejora.
+      </div>
+    );
+  }
+  const fmtWk = w => 'S' + ((w || '').split('-W')[1] || w);
+  const last = weekly[weekly.length - 1];
+  const dpos = last.delta_positive;
+  const series = weekly.map(w => ({ ...w, wk: fmtWk(w.week) }));
+  const dColor = d => d == null ? '#64748b' : d > 0 ? '#34d399' : d < 0 ? '#f87171' : '#94a3b8';
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Headline: esta semana vs anterior */}
+      <div style={{ ...card, padding: '16px 18px', display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.08em', opacity: 0.55 }}>Esta semana · {fmtWk(last.week)}</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+            <span style={{ fontSize: '2.4rem', fontWeight: 800, color: FUCHSIA, fontFamily: 'JetBrains Mono, monospace', lineHeight: 1 }}>{last.pct_positive}%</span>
+            <span style={{ fontSize: '0.8rem', opacity: 0.6 }}>positivos</span>
+            {dpos != null && (
+              <span style={{ fontSize: '0.95rem', fontWeight: 700, color: dColor(dpos) }}>
+                {dpos > 0 ? '▲ +' : dpos < 0 ? '▼ ' : '= '}{dpos} pts
+                <span style={{ fontSize: '0.6rem', opacity: 0.7, fontWeight: 400 }}> vs sem. anterior</span>
+              </span>
+            )}
+          </div>
+        </div>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 18, textAlign: 'right' }}>
+          <div><div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#34d399', fontFamily: 'JetBrains Mono, monospace' }}>{last.win_rate ?? '—'}%</div><div style={{ fontSize: '0.54rem', opacity: 0.55, textTransform: 'uppercase' }}>win rate</div></div>
+          <div><div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#a78bfa', fontFamily: 'JetBrains Mono, monospace' }}>{last.avg_outcome}</div><div style={{ fontSize: '0.54rem', opacity: 0.55, textTransform: 'uppercase' }}>outcome</div></div>
+          <div><div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#f0abfc', fontFamily: 'JetBrains Mono, monospace' }}>{last.n}</div><div style={{ fontSize: '0.54rem', opacity: 0.55, textTransform: 'uppercase' }}>videos</div></div>
+        </div>
+      </div>
+
+      {/* Chart */}
+      <div style={{ ...card, padding: '14px 12px 6px', height: 240 }}>
+        <div style={{ fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.6, marginBottom: 8, paddingLeft: 6 }}>% positivos &amp; win-rate por semana</div>
+        <ResponsiveContainer width="100%" height="88%">
+          <ComposedChart data={series} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+            <XAxis dataKey="wk" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 9, fill: '#94a3b8' }} axisLine={false} tickLine={false} width={34} domain={[0, 100]} tickFormatter={v => `${v}%`} />
+            <Tooltip contentStyle={{ background: '#0f1117', border: '1px solid #2d3244', borderRadius: 8, fontSize: 11 }}
+              formatter={(val, name) => [`${val}%`, name === 'pct_positive' ? '% positivos' : 'win rate']} />
+            <Bar dataKey="pct_positive" fill={FUCHSIA} fillOpacity={0.55} radius={[3, 3, 0, 0]} />
+            <Line type="monotone" dataKey="win_rate" stroke="#34d399" strokeWidth={2} dot={{ r: 3, fill: '#34d399' }} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Tabla */}
+      <div style={{ ...card, padding: 6 }}>
+        <table style={{ width: '100%', fontSize: 11.5, borderCollapse: 'collapse' }}>
+          <thead><tr style={{ opacity: 0.55, textAlign: 'left' }}>
+            <th style={{ padding: '5px 8px' }}>Semana</th><th style={{ width: 54 }}>Videos</th><th style={{ width: 54 }}>% Pos</th><th style={{ width: 56 }}>Δ pos</th><th style={{ width: 50 }}>Win</th><th style={{ width: 64 }}>Outcome</th><th style={{ width: 48 }}>Hold</th>
+          </tr></thead>
+          <tbody>
+            {series.slice().reverse().map(w => (
+              <tr key={w.week} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                <td style={{ padding: '6px 8px', fontWeight: 600 }}>{w.wk}</td>
+                <td>{w.n}</td>
+                <td style={{ color: FUCHSIA, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>{w.pct_positive}%</td>
+                <td style={{ color: dColor(w.delta_positive), fontFamily: 'JetBrains Mono, monospace' }}>{w.delta_positive != null ? (w.delta_positive > 0 ? '+' : '') + w.delta_positive : '—'}</td>
+                <td>{w.win_rate ?? '—'}%</td>
+                <td style={{ fontFamily: 'JetBrains Mono, monospace' }}>{w.avg_outcome}</td>
+                <td>{w.avg_hold}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ fontSize: '0.62rem', opacity: 0.5 }}>Positivo = el video graduó o convirtió (≥1 compra). El objetivo es que el % positivos suba semana a semana, aunque sea de a poco.</div>
     </div>
   );
 }
