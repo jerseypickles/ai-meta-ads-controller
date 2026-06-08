@@ -22,6 +22,7 @@ HUNT for these (almost always present at some level):
 - frozen / stuck objects instead of real gravity
 - the "AI look": too-smooth plasticky surfaces, staged/stocky background, uncanny lighting
 - the intended motion NOT actually happening (a barely-moving near-still frame)
+- 🧩 INCOHERENCE (analyze the WHOLE scene, not just one object) — the item the hand holds/shows does NOT match the contents of the jar/box/container in the SAME shot (e.g. a flat round CHIP in the hand while the jar/container clearly holds WHOLE pickles or spears), OR impossible scale/proportions (a piece far too big/small for its jar), OR elements that don't make sense together. A real person would notice "wait, that doesn't match". This is a SEVERE coherence break → verdict MUST be "reject".
 
 SCORE WITH REAL SPREAD — do NOT default to 90:
 - 90-100: genuinely flawless AND scroll-stopping. RARE — reserve it.
@@ -30,11 +31,12 @@ SCORE WITH REAL SPREAD — do NOT default to 90:
 - 0-54: broken — morphing product, severe artifacts, frozen, or wrong item.
 A competent-but-unremarkable clip is ~70-78, NOT 90. Be strict.
 
-verdict: "good" (overall ≥80 AND no severe issue) | "weak" (overall 55-79, real flaw) | "reject" (overall <55 / severe artifacts / product morphs / frozen / motion didn't happen).
+verdict: "good" (overall ≥80 AND no severe issue) | "weak" (overall 55-79, real flaw) | "reject" (overall <55 / severe artifacts / product morphs / frozen / motion didn't happen / INCOHERENT held-item-vs-container).
+"coherent": false ONLY if there is a real scene-coherence break (held item ≠ container contents, impossible proportions, elements that don't fit). Most clips are coherent → true.
 You MUST name the single biggest weakness in "weakness" — every clip has one, find it.
 
 Return ONLY JSON:
-{"overall":<0-100>,"motion_ok":<true|false>,"artifacts":"<none|minor|severe>","frozen":<true|false>,"fidelity_ok":<true|false>,"appetizing":<0-100>,"verdict":"<good|weak|reject>","weakness":"<the single biggest flaw, concrete>","notes":"<one sentence>"}`;
+{"overall":<0-100>,"motion_ok":<true|false>,"artifacts":"<none|minor|severe>","frozen":<true|false>,"fidelity_ok":<true|false>,"coherent":<true|false>,"appetizing":<0-100>,"verdict":"<good|weak|reject>","weakness":"<the single biggest flaw, concrete>","notes":"<one sentence>"}`;
 
 /**
  * @param {string} videoUrl - URL pública del mp4 (PiAPI ephemeral)
@@ -69,14 +71,18 @@ async function judgeVideoResult(videoUrl, productName = 'the product', motion = 
     const json = text.match(/\{[\s\S]*\}/);
     if (!json) throw new Error('Gemini sin JSON');
     const r = JSON.parse(json[0]);
+    const coherent = r.coherent !== false;
+    let verdict = ['good', 'weak', 'reject'].includes(r.verdict) ? r.verdict : 'weak';
+    if (!coherent) verdict = 'reject'; // incoherencia interna (pieza ≠ envase, proporciones) → reject SIEMPRE
     return {
       overall: Math.max(0, Math.min(100, r.overall || 0)),
       motion_ok: r.motion_ok !== false,
       artifacts: ['none', 'minor', 'severe'].includes(r.artifacts) ? r.artifacts : 'minor',
       frozen: !!r.frozen,
       fidelity_ok: r.fidelity_ok !== false,
+      coherent,
       appetizing: Math.max(0, Math.min(100, r.appetizing || 0)),
-      verdict: ['good', 'weak', 'reject'].includes(r.verdict) ? r.verdict : 'weak',
+      verdict,
       weakness: r.weakness || '',
       notes: r.notes || '',
       model: MODEL,

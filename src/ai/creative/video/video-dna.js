@@ -96,6 +96,7 @@ function productUnit(name = '') {
   // video de Pickled Salsa salía con un pickle chip en mano en vez de la salsa).
   if (isDip(n)) return 'a generous heaping spoonful of the chunky pickled salsa/relish on a spoon, the chunks clearly visible (this product is a chunky dip, NOT a pickle chip)';
   if (isShredded(n)) return 'a forkful of tangy shredded sauerkraut/cabbage strands lifted on a fork, the fine pale fermented strands clearly visible (this is shredded cabbage, NOT a pickle chip or a slice)';
+  if (isVarietyBox(n)) return 'a single WHOLE pickled cucumber/spear that MATCHES the whole pickles inside the jar/box in the shot (the variety box holds whole pickles — NOT a flat chip or a slice; the held piece and the container contents must be the same)';
   if (n.includes('onion')) return 'a single pickled red onion slice';
   if (n.includes('tomato')) return 'a single whole pickled tomato (plump, golf-ball size)';
   if (n.includes('bean')) return 'a single pickled green bean';
@@ -155,6 +156,14 @@ function isShredded(name = '') {
   return n.includes('sauerkraut') || n.includes('kraut') || n.includes('slaw');
 }
 
+// ¿El producto es una CAJA DE VARIEDAD ("Build Your Box" / a elección)? No es un pickle
+// único → mostrar una pieza suelta da incoherencia (mano con chip, envase con whole).
+// Se restringe a tomas de la CAJA/jars (no levantar una pieza) + pieza WHOLE consistente.
+function isVarietyBox(name = '') {
+  const n = (name || '').toLowerCase();
+  return (n.includes('build') && n.includes('box')) || n.includes('your box') || n.includes('variety') || n.includes('your choice');
+}
+
 // Motions que asumen una PIEZA SÓLIDA sostenida en mano — no aplican a un dip:
 // no se pellizca/gira ni se muerde una cucharada de salsa. (lift/dip/pull SÍ aplican:
 // "lift a spoonful out of the jar" se ve bien.)
@@ -166,6 +175,9 @@ function motionsForProduct(productName = '') {
   let keys = fitsOnFood(productName) ? allKeys : allKeys.filter(k => k !== 'on_food');
   // Dips y rallados (sauerkraut): no se pellizca/gira ni se muerde una pieza sólida.
   if (isDip(productName) || isShredded(productName)) keys = keys.filter(k => !SOLID_PIECE_MOTIONS.has(k));
+  // Caja de variedad: no levantar una pieza suelta íntima (mismatch con el envase); mostrar
+  // la caja/jars. Excluye pinch/bite/on_food; deja las tomas de la caja + lift de whole.
+  if (isVarietyBox(productName)) keys = keys.filter(k => !['pinch_twirl', 'bite_tease', 'on_food', 'pour_bowl'].includes(k));
   return keys;
 }
 

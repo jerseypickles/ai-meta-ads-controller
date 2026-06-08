@@ -15,6 +15,7 @@ const { productUnit } = require('./video-dna');
 const PROMPT = (productName, expectedUnit) => `You are simulating a REAL person scrolling Instagram/TikTok who sees this image as the FIRST FRAME of a 5-second UGC food-ad for "${productName}". Judge honestly whether real people would STOP, crave it, trust it, and want to buy — not whether it is merely "technically fine". The video animates this static frame (image-to-video); it cannot add objects.
 
 FIDELITY GATE (check FIRST): the hero item the hand holds/shows SHOULD be: ${expectedUnit}. If it shows the WRONG thing (e.g. a solid pickle chip when the product is a chunky salsa/dip, or the wrong food), real people are misled → fidelidad fails and the OVERALL score must be 15-25. A correct jar LABEL is NOT enough — the held/hero item must match.
+COHERENCE GATE (check too): the item in the hand must MATCH the contents visible inside the jar/box/container in the SAME image. If the hand holds a flat CHIP while the container clearly shows WHOLE pickles or spears (or any mismatch between held item and container contents, or impossible proportions), the scene is INCOHERENT → fidelidad fails, OVERALL score 15-25. A real person would notice it doesn't add up.
 
 Rate each dimension 0-100 as a real viewer would react, each with a SHORT concrete note:
 - fidelidad: does the hero item truly match the product? (the gate)
