@@ -160,6 +160,7 @@ Evaluate each ad set objectively based on its data. Act when the data justifies 
 - Zeus PRIORITIZE directive → scale immediately. Zeus already validated.
 - MODO AGRESIVO: proponé +20% por defecto, hasta +25-30% para ganadores fuertes y probados (el scale-gate ajusta el paso final según el win-rate y el cash). Nota: subir >20% resetea el learning de Meta — vale la pena para un ganador probado que querés crecer rápido; para uno estable que solo mantenés, quedate en +15-20% sin reset.
 - 📈 ROAS MARGINAL (la frontera eficiente) — si el contexto trae "ROAS MARGINAL", ESO MANDA sobre el ROAS 7d para decidir si SEGUIR escalando: mide si el dólar del último scale TODAVÍA rinde. HEADROOM PROFUNDO/EFICIENTE → escalá fuerte, hay espacio. CERCA DE LA FRONTERA → escalá chico (+10%) o mantené. SOBRE-ESCALADO → NO escales más (llegaste al techo de este adset), aunque el 7d mezclado se vea bien. Escalar al MÁXIMO = empujar mientras el marginal aguanta, frenar justo en la frontera — no hasta que rompa.
+- 📡 SATURACIÓN DE AUDIENCIA (adelantada) — si el contexto trae "SATURACIÓN", es el techo de AUDIENCIA: FRESCO → escalá libre, hay gente nueva. CALENTANDO → escalá chico (+10%) y vigilá. SATURANDO → NO escales (más budget solo sube la frequency a la misma gente); el lever es expandir audiencia, no plata. No esperes a freq 3.0 (ahí ya quemaste). El ROAS marginal te dice el techo de EFICIENCIA; la saturación te dice el techo de AUDIENCIA — respetá el que llegue primero.
 Then: set next_review_hours: 48.
 
 ## SCALE DOWN
@@ -1898,9 +1899,16 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full', cashHaircut = 1) 
     marginalContext = sig.context;
   } catch (e) { /* fail-open */ }
 
+  // SATURACIÓN ADELANTADA: el techo de AUDIENCIA antes de quemar (freq/CPM/CTR trends).
+  let saturationContext = '';
+  try {
+    const { getSaturationSignal } = require('./athena-saturation');
+    saturationContext = getSaturationSignal(adSetSnap).context;
+  } catch (e) { /* fail-open */ }
+
   const userMessage = isObserver
-    ? `[OBSERVER MODE — nighttime, read-only] Analyze ${baseContext}${targetContext}${marginalContext} Gather data, analyze trends, and save your assessment. You CANNOT take actions right now — only observe and document what you see.${planContext}`
-    : `Analyze and manage ${baseContext}${learningContext}${targetContext}${marginalContext} Gather data, decide actions based on ROAS and data, and save your assessment.${planContext}`;
+    ? `[OBSERVER MODE — nighttime, read-only] Analyze ${baseContext}${targetContext}${marginalContext}${saturationContext} Gather data, analyze trends, and save your assessment. You CANNOT take actions right now — only observe and document what you see.${planContext}`
+    : `Analyze and manage ${baseContext}${learningContext}${targetContext}${marginalContext}${saturationContext} Gather data, decide actions based on ROAS and data, and save your assessment.${planContext}`;
 
   let messages = [{ role: 'user', content: userMessage }];
 
