@@ -138,6 +138,22 @@ async function generateVideoSources() {
     winningConcepts = [...new Set(won.map(p => p.creative_concept).filter(Boolean))];
   } catch (_) { /* noop */ }
 
+  // Señales que la CALIBRACIÓN probó que predicen el outcome → guía al director creativo
+  // (cierra el loop: el director explora PERO sabiendo qué palancas funcionan).
+  let signalGuidance = '';
+  try {
+    const SystemConfig = require('../../../db/models/SystemConfig');
+    const { LEARNINGS_KEY } = require('./video-learning');
+    const L = await SystemConfig.get(LEARNINGS_KEY, null);
+    const sig = L?.signal_rank || [];
+    const NAMES = { hook_strength: 'Hook Strength', curiosity_gap: 'Curiosity Gap', food_craving: 'Food Craving', visual_energy: 'Visual Energy', visual_contrast: 'Visual Contrast', clarity: 'Clarity', production_quality: 'Production Quality', authenticity: 'Authenticity', motion_intensity: 'Motion Intensity' };
+    const pos = sig.filter(s => s.corr >= 0.3).map(s => `${NAMES[s.signal] || s.signal} (corr ${s.corr})`);
+    // Negativas: con poca data son ruidosas + 'authenticity' es pilar de marca (NO tocar)
+    // → solo actuamos sobre negativas claras y NO-críticas, con umbral conservador.
+    const neg = sig.filter(s => s.corr <= -0.3 && s.signal !== 'authenticity').map(s => NAMES[s.signal] || s.signal);
+    if (pos.length) signalGuidance = `MAXIMIZE these proven levers (ranked by how much they predict real success): ${pos.join(', ')}. Keep the authentic real-UGC look (always — it's the brand).${neg.length ? ` Avoid over-doing: ${neg.join(', ')}.` : ''}`;
+  } catch (_) { /* noop */ }
+
   logger.info(`[VIDEO-SOURCE] pool ${available}/${POOL_TARGET} → genero ${need}`);
   let generated = 0;
 
@@ -160,7 +176,7 @@ async function generateVideoSources() {
           .sort((a, b) => (b[1].graduated || 0) - (a[1].graduated || 0)).slice(0, 3).map(([k]) => k);
         // inspiración = motions ganadores + conceptos creativos que ya graduaron
         const inspiration = [...topMotions, ...winningConcepts.map(c => `concepto "${c}"`)].join(', ');
-        const concept = await inventCreativeConcept(product.product_name, inspiration);
+        const concept = await inventCreativeConcept(product.product_name, inspiration, signalGuidance);
         if (concept) {
           prompt = buildCreativePrompt(product.product_name, concept.image_prompt, FIDELITY, pickImageStyle());
           motionKey = concept.motion_hint; // motion válido para animar el video

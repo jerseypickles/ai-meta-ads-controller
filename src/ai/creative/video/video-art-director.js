@@ -18,9 +18,10 @@ const logger = require('../../../utils/logger');
 
 const VALID_MOTIONS = ['lift_drip', 'dip_drip', 'pull_up', 'pinch_twirl', 'bite_tease', 'pour_bowl', 'on_food'];
 
-const CONCEPT_PROMPT = (productName, inspiration) => `You are a world-class UGC food-ad creative director for "${productName}" (Jersey Pickles, a US pickles & condiments brand). Invent ONE fresh, scroll-stopping FIRST-FRAME image concept for a 5-second vertical UGC video ad that we have NOT tried before.
+const CONCEPT_PROMPT = (productName, inspiration, signalGuidance) => `You are a world-class UGC food-ad creative director for "${productName}" (Jersey Pickles, a US pickles & condiments brand). Invent ONE fresh, scroll-stopping FIRST-FRAME image concept for a 5-second vertical UGC video ad that we have NOT tried before.
 
 What already works (push BEYOND these — do NOT copy them, transcend them): ${inspiration || 'a hand lifting the product out of the jar with brine dripping'}.
+${signalGuidance ? `\nWHAT THE DATA PROVES DRIVES PERFORMANCE (the calibration learned these creative levers from real outcomes — bake them INTO your concept): ${signalGuidance}\nYour concept must be GENUINELY NEW, but engineered to maximize those proven levers. Explore freely, but aim at what works.\n` : ''}
 
 HARD RULES (a concept that breaks these is useless):
 - The product jar/tub is the HERO, its label clearly readable and true to the real product.
@@ -36,7 +37,7 @@ Return ONLY JSON:
  * Claude inventa un concepto de imagen NOVEDOSO. null si falla (fail-open al template).
  * @returns {{concept_tag, image_prompt, motion_hint, why}|null}
  */
-async function inventCreativeConcept(productName, inspiration = '') {
+async function inventCreativeConcept(productName, inspiration = '', signalGuidance = '') {
   const apiKey = config.claude?.apiKey || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
   try {
@@ -44,7 +45,7 @@ async function inventCreativeConcept(productName, inspiration = '') {
     const resp = await client.messages.create({
       model: config.claude.model,
       max_tokens: 600,
-      messages: [{ role: 'user', content: CONCEPT_PROMPT(productName, inspiration) }]
+      messages: [{ role: 'user', content: CONCEPT_PROMPT(productName, inspiration, signalGuidance) }]
     });
     const text = resp.content?.[0]?.text || '';
     const json = text.match(/\{[\s\S]*\}/);
