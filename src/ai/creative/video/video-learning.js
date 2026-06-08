@@ -133,6 +133,27 @@ async function reconcile() {
     .map(([s, c]) => ({ signal: s, corr: c })).sort((a, b) => b.corr - a.corr);
   const signals_count = settled.filter(v => v.creative_signals).length;
 
+  // ── PERFIL DE SEÑALES POR MOTION (la "receta": qué señales eleva cada patrón) ──
+  // Para cada motion top: el LIFT de cada señal vs el promedio global. Revela POR QUÉ
+  // funciona un patrón (ej. bite_tease eleva curiosity_gap +18 vs el promedio).
+  const sigWithVal = settled.filter(v => v.creative_signals);
+  const globalSig = {};
+  for (const s of SIGNAL_KEYS) {
+    const vals = sigWithVal.map(v => v.creative_signals[s]).filter(x => x != null);
+    globalSig[s] = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+  }
+  const pattern_signals = {};
+  for (const r of motionRank) {
+    const mv = sigWithVal.filter(v => v.motion_variant === r.key);
+    if (mv.length < 2) continue;
+    const prof = [];
+    for (const s of SIGNAL_KEYS) {
+      const vals = mv.map(v => v.creative_signals[s]).filter(x => x != null);
+      if (vals.length) prof.push({ signal: s, lift: +((vals.reduce((a, b) => a + b, 0) / vals.length) - globalSig[s]).toFixed(0) });
+    }
+    pattern_signals[r.key] = prof.sort((a, b) => b.lift - a.lift);
+  }
+
   const learnings = {
     generated_at: new Date(),
     settled_count: settled.length,
@@ -140,6 +161,7 @@ async function reconcile() {
     signal_corr: signalCorr,
     signal_rank,
     signals_count,
+    pattern_signals,
     judge: { score_corr, video_score_corr, video_hold_corr, claude_hold_corr, dim_corr: dimCorr }
   };
   await SystemConfig.set(LEARNINGS_KEY, learnings, 'video_learning');

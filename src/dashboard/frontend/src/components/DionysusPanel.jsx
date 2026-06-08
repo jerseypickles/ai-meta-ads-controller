@@ -350,6 +350,9 @@ function CalibracionSection({ learnings }) {
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
         <span style={{ fontSize: '1.1rem', fontWeight: 800, background: `linear-gradient(135deg, ${FUCHSIA}, #f9a8d4)`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>🎯 Calibración del Juez</span>
         <span style={{ fontSize: '0.66rem', opacity: 0.55 }}>Reconciliado de <b style={{ color: FUCHSIA }}>{settled}</b> videos firmes · juez + señales creativas ↔ resultado real</span>
+        {learnings.generated_at && (
+          <span style={{ marginLeft: 'auto', fontSize: '0.6rem', opacity: 0.45 }}>↻ actualizado hace {Math.max(0, Math.round((Date.now() - new Date(learnings.generated_at)) / 60000))} min</span>
+        )}
       </div>
 
       {/* KPI strip */}
@@ -413,15 +416,55 @@ function CalibracionSection({ learnings }) {
         )}
       </div>
 
-      {/* Insight automático */}
-      {best && (
-        <div style={{ ...card, padding: '12px 14px', display: 'flex', gap: 10, alignItems: 'center', borderColor: `color-mix(in srgb, ${FUCHSIA} 30%, transparent)` }}>
-          <span style={{ fontSize: 20 }}>⭐</span>
-          <div style={{ fontSize: '0.74rem', lineHeight: 1.4 }}>
-            <b style={{ color: FUCHSIA }}>Insight:</b> la señal <b>{SIGNAL_LABELS[best.signal] || best.signal}</b> es el predictor #1 del outcome (corr {best.corr}). {motions[0] && <>El patrón ganador es <b>{motions[0].key}</b> (outcome {motions[0].avg_outcome}).</>} Priorizá generar hacia eso.
+      {/* Impacto de señales por patrón (la receta del ganador) */}
+      {(() => {
+        const topMotion = motions[0]?.key;
+        const prof = (learnings.pattern_signals || {})[topMotion] || [];
+        if (!prof.length) return null;
+        const maxAbs = Math.max(...prof.map(p => Math.abs(p.lift)), 1);
+        return (
+          <div style={{ ...card, padding: '12px 14px' }}>
+            <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.6, marginBottom: 4 }}>🔬 Impacto de señales · <b style={{ color: '#34d399' }}>{topMotion}</b></div>
+            <div style={{ fontSize: '0.58rem', opacity: 0.5, marginBottom: 10 }}>qué señales ELEVA este patrón ganador vs el promedio (su receta creativa)</div>
+            {prof.slice(0, 7).map(p => {
+              const col = p.lift >= 0 ? '#34d399' : '#f87171';
+              return (
+                <div key={p.signal} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: '0.72rem' }}>
+                  <span style={{ width: 130, color: 'var(--text-secondary)' }}>{SIGNAL_LABELS[p.signal] || p.signal}</span>
+                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', height: 10 }}>
+                    <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>{p.lift < 0 && <div style={{ width: `${Math.abs(p.lift) / maxAbs * 100}%`, height: 6, background: col, borderRadius: 3 }} />}</div>
+                    <div style={{ width: 1, height: 12, background: 'rgba(255,255,255,0.2)' }} />
+                    <div style={{ flex: 1 }}>{p.lift >= 0 && <div style={{ width: `${p.lift / maxAbs * 100}%`, height: 6, background: col, borderRadius: 3 }} />}</div>
+                  </div>
+                  <span style={{ width: 36, textAlign: 'right', fontFamily: 'JetBrains Mono, monospace', color: col, fontWeight: 700 }}>{p.lift >= 0 ? '+' : ''}{p.lift}</span>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
+
+      {/* Footer: insights + recomendación + próxima acción */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+        <div style={{ ...card, padding: '12px 14px' }}>
+          <div style={{ fontSize: '0.66rem', fontWeight: 700, color: FUCHSIA, marginBottom: 6 }}>⭐ Insight clave</div>
+          <div style={{ fontSize: '0.7rem', lineHeight: 1.45, opacity: 0.85 }}>
+            {best ? <>La señal <b>{SIGNAL_LABELS[best.signal] || best.signal}</b> es el predictor #1 (corr {best.corr}){sigRank[1] && <>, seguida de <b>{SIGNAL_LABELS[sigRank[1].signal]}</b> ({sigRank[1].corr})</>}. Eso explica el outcome más que cualquier motion.</> : 'Aún juntando señales para el primer insight.'}
           </div>
         </div>
-      )}
+        <div style={{ ...card, padding: '12px 14px' }}>
+          <div style={{ fontSize: '0.66rem', fontWeight: 700, color: '#34d399', marginBottom: 6 }}>⚡ Recomendación auto</div>
+          <div style={{ fontSize: '0.7rem', lineHeight: 1.45, opacity: 0.85 }}>
+            {best && motions[0] ? <>Priorizá generar <b>{motions[0].key}</b> maximizando <b>{SIGNAL_LABELS[best.signal]}</b>. El director creativo ya recibe esta guía automáticamente.</> : 'Esperando data para recomendar.'}
+          </div>
+        </div>
+        <div style={{ ...card, padding: '12px 14px' }}>
+          <div style={{ fontSize: '0.66rem', fontWeight: 700, color: '#60a5fa', marginBottom: 6 }}>🎯 Próxima acción</div>
+          <div style={{ fontSize: '0.7rem', lineHeight: 1.45, opacity: 0.85 }}>
+            {motions[0] ? <>Generar variantes de <b>{motions[0].key}</b> con ángulos nuevos + curiosidad alta, testear en audiencias frías.</> : 'Generar más videos para llenar la calibración.'}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
