@@ -54,13 +54,33 @@ async function _submit({ imageUrl, prompt, durationSeconds, aspectRatio, seed })
   };
   if (SEND_SEED && Number.isFinite(seed)) input.seed = seed;
   const body = { model: MODEL, task_type: TASK_TYPE, input };
-  const res = await axios.post(`${BASE_URL}/task`, body, { headers: _headers(), timeout: 30000 });
-  if (res.data?.code !== 200) {
-    throw new Error(`PiAPI submit: ${res.data?.message || JSON.stringify(res.data).slice(0, 200)}`);
+
+  // RETRY con backoff: PiAPI devuelve 500/429 transitorios seguido (~46% de los videos
+  // morían por esto sin reintentar). Reintenta hasta 3x en errores transitorios (5xx/429/
+  // red). Errores 4xx "reales" (400/401/403) no se reintentan. 2026-06-08.
+  const DELAYS = [4000, 12000, 30000];
+  let lastErr;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      const res = await axios.post(`${BASE_URL}/task`, body, { headers: _headers(), timeout: 30000 });
+      if (res.data?.code !== 200) {
+        throw new Error(`PiAPI submit: ${res.data?.message || JSON.stringify(res.data).slice(0, 200)}`);
+      }
+      const taskId = res.data?.data?.task_id;
+      if (!taskId) throw new Error('PiAPI submit sin task_id');
+      if (attempt > 1) logger.info(`[SEEDANCE] submit OK en intento ${attempt} (recuperado de transitorio)`);
+      return taskId;
+    } catch (err) {
+      lastErr = err;
+      const code = err.response?.status;
+      const transient = !code || code >= 500 || code === 429; // 5xx/429/red = transitorio
+      if (!transient || attempt === 4) throw err;
+      const delay = DELAYS[attempt - 1] || 30000;
+      logger.warn(`[SEEDANCE] submit falló (${code || err.message}) — reintento ${attempt + 1}/4 en ${delay / 1000}s`);
+      await new Promise(r => setTimeout(r, delay));
+    }
   }
-  const taskId = res.data?.data?.task_id;
-  if (!taskId) throw new Error('PiAPI submit sin task_id');
-  return taskId;
+  throw lastErr;
 }
 
 /** Poll hasta completar. Devuelve la URL del video. */
