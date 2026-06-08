@@ -62,12 +62,13 @@ const MOTIONS = [
     img: 'a hand opening a home refrigerator door, revealing several {product} jars neatly lined up on the fridge shelf inside, cool soft fridge light spilling out, light condensation on the jars, POV handheld UGC, the {product} labels readable',
     vid: 'A hand slowly pulls the refrigerator door open, revealing the {product} jars lined up on the shelf as the cool fridge light spills out; faint condensation, almost no other movement.' },
   // ── Composiciones distintas (no la toma típica de mano+chip+drip) ──
-  // pour_bowl REESCRITO 2026-06-05: antes "varios chips mid-tumble despacio" → Seedance los
-  // congelaba pegados en el aire (física multi-objeto = lo más difícil de la IA, se nota
-  // artificial). Ahora UN solo chip que cae + drizzle de brine (un hilo, que la IA sí anima).
+  // pour_bowl REESCRITO 2026-06-07: usa {unit} (no "pickle chip" hardcodeado → fallaba
+  // fidelidad en cebolla/tomate). Se QUITÓ el hilo de brine continuo jar→bowl: con anillos
+  // (cebolla) Seedance los ensartaba como cuentas en el hilo y los congelaba "esperando" al
+  // siguiente. Ahora UNA pieza cae sola, limpia, sin hilo del que colgarse. Brine solo en el bowl.
   { key: 'pour_bowl', selfScene: true,
-    img: 'a hand tilting the open {product} jar over a white ceramic bowl on a kitchen counter, ONE pickle chip sliding off the jar rim about to drop into the bowl, a thin strand of glossy brine drizzling down, a couple of chips already resting in the bowl, UGC iPhone',
-    vid: 'A hand tilts the {product} jar; ONE pickle chip slides off the rim and drops naturally into the bowl with real gravity while a thin strand of glossy brine drizzles down. The chip falls and settles among the ones already there — real-time motion, nothing frozen, floating or stuck.' },
+    img: 'a hand tilting the open {product} jar over a white ceramic bowl on a kitchen counter, {unit} in mid-air falling cleanly straight down toward the bowl on its own (just that ONE piece, NOT strung or threaded on anything), a few more already resting in a little pooled brine in the bowl, UGC iPhone',
+    vid: 'A hand tilts the {product} jar and {unit} tumbles off the rim and falls straight down into the bowl under full real-world gravity, landing among the few already resting in a little pooled brine. The piece falls completely on its OWN — it is NOT threaded, strung or beaded onto any strand of brine, it does NOT freeze or hang in the air, and it does NOT wait for another piece to fall with it. One single clean discrete drop at real-time speed.' },
   { key: 'cooler_grab', selfScene: true,
     img: "a hand reaching into an ice-filled cooler and pulling out a frosty {product} jar, ice cubes and water droplets all around, condensation on the glass, backyard summer, UGC iPhone",
     vid: 'A hand lifts the frosty {product} jar up out of the ice; water droplets slide down the glass, ice settles slightly.' },
@@ -310,9 +311,11 @@ function buildImageScene(motionKey, sceneKey, productName) {
 // congelar/pegar objetos en el aire (se nota artificial); esto fuerza gravedad real.
 const NATURAL_PHYSICS =
   'CRITICAL realistic physics: everything obeys natural real-world gravity at real-time speed — ' +
-  'pickle pieces and brine fall, drip and settle naturally; nothing floats, freezes mid-air, ' +
-  'clumps, sticks together unnaturally, or moves in rubbery slow-motion. Falling pieces separate ' +
-  'and land realistically.';
+  'product pieces and brine fall, drip and settle naturally; nothing floats, freezes mid-air, ' +
+  'clumps, sticks together unnaturally, or moves in rubbery slow-motion. Each falling piece moves ' +
+  'independently under its own gravity — pieces NEVER thread, string or bead onto a strand of ' +
+  'liquid, and NEVER hang frozen waiting for another piece to fall with them. Falling pieces ' +
+  'separate and land realistically.';
 
 /** Prompt del VIDEO (Seedance): motion (con pieza real) + cámara + estilo ROTADO + física.
  *  styleOverride opcional (para tests deterministas); si no, rota un mood. */
