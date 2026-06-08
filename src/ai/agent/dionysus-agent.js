@@ -173,6 +173,12 @@ async function runDionysus() {
       source_proposal_id: c._id
     });
 
+    // Señales creativas abstractas (Pilar 4) — desde la imagen-fuente, fire-and-forget
+    // (no bloquea la generación del video). Alimenta la calibración del juez.
+    require('../creative/video/video-signals').extractCreativeSignals(c.image_base64, c.product_name, variant)
+      .then(sig => sig && CreativeProposal.findByIdAndUpdate(placeholder._id, { $set: { creative_signals: sig } }))
+      .catch(() => {});
+
     // 3. Generar el video (image-to-video desde la URL pública del proposal origen).
     const imageUrl = `${PUBLIC_BASE_URL}/vsrc/${c._id}.png`;
     try {

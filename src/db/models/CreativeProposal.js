@@ -71,6 +71,7 @@ const creativeProposalSchema = new mongoose.Schema({
   video_judge_score: { type: Number, default: null },  // score 0-100 del video-judge
   video_judge_breakdown: { type: mongoose.Schema.Types.Mixed, default: null }, // desglose: {reason, breakdown:{dim:{score,note}}, que_funciona[], que_falla[]}
   video_result_verdict: { type: mongoose.Schema.Types.Mixed, default: null },   // juez de VIDEO real (Gemini): {overall, motion_ok, artifacts, frozen, fidelity_ok, appetizing, verdict, notes}
+  creative_signals: { type: mongoose.Schema.Types.Mixed, default: null },        // señales abstractas (Pilar 4): {hook_strength, curiosity_gap, food_craving, visual_energy, visual_contrast, clarity, production_quality, authenticity, motion_intensity}
   source_proposal_id: { type: mongoose.Schema.Types.ObjectId, ref: 'CreativeProposal', default: null }, // imagen origen
 
   // Approval

@@ -49,7 +49,7 @@ function outcomeScore(status, m = {}) {
 async function reconcile() {
   const vids = await CreativeProposal.find({
     media_type: 'video', status: { $in: ['testing', 'graduated', 'killed', 'expired'] }
-  }).select('motion_variant product_name video_judge_score video_judge_breakdown video_result_verdict status').lean();
+  }).select('motion_variant product_name video_judge_score video_judge_breakdown video_result_verdict creative_signals status').lean();
 
   if (!vids.length) { logger.info('[VIDEO-LEARNING] sin videos con outcome aún'); return null; }
 
@@ -119,10 +119,27 @@ async function reconcile() {
     dimCorr[d] = pairs.length >= MIN_PAIRS_CORR ? corr(pairs) : null;
   }
 
+  // ── SEÑALES CREATIVAS ABSTRACTAS (Pilar 4): ¿qué palanca creativa explica el outcome? ──
+  // Cada señal (hook_strength, curiosity_gap, food_craving, ...) correlacionada contra el
+  // resultado real → el sistema aprende QUÉ mueve la aguja, no solo qué motion ganó.
+  const SIGNAL_KEYS = ['hook_strength', 'curiosity_gap', 'food_craving', 'visual_energy', 'visual_contrast', 'clarity', 'production_quality', 'authenticity', 'motion_intensity'];
+  const signalCorr = {};
+  for (const s of SIGNAL_KEYS) {
+    const pairs = settled.filter(v => v.creative_signals?.[s] != null)
+      .map(v => [v.creative_signals[s], outcomeScore(v.status, byProp[String(v._id)] || {})]);
+    signalCorr[s] = pairs.length >= MIN_PAIRS_CORR ? corr(pairs) : null;
+  }
+  const signal_rank = Object.entries(signalCorr).filter(([, c]) => c != null)
+    .map(([s, c]) => ({ signal: s, corr: c })).sort((a, b) => b.corr - a.corr);
+  const signals_count = settled.filter(v => v.creative_signals).length;
+
   const learnings = {
     generated_at: new Date(),
     settled_count: settled.length,
     motion_rank: motionRank,
+    signal_corr: signalCorr,
+    signal_rank,
+    signals_count,
     judge: { score_corr, video_score_corr, video_hold_corr, claude_hold_corr, dim_corr: dimCorr }
   };
   await SystemConfig.set(LEARNINGS_KEY, learnings, 'video_learning');

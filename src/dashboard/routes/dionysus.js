@@ -183,6 +183,36 @@ router.post('/backfill-video-judge', async (req, res) => {
   })();
 });
 
+// POST /backfill-signals — extrae las señales creativas abstractas (Pilar 4) de los
+// videos existentes desde su imagen-fuente (guardada, no expira). Async + reconcilia.
+router.post('/backfill-signals', async (req, res) => {
+  res.json({ started: true, message: 'Extrayendo señales creativas de los videos existentes — refrescá Calibración en unos minutos' });
+  (async () => {
+    try {
+      const { extractCreativeSignals } = require('../../ai/creative/video/video-signals');
+      const limit = Math.min(parseInt(req.body?.limit, 10) || 60, 120);
+      const vids = await CreativeProposal.find({ media_type: 'video', status: { $in: ['testing', 'graduated', 'killed', 'expired'] }, creative_signals: null })
+        .sort({ created_at: -1 }).limit(limit).lean();
+      let done = 0, skip = 0;
+      for (const v of vids) {
+        let img = v.image_base64;
+        if (!img && v.source_proposal_id) {
+          const s = await CreativeProposal.findById(v.source_proposal_id).select('image_base64').lean();
+          img = s?.image_base64;
+        }
+        if (!img) { skip++; continue; }
+        const sig = await extractCreativeSignals(img, v.product_name, v.motion_variant);
+        if (!sig) { skip++; continue; }
+        await CreativeProposal.updateOne({ _id: v._id }, { $set: { creative_signals: sig } });
+        done++;
+        if (done % 10 === 0) logger.info(`[SIGNALS-BACKFILL] ${done}/${vids.length}`);
+      }
+      try { await require('../../ai/creative/video/video-learning').reconcile(); } catch (_) {}
+      logger.info(`[SIGNALS-BACKFILL] DONE: ${done} puntuados · ${skip} sin imagen de ${vids.length}`);
+    } catch (e) { logger.error(`[SIGNALS-BACKFILL] ${e.message}`); }
+  })();
+});
+
 // POST /retry-failed — re-genera EXACTAMENTE los videos fallidos (no del pool). Async.
 router.post('/retry-failed', async (req, res) => {
   res.json({ started: true, message: 'Recuperando los videos fallidos desde su fuente — revisá la cola en unos minutos' });
