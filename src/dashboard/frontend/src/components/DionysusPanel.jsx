@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import {
   getDionysusPending, getDionysusStats, runDionysusApi,
-  approveDionysusVideo, rejectDionysusVideo, generateDionysusSources, backfillDionysusVideoJudge
+  approveDionysusVideo, rejectDionysusVideo, generateDionysusSources, backfillDionysusVideoJudge, backfillDionysusSignals
 } from '../api';
 
 const FUCHSIA = '#ec4899'; // magenta — matchea el orbe de Dionisio en la galaxia (era #c026d3)
@@ -290,97 +290,153 @@ function BackfillButton() {
 }
 
 // ── TAB: Calibración del juez (el reconciliador) ──
+const SIGNAL_LABELS = {
+  hook_strength: 'Hook Strength', curiosity_gap: 'Curiosity Gap', food_craving: 'Food Craving',
+  visual_energy: 'Visual Energy', visual_contrast: 'Visual Contrast', clarity: 'Clarity',
+  production_quality: 'Production Quality', authenticity: 'Authenticity', motion_intensity: 'Motion Intensity'
+};
+const cColor = c => c == null ? '#64748b' : c >= 0.6 ? '#34d399' : c >= 0.4 ? '#60a5fa' : c >= 0.2 ? '#fbbf24' : '#f87171';
+const corrLabel = c => c == null ? 'sin data' : c >= 0.6 ? 'Fuerte' : c >= 0.4 ? 'Moderada' : c >= 0.2 ? 'Débil' : 'Nula';
+
 function CalibracionSection({ learnings }) {
   if (!learnings) {
     return (
       <div style={{ ...card, padding: 20, fontSize: 12.5, opacity: 0.7, lineHeight: 1.5 }}>
-        🎯 Sin calibración aún. El <b>reconciliador</b> corre diario (4:45am ET): cruza la <b>predicción del juez</b> contra el <b>resultado real</b> (enganche + conversión) y aprende qué de su criterio predijo de verdad. Necesita videos firmes (con señal suficiente) para arrancar.
+        🎯 Sin calibración aún. El <b>reconciliador</b> cruza la predicción del juez + las señales creativas contra el resultado real. Necesita videos firmes para arrancar.
       </div>
     );
   }
-  const corr = learnings.judge?.score_corr;
-  const vcorr = learnings.judge?.video_score_corr;
-  const dimCorr = learnings.judge?.dim_corr || {};
-  const cColor = c => c == null ? '#64748b' : c >= 0.5 ? '#34d399' : c >= 0.3 ? '#fbbf24' : '#f87171';
-  const rank = learnings.motion_rank || [];
-  const corrCard = (title, sub, c, hl) => (
-    <div style={{ ...card, padding: '12px 14px', border: hl ? `1px solid color-mix(in srgb, ${FUCHSIA} 40%, transparent)` : card.border }}>
-      <div style={{ fontSize: '0.64rem', fontWeight: 700, color: hl ? FUCHSIA : 'var(--bos-text, #e5e7eb)' }}>{title}</div>
-      <div style={{ fontSize: '0.54rem', opacity: 0.5, marginBottom: 6 }}>{sub}</div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ fontSize: '1.6rem', fontWeight: 800, color: cColor(c), fontFamily: 'JetBrains Mono, monospace' }}>{c ?? '—'}</div>
+  const j = learnings.judge || {};
+  const sigRank = learnings.signal_rank || [];
+  const motions = learnings.motion_rank || [];
+  const settled = learnings.settled_count || 0;
+  const sigCount = learnings.signals_count || 0;
+  // derivados
+  // poder predictivo = promedio del |corr| (una señal de corr -0.3 SÍ predice, inversamente)
+  const corrs = sigRank.map(s => s.corr).filter(c => c != null);
+  const avgCorr = corrs.length ? corrs.reduce((a, b) => a + Math.abs(b), 0) / corrs.length : null;
+  const best = sigRank[0];
+  const confidence = Math.round(Math.min(100, (Math.min(1, settled / 30) * 45) + (Math.min(1, sigCount / 25) * 30) + ((avgCorr || 0) * 25)));
+
+  const Kpi = ({ label, value, sub, color = FUCHSIA }) => (
+    <div style={{ ...card, padding: '12px 14px' }}>
+      <div style={{ fontSize: '0.56rem', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.55 }}>{label}</div>
+      <div style={{ fontSize: '1.6rem', fontWeight: 800, color, fontFamily: 'JetBrains Mono, monospace', lineHeight: 1.15 }}>{value}</div>
+      {sub && <div style={{ fontSize: '0.6rem', opacity: 0.6, marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+  const JudgeCard = ({ icon, title, sub, c }) => (
+    <div style={{ ...card, padding: '14px 16px' }}>
+      <div style={{ fontSize: '0.78rem', fontWeight: 700 }}>{icon} {title}</div>
+      <div style={{ fontSize: '0.58rem', opacity: 0.5, marginBottom: 10 }}>{sub}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <div style={{ width: 64, height: 64, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: `conic-gradient(${cColor(c)} ${Math.max(0, Math.min(1, c || 0)) * 360}deg, rgba(255,255,255,0.08) 0deg)` }}>
+          <div style={{ width: 50, height: 50, borderRadius: '50%', background: 'var(--bg-secondary, #0f1330)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'JetBrains Mono, monospace', fontWeight: 800, fontSize: '0.9rem', color: cColor(c) }}>{c ?? '—'}</div>
+        </div>
         <div style={{ flex: 1 }}>
-          <div style={{ height: 5, background: 'rgba(255,255,255,0.08)', borderRadius: 3 }}>
-            <div style={{ width: `${Math.max(0, Math.min(1, (c || 0))) * 100}%`, height: '100%', background: cColor(c), borderRadius: 3 }} />
+          <div style={{ fontSize: '0.82rem', fontWeight: 700, color: cColor(c) }}>{corrLabel(c)}</div>
+          <div style={{ fontSize: '0.64rem', opacity: 0.6, lineHeight: 1.4, marginTop: 2 }}>
+            {c == null ? 'esperando videos asentados para calibrar.' : c >= 0.4 ? 'predice razonablemente el resultado real.' : 'predicción débil — el juez necesita afinar criterio.'}
           </div>
-          <div style={{ fontSize: '0.6rem', color: cColor(c), marginTop: 3 }}>{c == null ? 'sin data aún' : c < 0.35 ? 'débil' : c < 0.5 ? 'razonable' : 'fuerte'}</div>
         </div>
       </div>
     </div>
   );
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ fontSize: 11, opacity: 0.55 }}>Reconciliado de <b style={{ color: FUCHSIA }}>{learnings.settled_count}</b> videos firmes · cruza predicción del juez ↔ resultado real</div>
-
-      {/* ¿Cuál juez predice mejor? imagen (Claude) vs video (Gemini) */}
-      <div>
-        <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.6, marginBottom: 8 }}>¿Qué juez predice mejor el resultado real? (correlación ↔ outcome)</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-          {corrCard('🖼️ Juez de imagen · Claude', 'mira la foto-fuente (predicción)', corr, false)}
-          {corrCard('🎬 Juez de video · Gemini', 'mira el mp4 real (movimiento)', vcorr, true)}
-        </div>
-        {corr != null && vcorr != null && (
-          <div style={{ fontSize: '0.64rem', marginTop: 6, color: vcorr > corr ? '#34d399' : '#94a3b8' }}>
-            {vcorr > corr ? `✓ El juez de video predice mejor (+${(vcorr - corr).toFixed(2)}) — ver el mp4 real ayuda` : 'Aún parejos — más data lo va a definir'}
-          </div>
-        )}
-        {vcorr == null && <BackfillButton />}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '1.1rem', fontWeight: 800, background: `linear-gradient(135deg, ${FUCHSIA}, #f9a8d4)`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>🎯 Calibración del Juez</span>
+        <span style={{ fontSize: '0.66rem', opacity: 0.55 }}>Reconciliado de <b style={{ color: FUCHSIA }}>{settled}</b> videos firmes · juez + señales creativas ↔ resultado real</span>
       </div>
 
-      {/* dimensiones */}
-      <div>
-        <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.6, marginBottom: 8 }}>Qué dimensión del juez predijo de verdad</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}>
-          {Object.entries(VERDICT_DIMS).map(([k, label]) => {
-            const c = dimCorr[k];
-            return (
-              <div key={k} style={{ ...card, padding: '10px 12px', textAlign: 'center' }}>
-                <div style={{ fontSize: '1.1rem', fontWeight: 800, color: cColor(c), fontFamily: 'JetBrains Mono, monospace' }}>{c == null ? '—' : c}</div>
-                <div style={{ fontSize: '0.58rem', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 2 }}>{label}</div>
-              </div>
-            );
-          })}
-        </div>
-        <div style={{ fontSize: '0.62rem', opacity: 0.5, marginTop: 6 }}>cada dim vs su métrica real: freno_scroll↔hook (thumbstop) · apetito/calidad/autenticidad↔retención (hold) · fidelidad↔conversión · arranca con ≥6 videos del juez nuevo asentados</div>
+      {/* KPI strip */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
+        <Kpi label="Precisión predictiva" value={avgCorr != null ? `${Math.round(avgCorr * 100)}%` : '—'} sub="prom. de señales" color="#a78bfa" />
+        <Kpi label="Correlación prom." value={avgCorr != null ? avgCorr.toFixed(2) : '—'} sub={corrLabel(avgCorr)} color={cColor(avgCorr)} />
+        <Kpi label="Mejor señal" value={best ? (SIGNAL_LABELS[best.signal] || best.signal).split(' ')[0] : '—'} sub={best ? `corr ${best.corr}` : 'sin data'} color="#34d399" />
+        <Kpi label="Videos evaluados" value={settled} sub={`${sigCount} con señales`} color="#f0abfc" />
+        <Kpi label="Confianza" value={`${confidence}%`} sub={confidence >= 60 ? 'alta' : confidence >= 35 ? 'media' : 'baja'} color="#60a5fa" />
       </div>
 
-      {/* ranking de motions por outcome */}
-      <div>
-        <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.6, marginBottom: 8 }}>Motions por resultado real (lo que vuelve al prompt)</div>
-        {rank.length === 0 ? (
-          <div style={{ ...card, padding: 14, fontSize: 12, opacity: 0.6 }}>Aún sin motions con suficiente data (≥3 videos firmes c/u).</div>
+      {/* Jueces */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <JudgeCard icon="🖼️" title="Juez de imagen · Claude" sub="predice desde la foto-fuente" c={j.score_corr} />
+        <JudgeCard icon="🎬" title="Juez de video · Gemini" sub="predice desde el mp4 (movimiento)" c={j.video_score_corr} />
+      </div>
+
+      {/* Señales que más explican el outcome */}
+      <div style={{ ...card, padding: '12px 14px' }}>
+        <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.6, marginBottom: 8 }}>📊 Señales que más explican el outcome</div>
+        {sigRank.length === 0 ? (
+          <div style={{ fontSize: '0.72rem', opacity: 0.6, padding: '6px 0 10px' }}>Aún sin señales asentadas (≥6 videos puntuados + con outcome). Generalas con el botón de abajo.</div>
         ) : (
-          <div style={{ ...card, padding: 6 }}>
-            <table style={{ width: '100%', fontSize: 11.5, borderCollapse: 'collapse' }}>
-              <thead><tr style={{ opacity: 0.55, textAlign: 'left' }}>
-                <th style={{ padding: '5px 8px' }}>Motion</th><th style={{ width: 70 }}>Outcome</th><th style={{ width: 50 }}>Hold</th><th style={{ width: 70 }}>Grad/Test</th><th style={{ width: 50 }}>Kill</th>
-              </tr></thead>
-              <tbody>
-                {rank.map((r, i) => (
-                  <tr key={r.key} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                    <td style={{ padding: '6px 8px', fontWeight: 600, color: i === 0 ? '#34d399' : FUCHSIA }}>{i === 0 ? '👑 ' : ''}{r.key}</td>
-                    <td style={{ fontFamily: 'JetBrains Mono, monospace', color: r.avg_outcome >= 50 ? '#34d399' : r.avg_outcome >= 20 ? '#fbbf24' : '#f87171' }}>{r.avg_outcome}</td>
-                    <td>{r.avg_hold}%</td>
-                    <td style={{ color: '#34d399' }}>{r.graduated}/{r.n}</td>
-                    <td style={{ color: r.killed ? '#f87171' : '#64748b' }}>{r.killed}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div>
+            {sigRank.map(s => (
+              <div key={s.signal} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 0', fontSize: '0.74rem' }}>
+                <span style={{ width: 130, color: 'var(--text-secondary)' }}>{SIGNAL_LABELS[s.signal] || s.signal}</span>
+                <span style={{ width: 40, fontFamily: 'JetBrains Mono, monospace', color: cColor(s.corr), fontWeight: 700 }}>{s.corr}</span>
+                <div style={{ flex: 1, height: 6, background: 'rgba(255,255,255,0.07)', borderRadius: 3 }}>
+                  <div style={{ width: `${Math.max(0, Math.min(1, s.corr)) * 100}%`, height: '100%', background: cColor(s.corr), borderRadius: 3 }} />
+                </div>
+              </div>
+            ))}
           </div>
         )}
+        <div style={{ marginTop: 8 }}><SignalsButton /></div>
       </div>
+
+      {/* Hooks / patrones (motions) que funcionan */}
+      <div style={{ ...card, padding: 8 }}>
+        <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.6, padding: '4px 6px 8px' }}>🎬 Patrones que más funcionan (motions ↔ outcome real)</div>
+        {motions.length === 0 ? (
+          <div style={{ fontSize: 12, opacity: 0.6, padding: 10 }}>Aún sin motions con suficiente data (≥3 firmes c/u).</div>
+        ) : (
+          <table style={{ width: '100%', fontSize: 11.5, borderCollapse: 'collapse' }}>
+            <thead><tr style={{ opacity: 0.55, textAlign: 'left' }}>
+              <th style={{ padding: '5px 8px' }}>Motion</th><th style={{ width: 70 }}>Outcome</th><th style={{ width: 50 }}>Hold</th><th style={{ width: 70 }}>Grad/Test</th><th style={{ width: 40 }}>Kill</th>
+            </tr></thead>
+            <tbody>
+              {motions.map((r, i) => (
+                <tr key={r.key} style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                  <td style={{ padding: '6px 8px', fontWeight: 600, color: i === 0 ? '#34d399' : FUCHSIA }}>{i === 0 ? '👑 ' : ''}{r.key}</td>
+                  <td style={{ fontFamily: 'JetBrains Mono, monospace', color: r.avg_outcome >= 50 ? '#34d399' : r.avg_outcome >= 20 ? '#fbbf24' : '#f87171' }}>{r.avg_outcome}</td>
+                  <td>{r.avg_hold}%</td>
+                  <td style={{ color: '#34d399' }}>{r.graduated}/{r.n}</td>
+                  <td style={{ color: r.killed ? '#f87171' : '#64748b' }}>{r.killed}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Insight automático */}
+      {best && (
+        <div style={{ ...card, padding: '12px 14px', display: 'flex', gap: 10, alignItems: 'center', borderColor: `color-mix(in srgb, ${FUCHSIA} 30%, transparent)` }}>
+          <span style={{ fontSize: 20 }}>⭐</span>
+          <div style={{ fontSize: '0.74rem', lineHeight: 1.4 }}>
+            <b style={{ color: FUCHSIA }}>Insight:</b> la señal <b>{SIGNAL_LABELS[best.signal] || best.signal}</b> es el predictor #1 del outcome (corr {best.corr}). {motions[0] && <>El patrón ganador es <b>{motions[0].key}</b> (outcome {motions[0].avg_outcome}).</>} Priorizá generar hacia eso.
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+function SignalsButton() {
+  const [state, setState] = useState('idle');
+  const run = async () => {
+    setState('running');
+    try { await backfillDionysusSignals(); setState('done'); } catch { setState('idle'); }
+  };
+  if (state === 'done') return <div style={{ fontSize: '0.66rem', color: '#34d399' }}>✓ Extrayendo señales en background — refrescá (↻) en unos minutos.</div>;
+  return (
+    <button onClick={run} disabled={state === 'running'} style={{ padding: '7px 13px', borderRadius: 8, border: `1px solid ${FUCHSIA}`, background: `color-mix(in srgb, ${FUCHSIA} 18%, transparent)`, color: '#fff', fontWeight: 600, fontSize: '0.72rem', cursor: state === 'running' ? 'default' : 'pointer' }}>
+      {state === 'running' ? '📊 Lanzando…' : '📊 Extraer señales creativas de los videos'}
+    </button>
   );
 }
 

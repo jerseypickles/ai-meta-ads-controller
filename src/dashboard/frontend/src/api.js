@@ -328,6 +328,10 @@ export const backfillDionysusVideoJudge = async () => {
   const { data } = await api.post('/api/dionysus/backfill-video-judge', {});
   return data;
 };
+export const backfillDionysusSignals = async () => {
+  const { data } = await api.post('/api/dionysus/backfill-signals', {});
+  return data;
+};
 export const getDionysusStats = async () => {
   const { data } = await api.get('/api/dionysus/stats');
   return data;
