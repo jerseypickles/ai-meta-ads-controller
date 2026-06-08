@@ -171,7 +171,21 @@ const SCENES = [
   { key: 'beach_day',      img: 'on a beach towel in the sand on a bright sunny beach day' }
 ];
 
-const DIMS = { motion: MOTIONS, camera: CAMERAS, scene: SCENES };
+// HOOK — el GANCHO de los primeros 1-2s (lo que frena el scroll). Nueva dimensión DNA
+// (2026-06-08): hasta ahora TODOS los videos usaban el mismo gancho implícito (mano+jar)
+// → el thumbstop salía uniforme (~55%) y no se aprendía nada del hook. Estos son
+// modificadores ADITIVOS de framing/energía (no texto — gpt-image lo garabatea); cada uno
+// es una forma distinta de abrir → distinto scroll-stop → el thumbstop vuelve a discriminar.
+const HOOKS = [
+  { key: 'standard',        img: '' }, // baseline: la toma actual, gancho implícito
+  { key: 'macro_texture',   img: 'with the framing emphasis on an EXTREME close-up of the glistening wet product texture — hyper-detailed, mouth-watering, pores and drips visible' },
+  { key: 'fast_reaction',   img: 'with spontaneous candid energy, as if the camera caught the exact instant it happened — real unstaged in-the-moment UGC, slightly imperfect' },
+  { key: 'pov_first_person',img: 'from a true first-person POV looking down at your own hand (selfie-arm angle), immersive as if the viewer is doing it themselves' },
+  { key: 'hero_drip',       img: 'with one exaggerated glossy strand of brine as the dramatic hero focal point of the frame — appetizing and bold' },
+  { key: 'messy_real',      img: 'deliberately messy-real and authentic — a casual slightly cluttered home setting, anti-stock, maximum raw-UGC believability' }
+];
+
+const DIMS = { motion: MOTIONS, camera: CAMERAS, scene: SCENES, hook: HOOKS };
 
 /** Devuelve el objeto de un valor de dimensión (o el primero si no existe). */
 function get(dim, key) {
@@ -237,7 +251,7 @@ function pickWeighted(dim, statsByKey = {}, opts = {}) {
  * @returns {Object} { <valueKey>: { n, avg_roas, avg_ctr, graduated, killed } }
  */
 async function getDimensionStats(dim) {
-  const field = dim === 'motion' ? 'motion_variant' : dim;
+  const field = dim === 'motion' ? 'motion_variant' : dim === 'hook' ? 'hook_variant' : dim;
   // Videos que CORRIERON → señal de rendimiento (ROAS/hold).
   const vids = await CreativeProposal.find({
     media_type: 'video', status: { $in: ['testing', 'graduated', 'killed', 'expired'] }
@@ -297,12 +311,17 @@ function _fill(text, productName) {
 
 /** Prompt de la IMAGEN-fuente (gpt-image): interacción (con la pieza REAL) + escena.
  *  Si el motion trae escena propia (selfScene, ej. heladera), NO se le pega otra. */
-function buildImageScene(motionKey, sceneKey, productName) {
+function buildImageScene(motionKey, sceneKey, productName, hookKey) {
   const m = get('motion', motionKey);
   let img = _fill(m.img, productName);
   if (!m.selfScene) {
     const s = get('scene', sceneKey);
     img += `, ${s.img}`;
+  }
+  // HOOK: modificador aditivo de framing/energía (el gancho de los primeros 1-2s).
+  if (hookKey) {
+    const h = get('hook', hookKey);
+    if (h && h.img) img += `, ${h.img}`;
   }
   return img;
 }
@@ -331,5 +350,6 @@ function buildVideoPrompt(productName, motionKey, cameraKey, styleOverride, lear
 module.exports = {
   MOTIONS, CAMERAS, SCENES, DIMS, BASE_STYLE, VIDEO_STYLE_MOODS, pickVideoStyle,
   productUnit, productUnitFood, fitsOnFood, isDip, motionsForProduct,
-  get, keys, pickWeighted, getDimensionStats, buildImageScene, buildVideoPrompt
+  get, keys, pickWeighted, getDimensionStats, buildImageScene, buildVideoPrompt,
+  HOOKS
 };

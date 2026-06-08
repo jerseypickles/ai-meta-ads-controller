@@ -226,7 +226,7 @@ function ColaSection({ loading, pending, genVideos, busy, decide, downloadVideo 
 
 // ── TAB: Aprendizaje (DNA por dimensión) ──
 function DNASection({ stats }) {
-  const dims = [{ key: 'motion', label: 'Motion (interacción)' }, { key: 'camera', label: 'Cámara' }, { key: 'scene', label: 'Escena' }];
+  const dims = [{ key: 'motion', label: 'Motion (interacción)' }, { key: 'hook', label: 'Hook (gancho 1-2s)' }, { key: 'camera', label: 'Cámara' }, { key: 'scene', label: 'Escena' }];
   const byDim = stats?.dna_by_dimension;
   const hasAny = byDim && dims.some(d => (byDim[d.key] || []).length);
   return (

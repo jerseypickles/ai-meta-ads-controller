@@ -23,7 +23,7 @@ router.get('/stats', async (req, res) => {
     const videos = await CreativeProposal.find({
       media_type: 'video',
       status: { $in: ['testing', 'graduated', 'killed', 'expired'] }
-    }).select('headline product_name motion_variant camera scene status video_url').lean();
+    }).select('headline product_name motion_variant camera scene hook_variant status video_url').lean();
 
     // Métricas desde el TestRun de cada video (proposal_id → TestRun).
     const ids = videos.map(v => v._id);
@@ -37,7 +37,7 @@ router.get('/stats', async (req, res) => {
       const m = t.metrics || {};
       return {
         headline: v.headline, product_name: v.product_name,
-        motion_variant: v.motion_variant, camera: v.camera, scene: v.scene,
+        motion_variant: v.motion_variant, camera: v.camera, scene: v.scene, hook_variant: v.hook_variant,
         status: v.status, video_url: v.video_url,
         ctr: r2(m.ctr), roas: r2(m.roas), spend: r2(m.spend), purchases: m.purchases || 0,
         impressions: m.impressions || 0,
@@ -67,7 +67,8 @@ router.get('/stats', async (req, res) => {
     const dnaByDimension = {
       motion: aggregateBy('motion_variant'),
       camera: aggregateBy('camera'),
-      scene: aggregateBy('scene')
+      scene: aggregateBy('scene'),
+      hook: aggregateBy('hook_variant')
     };
     const dna = dnaByDimension.motion; // back-compat
 

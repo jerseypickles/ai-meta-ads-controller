@@ -162,7 +162,7 @@ async function runDionysus() {
       adset_id: c.adset_id, product_id: c.product_id, product_name: c.product_name,
       headline: c.headline, primary_text: c.primary_text, link_url: c.link_url,
       media_type: 'video', status: 'generating_video',
-      motion_variant: variant, camera, scene: c.scene || '',
+      motion_variant: variant, camera, scene: c.scene || '', hook_variant: c.hook_variant || '',
       video_judge_score: verdict.score,
       video_judge_breakdown: {
         reason: verdict.reason,

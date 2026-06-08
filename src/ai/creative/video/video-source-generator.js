@@ -38,8 +38,8 @@ function pickImageStyle() {
 }
 
 /** Construye el prompt de imagen para un producto + (motion, scene) del DNA. */
-function buildSourcePrompt(productName, motionKey, sceneKey) {
-  const interaction = dna.buildImageScene(motionKey, sceneKey, productName); // pieza = producto real
+function buildSourcePrompt(productName, motionKey, sceneKey, hookKey) {
+  const interaction = dna.buildImageScene(motionKey, sceneKey, productName, hookKey); // pieza real + hook
   // En escenas EN COMIDA la pieza va en slice (un tomate entero sobre un burger se ve raro);
   // en el resto, la pieza entera que se sostiene/moja.
   const FOOD_MOTIONS = ['on_food'];
@@ -119,10 +119,11 @@ async function generateVideoSources() {
     return { available, generated: 0, skipped: 'no_products' };
   }
 
-  // DNA stats para exploit/explore (qué motion / scene rinde mejor hasta ahora).
-  const [motionStats, sceneStats] = await Promise.all([
+  // DNA stats para exploit/explore (qué motion / scene / hook rinde mejor hasta ahora).
+  const [motionStats, sceneStats, hookStats] = await Promise.all([
     dna.getDimensionStats('motion').catch(() => ({})),
-    dna.getDimensionStats('scene').catch(() => ({}))
+    dna.getDimensionStats('scene').catch(() => ({})),
+    dna.getDimensionStats('hook').catch(() => ({}))
   ]);
 
   logger.info(`[VIDEO-SOURCE] pool ${available}/${POOL_TARGET} → genero ${need}`);
@@ -135,13 +136,14 @@ async function generateVideoSources() {
     // un spear sobre un burger se ve raro; esos productos usan las otras posturas).
     const motionKey = dna.pickWeighted('motion', motionStats, { allowedKeys: dna.motionsForProduct(product.product_name) });
     const sceneKey = dna.pickWeighted('scene', sceneStats);
+    const hookKey = dna.pickWeighted('hook', hookStats); // el gancho de los primeros 1-2s
     try {
       const refImages = product.png_references.map(ref => ({
         image_base64: ref.image_base64,
         mime_type: ref.mime_type,
         path: !ref.image_base64 ? null : null
       }));
-      const prompt = buildSourcePrompt(product.product_name, motionKey, sceneKey);
+      const prompt = buildSourcePrompt(product.product_name, motionKey, sceneKey, hookKey);
       const result = await generateCreativeImage(prompt, { referenceImages: refImages, aspectRatio: '9:16', imageSize: '2K' });
       if (!result?.base64) { logger.warn(`[VIDEO-SOURCE] sin imagen para ${product.product_name}`); continue; }
 
@@ -159,10 +161,11 @@ async function generateVideoSources() {
         tags: ['video_source'],
         motion_variant: motionKey,  // motion baked en la imagen
         scene: sceneKey,            // escena (dimensión DNA)
+        hook_variant: hookKey,      // gancho (dimensión DNA nueva)
         style: 'video_source'
       });
       generated++;
-      logger.info(`[VIDEO-SOURCE] ✓ "${copy.headline}" (${product.product_name}, ${motionKey}/${sceneKey})`);
+      logger.info(`[VIDEO-SOURCE] ✓ "${copy.headline}" (${product.product_name}, ${motionKey}/${sceneKey}/${hookKey})`);
     } catch (e) {
       logger.error(`[VIDEO-SOURCE] error generando para ${product.product_name}: ${e.message}`);
     }
