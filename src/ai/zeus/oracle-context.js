@@ -343,6 +343,34 @@ async function buildOracleContext(lastSeenAt = null) {
     };
   } catch (_) { /* Hermes informativo, no crítico para el contexto de Zeus */ }
 
+  // DIONISIO (video) — sexto agente. Zeus veía la campaña [TESTING-VIDEO] como números
+  // sueltos pero NO el sistema de video que aprende detrás. Awareness (no comandar): qué
+  // genera, qué aprendió la calibración (señales + motions), la curva de retención.
+  try {
+    const CreativeProposal = require('../../db/models/CreativeProposal');
+    const SystemConfig = require('../../db/models/SystemConfig');
+    const { LEARNINGS_KEY } = require('../creative/video/video-learning');
+    const since = new Date(Date.now() - 7 * 86400000);
+    const [testing, graduated, review, weekGen, L] = await Promise.all([
+      CreativeProposal.countDocuments({ media_type: 'video', status: 'testing' }),
+      CreativeProposal.countDocuments({ media_type: 'video', status: 'graduated' }),
+      CreativeProposal.countDocuments({ media_type: 'video', status: 'pending_video_review' }),
+      CreativeProposal.countDocuments({ media_type: 'video', created_at: { $gte: since } }),
+      SystemConfig.get(LEARNINGS_KEY, null)
+    ]);
+    ctx.dionysus = {
+      note: 'Agente de VIDEO (Seedance). Genera→juzga(Gemini)→testea→aprende. La calibración aprende qué SEÑAL creativa predice el outcome y alimenta al director. Awareness — no comandar directo.',
+      videos: { testing, graduated, pending_review: review, generated_7d: weekGen },
+      calibration: L ? {
+        top_signals: (L.signal_rank || []).slice(0, 3).map(s => `${s.signal} (corr ${s.corr})`),
+        top_motions: (L.motion_rank || []).slice(0, 3).map(m => `${m.key} (outcome ${m.avg_outcome})`),
+        watch_curve: L.watch_curve ? `p25 ${L.watch_curve.p25}% → p100 ${L.watch_curve.p100}%${L.watch_curve.biggest_drop ? `, mayor caída ${L.watch_curve.biggest_drop}` : ''}` : null,
+        video_judge_corr: L.judge?.video_score_corr ?? null,
+        settled: L.settled_count || 0
+      } : null
+    };
+  } catch (_) { /* Dionisio informativo, no crítico */ }
+
   // CUSTOMER INTELLIGENCE — Pilar 1 esteroides (2026-06-05). Zeus deja de ver SOLO
   // métricas de ads y ve al CLIENTE: recompra, LTV, RFM, qué producto es la puerta de
   // entrada, % de revenue de returning. Esto debe informar targeting/creativo/producto.
@@ -492,6 +520,19 @@ function formatContextForPrompt(ctx) {
     const h = ctx.hermes;
     const last = h.recent_actions?.[0];
     lines.push(`\nHERMES (foot traffic tienda física — NO ROAS, awareness only): ${h.live_ads} ads live · ${h.pending_proposals} pending${last ? ` · última: ${last.action} ${last.change || ''}` : ''}`);
+  }
+
+  // Dionisio (video) — awareness: qué genera + qué aprendió la calibración. Para drill, query_dionysus.
+  if (ctx.dionysus) {
+    const d = ctx.dionysus;
+    lines.push(`\nDIONISIO (video, Seedance — awareness): ${d.videos.testing} en testing · ${d.videos.graduated} graduados · ${d.videos.pending_review} en review · ${d.videos.generated_7d} generados (7d)`);
+    if (d.calibration) {
+      const c = d.calibration;
+      if (c.top_signals?.length) lines.push(`  Calibración (${c.settled} firmes): señales que predicen → ${c.top_signals.join(', ')}`);
+      if (c.top_motions?.length) lines.push(`  Motions top → ${c.top_motions.join(', ')}`);
+      if (c.watch_curve) lines.push(`  Curva retención → ${c.watch_curve}`);
+    }
+    lines.push(`  (la calibración alimenta al director creativo; para drill usá query_dionysus)`);
   }
 
   // Changelog del sistema — qué cambió en el código/conducta de los agentes en los

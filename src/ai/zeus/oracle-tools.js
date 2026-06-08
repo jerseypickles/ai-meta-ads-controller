@@ -296,6 +296,17 @@ const TOOL_DEFINITIONS = [
     }
   },
   {
+    name: 'query_dionysus',
+    description: 'Estado e INTELIGENCIA del agente Dionisio (VIDEO, Seedance): videos por status, y la CALIBRACIÓN completa — qué SEÑALES creativas predicen el outcome (hook_strength, curiosity_gap, food_craving, etc. con su correlación), qué MOTIONS rinden, el perfil de señales por patrón, la curva de retención (dónde se cae la gente), y cuánto predice cada juez (imagen/Claude vs video/Gemini). Usar cuando se discuta estrategia de VIDEO o por qué un video funciona/falla. La calibración alimenta al director creativo automáticamente. Awareness — Zeus lo ve pero no lo comanda directo.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number', default: 10 }
+      },
+      required: []
+    }
+  },
+  {
     name: 'query_demand_forecast',
     description: 'Pronóstico de DEMANDA (revenue Shopify) próximos 7/30/90d: baseline diario, tendencia (creciendo/estable/cayendo + % semanal), momentum (últimos 7d vs previos), patrón por día de semana (pico/valle), forecast día a día de los próximos 14d, y eventos estacionales próximos. Usar para PRE-POSICIONAR budget/creativos ANTES de los picos (no reaccionar después). Es un pronóstico heurístico, no certeza.',
     input_schema: { type: 'object', properties: {}, required: [] }
@@ -2164,8 +2175,36 @@ async function handleQueryRecCapacity() {
   }
 }
 
+async function handleQueryDionysus(input = {}) {
+  const limit = Math.min(input.limit || 10, 30);
+  const CreativeProposal = require('../../db/models/CreativeProposal');
+  const SystemConfig = require('../../db/models/SystemConfig');
+  const { LEARNINGS_KEY } = require('../creative/video/video-learning');
+  const [byStatus, L, recent] = await Promise.all([
+    CreativeProposal.aggregate([{ $match: { media_type: 'video' } }, { $group: { _id: '$status', n: { $sum: 1 } } }, { $sort: { n: -1 } }]),
+    SystemConfig.get(LEARNINGS_KEY, null),
+    CreativeProposal.find({ media_type: 'video', status: { $in: ['testing', 'graduated'] } })
+      .sort({ created_at: -1 }).limit(limit).select('headline motion_variant status product_name').lean()
+  ]);
+  return {
+    note: 'Dionisio = agente de VIDEO (Seedance). Genera→juzga(Gemini)→testea→aprende. La calibración aprende qué señal creativa predice el outcome → alimenta al director creativo. Awareness — no comandar directo.',
+    videos_by_status: byStatus.reduce((o, s) => { o[s._id || 'unknown'] = s.n; return o; }, {}),
+    calibration: L ? {
+      settled: L.settled_count,
+      signals_predicting_outcome: L.signal_rank || [],
+      motions_by_outcome: (L.motion_rank || []).map(m => ({ motion: m.key, outcome: m.avg_outcome, hold_pct: m.avg_hold, graduated: m.graduated, tested: m.n })),
+      pattern_signals: L.pattern_signals || {},
+      watch_curve: L.watch_curve || null,
+      judge_image_corr: L.judge?.score_corr ?? null,
+      judge_video_corr: L.judge?.video_score_corr ?? null
+    } : null,
+    recent_videos: recent.map(v => ({ headline: v.headline, motion: v.motion_variant, status: v.status, product: v.product_name }))
+  };
+}
+
 const TOOL_HANDLERS = {
   query_portfolio: handleQueryPortfolio,
+  query_dionysus: handleQueryDionysus,
   query_adsets: handleQueryAdsets,
   query_tests: handleQueryTests,
   query_dnas: handleQueryDnas,
