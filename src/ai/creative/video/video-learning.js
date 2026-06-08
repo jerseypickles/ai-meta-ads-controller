@@ -83,9 +83,21 @@ async function reconcile() {
   const score_corr = scorePairs.length >= MIN_PAIRS_CORR ? corr(scorePairs) : null;
 
   // ¿El juez de VIDEO (Gemini, ve el mp4) predice mejor que el de imagen (Claude)?
+  // (vs OUTCOME = conversión-dominante)
   const videoPairs = settled.filter(v => v.video_result_verdict?.overall != null)
     .map(v => [v.video_result_verdict.overall, outcomeScore(v.status, byProp[String(v._id)] || {})]);
   const video_score_corr = videoPairs.length >= MIN_PAIRS_CORR ? corr(videoPairs) : null;
+
+  // TARGET CORRECTO del juez de VIDEO: ¿un video mejor-juzgado se MIRA más (retención)?
+  // Gemini juzga CALIDAD, que mueve el HOLD, no la conversión (que la maneja oferta/producto).
+  // Esta es la validación honesta del juez de video. Igual para Claude (foto) como contraste.
+  const holdOf = v => (byProp[String(v._id)]?.hold_rate || 0) * 100;
+  const videoHoldPairs = settled.filter(v => v.video_result_verdict?.overall != null && holdOf(v) > 0)
+    .map(v => [v.video_result_verdict.overall, holdOf(v)]);
+  const video_hold_corr = videoHoldPairs.length >= MIN_PAIRS_CORR ? corr(videoHoldPairs) : null;
+  const claudeHoldPairs = settled.filter(v => v.video_judge_score != null && holdOf(v) > 0)
+    .map(v => [v.video_judge_score, holdOf(v)]);
+  const claude_hold_corr = claudeHoldPairs.length >= MIN_PAIRS_CORR ? corr(claudeHoldPairs) : null;
 
   const dimCorr = {};
   for (const d of JUDGE_DIMS) {
@@ -99,7 +111,7 @@ async function reconcile() {
     generated_at: new Date(),
     settled_count: settled.length,
     motion_rank: motionRank,
-    judge: { score_corr, video_score_corr, dim_corr: dimCorr }
+    judge: { score_corr, video_score_corr, video_hold_corr, claude_hold_corr, dim_corr: dimCorr }
   };
   await SystemConfig.set(LEARNINGS_KEY, learnings, 'video_learning');
   logger.info(`[VIDEO-LEARNING] reconciliado: ${settled.length} firmes · top motion ${motionRank[0]?.key || '—'} · juez score_corr ${score_corr ?? 'n/a'}`);
