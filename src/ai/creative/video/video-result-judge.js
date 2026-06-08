@@ -18,7 +18,8 @@ HUNT for these (almost always present at some level):
 - product/label MORPHING or shifting between frames (text warps, jar changes shape mid-clip)
 - hands/fingers warping, extra fingers, rubbery/melting deformation
 - unnatural drip/physics (drip that doesn't fall right, liquid that snaps, floats or teleports)
-- frozen / stuck / floating objects instead of real gravity
+- ⚠️ a product/jar/object FLOATING, LEVITATING or FLYING off a surface/shelf into the air instead of being held or resting on a surface — this is a SEVERE artifact → verdict MUST be "reject"
+- frozen / stuck objects instead of real gravity
 - the "AI look": too-smooth plasticky surfaces, staged/stocky background, uncanny lighting
 - the intended motion NOT actually happening (a barely-moving near-still frame)
 

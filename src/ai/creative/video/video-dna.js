@@ -72,9 +72,12 @@ const MOTIONS = [
   { key: 'cooler_grab', selfScene: true,
     img: "a hand reaching into an ice-filled cooler and pulling out a frosty {product} jar, ice cubes and water droplets all around, condensation on the glass, backyard summer, UGC iPhone",
     vid: 'A hand lifts the frosty {product} jar up out of the ice; water droplets slide down the glass, ice settles slightly.' },
+  // pantry_shelf REESCRITO 2026-06-08: "slides the jar forward off the shelf" → Seedance
+  // hacía FLOTAR el frasco en el aire (producto volando). Ahora la mano AGARRA el frasco
+  // que se queda anclado en el estante; solo se mueven los dedos. Nada se desliza ni flota.
   { key: 'pantry_shelf', selfScene: true,
-    img: 'several {product} jars neatly lined up on a wooden pantry shelf at home, a hand reaching toward the front jar, warm soft light, labels readable, UGC iPhone',
-    vid: 'A hand reaches and slides one {product} jar forward off the shelf; the other jars stay still.' },
+    img: 'several {product} jars neatly lined up on a wooden pantry shelf at home, a hand resting on and grasping the front jar, warm soft light, labels readable, UGC iPhone',
+    vid: 'A hand reaches in and firmly grasps the front {product} jar, fingers wrapping around it — the jar stays put ON the shelf, held in the hand, only the hand and fingers move. Every jar stays grounded on the shelf under gravity: NOTHING floats, levitates, slides off on its own, or lifts into the air.' },
   { key: 'on_food', selfScene: true,
     img: 'a hand laying {unit_food} FLAT on top of a juicy cheeseburger on a plate as the hero topping — the pickle slices lying flat on the patty/cheese, NOT a whole pickle standing upright — melty cheese, casual kitchen, mouth-watering UGC iPhone',
     vid: 'A hand lays {unit_food} flat onto the burger; a single drop of brine falls and faint steam rises from the food.' },
