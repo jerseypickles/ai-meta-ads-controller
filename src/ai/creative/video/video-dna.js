@@ -95,6 +95,7 @@ function productUnit(name = '') {
   // incluye "pickle" y caía a "a single pickle chip" (bug reportado 2026-06-06:
   // video de Pickled Salsa salía con un pickle chip en mano en vez de la salsa).
   if (isDip(n)) return 'a generous heaping spoonful of the chunky pickled salsa/relish on a spoon, the chunks clearly visible (this product is a chunky dip, NOT a pickle chip)';
+  if (isShredded(n)) return 'a forkful of tangy shredded sauerkraut/cabbage strands lifted on a fork, the fine pale fermented strands clearly visible (this is shredded cabbage, NOT a pickle chip or a slice)';
   if (n.includes('onion')) return 'a single pickled red onion slice';
   if (n.includes('tomato')) return 'a single whole pickled tomato (plump, golf-ball size)';
   if (n.includes('bean')) return 'a single pickled green bean';
@@ -109,6 +110,7 @@ function productUnit(name = '') {
 // plano (chips, rodajas) se deja igual.
 function productUnitFood(name = '') {
   const n = name.toLowerCase();
+  if (isShredded(n)) return 'a generous pile of shredded sauerkraut strands piled on top';
   if (n.includes('onion')) return 'a pickled red onion slice';
   if (n.includes('tomato')) return 'a thick slice of pickled tomato';
   if (n.includes('jalap') || n.includes('pepper')) return 'a few pickled jalapeño slices';
@@ -135,6 +137,8 @@ function fitsOnFood(productName = '') {
   if (n.includes('chip') || n.includes('chili') || n.includes('chamoy') || n.includes('horseradish')) return true;
   // Rodajas naturales que quedan bien en burger.
   if (n.includes('onion') || n.includes('jalap') || n.includes('pepper')) return true;
+  // Sauerkraut/slaw: topping clásico (hot dog, salchicha, brat, reuben) → va en comida.
+  if (isShredded(n)) return true;
   return false; // default conservador: si no es claramente apto, no on_food
 }
 
@@ -142,6 +146,13 @@ function fitsOnFood(productName = '') {
 function isDip(name = '') {
   const n = (name || '').toLowerCase();
   return n.includes('salsa') || n.includes('relish') || n.includes('sauce') || n.includes('chow') || n.includes('dip');
+}
+
+// ¿El producto es RALLADO/en hebras (sauerkraut/slaw)? Como el dip, NO es pieza sólida
+// (va en forkful/pila, no se pellizca ni se muerde un "chip"), pero NO es saucy.
+function isShredded(name = '') {
+  const n = (name || '').toLowerCase();
+  return n.includes('sauerkraut') || n.includes('kraut') || n.includes('slaw');
 }
 
 // Motions que asumen una PIEZA SÓLIDA sostenida en mano — no aplican a un dip:
@@ -153,7 +164,8 @@ const SOLID_PIECE_MOTIONS = new Set(['pinch_twirl', 'bite_tease']);
 function motionsForProduct(productName = '') {
   const allKeys = MOTIONS.map(m => m.key);
   let keys = fitsOnFood(productName) ? allKeys : allKeys.filter(k => k !== 'on_food');
-  if (isDip(productName)) keys = keys.filter(k => !SOLID_PIECE_MOTIONS.has(k));
+  // Dips y rallados (sauerkraut): no se pellizca/gira ni se muerde una pieza sólida.
+  if (isDip(productName) || isShredded(productName)) keys = keys.filter(k => !SOLID_PIECE_MOTIONS.has(k));
   return keys;
 }
 
@@ -352,7 +364,7 @@ function buildVideoPrompt(productName, motionKey, cameraKey, styleOverride, lear
 
 module.exports = {
   MOTIONS, CAMERAS, SCENES, DIMS, BASE_STYLE, VIDEO_STYLE_MOODS, pickVideoStyle,
-  productUnit, productUnitFood, fitsOnFood, isDip, motionsForProduct,
+  productUnit, productUnitFood, fitsOnFood, isDip, isShredded, motionsForProduct,
   get, keys, pickWeighted, getDimensionStats, buildImageScene, buildVideoPrompt,
   HOOKS
 };
