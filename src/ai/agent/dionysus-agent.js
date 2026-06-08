@@ -223,4 +223,42 @@ async function runDionysus() {
   return { judged, generated, rejected, elapsed_s: elapsed, results };
 }
 
-module.exports = { runDionysus, reconcileStuckVideos };
+/**
+ * Recupera EXACTAMENTE los videos que fallaron (status 'failed') — re-genera cada uno
+ * desde su MISMA fuente, reusando el placeholder (NO crea videos nuevos del pool). Para
+ * cuando un cron murió por crédito agotado / 500s transitorios y querés recuperar SOLO
+ * esos, sin gastar de más. @param hoursBack ventana de fallidos a recuperar.
+ */
+async function retryFailedVideos({ hoursBack = 6, limit = 20 } = {}) {
+  const since = new Date(Date.now() - hoursBack * 3600000);
+  const failed = await CreativeProposal.find({ media_type: 'video', status: 'failed', created_at: { $gte: since } })
+    .sort({ created_at: -1 }).limit(limit).lean();
+  logger.info(`[DIONISIO-RETRY] recuperando ${failed.length} videos fallidos (últimas ${hoursBack}h)`);
+  let recovered = 0, skipped = 0, reFailed = 0;
+  for (const f of failed) {
+    try {
+      const source = f.source_proposal_id ? await CreativeProposal.findById(f.source_proposal_id).lean() : null;
+      if (!source || !source.image_base64) { skipped++; logger.warn(`[DIONISIO-RETRY] ${f._id}: fuente no disponible — skip`); continue; }
+      const variant = f.motion_variant || 'lift_drip';
+      const camera = f.camera || 'static';
+      const prompt = dna.buildVideoPrompt(source.product_name || f.product_name || 'the product', variant, camera);
+      const imageUrl = `${PUBLIC_BASE_URL}/vsrc/${source._id}.png`;
+      await CreativeProposal.findByIdAndUpdate(f._id, { $set: { status: 'generating_video', rejection_reason: '' } });
+      const vid = await seedance.generateVideoFromImage({
+        imageUrl, prompt, durationSeconds: 5, aspectRatio: '9:16',
+        onSubmit: (taskId) => CreativeProposal.findByIdAndUpdate(f._id, { $set: { video_task_id: taskId } })
+      });
+      await CreativeProposal.findByIdAndUpdate(f._id, { $set: { status: 'pending_video_review', video_url: vid.video_url, video_task_id: vid.task_id } });
+      recovered++;
+      logger.info(`[DIONISIO-RETRY] ✓ recuperado: "${(f.headline || '').slice(0, 30)}" (${variant})`);
+    } catch (e) {
+      await CreativeProposal.findByIdAndUpdate(f._id, { $set: { status: 'failed', rejection_reason: `retry falló: ${e.message}` } });
+      reFailed++;
+      logger.warn(`[DIONISIO-RETRY] ✗ ${f._id} falló de nuevo: ${e.message}`);
+    }
+  }
+  logger.info(`[DIONISIO-RETRY] DONE: ${recovered} recuperados · ${reFailed} re-fallaron · ${skipped} sin fuente`);
+  return { recovered, reFailed, skipped, total: failed.length };
+}
+
+module.exports = { runDionysus, reconcileStuckVideos, retryFailedVideos };

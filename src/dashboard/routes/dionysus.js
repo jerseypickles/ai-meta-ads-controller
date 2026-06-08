@@ -183,6 +183,18 @@ router.post('/backfill-video-judge', async (req, res) => {
   })();
 });
 
+// POST /retry-failed — re-genera EXACTAMENTE los videos fallidos (no del pool). Async.
+router.post('/retry-failed', async (req, res) => {
+  res.json({ started: true, message: 'Recuperando los videos fallidos desde su fuente — revisá la cola en unos minutos' });
+  (async () => {
+    try {
+      const { retryFailedVideos } = require('../../ai/agent/dionysus-agent');
+      const r = await retryFailedVideos({ hoursBack: parseInt(req.body?.hoursBack, 10) || 6, limit: parseInt(req.body?.limit, 10) || 20 });
+      logger.info(`[DIONISIO-RETRY] resultado: ${JSON.stringify(r)}`);
+    } catch (e) { logger.error(`[DIONISIO-RETRY] ${e.message}`); }
+  })();
+});
+
 // POST /run — gatillar un ciclo de Dionisio (async)
 router.post('/run', async (req, res) => {
   try {
