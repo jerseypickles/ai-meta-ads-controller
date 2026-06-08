@@ -79,8 +79,8 @@ const MOTIONS = [
     img: 'several {product} jars neatly lined up on a wooden pantry shelf at home, a hand resting on and grasping the front jar, warm soft light, labels readable, UGC iPhone',
     vid: 'A hand reaches in and firmly grasps the front {product} jar, fingers wrapping around it — the jar stays put ON the shelf, held in the hand, only the hand and fingers move. Every jar stays grounded on the shelf under gravity: NOTHING floats, levitates, slides off on its own, or lifts into the air.' },
   { key: 'on_food', selfScene: true,
-    img: 'a hand laying {unit_food} FLAT on top of a juicy cheeseburger on a plate as the hero topping — the pickle slices lying flat on the patty/cheese, NOT a whole pickle standing upright — melty cheese, casual kitchen, mouth-watering UGC iPhone',
-    vid: 'A hand lays {unit_food} flat onto the burger; a single drop of brine falls and faint steam rises from the food.' },
+    img: 'a hand placing {unit_food} on top of {food} as the hero topping — {unit_food} sitting flat ON the food (NOT a whole pickle standing upright), juicy and mouth-watering, casual kitchen, UGC iPhone',
+    vid: 'A hand places {unit_food} onto {food}; a single drop falls and faint steam rises from the hot food.' },
   { key: 'table_spread', selfScene: true,
     img: "an open {product} jar in the center of a picnic table surrounded by a snack spread (chips, dips, drinks), top-down casual flat-lay, sunny outdoor, UGC iPhone, label readable",
     vid: 'Almost still — a faint breeze and soft light shift across the {product} jar and the spread; ambient micro-motion only.' }
@@ -110,7 +110,7 @@ function productUnit(name = '') {
 // plano (chips, rodajas) se deja igual.
 function productUnitFood(name = '') {
   const n = name.toLowerCase();
-  if (isShredded(n)) return 'a generous pile of shredded sauerkraut strands piled on top';
+  if (isShredded(n)) return 'a generous pile of shredded sauerkraut strands';
   if (n.includes('onion')) return 'a pickled red onion slice';
   if (n.includes('tomato')) return 'a thick slice of pickled tomato';
   if (n.includes('jalap') || n.includes('pepper')) return 'a few pickled jalapeño slices';
@@ -315,11 +315,20 @@ async function getDimensionStats(dim) {
 }
 
 // Reemplaza {unit} (una pieza del producto) y {product} (el frasco/nombre entero).
+// La COMIDA sobre la que va el topping (on_food) — por producto. Sauerkraut va en hot dog
+// (su pairing clásico, como la foto de referencia), no en burger.
+function foodFor(name = '') {
+  const n = (name || '').toLowerCase();
+  if (isShredded(n)) return 'a grilled hot dog or bratwurst in a soft bun on a plate';
+  return 'a juicy cheeseburger on a plate';
+}
+
 function _fill(text, productName) {
   const unit = productUnit(productName);
   const unitFood = productUnitFood(productName);
   return text
     .replace(/\{unit_food\}/g, unitFood)   // primero el más específico
+    .replace(/\{food\}/g, foodFor(productName))
     .replace(/\{unit\}/g, unit)
     .replace(/\{product\}/g, productName || 'the product');
 }
