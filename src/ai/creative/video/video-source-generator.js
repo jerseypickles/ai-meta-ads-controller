@@ -62,6 +62,17 @@ function buildSourcePrompt(productName, motionKey, sceneKey, hookKey) {
 /** Genera un headline + copy corto para el creativo (en inglés, mercado US). */
 async function generateCopy(productName) {
   try {
+    const dna = require('./video-dna');
+    const unit = dna.productUnit(productName);
+    const isDip = dna.isDip(productName);
+    const isShredded = dna.isShredded(productName);
+    // Descripción fiel del producto + guardrail anti-mislabel (el bug del "tomato dip":
+    // pickled tomatoes ENTEROS salían con copy de "dip/dipping/salsa").
+    const typeNote = isDip
+      ? 'This IS a dip/salsa/relish — copy about dipping/scooping is fine.'
+      : isShredded
+        ? 'This is shredded sauerkraut/slaw (a topping for hot dogs/sausages). Do NOT call it a "dip", "salsa" or "sauce".'
+        : 'IMPORTANT: this is NOT a dip, salsa or sauce — do NOT call it a "dip"/"salsa"/"sauce" or say "dipping"/"scooping". Describe it as the real product (you eat the piece itself).';
     const apiKey = config.claude?.apiKey || process.env.ANTHROPIC_API_KEY;
     const claude = new Anthropic({ apiKey });
     const resp = await claude.messages.create({
@@ -69,7 +80,7 @@ async function generateCopy(productName) {
       max_tokens: 200,
       messages: [{
         role: 'user',
-        content: `Write punchy UGC ad copy in ENGLISH (US market) for a short video of Jersey Pickles "${productName}" — a hand lifting a chip with sauce dripping. Return ONLY JSON: {"headline":"<max 6 words, hooky>","primary_text":"<1-2 short sentences, casual, appetizing, with 1-2 emojis>"}`
+        content: `Write punchy UGC ad copy in ENGLISH (US market) for a short video of Jersey Pickles "${productName}". The product shown is: ${unit}. ${typeNote} Return ONLY JSON: {"headline":"<max 6 words, hooky>","primary_text":"<1-2 short sentences, casual, appetizing, with 1-2 emojis>"}`
       }]
     });
     const txt = resp.content?.[0]?.text || '';
