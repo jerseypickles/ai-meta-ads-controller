@@ -23,6 +23,9 @@ const dna = require('./video-dna');
 const POOL_TARGET = parseInt(process.env.VIDEO_SOURCE_POOL_TARGET || '40', 10); // 2026-06-05: 16→40 (Dionisio extremo — el video manda)
 const PER_CYCLE_CAP = parseInt(process.env.VIDEO_SOURCE_PER_CYCLE || '8', 10);  // 2026-06-05: 4→8
 const ENABLED = process.env.VIDEO_SOURCE_ENABLED !== 'false';
+// 🎨 Director creativo: % de generaciones que inventan un concepto NUEVO (el LLM, no el
+// template fijo) → el DNA crece su espacio en vez de cerrarse. 2026-06-08, Dionisio fabuloso.
+const CREATIVE_RATE = parseFloat(process.env.VIDEO_SOURCE_CREATIVE_RATE || '0.3');
 
 const FIDELITY = 'The product container and its LABEL must remain a pixel-perfect match to the reference photo — same shape, same label design, same text, same colors, same proportions. Do NOT redraw, re-render, or restyle the packaging or the label. CRITICAL COLOR FIDELITY: replicate the EXACT colors of the product and its contents from the reference; do not shift them toward what this food "usually" looks like.';
 
@@ -126,6 +129,15 @@ async function generateVideoSources() {
     dna.getDimensionStats('hook').catch(() => ({}))
   ]);
 
+  // Conceptos del art-director que YA GRADUARON → inspiración para inventar MÁS en esas
+  // direcciones probadas (el DNA crece con la novedad que funcionó, no solo con motions fijos).
+  let winningConcepts = [];
+  try {
+    const won = await CreativeProposal.find({ media_type: 'video', status: 'graduated', creative_concept: { $ne: null } })
+      .sort({ created_at: -1 }).select('creative_concept').limit(8).lean();
+    winningConcepts = [...new Set(won.map(p => p.creative_concept).filter(Boolean))];
+  } catch (_) { /* noop */ }
+
   logger.info(`[VIDEO-SOURCE] pool ${available}/${POOL_TARGET} → genero ${need}`);
   let generated = 0;
 
@@ -134,16 +146,38 @@ async function generateVideoSources() {
     // Exploit/explore: sesga hacia el motion/scene ganador, sigue probando los otros.
     // allowedKeys excluye motions que no le quedan al producto (ej. on_food en spears →
     // un spear sobre un burger se ve raro; esos productos usan las otras posturas).
-    const motionKey = dna.pickWeighted('motion', motionStats, { allowedKeys: dna.motionsForProduct(product.product_name) });
-    const sceneKey = dna.pickWeighted('scene', sceneStats);
-    const hookKey = dna.pickWeighted('hook', hookStats); // el gancho de los primeros 1-2s
+    let motionKey = dna.pickWeighted('motion', motionStats, { allowedKeys: dna.motionsForProduct(product.product_name) });
+    let sceneKey = dna.pickWeighted('scene', sceneStats);
+    let hookKey = dna.pickWeighted('hook', hookStats); // el gancho de los primeros 1-2s
+    let prompt = null, creativeConcept = null;
+
+    // 🎨 DIRECTOR CREATIVO: una parte de las generaciones INVENTA un concepto nuevo (el LLM)
+    // en vez del template fijo → explora territorio que no está en el menú del DNA.
+    if (Math.random() < CREATIVE_RATE) {
+      try {
+        const { inventCreativeConcept, buildCreativePrompt } = require('./video-art-director');
+        const topMotions = Object.entries(motionStats).filter(([, s]) => (s.graduated || 0) > 0)
+          .sort((a, b) => (b[1].graduated || 0) - (a[1].graduated || 0)).slice(0, 3).map(([k]) => k);
+        // inspiración = motions ganadores + conceptos creativos que ya graduaron
+        const inspiration = [...topMotions, ...winningConcepts.map(c => `concepto "${c}"`)].join(', ');
+        const concept = await inventCreativeConcept(product.product_name, inspiration);
+        if (concept) {
+          prompt = buildCreativePrompt(product.product_name, concept.image_prompt, FIDELITY, pickImageStyle());
+          motionKey = concept.motion_hint; // motion válido para animar el video
+          sceneKey = ''; hookKey = '';
+          creativeConcept = concept.concept_tag;
+          logger.info(`[VIDEO-SOURCE] 🎨 concepto NUEVO del art-director: "${concept.concept_tag}" (${product.product_name}) — ${concept.why}`);
+        }
+      } catch (e) { logger.warn(`[VIDEO-SOURCE] art-director falló (uso template): ${e.message}`); }
+    }
+    if (!prompt) prompt = buildSourcePrompt(product.product_name, motionKey, sceneKey, hookKey);
+
     try {
       const refImages = product.png_references.map(ref => ({
         image_base64: ref.image_base64,
         mime_type: ref.mime_type,
         path: !ref.image_base64 ? null : null
       }));
-      const prompt = buildSourcePrompt(product.product_name, motionKey, sceneKey, hookKey);
       const result = await generateCreativeImage(prompt, { referenceImages: refImages, aspectRatio: '9:16', imageSize: '2K' });
       if (!result?.base64) { logger.warn(`[VIDEO-SOURCE] sin imagen para ${product.product_name}`); continue; }
 
@@ -162,10 +196,11 @@ async function generateVideoSources() {
         motion_variant: motionKey,  // motion baked en la imagen
         scene: sceneKey,            // escena (dimensión DNA)
         hook_variant: hookKey,      // gancho (dimensión DNA nueva)
+        creative_concept: creativeConcept, // concepto del art-director (null si template)
         style: 'video_source'
       });
       generated++;
-      logger.info(`[VIDEO-SOURCE] ✓ "${copy.headline}" (${product.product_name}, ${motionKey}/${sceneKey}/${hookKey})`);
+      logger.info(`[VIDEO-SOURCE] ✓ "${copy.headline}" (${product.product_name}, ${creativeConcept ? '🎨 ' + creativeConcept : motionKey + '/' + sceneKey + '/' + hookKey})`);
     } catch (e) {
       logger.error(`[VIDEO-SOURCE] error generando para ${product.product_name}: ${e.message}`);
     }
