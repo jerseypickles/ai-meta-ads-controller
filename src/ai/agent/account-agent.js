@@ -153,11 +153,12 @@ Evaluate each ad set objectively based on its data. Act when the data justifies 
 - Si NO hay target por-adset (adset nuevo / poca data), usá los umbrales globales de abajo.
 
 ## SCALE UP
-- ROAS 7d >= 3x with $50+ spend 7d → scale +15%. No other criteria needed.
-- ROAS 7d >= account average with improving 3d trend → scale +15%.
+- 🎓 GRADUADO PROBADO (PRIORIDAD #1) — el ad set ya pasó por testing si su nombre termina en "[Prometheus]" O tiene ROAS 7d >= 3x con >= 2 compras. ESO YA ES PRUEBA: NO lo trates como "data insuficiente" ni esperes $50 de spend. Escalalo YA aunque tenga spend bajo o esté fresco — un ganador de 5x NO puede quedarse hambriento a $20/día. Alimentar a tus graduados probados es el lever de crecimiento #1 del sistema. (Igual respeta: frequency < 3.0 y que la ROAS 3d no venga cayendo vs 7d.)
+- ROAS 7d >= 3x with $50+ spend 7d → scale up. No other criteria needed.
+- ROAS 7d >= account average with improving 3d trend → scale up.
 - Frequency must be < 3.0 (not saturated).
-- Zeus PRIORITIZE directive → scale +15% immediately. Zeus already validated.
-- Scale +15% does NOT reset Meta learning phase (only >20% does).
+- Zeus PRIORITIZE directive → scale immediately. Zeus already validated.
+- MODO AGRESIVO: proponé +20% por defecto, hasta +25-30% para ganadores fuertes y probados (el scale-gate ajusta el paso final según el win-rate y el cash). Nota: subir >20% resetea el learning de Meta — vale la pena para un ganador probado que querés crecer rápido; para uno estable que solo mantenés, quedate en +15-20% sin reset.
 Then: set next_review_hours: 48.
 
 ## SCALE DOWN
@@ -182,7 +183,7 @@ Then: set next_review_hours: 72.
 - Safety: account must have 10+ other healthy ad sets with ROAS > 2x.
 
 ## HOLD
-- Data insufficient (< $50 spend 7d) → hold, check in 24h.
+- Data insufficient (< $50 spend 7d) → hold, check in 24h. EXCEPCIÓN: un GRADUADO PROBADO ([Prometheus] o ROAS≥3x con compras) NO es "data insuficiente" — ya se probó en testing. NO lo holdees: escalalo (ver SCALE UP, prioridad #1).
 - Trend unclear (3d up but 7d down) → hold, check in 24h.
 - Within cooldown from recent action → hold until cooldown expires.
 
