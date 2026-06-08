@@ -24,7 +24,7 @@ const VIDEO_TEST_DAILY_BUDGET = 25; // $25/dia ABO para tests de VIDEO (Dionisio
 // Foto queda igual (1.96x, no merece más volumen).
 const MAX_CONCURRENT_VIDEO_TESTS = 24; // 2026-06-05: 12→24 (extremo video)
 const MAX_DAILY_VIDEO_TESTING_BUDGET = 600; // 2026-06-05: 300→600 (24 × $25)
-const MAX_DAILY_TESTING_BUDGET = parseInt(process.env.MAX_DAILY_TESTING_BUDGET, 10) || 400; // Cap diario FOTO. Env-overridable (temporal). 2026-06-03: 1000→400 (foto flojo).
+const MAX_DAILY_TESTING_BUDGET = parseInt(process.env.MAX_DAILY_TESTING_BUDGET, 10) || 600; // Cap diario FOTO. TEMPORAL 600 (validar 9:16) — revertir a 400. Env-overridable.
 const MAX_LAUNCHES_PER_CYCLE = 6; // 2026-06-05: 3→6 (más tests nuevos/ciclo; el video lo aprovecha)
 const TEST_MAX_DAYS = 7;
 const KILL_MIN_SPEND = 25;     // Kill si $25+ spend y 0 compras
