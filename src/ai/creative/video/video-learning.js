@@ -133,6 +133,21 @@ async function reconcile() {
     .map(([s, c]) => ({ signal: s, corr: c })).sort((a, b) => b.corr - a.corr);
   const signals_count = settled.filter(v => v.creative_signals).length;
 
+  // ── CURVA DE RETENCIÓN promedio (dónde se cae la gente) ──
+  // p25→p50→p75→p100: la FORMA revela si pierde en el hook (caída temprana) o el payoff.
+  const wc = settled.map(v => byProp[String(v._id)]).filter(m => m && (m.thumbstop_rate || m.p50_rate || m.hold_rate));
+  const avgAt = key => wc.length ? +(wc.reduce((s, m) => s + (m[key] || 0), 0) / wc.length * 100).toFixed(0) : 0;
+  let watch_curve = null;
+  if (wc.length) {
+    const pts = { p25: avgAt('thumbstop_rate'), p50: avgAt('p50_rate'), p75: avgAt('p75_rate'), p100: avgAt('hold_rate') };
+    // segmento con la caída más grande (dónde más se pierde la audiencia)
+    const drops = [['hook (0→25%)', 100 - pts.p25], ['25→50%', pts.p25 - pts.p50], ['50→75%', pts.p50 - pts.p75], ['75→100%', pts.p75 - pts.p100]];
+    const worst = drops.filter(d => d[1] > 0).sort((a, b) => b[1] - a[1])[0];
+    const avgSec = +(wc.reduce((s, m) => s + (m.video_avg_time || 0), 0) / wc.length).toFixed(1);
+    const hasMid = wc.some(m => m.p50_rate); // si aún no hay p50 capturado, la curva es parcial
+    watch_curve = { ...pts, avg_seconds: avgSec, biggest_drop: worst ? worst[0] : null, biggest_drop_pct: worst ? worst[1] : 0, n: wc.length, partial: !hasMid };
+  }
+
   // ── PERFIL DE SEÑALES POR MOTION (la "receta": qué señales eleva cada patrón) ──
   // Para cada motion top: el LIFT de cada señal vs el promedio global. Revela POR QUÉ
   // funciona un patrón (ej. bite_tease eleva curiosity_gap +18 vs el promedio).
@@ -162,6 +177,7 @@ async function reconcile() {
     signal_rank,
     signals_count,
     pattern_signals,
+    watch_curve,
     judge: { score_corr, video_score_corr, video_hold_corr, claude_hold_corr, dim_corr: dimCorr }
   };
   await SystemConfig.set(LEARNINGS_KEY, learnings, 'video_learning');

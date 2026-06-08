@@ -63,6 +63,12 @@ const testRunSchema = new mongoose.Schema({
     thumbstop_rate: { type: Number, default: 0 },   // % que se queda a verlo (p25/impr)
     thruplay_rate: { type: Number, default: 0 },
     video_impressions: { type: Number, default: 0 },
+    // CURVA DE RETENCIÓN (2026-06-08): el MEDIO de la curva — dónde se cae la gente.
+    // Antes solo teníamos p25 (inicio) y p100 (final); el medio revela si pierde en el
+    // HOOK (caída temprana) o el PAYOFF (caída tardía). Lo computa fetchVideoEngagement.
+    p50_rate: { type: Number, default: 0 },         // % que llegó a la mitad (p50/impr)
+    p75_rate: { type: Number, default: 0 },         // % que llegó a 3/4 (p75/impr)
+    video_avg_time: { type: Number, default: 0 },   // segundos promedio vistos (de 5s)
     updated_at: { type: Date, default: null }
   },
 

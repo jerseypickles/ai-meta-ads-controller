@@ -81,8 +81,10 @@ async function getVideoEngagement(meta, adsetId, launchedAt) {
     return {
       video_impressions: impr, video_plays: plays, video_thruplays: thru,
       video_p25: p25, video_p50: p50, video_p75: p75, video_p100: p100, video_avg_time: avgT,
-      thumbstop_rate: p25 / impr,   // proxy thumbstop: % que vio >=25%
-      hold_rate: p100 / impr,       // % que lo vio completo
+      thumbstop_rate: p25 / impr,   // proxy thumbstop: % que vio >=25% (inicio de la curva)
+      p50_rate: impr ? p50 / impr : 0,   // % que llegó a la mitad (el MEDIO — dónde se cae)
+      p75_rate: impr ? p75 / impr : 0,   // % que llegó a 3/4
+      hold_rate: p100 / impr,       // % que lo vio completo (final de la curva)
       thruplay_rate: thru / impr
     };
   } catch (e) {

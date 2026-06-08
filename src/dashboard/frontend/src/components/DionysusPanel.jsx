@@ -370,6 +370,30 @@ function CalibracionSection({ learnings }) {
         <JudgeCard icon="🎬" title="Juez de video · Gemini" sub="predice desde el mp4 (movimiento)" c={j.video_score_corr} />
       </div>
 
+      {/* Curva de retención — dónde se cae la gente */}
+      {learnings.watch_curve && (
+        <div style={{ ...card, padding: '12px 14px' }}>
+          <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.6, marginBottom: 2 }}>📉 Curva de retención · dónde se cae la gente</div>
+          <div style={{ fontSize: '0.58rem', opacity: 0.5, marginBottom: 10 }}>{learnings.watch_curve.partial ? 'capturando el medio (p50/p75) — se llena en las próximas corridas de tests' : `prom ${learnings.watch_curve.avg_seconds}s vistos · n=${learnings.watch_curve.n}`}</div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, height: 90, padding: '0 4px' }}>
+            {[['p25', 'inicio (3s)'], ['p50', 'mitad'], ['p75', '3/4'], ['p100', 'final']].map(([k, lbl]) => {
+              const v = learnings.watch_curve[k] || 0;
+              const empty = learnings.watch_curve.partial && (k === 'p50' || k === 'p75');
+              return (
+                <div key={k} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, fontFamily: 'JetBrains Mono, monospace', color: empty ? '#64748b' : '#60a5fa' }}>{empty ? '—' : v + '%'}</div>
+                  <div style={{ width: '70%', height: `${Math.max(2, v)}%`, background: empty ? 'rgba(255,255,255,0.06)' : `linear-gradient(180deg, #60a5fa, ${FUCHSIA})`, borderRadius: '4px 4px 0 0', marginTop: 3 }} />
+                  <div style={{ fontSize: '0.56rem', opacity: 0.5, marginTop: 4 }}>{lbl}</div>
+                </div>
+              );
+            })}
+          </div>
+          {!learnings.watch_curve.partial && learnings.watch_curve.biggest_drop && (
+            <div style={{ fontSize: '0.66rem', marginTop: 8, color: '#fbbf24' }}>⚠️ Mayor caída: <b>{learnings.watch_curve.biggest_drop}</b> (−{learnings.watch_curve.biggest_drop_pct}%) — ahí se pierde más audiencia</div>
+          )}
+        </div>
+      )}
+
       {/* Señales que más explican el outcome */}
       <div style={{ ...card, padding: '12px 14px' }}>
         <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em', opacity: 0.6, marginBottom: 8 }}>📊 Señales que más explican el outcome</div>
