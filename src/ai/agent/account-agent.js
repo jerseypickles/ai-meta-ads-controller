@@ -159,6 +159,7 @@ Evaluate each ad set objectively based on its data. Act when the data justifies 
 - Frequency must be < 3.0 (not saturated).
 - Zeus PRIORITIZE directive → scale immediately. Zeus already validated.
 - MODO AGRESIVO: proponé +20% por defecto, hasta +25-30% para ganadores fuertes y probados (el scale-gate ajusta el paso final según el win-rate y el cash). Nota: subir >20% resetea el learning de Meta — vale la pena para un ganador probado que querés crecer rápido; para uno estable que solo mantenés, quedate en +15-20% sin reset.
+- 📈 ROAS MARGINAL (la frontera eficiente) — si el contexto trae "ROAS MARGINAL", ESO MANDA sobre el ROAS 7d para decidir si SEGUIR escalando: mide si el dólar del último scale TODAVÍA rinde. HEADROOM PROFUNDO/EFICIENTE → escalá fuerte, hay espacio. CERCA DE LA FRONTERA → escalá chico (+10%) o mantené. SOBRE-ESCALADO → NO escales más (llegaste al techo de este adset), aunque el 7d mezclado se vea bien. Escalar al MÁXIMO = empujar mientras el marginal aguanta, frenar justo en la frontera — no hasta que rompa.
 Then: set next_review_hours: 48.
 
 ## SCALE DOWN
@@ -788,6 +789,28 @@ async function handleScaleBudget(input, ctx) {
       athenaScaleStep = await getAdaptiveScaleStep();
     } catch (e) {
       logger.warn(`[ACCOUNT-AGENT] athena scale-gate falló (fail-open): ${e.message}`);
+    }
+  }
+
+  // ── GATE: ROAS MARGINAL — la frontera eficiente. Si el dólar del último scale rindió
+  // marginal < mínimo, el adset llegó a su techo → no escalar más aunque el 7d mezclado
+  // se vea bien. SHADOW por default (ATHENA_MARGINAL_GATE_LIVE): el R1 reciente sub-atribuye
+  // en el pixel nuevo → en cold-start daría falsos negativos (misma lección que el verdict).
+  // El marginal SÍ va al contexto del LLM (que lo razona); el gate DURO espera a madurar.
+  if (isScaleUp) {
+    try {
+      let haircut = 1;
+      try { const { getAccountCashSignal } = require('./demeter-cash-signal'); const cs = await getAccountCashSignal(); if (cs.available) haircut = cs.haircut_factor; } catch (_) {}
+      const { getMarginalSignal } = require('./athena-marginal');
+      const sig = await getMarginalSignal(snap, haircut);
+      if (sig.gate) {
+        if (process.env.ATHENA_MARGINAL_GATE_LIVE === 'true') {
+          return { blocked: true, reason: sig.gate };
+        }
+        logger.info(`[ACCOUNT-AGENT] 🌗 marginal-gate SHADOW (no bloquea) ${snap.entity_name || adset_id}: ${sig.gate}`);
+      }
+    } catch (e) {
+      logger.warn(`[ACCOUNT-AGENT] marginal-gate falló (fail-open): ${e.message}`);
     }
   }
 
@@ -1867,9 +1890,17 @@ async function _manageAdSet(adSetSnap, cycleId, mode = 'full', cashHaircut = 1) 
     logger.warn(`[ACCOUNT-AGENT] target por-adset falló (no crítico): ${e.message}`);
   }
 
+  // ROAS MARGINAL: la frontera eficiente — ¿el dólar del último scale todavía rinde?
+  let marginalContext = '';
+  try {
+    const { getMarginalSignal } = require('./athena-marginal');
+    const sig = await getMarginalSignal(adSetSnap, cashHaircut);
+    marginalContext = sig.context;
+  } catch (e) { /* fail-open */ }
+
   const userMessage = isObserver
-    ? `[OBSERVER MODE — nighttime, read-only] Analyze ${baseContext}${targetContext} Gather data, analyze trends, and save your assessment. You CANNOT take actions right now — only observe and document what you see.${planContext}`
-    : `Analyze and manage ${baseContext}${learningContext}${targetContext} Gather data, decide actions based on ROAS and data, and save your assessment.${planContext}`;
+    ? `[OBSERVER MODE — nighttime, read-only] Analyze ${baseContext}${targetContext}${marginalContext} Gather data, analyze trends, and save your assessment. You CANNOT take actions right now — only observe and document what you see.${planContext}`
+    : `Analyze and manage ${baseContext}${learningContext}${targetContext}${marginalContext} Gather data, decide actions based on ROAS and data, and save your assessment.${planContext}`;
 
   let messages = [{ role: 'user', content: userMessage }];
 
