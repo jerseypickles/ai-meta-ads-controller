@@ -351,7 +351,7 @@ function CalibracionSection({ learnings }) {
             );
           })}
         </div>
-        <div style={{ fontSize: '0.62rem', opacity: 0.5, marginTop: 6 }}>correlación dimensión↔resultado real · arranca cuando hay ≥6 videos del juez nuevo</div>
+        <div style={{ fontSize: '0.62rem', opacity: 0.5, marginTop: 6 }}>cada dim vs su métrica real: freno_scroll↔hook (thumbstop) · apetito/calidad/autenticidad↔retención (hold) · fidelidad↔conversión · arranca con ≥6 videos del juez nuevo asentados</div>
       </div>
 
       {/* ranking de motions por outcome */}

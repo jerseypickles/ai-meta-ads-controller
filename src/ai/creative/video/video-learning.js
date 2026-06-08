@@ -99,11 +99,23 @@ async function reconcile() {
     .map(v => [v.video_judge_score, holdOf(v)]);
   const claude_hold_corr = claudeHoldPairs.length >= MIN_PAIRS_CORR ? corr(claudeHoldPairs) : null;
 
+  // Cada dimensión del juez se valida contra SU métrica real del funnel, no contra el
+  // outcome mezclado: freno_scroll ↔ thumbstop (el hook real), apetito/autenticidad/calidad
+  // ↔ hold (retención), fidelidad ↔ conversión. Así medimos si el juez predice LO QUE
+  // esa dimensión controla, no las ventas en general (que dependen de oferta/producto).
+  const dimMetric = (d, status, m) => {
+    if (d === 'freno_scroll') return (m.thumbstop_rate || 0) * 100;   // hook / scroll-stop real
+    if (d === 'fidelidad') return outcomeScore(status, m);            // producto correcto → conversión
+    return (m.hold_rate || 0) * 100;                                  // apetito/autenticidad/calidad → retención
+  };
   const dimCorr = {};
   for (const d of JUDGE_DIMS) {
     const pairs = settled
-      .filter(v => v.video_judge_breakdown?.breakdown?.[d]?.score != null)
-      .map(v => [v.video_judge_breakdown.breakdown[d].score, outcomeScore(v.status, byProp[String(v._id)] || {})]);
+      .filter(v => {
+        const m = byProp[String(v._id)] || {};
+        return v.video_judge_breakdown?.breakdown?.[d]?.score != null && dimMetric(d, v.status, m) > 0;
+      })
+      .map(v => [v.video_judge_breakdown.breakdown[d].score, dimMetric(d, v.status, byProp[String(v._id)] || {})]);
     dimCorr[d] = pairs.length >= MIN_PAIRS_CORR ? corr(pairs) : null;
   }
 
