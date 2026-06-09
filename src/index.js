@@ -1268,19 +1268,10 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'platform-circuit-breaker' });
   logger.info('  [*] Platform Circuit Breaker — cada 15 min (offset 7)');
 
-  // Cada 30 minutos: Zeus proactive — detecta señales y manda mensaje espontáneo al chat
-  cron.schedule('*/30 * * * *', async () => {
-    try {
-      const { runProactiveCycle } = require('./ai/zeus/oracle-proactive');
-      const result = await runProactiveCycle();
-      if (result.sent) {
-        logger.info(`[ZEUS-PROACTIVE-CRON] sent message to conversation ${result.conversation_id}`);
-      }
-    } catch (err) {
-      logger.error(`[ZEUS-PROACTIVE-CRON] ${err.message}`);
-    }
-  }, { timezone: TIMEZONE, name: 'zeus-proactive' });
-  logger.info('  [*] Zeus proactive — cada 30 min');
+  // Zeus proactive cron ELIMINADO (2026-06-09): el creador retiró el chat de Zeus
+  // y decidió apagar también los avisos proactivos. Esto incluye los watchers
+  // (se evaluaban dentro de runProactiveCycle — no tienen cron propio).
+  // El módulo oracle-proactive.js queda en el repo por si se quiere reactivar.
 
   // Diario 4:30am ET: Zeus Sentinel daily pass (security + silent-failures + config-drift)
   cron.schedule('30 4 * * *', async () => {

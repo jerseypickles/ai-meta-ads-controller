@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AdSetDetailModal } from './AdSetDetailCard';
 import CustomerIntelPanel from './CustomerIntelPanel';
 import DemandForecastPanel from './DemandForecastPanel';
 
@@ -19,9 +18,7 @@ function zeusUrlTransform(url) {
 import api from '../api';
 import { renderVizBlock } from './zeus-viz';
 
-const LS_CONV_KEY = 'zeus_oracle_conversation_id';
 const LS_DRAWER_OPEN_KEY = 'zeus_oracle_drawer_open';
-const LS_MESSAGES_CACHE_KEY = 'zeus_oracle_messages_cache';
 
 function formatTimeAgo(date) {
   if (!date) return '';
@@ -36,59 +33,19 @@ function formatTimeAgo(date) {
   return `${days}d`;
 }
 
-function getApiBase() {
-  return import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
-}
-
-function getToken() {
-  return localStorage.getItem('auth_token');
-}
-
-/**
- * Streaming helper: abre EventSource a `path` y emite callbacks por tipo de evento.
- */
-function streamSSE(path, handlers) {
-  const token = getToken();
-  const url = `${getApiBase()}${path}${path.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
-  const es = new EventSource(url);
-
-  for (const [event, handler] of Object.entries(handlers)) {
-    es.addEventListener(event, (e) => {
-      try {
-        const data = e.data ? JSON.parse(e.data) : {};
-        handler(data);
-      } catch (err) {
-        handler({ raw: e.data });
-      }
-    });
-  }
-
-  es.onerror = () => {
-    if (handlers.error) handlers.error({ error: 'SSE connection error' });
-    es.close();
-  };
-
-  return es;
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN COMPONENT
+// Chat conversacional retirado (2026-06-09) por decisión del creador.
+// ZeusSpeaks queda como hub de paneles: notificaciones, code recs, auto-pause,
+// calibración, stances, planes, memoria, calendario, arquitectura, intel.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export default function ZeusSpeaks() {
-  const [mode, setMode] = useState('loading'); // loading | greeting | collapsed | error
-  const [streamingText, setStreamingText] = useState('');
-  const [conversationId, setConversationId] = useState(null);
-  const [toolActivity, setToolActivity] = useState([]);
-  const [streaming, setStreaming] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(() => {
     // Restaura estado del drawer en refresh — si estaba abierto, vuelve abierto
     try { return localStorage.getItem(LS_DRAWER_OPEN_KEY) === '1'; } catch (_) { return false; }
   });
-  const [pendingInitialMessage, setPendingInitialMessage] = useState(null);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [unreadPreview, setUnreadPreview] = useState(null);
-  const esRef = useRef(null);
 
   // Persiste estado del drawer
   useEffect(() => {
@@ -101,7 +58,6 @@ export default function ZeusSpeaks() {
       try {
         const res = await api.get('/api/zeus/chat/unread');
         setUnreadCount(res.data.unread || 0);
-        setUnreadPreview(res.data.latest);
       } catch (err) { /* silent */ }
     }
     checkUnread();
@@ -114,98 +70,23 @@ export default function ZeusSpeaks() {
     if (drawerOpen && unreadCount > 0) {
       api.post('/api/zeus/chat/mark-read').catch(() => {});
       setUnreadCount(0);
-      setUnreadPreview(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drawerOpen]);
 
-  useEffect(() => {
-    startGreeting();
-    return () => { esRef.current?.close(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function startGreeting() {
-    // Greeting de bienvenida deshabilitado (17-may-2026): el saludo generado
-    // por Claude en cada apertura del drawer gastaba tokens sin aportar valor.
-    // El drawer ahora abre directo en estado colapsado, conservando la
-    // conversación previa si existe. El chat sigue 100% funcional on-demand.
-    const prevConv = localStorage.getItem(LS_CONV_KEY);
-    if (prevConv) setConversationId(prevConv);
-    setMode('collapsed');
-  }
-
-  const hasConv = !!conversationId;
-
   return (
     <>
-      <AnimatePresence mode="wait">
-        {mode === 'loading' && (
-          <motion.div
-            key="loading"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="zeus-speaks-hero zeus-speaks-idle"
-          >
-            <div className="zeus-speaks-pulse" />
-            <span>Zeus está despertando...</span>
-          </motion.div>
-        )}
-
-        {mode === 'greeting' && (
-          <ZeusHero
-            key="greeting"
-            text={streamingText}
-            toolActivity={toolActivity}
-            streaming={streaming}
-            onCollapse={() => setMode('collapsed')}
-            onReply={(msgMaybe) => {
-              setMode('collapsed');
-              setDrawerOpen(true);
-              if (msgMaybe) setPendingInitialMessage(msgMaybe);
-            }}
-          />
-        )}
-
-        {/* Banner 'collapsed' eliminado (18-may-2026) — gastaba espacio
-            horizontal y era redundante con el FAB flotante, que ya abre el
-            chat e indica unreads con su badge. En modo collapsed no se
-            renderiza nada salvo el FAB. */}
-
-        {mode === 'error' && (
-          <motion.div
-            key="error"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="zeus-speaks-banner zeus-speaks-error"
-          >
-            <span>
-              Zeus no responde ahora.{' '}
-              <button onClick={startGreeting} style={{ background: 'none', border: 'none', color: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}>
-                Reintentar
-              </button>
-            </span>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Notif card eliminada (18-may-2026) — aburría. El unread se sigue
-          señalando con el badge del FAB, sin la card grande top-right. */}
-
       {/* Floating action button */}
-      {!drawerOpen && mode !== 'loading' && (
+      {!drawerOpen && (
         <div className="zeus-fab-wrap">
-          {/* preview removido — ahora usamos el top banner arriba */}
           <motion.button
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ delay: 0.5 }}
             onClick={() => setDrawerOpen(true)}
             className={`zeus-fab ${unreadCount > 0 ? 'has-unread' : ''}`}
-            aria-label="Hablar con Zeus"
-            title="Abrir chat con Zeus"
+            aria-label="Paneles de Zeus"
+            title="Abrir paneles de Zeus"
           >
             <span className="zeus-fab-icon">⚡</span>
             {unreadCount > 0 && (
@@ -220,14 +101,7 @@ export default function ZeusSpeaks() {
         <AnimatePresence>
           {drawerOpen && (
             <ZeusDrawer
-              conversationId={conversationId}
-              onNewConversation={(id) => {
-                setConversationId(id);
-                localStorage.setItem(LS_CONV_KEY, id);
-              }}
-              onClose={() => { setDrawerOpen(false); setPendingInitialMessage(null); }}
-              initialMessage={pendingInitialMessage}
-              onInitialMessageConsumed={() => setPendingInitialMessage(null)}
+              onClose={() => setDrawerOpen(false)}
               unreadCount={unreadCount}
               onAllMarkedRead={() => setUnreadCount(0)}
             />
@@ -236,102 +110,6 @@ export default function ZeusSpeaks() {
         document.body
       )}
     </>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// HERO — streaming greeting
-// ═══════════════════════════════════════════════════════════════════════════
-
-function ZeusHero({ text, toolActivity, streaming, onCollapse, onReply }) {
-  const [input, setInput] = useState('');
-
-  function submit() {
-    const msg = input.trim();
-    if (!msg || streaming) return;
-    setInput('');
-    onReply(msg);
-  }
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: -12 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -12 }}
-      transition={{ duration: 0.5 }}
-      className="zeus-speaks-hero"
-    >
-      <div className="zeus-hero-glow" />
-      <div className="zeus-hero-inner">
-        <div className="zeus-hero-header">
-          <motion.div
-            className="zeus-orb-hero"
-            animate={streaming ? { scale: [1, 1.08, 1] } : { scale: 1 }}
-            transition={streaming ? { duration: 1.6, repeat: Infinity } : {}}
-          >
-            ⚡
-          </motion.div>
-          <div style={{ flex: 1 }}>
-            <div className="zeus-hero-title">ZEUS</div>
-            <div className="zeus-hero-subtitle">
-              {streaming ? 'pensando...' : 'tu turno'}
-            </div>
-          </div>
-          <button className="zeus-hero-btn" onClick={onCollapse} title="Ocultar hero">
-            Ocultar
-          </button>
-        </div>
-
-        <div className="zeus-hero-text zeus-markdown">
-          <ZeusMarkdown>{text}</ZeusMarkdown>
-          {streaming && <span className="zeus-cursor">▌</span>}
-        </div>
-
-        <AnimatePresence>
-          {toolActivity.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="zeus-hero-tools"
-            >
-              {toolActivity.map((t, i) => (
-                <div key={i} className={`zeus-tool-chip zeus-tool-${t.status}`}>
-                  <span className="zeus-tool-dot" />
-                  <span className="zeus-tool-name">{toolLabel(t.tool)}</span>
-                  {t.summary && <span className="zeus-tool-summary">— {t.summary}</span>}
-                </div>
-              ))}
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Input inline — responder sin abrir drawer */}
-        <div className="zeus-hero-reply">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                submit();
-              }
-            }}
-            placeholder={streaming ? 'Esperá a que Zeus termine...' : 'Escribí tu respuesta y apretá Enter...'}
-            rows={1}
-            disabled={streaming}
-          />
-          <button
-            onClick={submit}
-            disabled={streaming || !input.trim()}
-            className="zeus-send-btn"
-            title="Enviar"
-          >
-            ⟶
-          </button>
-        </div>
-      </div>
-    </motion.div>
   );
 }
 
@@ -414,116 +192,15 @@ function ZeusMarkdown({ children, onEntityClick }) {
   );
 }
 
-function stripFollowupsBlock(text) {
-  if (!text) return text;
-  return text.replace(/---FOLLOWUPS---[\s\S]*?---END---\s*$/, '').trim();
-}
-
-function formatConvDate(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  const diff = Date.now() - d.getTime();
-  const m = Math.floor(diff / 60000);
-  if (m < 60) return `hace ${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `hace ${h}h`;
-  const days = Math.floor(h / 24);
-  if (days < 7) return `hace ${days}d`;
-  return d.toLocaleDateString('es-AR', { day: 'numeric', month: 'short' });
-}
-
-function toolLabel(tool) {
-  const labels = {
-    query_portfolio: 'portfolio',
-    query_adsets: 'ad sets',
-    query_tests: 'tests',
-    query_dnas: 'DNAs',
-    query_actions: 'acciones',
-    query_directives: 'directivas',
-    query_insights: 'insights',
-    query_hypotheses: 'hipótesis',
-    query_duplications: 'duplicaciones',
-    query_adset_detail: 'detalle ad set',
-    query_overview_history: 'historia portfolio',
-    query_time_series: 'serie temporal',
-    query_brain_memory: 'memoria',
-    query_safety_events: 'safety',
-    query_creative_proposals: 'creativos',
-    query_ai_creations: 'creaciones AI',
-    query_ads: 'ads',
-    query_campaigns: 'campañas',
-    query_recommendations: 'recomendaciones',
-    query_products: 'productos',
-    query_strategic_directives: 'estratégia',
-    query_agent_conversations: 'comunicación agentes',
-    ask_athena: '🦉 consultando a Athena',
-    ask_apollo: '☀️ consultando a Apollo',
-    ask_prometheus: '🔥 consultando a Prometheus',
-    ask_ares: '⚔️ consultando a Ares',
-    code_overview: '📂 overview del código',
-    list_code_files: '📄 listando archivos',
-    read_code_file: '📖 leyendo código',
-    grep_code: '🔍 buscando en código',
-    propose_code_change: '💡 guardando recomendación',
-    remember_preference: '💭 recordando',
-    forget_preference: '💭 olvidando',
-    list_preferences: '💭 revisando memoria',
-    create_directive: '📣 emitiendo directiva',
-    deactivate_directive: '📣 desactivando directiva',
-    query_delivery_health: '🩺 chequeando salud de delivery',
-    create_watcher: '👁️ creando watcher',
-    cancel_watcher: '👁️ cancelando watcher',
-    list_watchers: '👁️ revisando watchers',
-    query_code_recommendations: '💡 revisando mis code recs',
-    query_calibration: '📊 revisando mi track record',
-    track_recommendation: '📊 trackeando recomendación',
-    mark_recommendation_applied: '📊 marcando aplicada',
-    form_hypothesis: '🔬 formulando hipótesis',
-    commission_hypothesis_test: '🔬 comisionando test',
-    list_hypotheses: '🔬 revisando hipótesis',
-    query_strategic_plan: '🗺️ leyendo plan estratégico',
-    generate_plan: '🗺️ generando plan',
-    approve_plan: '🗺️ aprobando plan',
-    set_north_star: '⭐ seteando north star',
-    write_journal_entry: '📓 escribiendo journal',
-    list_playbooks: '📘 revisando mis playbooks',
-    query_execution_authority: '🔐 revisando autoridad ejecutiva',
-    check_execution_readiness: '🔐 chequeando si puedo ejecutar'
-  };
-  return labels[tool] || tool;
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
-// DRAWER — chat de texto
+// DRAWER — hub de paneles (chat retirado 2026-06-09)
 // ═══════════════════════════════════════════════════════════════════════════
 
-function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage, onInitialMessageConsumed, unreadCount = 0, onAllMarkedRead }) {
-  // Inicializa mensajes con cache local (instant show mientras server fetch corre en paralelo)
-  const [messages, setMessages] = useState(() => {
-    try {
-      const raw = localStorage.getItem(LS_MESSAGES_CACHE_KEY);
-      if (!raw) return [];
-      const cache = JSON.parse(raw);
-      // Solo usamos cache si matchea la conversation actual
-      if (cache.conversation_id === conversationId && Array.isArray(cache.messages)) {
-        return cache.messages;
-      }
-    } catch (_) {}
-    return [];
-  });
-  const [input, setInput] = useState('');
-  const [streaming, setStreaming] = useState(false);
-  const [thinking, setThinking] = useState(false);
-  const [streamingText, setStreamingText] = useState('');
-  const [toolActivity, setToolActivity] = useState([]);
-  const [pendingFollowups, setPendingFollowups] = useState([]);
-  const [loadingHistory, setLoadingHistory] = useState(!!conversationId);
-  const [showConversationList, setShowConversationList] = useState(false);
-  const [conversationList, setConversationList] = useState([]);
+function ZeusDrawer({ onClose, unreadCount = 0, onAllMarkedRead }) {
   const [showCodeRecs, setShowCodeRecs] = useState(false);
   const [showCustomerIntel, setShowCustomerIntel] = useState(false);
   const [showDemandForecast, setShowDemandForecast] = useState(false);
-  const [showNotifications, setShowNotifications] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(true); // panel default al abrir el drawer
   const [notifications, setNotifications] = useState([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [codeRecs, setCodeRecs] = useState([]);
@@ -560,41 +237,6 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
   const [apStatus, setApStatus] = useState(null);
   const [apTab, setApTab] = useState('live'); // live | shadow
   const [apLogs, setApLogs] = useState([]);
-  // Modal overlay de drill-in de adset (al clickear link zeus://adset/<id> en el chat)
-  const [activeAdsetId, setActiveAdsetId] = useState(null);
-  const scrollRef = useRef(null);
-  const esRef = useRef(null);
-  const streamingTextRef = useRef('');
-  const toolActivityRef = useRef([]);
-  const followupsRef = useRef([]);
-  const initialHandledRef = useRef(false);
-
-  async function loadConversationList() {
-    try {
-      const res = await api.get('/api/zeus/chat/conversations');
-      setConversationList(res.data.conversations || []);
-    } catch (err) { console.error(err); }
-  }
-
-  function switchConversation(newId) {
-    setShowConversationList(false);
-    if (newId === conversationId) return;
-    onNewConversation(newId);
-    setMessages([]);
-    setStreamingText('');
-    setToolActivity([]);
-  }
-
-  function startNewConversation() {
-    setShowConversationList(false);
-    setMessages([]);
-    setStreamingText('');
-    setToolActivity([]);
-    onNewConversation(null);
-    localStorage.removeItem(LS_CONV_KEY);
-    localStorage.removeItem(LS_MESSAGES_CACHE_KEY);
-  }
-
   async function loadCodeRecs() {
     try {
       const params = codeRecsFilter !== 'all' ? { status: codeRecsFilter } : {};
@@ -994,184 +636,9 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
     })();
   }, []);
 
-  useEffect(() => { streamingTextRef.current = streamingText; }, [streamingText]);
-
-  // Persiste cache de mensajes en localStorage — para show instantáneo en refresh.
-  // Fix 2026-04-22: si QuotaExceededError, re-intentamos con menos mensajes en vez
-  // de fallar silencioso (antes tenía catch (_) {} mudo — el cache se rompía sin
-  // aviso cuando algún mensaje tenía tool_calls o context_snapshot grandes).
-  useEffect(() => {
-    if (!conversationId) return;
-    function trySave(count) {
-      const trimmed = messages.slice(-count);
-      localStorage.setItem(LS_MESSAGES_CACHE_KEY, JSON.stringify({
-        conversation_id: conversationId,
-        messages: trimmed,
-        saved_at: Date.now()
-      }));
-    }
-    try {
-      trySave(30);
-    } catch (err) {
-      if (err && (err.name === 'QuotaExceededError' || err.code === 22)) {
-        // Quota llena — intentamos con 15, luego 5, luego limpiamos
-        for (const fallback of [15, 5]) {
-          try {
-            trySave(fallback);
-            console.warn(`[ZeusSpeaks] localStorage quota — degradé a últimos ${fallback} mensajes`);
-            return;
-          } catch (_) { /* siguiente fallback */ }
-        }
-        // Último recurso: limpiar el cache entero
-        try { localStorage.removeItem(LS_MESSAGES_CACHE_KEY); } catch (_) {}
-        console.warn('[ZeusSpeaks] localStorage quota — cache limpiado; next refresh carga desde API');
-      } else {
-        console.warn('[ZeusSpeaks] localStorage save falló:', err?.message || err);
-      }
-    }
-  }, [messages, conversationId]);
-  useEffect(() => { toolActivityRef.current = toolActivity; }, [toolActivity]);
-  useEffect(() => { followupsRef.current = pendingFollowups; }, [pendingFollowups]);
-
-  useEffect(() => {
-    if (conversationId) loadHistory(conversationId);
-    else setLoadingHistory(false);
-    return () => { esRef.current?.close(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationId]);
-
-  // Si el drawer se abrió con un initial message desde el hero, enviarlo auto
-  useEffect(() => {
-    if (!initialMessage || initialHandledRef.current) return;
-    if (loadingHistory) return;
-    initialHandledRef.current = true;
-    sendMessage(initialMessage);
-    onInitialMessageConsumed?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialMessage, loadingHistory]);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, streamingText]);
-
-  async function loadHistory(convId) {
-    // Solo mostramos loading si NO tenemos cache — cache visible instantáneo, server reconcila en bg
-    const hasCache = messages.length > 0;
-    if (!hasCache) setLoadingHistory(true);
-    try {
-      const res = await api.get('/api/zeus/chat/history', { params: { conversation_id: convId } });
-      const serverMessages = res.data.messages || [];
-      // Si el server tiene más mensajes que el cache, reemplazamos. Si menos (edge case),
-      // mantenemos cache que probablemente tiene mensajes locales recientes aún no persistidos.
-      setMessages(prev => {
-        if (serverMessages.length >= prev.length) return serverMessages;
-        // Preservamos mensajes locales al final que el server todavía no tiene
-        const localTail = prev.filter(m => m._local);
-        return [...serverMessages, ...localTail];
-      });
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoadingHistory(false);
-    }
-  }
-
-  async function sendMessage(override) {
-    const msg = (override != null ? override : input).trim();
-    if (!msg || streaming) return;
-    if (override == null) setInput('');
-    setStreaming(true);
-    setThinking(false);
-    setStreamingText('');
-    setToolActivity([]);
-    setPendingFollowups([]);
-
-    setMessages(prev => [...prev, { role: 'user', content: msg, _local: true, created_at: new Date() }]);
-
-    const params = new URLSearchParams({ message: msg });
-    if (conversationId) params.set('conversation_id', conversationId);
-    const uiContext = typeof window !== 'undefined' ? window.__zeusUiContext : null;
-    if (uiContext) params.set('ui_context', JSON.stringify(uiContext));
-
-    const es = streamSSE(`/api/zeus/chat/stream?${params.toString()}`, {
-      start: (data) => {
-        if (data.conversation_id && data.conversation_id !== conversationId) {
-          onNewConversation(data.conversation_id);
-        }
-      },
-      thinking: () => setThinking(true),
-      text_delta: (data) => {
-        setThinking(false);
-        setStreamingText(prev => prev + (data.text || ''));
-      },
-      tool_use_start: (data) => {
-        setToolActivity(prev => [...prev, { tool: data.tool, status: 'running' }]);
-      },
-      tool_use_result: (data) => {
-        setToolActivity(prev => prev.map(t =>
-          t.tool === data.tool && t.status === 'running' ? { ...t, status: 'done', summary: data.summary } : t
-        ));
-      },
-      followups: (data) => {
-        setPendingFollowups(data.items || []);
-      },
-      end: () => {
-        setMessages(prev => {
-          const next = [...prev.filter(m => !m._local)];
-          next.push({ role: 'user', content: msg, created_at: new Date() });
-          const cleanText = stripFollowupsBlock(streamingTextRef.current || '');
-          next.push({
-            role: 'assistant',
-            content: cleanText,
-            followups: followupsRef.current,
-            created_at: new Date(),
-            tool_calls: toolActivityRef.current
-          });
-          return next;
-        });
-        setStreamingText('');
-        setToolActivity([]);
-        setPendingFollowups([]);
-        setStreaming(false);
-        setThinking(false);
-        es.close();
-      },
-      api_error: (data) => {
-        setMessages(prev => {
-          const next = [...prev.filter(m => !m._local)];
-          next.push({ role: 'user', content: msg, created_at: new Date() });
-          next.push({
-            role: 'assistant',
-            content: `⚠️ Algo falló del lado de Zeus: \`${(data.error || 'error').substring(0, 200)}\`. Reintentá en un momento.`,
-            _error: true,
-            created_at: new Date()
-          });
-          return next;
-        });
-        setStreaming(false);
-        setThinking(false);
-        es.close();
-      },
-      error: (data) => {
-        setMessages(prev => {
-          const next = [...prev.filter(m => !m._local)];
-          next.push({ role: 'user', content: msg, created_at: new Date() });
-          next.push({
-            role: 'assistant',
-            content: `⚠️ Se cortó la conexión${data?.error ? ': `' + data.error + '`' : '.'} Reintentá.`,
-            _error: true,
-            created_at: new Date()
-          });
-          return next;
-        });
-        setStreaming(false);
-        setThinking(false);
-        es.close();
-      }
-    });
-
-    esRef.current = es;
-  }
+  const anyPanelOpen = showCustomerIntel || showDemandForecast || showPlans || showTrackRecord ||
+    showCalendar || showArchitecture || showStances || showCalibration || showAutoPause ||
+    showMemory || showNotifications || showCodeRecs;
 
   return (
     <>
@@ -1194,9 +661,7 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
             <div className="zeus-orb-drawer">⚡</div>
             <div>
               <div className="zeus-drawer-title">Zeus</div>
-              <div className="zeus-drawer-subtitle">
-                {streaming ? '💭 pensando...' : 'Oracle · read-only'}
-              </div>
+              <div className="zeus-drawer-subtitle">Paneles · read-only</div>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 4, alignItems: 'center', position: 'relative' }}>
@@ -1211,13 +676,6 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                   {Math.min(99, codeRecsCounts.pending + (archCounts.draft || 0) + prefDraftsCount)}
                 </span>
               )}
-            </button>
-            <button
-              className="zeus-drawer-icon-btn"
-              onClick={startNewConversation}
-              title="Nueva conversación"
-            >
-              ＋
             </button>
             <button className="zeus-drawer-close" onClick={onClose}>×</button>
             <AnimatePresence>
@@ -1234,7 +692,6 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                     setShowArchitecture(false);
                     setShowMemory(false);
                     setShowCodeRecs(false);
-                    setShowConversationList(false);
                     setShowStances(false);
                     setShowCalibration(false);
                     setShowTrackRecord(false);
@@ -1254,10 +711,6 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
                     else if (key === 'trackrecord') setShowTrackRecord(true);
                     else if (key === 'autopause') setShowAutoPause(true);
                     else if (key === 'notifications') setShowNotifications(true);
-                    else if (key === 'conversations') {
-                      loadConversationList();
-                      setShowConversationList(true);
-                    }
                     setShowPalette(false);
                   }}
                 />
@@ -1910,138 +1363,20 @@ function ZeusDrawer({ conversationId, onNewConversation, onClose, initialMessage
           )}
         </AnimatePresence>
 
-        {/* Panel de conversaciones */}
-        <AnimatePresence>
-          {showConversationList && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="zeus-conversations-panel"
-            >
-              <div className="zeus-conversations-header">
-                <button className="zeus-panel-close" onClick={() => setShowConversationList(false)} aria-label="Cerrar panel">×</button>
-                <div className="zeus-conversations-title">📁 Conversaciones previas</div>
+        {!anyPanelOpen && (
+          <div className="zeus-drawer-messages">
+            <div className="zeus-drawer-empty">
+              <div className="zeus-empty-orb">⚡</div>
+              <div style={{ marginTop: 12, fontSize: '0.82rem' }}>
+                Elige un panel con el botón ☰ de arriba.
               </div>
-              {conversationList.length === 0 ? (
-                <div className="zeus-conversations-empty">No hay conversaciones previas</div>
-              ) : (
-                conversationList.map(c => (
-                  <button
-                    key={c.conversation_id}
-                    onClick={() => switchConversation(c.conversation_id)}
-                    className={`zeus-conversation-item ${c.conversation_id === conversationId ? 'active' : ''}`}
-                  >
-                    <div className="zeus-conv-preview">{c.preview || '(sin mensajes)'}</div>
-                    <div className="zeus-conv-meta">
-                      {c.message_count} mensajes · {formatConvDate(c.last_at)}
-                    </div>
-                  </button>
-                ))
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <div ref={scrollRef} className="zeus-drawer-messages">
-          {loadingHistory ? (
-            <div style={{ textAlign: 'center', padding: 40, color: 'var(--bos-text-muted)', fontSize: '0.8rem' }}>
-              Cargando conversación...
+              <div style={{ marginTop: 6, fontSize: '0.7rem', color: 'var(--bos-text-muted)' }}>
+                El chat conversacional fue retirado — Zeus opera vía notificaciones, stances y directivas.
+              </div>
             </div>
-          ) : (
-            <>
-              {messages.length === 0 && !streamingText && (
-                <div className="zeus-drawer-empty">
-                  <div className="zeus-empty-orb">⚡</div>
-                  <div style={{ marginTop: 12, fontSize: '0.82rem' }}>
-                    Preguntále a Zeus lo que quieras.
-                  </div>
-                  <div style={{ marginTop: 6, fontSize: '0.7rem', color: 'var(--bos-text-muted)' }}>
-                    Puede consultar cualquier parte de la base de datos.
-                  </div>
-                </div>
-              )}
-
-              {/* Filtro 2026-04-23: los proactive pings NO se mezclan con
-                  el flow del chat. Viven en el panel 🔔 Notificaciones
-                  (nuevo) para no saturar la conversación del creador. */}
-              {messages.filter(m => !m.proactive && m.role !== 'system_greeting').map((m, i) => (
-                <MessageBubble
-                  key={i}
-                  message={m}
-                  onFollowup={(q) => sendMessage(q)}
-                  onOpenAdset={setActiveAdsetId}
-                />
-              ))}
-
-              {streaming && (
-                <div className="zeus-msg zeus-msg-assistant">
-                  <div className="zeus-msg-avatar">⚡</div>
-                  <div className="zeus-msg-content">
-                    {thinking && !streamingText && (
-                      <div className="zeus-thinking-indicator">
-                        <span className="zeus-thinking-dot" />
-                        <span className="zeus-thinking-dot" />
-                        <span className="zeus-thinking-dot" />
-                        <span style={{ marginLeft: 6 }}>pensando profundamente...</span>
-                      </div>
-                    )}
-                    {toolActivity.length > 0 && (
-                      <div className="zeus-msg-tools">
-                        {toolActivity.map((t, i) => (
-                          <div key={i} className={`zeus-tool-chip zeus-tool-${t.status}`}>
-                            <span className="zeus-tool-dot" />
-                            <span>{toolLabel(t.tool)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {streamingText && (
-                      <div className="zeus-msg-text zeus-markdown">
-                        <ZeusMarkdown onEntityClick={(kind, id) => {
-                          if (kind === 'adset' && id) { setActiveAdsetId(id); return true; }
-                          return false;
-                        }}>{stripFollowupsBlock(streamingText)}</ZeusMarkdown>
-                        <span className="zeus-cursor">▌</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-            </>
-          )}
-        </div>
-
-        <div className="zeus-drawer-input">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-              }
-            }}
-            placeholder="Preguntále a Zeus..."
-            rows={1}
-            disabled={streaming}
-          />
-          <button
-            onClick={() => sendMessage()}
-            disabled={streaming || !input.trim()}
-            className="zeus-send-btn"
-          >
-            {streaming ? '...' : '⟶'}
-          </button>
-        </div>
+          </div>
+        )}
       </motion.div>
-
-      {/* Modal overlay — drill-in de adset clickeado en el chat */}
-      {activeAdsetId && createPortal(
-        <AdSetDetailModal adsetId={activeAdsetId} onClose={() => setActiveAdsetId(null)} />,
-        document.body
-      )}
     </>
   );
 }
@@ -2066,8 +1401,7 @@ function ZeusPalette({ onClose, onSelect, codeRecsPending, archDrafts, prefDraft
       entries: [
         { key: 'notifications', emoji: '🔔', label: 'Notificaciones', desc: 'Alertas proactivas de Zeus', badge: notificationsUnread },
         { key: 'memory', emoji: '💭', label: 'Memoria', desc: 'Preferencias persistentes', badge: prefDrafts },
-        { key: 'calendar', emoji: '📅', label: 'Calendario', desc: 'Eventos estacionales' },
-        { key: 'conversations', emoji: '📁', label: 'Conversaciones', desc: 'Historial de chats' }
+        { key: 'calendar', emoji: '📅', label: 'Calendario', desc: 'Eventos estacionales' }
       ]
     },
     {
@@ -2760,59 +2094,6 @@ function CodeRecCard({ rec, onAccept, onReject, onApply, onDelete }) {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function MessageBubble({ message, onFollowup, onOpenAdset }) {
-  const isUser = message.role === 'user';
-  const isGreeting = message.role === 'system_greeting';
-  const followups = !isUser ? (message.followups || []) : [];
-
-  function handleEntityClick(kind, id) {
-    if (kind === 'adset' && id && onOpenAdset) {
-      onOpenAdset(id);
-      return true; // consumido — abre modal overlay, no navegar al panel
-    }
-    return false; // deja que el handler global navegue al panel
-  }
-
-  return (
-    <div className={`zeus-msg ${isUser ? 'zeus-msg-user' : 'zeus-msg-assistant'}`}>
-      {!isUser && <div className="zeus-msg-avatar">⚡</div>}
-      <div className="zeus-msg-content">
-        {!isUser && (message.tool_calls?.length > 0) && (
-          <div className="zeus-msg-tools">
-            {message.tool_calls.map((t, i) => (
-              <div key={i} className="zeus-tool-chip zeus-tool-done">
-                <span className="zeus-tool-dot" />
-                <span>{toolLabel(t.tool)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="zeus-msg-text zeus-markdown">
-          {isUser
-            ? message.content
-            : <ZeusMarkdown onEntityClick={handleEntityClick}>{stripFollowupsBlock(message.content || '')}</ZeusMarkdown>}
-        </div>
-
-        {isGreeting && (
-          <div className="zeus-msg-meta">saludo automático</div>
-        )}
-        {message.proactive && (
-          <div className="zeus-msg-meta zeus-msg-meta-proactive">⚡ proactivo</div>
-        )}
-        {followups.length > 0 && onFollowup && (
-          <div className="zeus-followups zeus-followups-inline">
-            {followups.map((f, i) => (
-              <button key={i} className="zeus-followup-btn" onClick={() => onFollowup(f)}>
-                {f}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
     </div>
   );
 }

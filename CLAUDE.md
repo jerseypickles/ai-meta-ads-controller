@@ -188,8 +188,7 @@ scripts/                            # Utility scripts (seed, backfill, dedup, cl
 | `*/15 * * * *` | Kill Switch Monitor | cada 15 min | Safety check emergencia |
 | `5,20,35,50 * * * *` | AI Ops Metrics Refresh | cada 15 min | Fresh ops metrics |
 | `7,22,37,52 * * * *` | Platform Circuit Breaker | cada 15 min | Meta degradación check |
-| `12,42 * * * *` | Zeus Watchers | cada 30 min | Conditional proactive watchers |
-| `*/30 * * * *` | Zeus Proactive | cada 30 min | Detect signals + dedup + quiet hours (23-07 ET) |
+| ~~Zeus Proactive~~ | **ELIMINADO 2026-06-09** | — | Cron proactivo retirado junto con el chat (incluía la evaluación de watchers) |
 | `0 * * * *` | Anomaly Detection | hourly | Per-entity alerts |
 | `0 */2 * * *` | CBO Health Monitor | cada 2h, 24/7 | Snapshots CBO como unidad (Fase 1) |
 | `0 */2 * * *` | Impact Measurement | cada 2h | T+1d/3d/7d del ActionLog |
@@ -275,10 +274,8 @@ Zeus es el layer de alto nivel que coordina los 4 agentes especializados. Operat
 - **L4 Meta-cognitive** — journal + playbooks + reflection
 - **L5 Autonomous Partner** — authorities scaffolded, **OFF by default**
 
-### Modos de conversación (persona)
-- **ANALISTA** — responde con data, tool calls, viz inline
-- **CONVERSACIÓN** — opinión estratégica sin tools, texto plano
-- **MIXTO** — híbrido según juicio del contexto
+### ⚠️ Chat conversacional RETIRADO (2026-06-09)
+El creador eliminó el chat con Zeus (drawer ZeusSpeaks) y el cron proactivo. `ZeusSpeaks.jsx` quedó como **hub de paneles** (🔔 notificaciones, 💡 code recs, 🎚️ auto-pause, 📓 calibración, stances, planes, memoria, calendario, arquitectura, intel de cliente/demanda). `oracle-runner.js` sigue vivo — lo usan trap-runner, weekly-audit, sentinel y plan-readiness. `oracle-proactive.js` quedó en el repo sin cron. El historial de chat persiste en `ZeusChatMessage` como archivo read-only.
 
 ### REGLA #1 (scope drift)
 Cada turno pre-respuesta Zeus valida: ¿qué preguntó el creador? ¿mi respuesta agrega temas no pedidos? → corta. Previene scope drift sistemático.
