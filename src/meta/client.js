@@ -1459,12 +1459,38 @@ class MetaClient {
       await this.post(`/${newId}`, { name: options.name });
     }
 
+    // ─── GARANTÍA ANTI-ADSET-VACÍO ───────────────────────────────────────
+    // Si tras la copia el adset destino NO tiene ads (deep_copy no los trajo —
+    // caso Ares-Brain CBOs 2026-06-09: adsets creados vacíos → no entregan), los
+    // creamos desde los creativos de la FUENTE. Un adset sin ad no entrega nunca.
+    let guaranteedRelink = 0;
+    if (newId && !usedFallback) { // si usó el fallback, ya re-linkeó arriba
+      try {
+        const destAds = await this.getAds(newId, 'id');
+        if (!destAds || destAds.length === 0) {
+          const srcAds = await this.getAds(adSetId, 'id,name,status,creative{id}');
+          for (const ad of (srcAds || [])) {
+            const cid = ad.creative?.id;
+            if (!cid) continue;
+            // Estado: respeta el del adset (Ares siembra ACTIVE) pero no activa un ad
+            // que estaba PAUSED en la fuente.
+            const want = options.status || 'PAUSED';
+            const st = (want === 'ACTIVE' && ad.status === 'ACTIVE') ? 'ACTIVE' : 'PAUSED';
+            try { await this.createAd(newId, cid, ad.name || `Ad ${adSetId}`, st); guaranteedRelink++; }
+            catch (e) { logger.warn(`[duplicateAdSet] garantía re-link falló (creative ${cid}): ${e.message}`); }
+          }
+          if (guaranteedRelink > 0) logger.warn(`[duplicateAdSet] ${newId} quedó VACÍO tras deep_copy → garantía creó ${guaranteedRelink} ads desde la fuente`);
+          else logger.error(`[duplicateAdSet] ${newId} VACÍO y la garantía no pudo re-linkear ningún ad (fuente sin creative_id?)`);
+        }
+      } catch (e) { logger.warn(`[duplicateAdSet] verificación anti-vacío falló (best-effort): ${e.message}`); }
+    }
+
     return {
       success: true,
       new_adset_id: newId,
       original_adset_id: adSetId,
       used_fallback_relink: usedFallback,
-      ads_relinked: result._ads_relinked,
+      ads_relinked: result._ads_relinked || guaranteedRelink,
       ads_failed: result._ads_failed
     };
   }
