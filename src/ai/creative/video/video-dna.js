@@ -169,9 +169,15 @@ function isVarietyBox(name = '') {
 // "lift a spoonful out of the jar" se ve bien.)
 const SOLID_PIECE_MOTIONS = new Set(['pinch_twirl', 'bite_tease']);
 
+// Motions DESHABILITADOS globalmente — físicamente difíciles para Seedance. pour_bowl
+// anima un objeto en CAÍDA LIBRE → el motor lo congela/cuelga mid-aire (2/2 weak, freeze
+// que el juez ni caza). Se mantiene en MOTIONS para la data histórica del DNA, pero no se
+// genera. Re-habilitar si el motor de video mejora la física de caída. (2026-06-09)
+const DISABLED_MOTIONS = new Set(['pour_bowl']);
+
 // Motions PERMITIDOS para un producto (excluye los que no le quedan, ej. on_food en spears).
 function motionsForProduct(productName = '') {
-  const allKeys = MOTIONS.map(m => m.key);
+  const allKeys = MOTIONS.map(m => m.key).filter(k => !DISABLED_MOTIONS.has(k));
   let keys = fitsOnFood(productName) ? allKeys : allKeys.filter(k => k !== 'on_food');
   // Dips y rallados (sauerkraut): no se pellizca/gira ni se muerde una pieza sólida.
   if (isDip(productName) || isShredded(productName)) keys = keys.filter(k => !SOLID_PIECE_MOTIONS.has(k));
