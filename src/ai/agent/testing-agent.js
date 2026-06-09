@@ -17,14 +17,22 @@ const { getAdsForAdSet } = require('../../db/queries');
 const MAX_CONCURRENT_TESTS = parseInt(process.env.MAX_CONCURRENT_TESTS, 10) || 12; // 2026-06-09: 40→12 — MENOS tests, más potentes (con $400 cap / $50 = ~8 reales). Conversión es señal cara: tests chicos quedan inconclusos.
 const TEST_DAILY_BUDGET = parseInt(process.env.TEST_DAILY_BUDGET, 10) || 50; // 2026-06-09: $20→$50/día — cada test llega a significancia de CONVERSIÓN (≈2x CPA) → veredicto decisivo rápido. Env-overridable.
 const DECISIVE_KILL_SPEND = parseInt(process.env.DECISIVE_KILL_SPEND, 10) || 50; // $ de spend con 0 compras = perdedor decisivo (≈2x CPA). Mata por significancia, no por días.
-const VIDEO_TEST_DAILY_BUDGET = 25; // $25/dia ABO para tests de VIDEO (Dionisio), campaña aparte. (2026-05-30)
+// 2026-06-09: $25→$35/día (pedido del creador) — con CPA target $25, a $25/día un test
+// espera ~1 compra/día (ruido puro); a $35 llega a veredicto decisivo en menos días y
+// reduce la ventana de exposición al lag ver→comprar del video (8/20 kills en falso
+// históricos). Los perdedores NO cuestan más: las kill rules son por spend acumulado.
+// Env-overridable como el de foto.
+const VIDEO_TEST_DAILY_BUDGET = parseInt(process.env.VIDEO_TEST_DAILY_BUDGET, 10) || 35;
 // Track de VIDEO con caps PROPIOS — no compite por los slots/budget de las fotos
 // (campaña separada). Si no, los tests de foto bloquean los videos. (2026-05-30)
 // 2026-06-05 "Dionisio extremo": el video probó ser el lever más fuerte (4.85x ROAS,
 // CPM $14, 76% de las ventas). Subimos los caps de VIDEO fuerte (la economía lo justifica).
 // Foto queda igual (1.96x, no merece más volumen).
 const MAX_CONCURRENT_VIDEO_TESTS = 24; // 2026-06-05: 12→24 (extremo video)
-const MAX_DAILY_VIDEO_TESTING_BUDGET = 600; // 2026-06-05: 300→600 (24 × $25)
+// Cap diario TOTAL de video queda en $600 (decisión 2026-06-09): a $35/test el máximo
+// implícito baja a ~17 concurrentes — Dionisio lanza ~12/día así que no aprieta en la
+// práctica, y el techo de gasto total NO sube. Mejor señal por test, mismo riesgo.
+const MAX_DAILY_VIDEO_TESTING_BUDGET = parseInt(process.env.MAX_DAILY_VIDEO_TESTING_BUDGET, 10) || 600;
 const MAX_DAILY_TESTING_BUDGET = parseInt(process.env.MAX_DAILY_TESTING_BUDGET, 10) || 400; // Cap diario FOTO. Env-overridable. 2026-06-03: 1000→400 (foto flojo).
 const MAX_LAUNCHES_PER_CYCLE = 6; // 2026-06-05: 3→6 (más tests nuevos/ciclo; el video lo aprovecha)
 const TEST_MAX_DAYS = 7;
