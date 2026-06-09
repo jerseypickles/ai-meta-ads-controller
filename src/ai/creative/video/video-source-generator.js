@@ -105,6 +105,44 @@ async function generateCopy(productName) {
 }
 
 /**
+ * BACKFILL del frame final para fuentes pre-piloto que aún esperan en el pool.
+ * Solo motions con `end` definido en el DNA. Edición anclada al primer frame.
+ * @returns {number} cuántas se backfillearon en esta corrida
+ */
+async function backfillEndFrames(cap = 8) {
+  // Motions del piloto = los que tienen estado final definido
+  const pilotMotions = dna.MOTIONS.filter(m => m.end).map(m => m.key);
+  const missing = await CreativeProposal.find({
+    media_type: 'image', tags: 'video_source', status: { $nin: ['failed', 'rejected'] },
+    motion_variant: { $in: pilotMotions },
+    image_base64: { $type: 'string', $ne: '' },
+    $or: [{ end_frame_base64: { $exists: false } }, { end_frame_base64: '' }]
+  }).sort({ created_at: -1 }).limit(cap).select('product_name motion_variant image_base64').lean();
+  if (!missing.length) return 0;
+
+  let done = 0;
+  for (const s of missing) {
+    const endScene = dna.buildEndFrameScene(s.motion_variant, s.product_name);
+    if (!endScene) continue;
+    try {
+      const endPrompt = `Edit this exact photograph (the FIRST reference image): recreate it EXACTLY — same scene, same hand(s), same product piece, same jar and label, same lighting, same camera angle and framing — changing ONLY this: ${endScene}. This is the FINAL frame of a 5-second video that STARTS at the reference photograph, so everything that is not part of that one change must stay pixel-consistent. ${FIDELITY}`;
+      const endResult = await generateCreativeImage(endPrompt, {
+        referenceImages: [{ image_base64: s.image_base64, mime_type: 'image/png' }],
+        aspectRatio: '9:16', imageSize: '2K'
+      });
+      if (endResult?.base64) {
+        await CreativeProposal.findByIdAndUpdate(s._id, { $set: { end_frame_base64: endResult.base64 } });
+        done++;
+        logger.info(`[VIDEO-SOURCE] 🎬 end-frame backfilled: ${s.product_name} (${s.motion_variant})`);
+      }
+    } catch (e) {
+      logger.warn(`[VIDEO-SOURCE] backfill end-frame falló para ${s._id} (${s.motion_variant}): ${e.message}`);
+    }
+  }
+  return done;
+}
+
+/**
  * Cuenta las imágenes-fuente DISPONIBLES (sin consumir): tag video_source, no
  * failed/rejected, y que todavía no tienen un video hijo vivo (no animadas).
  */
@@ -127,11 +165,20 @@ async function countAvailableSources() {
 async function generateVideoSources() {
   if (!ENABLED) { logger.info('[VIDEO-SOURCE] deshabilitado'); return { skipped: 'disabled' }; }
 
+  // BACKFILL first+last (2026-06-09): el pool existente es pre-piloto — fabricarle el
+  // frame final a las fuentes que ya están esperando, no solo a las nuevas. Corre ANTES
+  // del early-return de pool lleno (si no, con pool lleno nunca se backfillearía).
+  let backfilled = 0;
+  if (END_FRAME_ENABLED) {
+    try { backfilled = await backfillEndFrames(PER_CYCLE_CAP); }
+    catch (e) { logger.warn(`[VIDEO-SOURCE] backfill end-frames falló: ${e.message}`); }
+  }
+
   const available = await countAvailableSources();
   const need = Math.min(POOL_TARGET - available, PER_CYCLE_CAP);
   if (need <= 0) {
-    logger.info(`[VIDEO-SOURCE] pool lleno (${available}/${POOL_TARGET}) — no genero`);
-    return { available, generated: 0 };
+    logger.info(`[VIDEO-SOURCE] pool lleno (${available}/${POOL_TARGET}) — no genero${backfilled ? ` · ${backfilled} end-frames backfilled` : ''}`);
+    return { available, generated: 0, backfilled };
   }
 
   // Productos con referencia PNG (para fidelidad del label).
