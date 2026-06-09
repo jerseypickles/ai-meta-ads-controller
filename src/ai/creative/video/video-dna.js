@@ -175,9 +175,10 @@ function motionsForProduct(productName = '') {
   let keys = fitsOnFood(productName) ? allKeys : allKeys.filter(k => k !== 'on_food');
   // Dips y rallados (sauerkraut): no se pellizca/gira ni se muerde una pieza sólida.
   if (isDip(productName) || isShredded(productName)) keys = keys.filter(k => !SOLID_PIECE_MOTIONS.has(k));
-  // Caja de variedad: no levantar una pieza suelta íntima (mismatch con el envase); mostrar
-  // la caja/jars. Excluye pinch/bite/on_food; deja las tomas de la caja + lift de whole.
-  if (isVarietyBox(productName)) keys = keys.filter(k => !['pinch_twirl', 'bite_tease', 'on_food', 'pour_bowl'].includes(k));
+  // Caja de variedad ("Build Your Box"): el HÉROE es la CAJA, no un pickle suelto. Levantar
+  // UN pickle entero alto sobre la caja (lift/dip/pull) se ve raro ("flotando"). Whitelist:
+  // solo motions que MUESTRAN la caja/jars (abrir, revelar, en estante, en cooler, en mesa).
+  if (isVarietyBox(productName)) keys = keys.filter(k => ['two_hand_open', 'fridge_reveal', 'cooler_grab', 'pantry_shelf', 'table_spread'].includes(k));
   return keys;
 }
 
