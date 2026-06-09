@@ -234,7 +234,10 @@ const CreativeProposal = require('../../db/models/CreativeProposal');
 router.get('/proposals', async (req, res) => {
   try {
     const status = req.query.status || '';
-    const query = status ? { status } : { status: { $in: ['ready', 'testing', 'graduated', 'killed', 'expired'] } };
+    // Apollo = creador de FOTOS. Los videos (media_type:'video') viven en Dionisio y no
+    // tienen image_base64 → se veían como cards rotas ("?") en el pipeline de Apollo.
+    const base = { media_type: { $ne: 'video' } };
+    const query = status ? { ...base, status } : { ...base, status: { $in: ['ready', 'testing', 'graduated', 'killed', 'expired'] } };
     const proposals = await CreativeProposal.find(query)
       .select('-image_base64 -prompt_used')
       .sort({ created_at: -1 })
@@ -314,8 +317,10 @@ router.get('/intelligence', async (req, res) => {
         { $match: { _id: { $ne: null } } },
         { $sort: { wins: -1 } }
       ]),
-      // 1 sola aggregate reemplaza 5 countDocuments por status
+      // 1 sola aggregate reemplaza 5 countDocuments por status. Solo FOTOS (Apollo) —
+      // los videos (Dionisio) tienen sus propios stats; antes inflaban el pool/graduados.
       CreativeProposal.aggregate([
+        { $match: { media_type: { $ne: 'video' } } },
         { $group: { _id: '$status', count: { $sum: 1 } } }
       ]),
       // Zeus directives
