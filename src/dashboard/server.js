@@ -174,6 +174,24 @@ app.get('/vsrc/:id.png', async (req, res) => {
   }
 });
 
+// Frame FINAL del par first+last (piloto 2026-06-09). Mismo patrón público que /vsrc.
+app.get('/vsrc/:id/end.png', async (req, res) => {
+  try {
+    const CreativeProposal = require('../db/models/CreativeProposal');
+    const p = await CreativeProposal.findById(req.params.id).select('end_frame_base64').lean();
+    if (!p || !p.end_frame_base64) return res.status(404).send('not found');
+    const b64 = p.end_frame_base64;
+    const mime = b64.startsWith('/9j/') ? 'image/jpeg'
+      : b64.startsWith('iVBOR') ? 'image/png'
+      : b64.startsWith('UklGR') ? 'image/webp' : 'image/jpeg';
+    res.set('Content-Type', mime);
+    res.set('Cache-Control', 'public, max-age=3600');
+    return res.send(Buffer.from(b64, 'base64'));
+  } catch (e) {
+    return res.status(400).send('bad request');
+  }
+});
+
 // SPA fallback — todas las rutas no-API sirven el frontend
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'frontend', 'dist', 'index.html'));

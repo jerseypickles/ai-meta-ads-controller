@@ -27,6 +27,10 @@ const AUTO_APPROVE_MAX_MOTION_REJECT = parseFloat(process.env.DIONYSUS_AUTO_APPR
 // en el aire (se nota artificial). NUNCA auto-aprobar estos: siempre review manual (el humano
 // es el mejor juez de física). 2026-06-05, por el reporte de pickles "stuck" al verter.
 const HIGH_PHYSICS_MOTIONS = new Set(['pour_bowl']);
+// PILOTO first+last frame (2026-06-09): % de videos que usan el par primer+último frame
+// cuando la fuente lo trae. 0.5 = A/B 50/50 (cohorte comparable en el reconciliador).
+// Subir a 1.0 cuando el A/B confirme que mejora; bajar a 0 para apagar sin deploy.
+const LAST_FRAME_RATE = parseFloat(process.env.SEEDANCE_LAST_FRAME_RATE || '0.5');
 
 /** Mapea la sugerencia del judge a un motion del DNA. Fallback raro: la imagen-fuente
  *  casi siempre trae su motion baked, así que esto solo aplica a fuentes legacy. NO
@@ -180,13 +184,19 @@ async function runDionysus() {
       .catch(() => {});
 
     // 3. Generar el video (image-to-video desde la URL pública del proposal origen).
+    // PILOTO first+last (2026-06-09): si la fuente trae frame final, A/B al 50% —
+    // mitad con par de frames, mitad como hoy. used_last_frame marca la cohorte
+    // para que el reconciliador compare hold/rechazos entre ambas.
     const imageUrl = `${PUBLIC_BASE_URL}/vsrc/${c._id}.png`;
+    const hasEndFrame = !!(c.end_frame_base64 && c.end_frame_base64.length > 100);
+    const useLastFrame = hasEndFrame && Math.random() < LAST_FRAME_RATE;
+    const lastFrameUrl = useLastFrame ? `${PUBLIC_BASE_URL}/vsrc/${c._id}/end.png` : null;
     try {
       const vid = await seedance.generateVideoFromImage({
-        imageUrl, prompt, durationSeconds: 5, aspectRatio: '9:16',
+        imageUrl, lastFrameUrl, prompt, durationSeconds: 5, aspectRatio: '9:16',
         // Persistir el task_id YA (apenas se emite) → si el proceso muere
         // mid-render, reconcileStuckVideos puede recuperarlo desde PiAPI.
-        onSubmit: (taskId) => CreativeProposal.findByIdAndUpdate(placeholder._id, { $set: { video_task_id: taskId } })
+        onSubmit: (taskId) => CreativeProposal.findByIdAndUpdate(placeholder._id, { $set: { video_task_id: taskId, used_last_frame: useLastFrame } })
       });
       // JUEZ DE VIDEO REAL (Gemini mira el mp4) — ve movimiento/artefactos/freezing
       // que el juez de imagen no puede. Auto-rechaza videos rotos y gatea el auto-aprobado.
@@ -215,7 +225,7 @@ async function runDionysus() {
       });
       generated++;
       results.push({ source: c._id, headline: c.headline, score: verdict.score, video_url: vid.video_url, variant, auto_approved: autoOk });
-      logger.info(`[DIONISIO] 🎬 ${autoOk ? '⚡ AUTO-APROBADO → ready (Prometheus)' : 'pendiente review'}: "${(c.headline || '').slice(0, 30)}" (score ${verdict.score}, ${variant}${videoVerdict ? `, video ${videoVerdict.verdict} ${videoVerdict.overall}` : ''})`);
+      logger.info(`[DIONISIO] 🎬 ${autoOk ? '⚡ AUTO-APROBADO → ready (Prometheus)' : 'pendiente review'}: "${(c.headline || '').slice(0, 30)}" (score ${verdict.score}, ${variant}${useLastFrame ? ', 🎬 first+last' : ''}${videoVerdict ? `, video ${videoVerdict.verdict} ${videoVerdict.overall}` : ''})`);
     } catch (e) {
       await CreativeProposal.findByIdAndUpdate(placeholder._id, {
         $set: { status: 'failed', rejection_reason: `video gen failed: ${e.message}` }

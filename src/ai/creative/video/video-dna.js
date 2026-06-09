@@ -39,16 +39,22 @@ function pickVideoStyle() {
 // MOTION — interacción con el producto. `{unit}` = la pieza real del producto
 // (rodaja de cebolla, tomate, pickle chip, etc — se reemplaza por producto).
 // `img` = qué hace la mano en la foto (gpt-image), `vid` = cómo se anima (Seedance).
+// `end` (opcional) = estado FINAL del motion para el piloto first+last frame (2026-06-09):
+// se genera como EDICIÓN del primer frame y Seedance interpola entre ambos — la física
+// deja de ser adivinanza (sabe dónde termina todo). Solo motions con desenlace claro.
 const MOTIONS = [
   { key: 'lift_drip',
     img: 'a hand slowly lifting {unit} up out of the jar, a glossy strand of brine dripping off it back into the jar',
-    vid: 'A hand slowly lifts {unit} up out of the jar; a glossy strand of brine drips slowly off it back into the jar. It stays in focus.' },
+    vid: 'A hand slowly lifts {unit} up out of the jar; a glossy strand of brine drips slowly off it back into the jar. It stays in focus.',
+    end: 'the same hand now holds {unit} fully raised well above the jar, the brine strand stretched thin with one last drop falling back into the jar' },
   { key: 'dip_drip',
     img: 'a hand holding {unit} just above the open tub, thick glossy brine/sauce dripping off it in a stretching strand',
-    vid: 'A hand holds {unit} above the tub and thick glossy brine drips slowly off it in a stretching strand back into the tub.' },
+    vid: 'A hand holds {unit} above the tub and thick glossy brine drips slowly off it in a stretching strand back into the tub.',
+    end: 'the same hand holds {unit} in the same position above the tub, the brine strand now thinned to one final small drop about to land in the tub' },
   { key: 'pull_up',
     img: 'a hand pulling {unit} upward out of the tub, glistening wet, a little brine dripping',
-    vid: 'A hand slowly pulls {unit} upward out of the tub, glistening wet, a little brine dripping off the bottom edge.' },
+    vid: 'A hand slowly pulls {unit} upward out of the tub, glistening wet, a little brine dripping off the bottom edge.',
+    end: 'the same hand now holds {unit} fully clear above the tub, glistening wet, one small drop of brine falling from its bottom edge' },
   { key: 'pinch_twirl',
     img: 'two fingers pinching {unit} held up close to the camera, glistening with brine',
     vid: 'Two fingers pinch {unit} held close to the camera and slowly twirl it a few degrees; it glistens and a single drop forms at the bottom.' },
@@ -61,7 +67,8 @@ const MOTIONS = [
   // Ahora: piezas SIEMPRE adentro bajo el borde, la tapa se mueve SOLA.
   { key: 'two_hand_open',
     img: 'two hands holding the jar and just twisting the lid open, the product pieces resting fully INSIDE the jar below the rim (nothing on the lid, nothing leaning against the rim), brine surface visible',
-    vid: 'Two hands hold the jar and slowly twist the lid open; the lid moves ALONE — nothing rests on it, sticks to it or hangs from it. The pieces stay fully inside the jar and the brine surface ripples gently.' },
+    vid: 'Two hands hold the jar and slowly twist the lid open; the lid moves ALONE — nothing rests on it, sticks to it or hangs from it. The pieces stay fully inside the jar and the brine surface ripples gently.',
+    end: 'the same two hands, the lid now fully unscrewed and held to one side in one hand, the open jar showing the product resting inside, brine surface calm' },
   { key: 'fridge_reveal', selfScene: true,
     img: 'a hand opening a home refrigerator door, revealing several {product} jars neatly lined up on the fridge shelf inside, cool soft fridge light spilling out, light condensation on the jars, POV handheld UGC, the {product} labels readable',
     vid: 'A hand slowly pulls the refrigerator door open, revealing the {product} jars lined up on the shelf as the cool fridge light spills out; faint condensation, almost no other movement.' },
@@ -394,9 +401,17 @@ function buildVideoPrompt(productName, motionKey, cameraKey, styleOverride, lear
   return `${_fill(m.vid, productName)} ${c.vid} ${style} ${NATURAL_PHYSICS} ${readable}${learned}`;
 }
 
+/** Estado FINAL del motion (piloto first+last frame). null si el motion no tiene
+ *  desenlace claro definido — en ese caso el video va solo con primer frame. */
+function buildEndFrameScene(motionKey, productName) {
+  const m = (MOTIONS.find(x => x.key === motionKey)) || null;
+  if (!m || !m.end) return null;
+  return _fill(m.end, productName);
+}
+
 module.exports = {
   MOTIONS, CAMERAS, SCENES, DIMS, BASE_STYLE, VIDEO_STYLE_MOODS, pickVideoStyle,
   productUnit, productUnitFood, fitsOnFood, isDip, isShredded, motionsForProduct,
   get, keys, pickWeighted, getDimensionStats, buildImageScene, buildVideoPrompt,
-  HOOKS
+  buildEndFrameScene, HOOKS
 };

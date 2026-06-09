@@ -49,7 +49,7 @@ function outcomeScore(status, m = {}) {
 async function reconcile() {
   const vids = await CreativeProposal.find({
     media_type: 'video', status: { $in: ['testing', 'graduated', 'killed', 'expired'] }
-  }).select('motion_variant product_name video_judge_score video_judge_breakdown video_result_verdict creative_signals status').lean();
+  }).select('motion_variant product_name video_judge_score video_judge_breakdown video_result_verdict creative_signals status used_last_frame').lean();
 
   if (!vids.length) { logger.info('[VIDEO-LEARNING] sin videos con outcome aún'); return null; }
 
@@ -169,6 +169,31 @@ async function reconcile() {
     pattern_signals[r.key] = prof.sort((a, b) => b.lift - a.lift);
   }
 
+  // ── A/B first+last frame (piloto 2026-06-09): hold + outcome por cohorte, y la
+  // métrica más rápida: tasa de rechazo del result-judge (física rota) últimos 14d ──
+  const abCohort = (flag) => {
+    const set = settled.filter(v => !!v.used_last_frame === flag);
+    if (!set.length) return { n: 0 };
+    const hold = set.reduce((a, v) => a + ((byProp[String(v._id)] || {}).hold_rate || 0), 0) / set.length;
+    const out = set.reduce((a, v) => a + outcomeScore(v.status, byProp[String(v._id)] || {}), 0) / set.length;
+    return { n: set.length, avg_hold: +(hold * 100).toFixed(0), avg_outcome: +out.toFixed(1) };
+  };
+  const last_frame_ab = { with_last: abCohort(true), without: abCohort(false) };
+  try {
+    const since14 = new Date(Date.now() - 14 * 86400000);
+    const [rejW, totW, rejN, totN] = await Promise.all([
+      CreativeProposal.countDocuments({ media_type: 'video', status: 'rejected', used_last_frame: true, created_at: { $gte: since14 } }),
+      CreativeProposal.countDocuments({ media_type: 'video', used_last_frame: true, created_at: { $gte: since14 } }),
+      CreativeProposal.countDocuments({ media_type: 'video', status: 'rejected', used_last_frame: false, created_at: { $gte: since14 } }),
+      CreativeProposal.countDocuments({ media_type: 'video', used_last_frame: false, created_at: { $gte: since14 } })
+    ]);
+    last_frame_ab.reject_rate_14d = {
+      with_last: totW ? +((rejW / totW) * 100).toFixed(0) : null,
+      without: totN ? +((rejN / totN) * 100).toFixed(0) : null,
+      n_with: totW, n_without: totN
+    };
+  } catch (_) { /* fail-open */ }
+
   const learnings = {
     generated_at: new Date(),
     settled_count: settled.length,
@@ -178,10 +203,14 @@ async function reconcile() {
     signals_count,
     pattern_signals,
     watch_curve,
+    last_frame_ab,
     judge: { score_corr, video_score_corr, video_hold_corr, claude_hold_corr, dim_corr: dimCorr }
   };
   await SystemConfig.set(LEARNINGS_KEY, learnings, 'video_learning');
-  logger.info(`[VIDEO-LEARNING] reconciliado: ${settled.length} firmes · top motion ${motionRank[0]?.key || '—'} · juez score_corr ${score_corr ?? 'n/a'}`);
+  const abLog = last_frame_ab.reject_rate_14d
+    ? ` · A/B last-frame reject% ${last_frame_ab.reject_rate_14d.with_last ?? '—'}(par n=${last_frame_ab.reject_rate_14d.n_with}) vs ${last_frame_ab.reject_rate_14d.without ?? '—'}(solo n=${last_frame_ab.reject_rate_14d.n_without})`
+    : '';
+  logger.info(`[VIDEO-LEARNING] reconciliado: ${settled.length} firmes · top motion ${motionRank[0]?.key || '—'} · juez score_corr ${score_corr ?? 'n/a'}${abLog}`);
   return learnings;
 }
 

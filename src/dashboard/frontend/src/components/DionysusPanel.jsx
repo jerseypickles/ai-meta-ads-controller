@@ -208,6 +208,19 @@ function ColaSection({ loading, pending, genVideos, busy, decide, downloadVideo 
       {pending.map(v => (
         <div key={v._id} style={{ ...card, overflow: 'hidden', padding: 0 }}>
           <video src={v.video_url} controls loop muted playsInline style={{ width: '100%', display: 'block', aspectRatio: '9/16', objectFit: 'cover', background: '#000' }} />
+          {/* Piloto first+last: thumbnails del par de frames para juzgar consistencia a ojo */}
+          {v.used_last_frame && v.source_proposal_id && (
+            <div style={{ display: 'flex', gap: 4, padding: '6px 10px 0', alignItems: 'center' }}>
+              <a href={`/vsrc/${v.source_proposal_id}.png`} target="_blank" rel="noreferrer" title="Primer frame (start)">
+                <img src={`/vsrc/${v.source_proposal_id}.png`} alt="start" style={{ width: 44, aspectRatio: '9/16', objectFit: 'cover', borderRadius: 4, border: '1px solid rgba(255,255,255,0.15)' }} />
+              </a>
+              <span style={{ fontSize: 14, opacity: 0.5 }}>→</span>
+              <a href={`/vsrc/${v.source_proposal_id}/end.png`} target="_blank" rel="noreferrer" title="Último frame (end)">
+                <img src={`/vsrc/${v.source_proposal_id}/end.png`} alt="end" style={{ width: 44, aspectRatio: '9/16', objectFit: 'cover', borderRadius: 4, border: `1px solid ${FUCHSIA}` }} />
+              </a>
+              <span style={{ fontSize: 9, color: FUCHSIA, marginLeft: 4 }}>🎬 first+last</span>
+            </div>
+          )}
           <div style={{ padding: 10 }}>
             <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{v.headline}</div>
             <div style={{ fontSize: 10, opacity: 0.55, marginBottom: 8 }}>{v.product_name} · <span style={{ color: FUCHSIA }}>{v.motion_variant}</span></div>

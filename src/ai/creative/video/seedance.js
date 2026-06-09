@@ -43,14 +43,16 @@ function _headers() {
 }
 
 /** Submit del job image-to-video. Devuelve task_id. */
-async function _submit({ imageUrl, prompt, durationSeconds, aspectRatio, seed }) {
+async function _submit({ imageUrl, lastFrameUrl, prompt, durationSeconds, aspectRatio, seed }) {
   const input = {
     mode: 'first_last_frames',     // imagen = primer frame → preserva fidelidad del producto
     prompt,
     duration: durationSeconds,
     aspect_ratio: aspectRatio,
     resolution: RESOLUTION,        // 1080p (solo lo respeta el tier VIP)
-    image_urls: [imageUrl]
+    // Piloto 2026-06-09: con lastFrameUrl el modo usa AMBOS anclas (primer + último frame)
+    // → Seedance interpola entre dos estados conocidos en vez de adivinar la física.
+    image_urls: lastFrameUrl ? [imageUrl, lastFrameUrl] : [imageUrl]
   };
   if (SEND_SEED && Number.isFinite(seed)) input.seed = seed;
   const body = { model: MODEL, task_type: TASK_TYPE, input };
@@ -115,14 +117,14 @@ async function _poll(taskId) {
  * @returns {Promise<{video_url, task_id, model, task_type, elapsed_s}>}
  */
 async function generateVideoFromImage(opts) {
-  const { imageUrl, prompt, durationSeconds = 5, aspectRatio = '9:16' } = opts;
+  const { imageUrl, lastFrameUrl = null, prompt, durationSeconds = 5, aspectRatio = '9:16' } = opts;
   if (!imageUrl) throw new Error('Seedance: falta imageUrl (URL pública)');
   if (!prompt) throw new Error('Seedance: falta motion prompt');
   const seed = Number.isFinite(opts.seed) ? opts.seed : Math.floor(Math.random() * 1e9);
 
   const t0 = Date.now();
-  logger.info(`[SEEDANCE] ${MODEL}/${TASK_TYPE} image-to-video · ${durationSeconds}s ${aspectRatio} · ${RESOLUTION}${SEND_SEED ? ` · seed ${seed}` : ''}`);
-  const taskId = await _submit({ imageUrl, prompt, durationSeconds, aspectRatio, seed });
+  logger.info(`[SEEDANCE] ${MODEL}/${TASK_TYPE} image-to-video${lastFrameUrl ? ' · 🎬 FIRST+LAST frames' : ''} · ${durationSeconds}s ${aspectRatio} · ${RESOLUTION}${SEND_SEED ? ` · seed ${seed}` : ''}`);
+  const taskId = await _submit({ imageUrl, lastFrameUrl, prompt, durationSeconds, aspectRatio, seed });
   logger.info(`[SEEDANCE] task ${taskId} en cola, pooleando...`);
   // Avisar el task_id apenas se emite (para persistirlo y poder reconciliar si el
   // proceso muere mid-render).

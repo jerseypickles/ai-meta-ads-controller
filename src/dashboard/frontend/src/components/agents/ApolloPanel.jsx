@@ -626,6 +626,17 @@ function VideoSourceSection({ sources, setLightbox }) {
                   {p.motion_variant}
                 </div>
               )}
+              {/* Piloto first+last: mini-thumbnail del frame FINAL — click para verlo grande */}
+              {p.has_end_frame && (
+                <div
+                  onClick={(e) => { e.stopPropagation(); setLightbox(`/vsrc/${p._id}/end.png`); }}
+                  title="Frame final (last) — click para ver grande"
+                  style={{ position: 'absolute', bottom: 6, right: 6, width: 46, aspectRatio: '9/16', borderRadius: 5, overflow: 'hidden', border: `2px solid ${FUCHSIA}`, boxShadow: '0 2px 8px rgba(0,0,0,0.6)' }}
+                >
+                  <img src={`/vsrc/${p._id}/end.png`} alt="end frame" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                  <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: `${FUCHSIA}e6`, color: '#fff', fontSize: '0.45rem', fontWeight: 700, textAlign: 'center', padding: '1px 0' }}>END</div>
+                </div>
+              )}
             </div>
             <div style={{ padding: 9 }}>
               <div style={{ fontSize: '0.7rem', color: 'var(--bos-text)', fontWeight: 600, lineHeight: 1.3, marginBottom: 4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>

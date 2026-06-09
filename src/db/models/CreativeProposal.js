@@ -17,6 +17,11 @@ const creativeProposalSchema = new mongoose.Schema({
   image_path: { type: String, default: '' },
   image_filename: { type: String, default: '' },
   image_base64: { type: String, default: '' }, // fallback: store image in DB if filesystem is ephemeral
+  // PILOTO first+last frame (2026-06-09): frame FINAL del video, generado como edición
+  // del primer frame. Seedance interpola entre ambos (mata la ambigüedad de física).
+  end_frame_base64: { type: String, default: '' },
+  // En videos: si este render usó el par first+last (cohorte A/B para el reconciliador)
+  used_last_frame: { type: Boolean, default: false, index: true },
   // URL de la imagen en Meta CDN — cached cuando recuperamos via Meta API.
   // Para proposals viejas sin image_base64, fetcheamos via meta_creative_id
   // y cacheamos aquí. Las URLs de Meta expiran eventualmente, pero se refrescan

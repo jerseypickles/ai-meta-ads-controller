@@ -110,7 +110,7 @@ router.get('/pending', async (req, res) => {
     const [pending, generating] = await Promise.all([
       CreativeProposal.find({ media_type: 'video', status: 'pending_video_review' })
         .sort({ created_at: -1 })
-        .select('headline primary_text product_name video_url motion_variant video_judge_score video_judge_breakdown source_proposal_id created_at')
+        .select('headline primary_text product_name video_url motion_variant video_judge_score video_judge_breakdown source_proposal_id created_at used_last_frame')
         .lean(),
       CreativeProposal.find({ media_type: 'video', status: 'generating_video' })
         .sort({ created_at: -1 })
@@ -136,6 +136,12 @@ router.get('/sources', async (req, res) => {
       media_type: 'video', source_proposal_id: { $in: ids }, status: { $ne: 'failed' }
     }).select('source_proposal_id').lean();
     const consumed = new Set(animated.map(v => String(v.source_proposal_id)));
+    // Piloto first+last: marcar qué fuentes traen frame final (sin traer los base64 pesados)
+    const withEnd = await CreativeProposal.find({
+      _id: { $in: ids }, end_frame_base64: { $exists: true, $nin: [null, ''] }
+    }).select('_id').lean();
+    const endSet = new Set(withEnd.map(s => String(s._id)));
+    for (const s of sources) s.has_end_frame = endSet.has(String(s._id));
     const available = sources.filter(s => !consumed.has(String(s._id)));
     res.json({ available, available_count: available.length, consumed_count: sources.length - available.length });
   } catch (e) {

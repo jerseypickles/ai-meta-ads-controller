@@ -26,6 +26,10 @@ const ENABLED = process.env.VIDEO_SOURCE_ENABLED !== 'false';
 // 🎨 Director creativo: % de generaciones que inventan un concepto NUEVO (el LLM, no el
 // template fijo) → el DNA crece su espacio en vez de cerrarse. 2026-06-08, Dionisio fabuloso.
 const CREATIVE_RATE = parseFloat(process.env.VIDEO_SOURCE_CREATIVE_RATE || '0.3');
+// PILOTO first+last frame (2026-06-09): genera el frame FINAL como EDICIÓN del inicial
+// (misma escena, solo cambia el estado del motion) para motions con `end` definido en el
+// DNA. Seedance interpola entre ambos → la física deja de ser adivinanza. Apagar con env.
+const END_FRAME_ENABLED = process.env.VIDEO_END_FRAME_ENABLED !== 'false';
 
 const FIDELITY = 'The product container and its LABEL must remain a pixel-perfect match to the reference photo — same shape, same label design, same text, same colors, same proportions. Do NOT redraw, re-render, or restyle the packaging or the label. CRITICAL COLOR FIDELITY: replicate the EXACT colors of the product and its contents from the reference; do not shift them toward what this food "usually" looks like.';
 
@@ -213,6 +217,22 @@ async function generateVideoSources() {
       const result = await generateCreativeImage(prompt, { referenceImages: refImages, aspectRatio: '9:16', imageSize: '2K' });
       if (!result?.base64) { logger.warn(`[VIDEO-SOURCE] sin imagen para ${product.product_name}`); continue; }
 
+      // PILOTO first+last: frame FINAL como edición del inicial (el inicial va PRIMERO
+      // en las referencias para anclar escena/mano/label; el ref del producto refuerza
+      // la fidelidad). Fail-open: si falla, el video sale solo con primer frame como hoy.
+      let endFrameBase64 = '';
+      const endScene = END_FRAME_ENABLED ? dna.buildEndFrameScene(motionKey, product.product_name) : null;
+      if (endScene) {
+        try {
+          const endPrompt = `Edit this exact photograph (the FIRST reference image): recreate it EXACTLY — same scene, same hand(s), same product piece, same jar and label, same lighting, same camera angle and framing — changing ONLY this: ${endScene}. This is the FINAL frame of a 5-second video that STARTS at the reference photograph, so everything that is not part of that one change must stay pixel-consistent. ${FIDELITY}`;
+          const endResult = await generateCreativeImage(endPrompt, {
+            referenceImages: [{ image_base64: result.base64, mime_type: 'image/png' }, ...refImages.slice(0, 1)],
+            aspectRatio: '9:16', imageSize: '2K'
+          });
+          if (endResult?.base64) endFrameBase64 = endResult.base64;
+        } catch (e) { logger.warn(`[VIDEO-SOURCE] end-frame falló para ${product.product_name} (sigue solo first): ${e.message}`); }
+      }
+
       const copy = await generateCopy(product.product_name);
       await CreativeProposal.create({
         product_id: product._id,
@@ -222,6 +242,7 @@ async function generateVideoSources() {
         primary_text: copy.primary_text,
         link_url: product.link_url || 'https://jerseypickles.com',
         image_base64: result.base64,
+        end_frame_base64: endFrameBase64,
         media_type: 'image',
         status: 'video_source',
         tags: ['video_source'],
@@ -232,7 +253,7 @@ async function generateVideoSources() {
         style: 'video_source'
       });
       generated++;
-      logger.info(`[VIDEO-SOURCE] ✓ "${copy.headline}" (${product.product_name}, ${creativeConcept ? '🎨 ' + creativeConcept : motionKey + '/' + sceneKey + '/' + hookKey})`);
+      logger.info(`[VIDEO-SOURCE] ✓ "${copy.headline}" (${product.product_name}, ${creativeConcept ? '🎨 ' + creativeConcept : motionKey + '/' + sceneKey + '/' + hookKey})${endFrameBase64 ? ' · 🎬 par first+last' : ''}`);
     } catch (e) {
       logger.error(`[VIDEO-SOURCE] error generando para ${product.product_name}: ${e.message}`);
     }
