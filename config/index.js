@@ -56,6 +56,10 @@ module.exports = {
     model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
     // Tier alto solo para jueces de creativos (vision fina: fidelidad, CTR) — gate que custodia spend de testing
     judgeModel: process.env.CLAUDE_JUDGE_MODEL || 'claude-fable-5',
+    // Director creativo de Apollo (prompt-generator): Fable 5 EN PRUEBA desde 2026-06-09.
+    // Medir vs cohorte Sonnet: scores del judge + % que entra a testing + CTR real.
+    // Revert sin deploy: CLAUDE_CREATIVE_MODEL=claude-sonnet-4-6 en Render.
+    creativeModel: process.env.CLAUDE_CREATIVE_MODEL || 'claude-fable-5',
     maxTokens: 4096
   },
 

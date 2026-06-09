@@ -455,7 +455,7 @@ Remember: respond with ONLY valid JSON, no markdown fences. 3 prompts total. Do 
     : userMessage;
 
   const response = await client.messages.create({
-    model: config.claude.model,
+    model: config.claude.creativeModel,
     max_tokens: 8192,
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: messageContent }]
