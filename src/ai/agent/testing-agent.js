@@ -14,8 +14,9 @@ const { getAdsForAdSet } = require('../../db/queries');
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONFIGURACION
 // ═══════════════════════════════════════════════════════════════════════════════
-const MAX_CONCURRENT_TESTS = 40; // 2026-06-03: 100→40 — bajar volumen de testing >50% (cold-start, menos quema)
-const TEST_DAILY_BUDGET = 20; // $20/dia (10→20 el 30-may: más delivery/señal por test + kills más rápidos)
+const MAX_CONCURRENT_TESTS = parseInt(process.env.MAX_CONCURRENT_TESTS, 10) || 12; // 2026-06-09: 40→12 — MENOS tests, más potentes (con $400 cap / $50 = ~8 reales). Conversión es señal cara: tests chicos quedan inconclusos.
+const TEST_DAILY_BUDGET = parseInt(process.env.TEST_DAILY_BUDGET, 10) || 50; // 2026-06-09: $20→$50/día — cada test llega a significancia de CONVERSIÓN (≈2x CPA) → veredicto decisivo rápido. Env-overridable.
+const DECISIVE_KILL_SPEND = parseInt(process.env.DECISIVE_KILL_SPEND, 10) || 50; // $ de spend con 0 compras = perdedor decisivo (≈2x CPA). Mata por significancia, no por días.
 const VIDEO_TEST_DAILY_BUDGET = 25; // $25/dia ABO para tests de VIDEO (Dionisio), campaña aparte. (2026-05-30)
 // Track de VIDEO con caps PROPIOS — no compite por los slots/budget de las fotos
 // (campaña separada). Si no, los tests de foto bloquean los videos. (2026-05-30)
@@ -597,6 +598,16 @@ async function monitorTests() {
       if (cashAdjRoas >= GRADUATE_EARLY_ROAS && metrics.purchases >= GRADUATE_EARLY_PURCHASES
           && metrics.spend < GRADUATE_EARLY_MIN_SPEND) {
         logger.info(`[TESTING-AGENT] ${test.test_adset_name}: ${cashAdjRoas.toFixed(1)}x cash / ${metrics.purchases} compras pero solo $${metrics.spend.toFixed(2)} spend (<$${GRADUATE_EARLY_MIN_SPEND}) — espero más volumen antes de graduar (anti-fluke)`);
+      }
+
+      // KILL DECISIVO por significancia de CONVERSIÓN (no por días): $50 spend (≈2x CPA)
+      // con 0 compras = perdedor real — un buen convertidor ya habría comprado a ese spend.
+      // No esperar a día 3. Respeta el hold de video (lag ver→compra → no mata videos que
+      // enganchan). Esto ataca el 71% de spend que se desperdiciaba en perdedores sin cortar.
+      if (metrics.spend >= DECISIVE_KILL_SPEND && metrics.purchases === 0 && !videoEngages) {
+        await killOrExpireTest(test, `kill decisivo: $${metrics.spend.toFixed(0)} spend (≥$${DECISIVE_KILL_SPEND}) + 0 compras — perdedor por significancia, no espera días`, 'killed');
+        killed++;
+        continue;
       }
 
       // Dia 6-7: Decision final
