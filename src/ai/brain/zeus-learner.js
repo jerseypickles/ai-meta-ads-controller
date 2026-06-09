@@ -1017,7 +1017,7 @@ ${(accountData.prometheus.close_to_kill || []).length > 0
 
   try {
     const response = await claude.messages.create({
-      model: 'claude-opus-4-7',
+      model: 'claude-fable-5',
       max_tokens: 2000,
       messages: [{
         role: 'user',

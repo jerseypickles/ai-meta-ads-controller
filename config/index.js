@@ -52,7 +52,10 @@ module.exports = {
 
   claude: {
     apiKey: process.env.ANTHROPIC_API_KEY,
-    model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6-20250514',
+    // OJO: 'claude-sonnet-4-6' sin sufijo de fecha — el ID con fecha no existe y devuelve 404
+    model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
+    // Tier alto solo para jueces de creativos (vision fina: fidelidad, CTR) — gate que custodia spend de testing
+    judgeModel: process.env.CLAUDE_JUDGE_MODEL || 'claude-fable-5',
     maxTokens: 4096
   },
 

@@ -23,7 +23,7 @@ const logger = require('../../utils/logger');
 class StrategicAgent {
   constructor() {
     this.anthropic = new Anthropic({ apiKey: config.claude.apiKey });
-    this.model = config.claude.model || 'claude-sonnet-4-5-20250929';
+    this.model = config.claude.model || 'claude-sonnet-4-6';
     this.maxTokens = Math.max(config.claude.maxTokens || 4096, 8192);
     this.creativeAnalyzer = new CreativeAnalyzer();
     this.researchModule = new ResearchModule();

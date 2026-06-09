@@ -735,7 +735,7 @@ async function manageAdSetWithAgent(creation) {
     let response;
     try {
       response = await client.messages.create({
-        model: 'claude-sonnet-4-6-20250514',
+        model: 'claude-sonnet-4-6',
         max_tokens: 2048,
         system: AGENT_SYSTEM_PROMPT,
         tools: TOOLS,
@@ -747,7 +747,7 @@ async function manageAdSetWithAgent(creation) {
         await new Promise(r => setTimeout(r, 15000));
         try {
           response = await client.messages.create({
-            model: 'claude-sonnet-4-6-20250514',
+            model: 'claude-sonnet-4-6',
             max_tokens: 2048,
             system: AGENT_SYSTEM_PROMPT,
             tools: TOOLS,

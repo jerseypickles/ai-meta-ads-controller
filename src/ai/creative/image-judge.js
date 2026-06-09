@@ -162,7 +162,7 @@ Here are the images:`
   const startTime = Date.now();
 
   const response = await client.messages.create({
-    model: config.claude.model,
+    model: config.claude.judgeModel,
     max_tokens: 4096,
     system: JUDGE_SYSTEM_PROMPT,
     messages: [{ role: 'user', content }]
@@ -258,7 +258,7 @@ async function judgeCreative(generatedBase64, referenceImages = [], productName 
       text: `\nRespondé SOLO JSON, sin markdown: {${hasRef ? '"fidelity_score":0-100,"color_match":true|false,' : ''}"quality_score":0-100,"predicted_ctr":"high|medium|low","issues":["..."],"verdict":"1 frase"}. ${hasRef ? 'color_match=false si el color/contenido difiere de la ref; fidelity_score<70 si hay desviación seria de color/contenido/forma/label. ' : ''}quality_score = potencial de CTR/scroll-stop (alto = para el scroll; bajo = genérico/aburrido/render/stock).`
     });
 
-    const resp = await client.messages.create({ model: config.claude.model, max_tokens: 500, messages: [{ role: 'user', content }] });
+    const resp = await client.messages.create({ model: config.claude.judgeModel, max_tokens: 500, messages: [{ role: 'user', content }] });
     const text = resp.content[0]?.text || '';
     let parsed;
     try {
