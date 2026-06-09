@@ -27,6 +27,7 @@ HARD RULES (a concept that breaks these is useless):
 - The product jar/tub is the HERO, its label clearly readable and true to the real product.
 - Authentic real-person UGC iPhone look — candid, in-the-moment, NOT staged, NOT stock, NOT AI-looking.
 - It is the FIRST FRAME of a 5s video → it MUST be animatable with ONE simple natural motion (a hand lifting / dipping / pouring into something / a bite / a reach). NO complex multi-object physics (no several things flying or pouring at once — those break in AI video).
+- PHYSICS-SAFE SCENE DESIGN (AI video engines glue or freeze ambiguous loose objects): design around ONE clearly moving element with an unambiguous outcome. Every solid item in the frame must be firmly HELD by a hand, fully INSIDE a container, or resting FLAT on a stable surface. NEVER place a loose piece on top of / leaning against a lid, a rim, an edge, or anything that will move during the motion. Nothing detaches, falls or floats — only a liquid brine drip may hang.
 - Vertical 9:16, mouth-watering, product in sharp focus.
 - Be GENUINELY NOVEL: a fresh scenario, angle, context, mood, time of day, or composition we have not seen. Surprise me — think what makes a real person STOP scrolling mid-feed.
 
@@ -43,7 +44,8 @@ async function inventCreativeConcept(productName, inspiration = '', signalGuidan
   try {
     const client = new Anthropic({ apiKey });
     const resp = await client.messages.create({
-      model: config.claude.model,
+      // creativeModel (Fable 5 en prueba 2026-06-09) — mismo tier que el director de Apollo
+      model: config.claude.creativeModel || config.claude.model,
       max_tokens: 600,
       messages: [{ role: 'user', content: CONCEPT_PROMPT(productName, inspiration, signalGuidance) }]
     });
@@ -71,7 +73,8 @@ async function inventCreativeConcept(productName, inspiration = '', signalGuidan
  */
 function buildCreativePrompt(productName, conceptPrompt, fidelityClause, styleClause) {
   const matchPiece = `CRITICAL: the pickled food shown must be the SAME product inside this "${productName}" jar — same type and same color as the reference contents. Do NOT substitute a different food.`;
-  return `Create a vertical 9:16 photograph. ${conceptPrompt} For the product "${productName}": the jar/tub from the reference photo is clearly visible in the shot with its label readable. ${matchPiece} ${fidelityClause} ${styleClause} Photorealistic real handheld iPhone UGC — looks shot by a real person, NOT AI. Mouth-watering, product in sharp focus.`;
+  const physicsSafe = 'PHYSICS-SAFE FOR VIDEO (this image will be animated): every solid item must be firmly HELD by a hand, fully INSIDE the container, or resting FLAT on a stable surface — never perched on a lid/rim/edge, never mid-air. Only a liquid brine drip may hang.';
+  return `Create a vertical 9:16 photograph. ${conceptPrompt} For the product "${productName}": the jar/tub from the reference photo is clearly visible in the shot with its label readable. ${matchPiece} ${physicsSafe} ${fidelityClause} ${styleClause} Photorealistic real handheld iPhone UGC — looks shot by a real person, NOT AI. Mouth-watering, product in sharp focus.`;
 }
 
 module.exports = { inventCreativeConcept, buildCreativePrompt };

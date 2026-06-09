@@ -29,6 +29,11 @@ const CREATIVE_RATE = parseFloat(process.env.VIDEO_SOURCE_CREATIVE_RATE || '0.3'
 
 const FIDELITY = 'The product container and its LABEL must remain a pixel-perfect match to the reference photo — same shape, same label design, same text, same colors, same proportions. Do NOT redraw, re-render, or restyle the packaging or the label. CRITICAL COLOR FIDELITY: replicate the EXACT colors of the product and its contents from the reference; do not shift them toward what this food "usually" looks like.';
 
+// Física segura para image-to-video (2026-06-09): el motor de video pega/congela objetos
+// sueltos en posiciones ambiguas (caso: spear apoyado en la tapa quedó COLGADO de la tapa
+// al abrirla). Toda imagen-fuente debe nacer sin trampas de física.
+const PHYSICS_SAFE = 'PHYSICS-SAFE FOR VIDEO (this image will be animated): every solid item must be either firmly HELD by a hand, fully INSIDE the container, or resting FLAT on a stable surface. NEVER place a loose piece on top of / leaning against the lid, the rim, an edge, or anything that could move — and never floating in mid-air. Only liquid (a brine drip) may hang.';
+
 // MOODS de estilo de IMAGEN — se rota uno por imagen para que las fuentes (y por
 // ende los videos) no salgan todas con el mismo look. Core: UGC real, NO-IA, fieles.
 const STYLE_MOODS = [
@@ -56,7 +61,7 @@ function buildSourcePrompt(productName, motionKey, sceneKey, hookKey) {
     : `CRITICAL: the pickled item shown must be ${unit} — the SAME pickled food that is inside this "${productName}" jar (same type, same color as the contents visible in the reference). Do NOT substitute a generic pickle chip or any different food.`;
   return `Create a vertical photograph of ${interaction}, for the product "${productName}". ` +
     `The jar/tub from the reference photo is clearly visible in the shot with its label readable. ` +
-    `${matchPiece} ${FIDELITY} ${pickImageStyle()} The hand and the dripping brine should be the hero of the shot, mouth-watering and in sharp focus.`;
+    `${matchPiece} ${PHYSICS_SAFE} ${FIDELITY} ${pickImageStyle()} The hand and the dripping brine should be the hero of the shot, mouth-watering and in sharp focus.`;
 }
 
 /** Genera un headline + copy corto para el creativo (en inglés, mercado US). */

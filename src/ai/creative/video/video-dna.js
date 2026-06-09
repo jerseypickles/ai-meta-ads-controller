@@ -55,9 +55,13 @@ const MOTIONS = [
   { key: 'bite_tease',
     img: 'a hand holding {unit} up close to the camera as if about to take a bite, glossy and dripping',
     vid: 'A hand holds {unit} up close as if about to take a bite; a slow drop of brine falls and it glistens.' },
+  // two_hand_open REESCRITO 2026-06-09: "product visible at the rim" + "top piece shifts"
+  // → el motor de imagen ponía una pieza suelta apoyada en la tapa, y Seedance la dejaba
+  // PEGADA a la tapa al abrirla (caso reportado: spear colgando de la tapa del tub).
+  // Ahora: piezas SIEMPRE adentro bajo el borde, la tapa se mueve SOLA.
   { key: 'two_hand_open',
-    img: 'two hands holding the jar and just twisting the lid open, the product and brine visible at the rim',
-    vid: 'Two hands hold the jar and slowly twist the lid open; the brine ripples and the top piece shifts slightly.' },
+    img: 'two hands holding the jar and just twisting the lid open, the product pieces resting fully INSIDE the jar below the rim (nothing on the lid, nothing leaning against the rim), brine surface visible',
+    vid: 'Two hands hold the jar and slowly twist the lid open; the lid moves ALONE — nothing rests on it, sticks to it or hangs from it. The pieces stay fully inside the jar and the brine surface ripples gently.' },
   { key: 'fridge_reveal', selfScene: true,
     img: 'a hand opening a home refrigerator door, revealing several {product} jars neatly lined up on the fridge shelf inside, cool soft fridge light spilling out, light condensation on the jars, POV handheld UGC, the {product} labels readable',
     vid: 'A hand slowly pulls the refrigerator door open, revealing the {product} jars lined up on the shelf as the cool fridge light spills out; faint condensation, almost no other movement.' },
