@@ -210,7 +210,10 @@ async function reconcile() {
   const abLog = last_frame_ab.reject_rate_14d
     ? ` · A/B last-frame reject% ${last_frame_ab.reject_rate_14d.with_last ?? '—'}(par n=${last_frame_ab.reject_rate_14d.n_with}) vs ${last_frame_ab.reject_rate_14d.without ?? '—'}(solo n=${last_frame_ab.reject_rate_14d.n_without})`
     : '';
-  logger.info(`[VIDEO-LEARNING] reconciliado: ${settled.length} firmes · top motion ${motionRank[0]?.key || '—'} · juez score_corr ${score_corr ?? 'n/a'}${abLog}`);
+  // Señales top en el log (2026-06-10): sin esto el signal_rank solo vive en Mongo y
+  // no se puede auditar "qué explica el outcome" desde los logs.
+  const sigLog = (signal_rank || []).slice(0, 3).map(s => `${s.signal}:${s.corr}`).join(' ');
+  logger.info(`[VIDEO-LEARNING] reconciliado: ${settled.length} firmes · top motion ${motionRank[0]?.key || '—'} (n=${motionRank[0]?.n ?? 0}) · juez score_corr ${score_corr ?? 'n/a'}${sigLog ? ` · señales top: ${sigLog}` : ''}${abLog}`);
   return learnings;
 }
 
