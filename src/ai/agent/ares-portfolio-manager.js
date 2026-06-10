@@ -44,7 +44,13 @@ const { CooldownManager } = require('../../safety/cooldown-manager');
 const cooldowns = new CooldownManager();
 
 // Thresholds configurables — ajustados a la data real observada 2026-04-23/24.
-const STARVED_WINNER_SHARE_MAX = 0.03;   // <3% del spend de su CBO
+// STARVATION RELATIVA + ABSOLUTA (2026-06-10, pedido del creador): el 3% fijo era
+// ciego al tamaño del CBO. En un CBO de $1000/d, 3% = $30/d (NO es hambre); en uno
+// de $75/d con 3 adsets el share justo es 33% y el 3% es trivial. Famélico ahora =
+// recibe menos de la MITAD de su parte justa (1/N adsets) Y menos de $8/día absolutos.
+const STARVED_FAIR_SHARE_RATIO = 0.5;     // share < 50% de su fair share (1/N adsets del CBO)
+const STARVED_SHARE_HARD_CEIL = 0.20;     // techo duro: nunca considerar famélico arriba de 20% share
+const STARVED_DAILY_SPEND_MAX = 8;        // $/día promedio 7d — con más que esto no es hambre, aunque el share sea bajo
 const STARVED_WINNER_ROAS_MIN = 2.0;      // ROAS mínimo para considerar "winner"
 // 2026-06-10 (caso "43x" = 1 compra sobre centavos en un clon de 1 día):
 const STARVED_WINNER_PURCHASES_MIN = 2;   // 1→2 — una compra es moneda al aire, no winner (misma lección que Prometheus)
@@ -371,7 +377,15 @@ async function executeStarvedRescue(cboSnapshot, adsets, getRescueCbo) {
     // El guard isRescueCbo de arriba solo cubre el rescate ACTUAL por campaign_id;
     // esto cubre también clones de rescates viejos que viven en otros CBOs.
     if (a.name && a.name.includes('[Ares-Rescue]')) continue;
-    if (a.spend_share_7d >= STARVED_WINNER_SHARE_MAX) continue;
+    // FAMÉLICO = share relativo bajo Y dólares absolutos bajos (escala con el CBO):
+    // en un CBO de 15 adsets el umbral de share es ~3.3%; en uno de 3 es ~16.7% —
+    // pero SIEMPRE con <$8/día reales. Un adset con $30/d en un CBO de $1000/d no
+    // está famélico aunque su share sea 3% (caso planteado por el creador).
+    const fairShare = 1 / Math.max(1, adsets.length);
+    const shareCeil = Math.min(STARVED_SHARE_HARD_CEIL, fairShare * STARVED_FAIR_SHARE_RATIO);
+    const dailySpend7d = a.spend_7d / 7;
+    if (a.spend_share_7d >= shareCeil) continue;
+    if (dailySpend7d >= STARVED_DAILY_SPEND_MAX) continue;
     if (a.roas_7d < STARVED_WINNER_ROAS_MIN) continue;
     if (a.purchases_7d < STARVED_WINNER_PURCHASES_MIN) continue;
     if (a.spend_7d < STARVED_WINNER_MIN_SPEND_7D) continue; // ROAS sobre centavos ≠ winner
@@ -396,7 +410,7 @@ async function executeStarvedRescue(cboSnapshot, adsets, getRescueCbo) {
     }
 
     const cloneName = `[Ares-Rescue] ${a.name}`;
-    const reasoning = `Winner starved: ROAS ${a.roas_7d.toFixed(2)}x, ${a.purchases_7d} compras, solo ${(a.spend_share_7d*100).toFixed(1)}% del spend de CBO "${cboSnapshot.campaign_name}" en 7d. Duplicando a CBO rescate con budget $${STARVED_RESCUE_BUDGET}/d.`;
+    const reasoning = `Winner starved: ROAS ${a.roas_7d.toFixed(2)}x con ${a.purchases_7d} compras sobre $${a.spend_7d.toFixed(0)} en 7d, recibiendo solo $${dailySpend7d.toFixed(1)}/día (${(a.spend_share_7d*100).toFixed(1)}% share vs ${(fairShare*100).toFixed(0)}% justo entre ${adsets.length} adsets) en CBO "${cboSnapshot.campaign_name}". Duplicando a CBO rescate con budget $${STARVED_RESCUE_BUDGET}/d.`;
 
     try {
       const { getMetaClient } = require('../../meta/client');
