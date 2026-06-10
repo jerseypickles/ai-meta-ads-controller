@@ -205,7 +205,8 @@ async function runDionysus() {
       // juzgue el video final tal como lo verá la gente. Fail-open: sin overlay, sale crudo.
       let finalVideoUrl = vid.video_url;
       let usedOverlay = false;
-      const hookText = (c.hook_text || '').trim();
+      // Fallback para fuentes pre-hook_text (pool viejo): primeras 5 palabras del headline.
+      const hookText = (c.hook_text || (c.headline || '').split(/\s+/).slice(0, 5).join(' ')).trim();
       if (hookText && Math.random() < OVERLAY_RATE) {
         try {
           const { applyHookOverlay } = require('../creative/video/video-postpro');
