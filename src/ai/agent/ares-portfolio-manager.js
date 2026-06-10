@@ -46,7 +46,11 @@ const cooldowns = new CooldownManager();
 // Thresholds configurables — ajustados a la data real observada 2026-04-23/24.
 const STARVED_WINNER_SHARE_MAX = 0.03;   // <3% del spend de su CBO
 const STARVED_WINNER_ROAS_MIN = 2.0;      // ROAS mínimo para considerar "winner"
-const STARVED_WINNER_PURCHASES_MIN = 1;   // al menos 1 compra histórica
+// 2026-06-10 (caso "43x" = 1 compra sobre centavos en un clon de 1 día):
+const STARVED_WINNER_PURCHASES_MIN = 2;   // 1→2 — una compra es moneda al aire, no winner (misma lección que Prometheus)
+const STARVED_WINNER_MIN_SPEND_7D = 10;   // piso de spend 7d: ROAS calculado sobre centavos no es señal
+const STARVED_WINNER_MIN_AGE_DAYS = 3;    // edad mínima REAL (first-seen) — fail-closed si edad desconocida
+const RESCUE_SRC_CBO_MIN_AGE_DAYS = 5;    // no medir "starvation" en CBOs que aún rampean su reparto de budget
 const STARVED_RESCUE_BUDGET = 75;         // budget inicial del adset duplicado a CBO 3 ($/d)
 
 const UNDERPERFORMER_SPEND_MIN = 50;      // primera semana conservador (normal $30)
@@ -269,6 +273,22 @@ async function getAdsetsWithMetrics(campaign_id) {
     { $match: { status: 'ACTIVE' } }
   ]);
 
+  // EDAD REAL vía first-seen del collector (2026-06-10): Meta no popula created_time
+  // (23/23 null) → los gates de edad eran código muerto. Caso real: el rescate se llevó
+  // un clon de 1 día desde un CBO creado el día anterior porque el gate nunca disparó.
+  // El primer snapshot del adset es un proxy confiable (el collector corre cada 10 min).
+  const ids = adsets.map(a => a.entity_id);
+  let firstSeenAt = {};
+  if (ids.length) {
+    try {
+      const firstSeen = await MetricSnapshot.aggregate([
+        { $match: { entity_type: 'adset', entity_id: { $in: ids } } },
+        { $group: { _id: '$entity_id', first_at: { $min: '$snapshot_at' } } }
+      ]);
+      for (const f of firstSeen) firstSeenAt[f._id] = f.first_at;
+    } catch (e) { logger.warn(`[ARES-PORTFOLIO] first-seen lookup falló: ${e.message}`); }
+  }
+
   const totalSpend7d = adsets.reduce((s, a) => s + (a.metrics?.last_7d?.spend || 0), 0);
   const totalSpend3d = adsets.reduce((s, a) => s + (a.metrics?.last_3d?.spend || 0), 0);
 
@@ -278,7 +298,8 @@ async function getAdsetsWithMetrics(campaign_id) {
     const spend7d = m7.spend || 0;
     const spend3d = m3.spend || 0;
     const purchaseValue = m7.purchase_value || 0;
-    const ageDays = a.created_time ? Math.floor((Date.now() - new Date(a.created_time).getTime()) / 86400000) : null;
+    const firstAt = a.created_time || firstSeenAt[a.entity_id];
+    const ageDays = firstAt ? Math.floor((Date.now() - new Date(firstAt).getTime()) / 86400000) : null;
     return {
       id: a.entity_id,
       name: a.entity_name,
@@ -323,6 +344,23 @@ async function executeStarvedRescue(cboSnapshot, adsets, getRescueCbo) {
   // No rescatar adsets que ya viven DENTRO del CBO rescate — sería un loop
   // sobre sí mismo (rescatar clones del rescate hacia el mismo rescate).
   if (await isRescueCbo(cboSnapshot.campaign_id)) return executed;
+
+  // CBO RECIÉN NACIDA (2026-06-10): en una campaña de <5 días el reparto de budget
+  // de Meta aún está rampeando — un spend_share bajo ahí es APRENDIZAJE, no hambre.
+  // Caso real: se "rescató" un clon de 1 día desde un CBO que Ares mismo había creado
+  // el día anterior → churn de campañas. Edad vía first-seen del collector.
+  try {
+    const firstCboSnap = await MetricSnapshot.findOne({ entity_type: 'campaign', entity_id: cboSnapshot.campaign_id })
+      .sort({ snapshot_at: 1 }).select('snapshot_at').lean();
+    const cboAgeDays = firstCboSnap ? (Date.now() - new Date(firstCboSnap.snapshot_at).getTime()) / 86400000 : 0;
+    if (cboAgeDays < RESCUE_SRC_CBO_MIN_AGE_DAYS) {
+      logger.info(`[ARES-PORTFOLIO] SKIP starved_rescue en "${cboSnapshot.campaign_name}": CBO de ${cboAgeDays.toFixed(1)}d (<${RESCUE_SRC_CBO_MIN_AGE_DAYS}d) — el reparto aún rampea, share bajo no es hambre`);
+      return executed;
+    }
+  } catch (e) {
+    logger.warn(`[ARES-PORTFOLIO] edad de CBO no determinable (${e.message}) — skip rescue por seguridad`);
+    return executed;
+  }
   for (const a of adsets) {
     // No re-rescatar adsets que YA son producto de un rescate previo. El clon
     // de rescate siempre lleva el prefijo "[Ares-Rescue]" (ver cloneName abajo),
@@ -336,7 +374,10 @@ async function executeStarvedRescue(cboSnapshot, adsets, getRescueCbo) {
     if (a.spend_share_7d >= STARVED_WINNER_SHARE_MAX) continue;
     if (a.roas_7d < STARVED_WINNER_ROAS_MIN) continue;
     if (a.purchases_7d < STARVED_WINNER_PURCHASES_MIN) continue;
-    if (a.age_days && a.age_days < 3) continue;
+    if (a.spend_7d < STARVED_WINNER_MIN_SPEND_7D) continue; // ROAS sobre centavos ≠ winner
+    // FAIL-CLOSED en edad (2026-06-10): antes era `a.age_days &&` — con edad null/0 el
+    // gate se saltaba (bug). Edad desconocida = no rescatar.
+    if (a.age_days == null || a.age_days < STARVED_WINNER_MIN_AGE_DAYS) continue;
     if (await alreadyActedOn(a.id, 'duplicate_adset')) continue;
 
     const gate = await validateSafetyGates({ entity_id: a.id, action_type: 'duplicate_adset' });
@@ -1049,7 +1090,7 @@ async function createRescueCbo() {
       const SafetyEvent = require('../../db/models/SafetyEvent');
       await SafetyEvent.create({
         event_type: 'autonomous_cbo_created',
-        severity: 'high',
+        severity: 'warning', // 2026-06-10: 'high' no existe en el enum (critical|warning|info) — el evento fallaba silencioso
         entity_id: result.campaign_id,
         entity_name: name,
         description: `Ares Portfolio auto-creó el CBO rescate "${name}" ($${RESCUE_CBO_BUDGET}/d) — destino para winners famélicos.`,
