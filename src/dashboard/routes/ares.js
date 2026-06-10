@@ -91,7 +91,22 @@ router.get('/intelligence', async (req, res) => {
     const cbo1Adsets = mapCampaignAdsets(aresCampaignId);
     const cbo2Adsets = mapCampaignAdsets(aresCampaign2Id);
     const cbo3Adsets = mapCampaignAdsets(aresCampaign3Id);
-    const allAdsets = [...cbo1Adsets, ...cbo2Adsets, ...cbo3Adsets];
+
+    // 2026-06-10: los KPIs de arriba salían en $0 porque solo se miraban los 3 CBOs
+    // legacy de SystemConfig — las campañas nuevas de Ares-Brain ([Ares-Brain] ...) y
+    // el CBO rescate ([Ares-Rescue] ...) no entraban. Descubrimiento dinámico por
+    // nombre: toda campaña cuyo nombre empiece con "[Ares" cuenta para el total.
+    const legacyIds = new Set([aresCampaignId, aresCampaign2Id, aresCampaign3Id].filter(Boolean));
+    let dynamicAdsets = [];
+    try {
+      const campaignSnaps = await getLatestSnapshots('campaign');
+      const aresCampaignIds = campaignSnaps
+        .filter(c => /^\[ares/i.test(c.entity_name || '') && !legacyIds.has(c.entity_id))
+        .map(c => c.entity_id);
+      dynamicAdsets = aresCampaignIds.flatMap(id => mapCampaignAdsets(id));
+    } catch (e) { /* fail-open: el total cae a los 3 legacy */ }
+
+    const allAdsets = [...cbo1Adsets, ...cbo2Adsets, ...cbo3Adsets, ...dynamicAdsets];
     const cbo1Stats = calcStats(cbo1Adsets);
     const cbo2Stats = calcStats(cbo2Adsets);
     const cbo3Stats = calcStats(cbo3Adsets);

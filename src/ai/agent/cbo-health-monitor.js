@@ -256,8 +256,9 @@ async function analyzeCBO(campaignSnapshot) {
       const m = a.metrics?.[win] || {};
       acc.spend += m.spend || 0;
       acc.revenue += m.purchase_value || 0;
+      acc.purchases += m.purchases || 0; // 2026-06-10: faltaba — el panel mostraba COMPRAS 0 con revenue/ROAS reales
       return acc;
-    }, { spend: 0, revenue: 0 });
+    }, { spend: 0, revenue: 0, purchases: 0 });
 
     const w1 = agg('today');
     const w3 = agg('last_3d');
@@ -347,6 +348,7 @@ async function analyzeCBO(campaignSnapshot) {
       cbo_roas_1d, cbo_roas_3d, cbo_roas_7d,
       cbo_spend_1d: w1.spend, cbo_spend_3d: w3.spend, cbo_spend_7d: w7.spend,
       cbo_revenue_1d: w1.revenue, cbo_revenue_3d: w3.revenue, cbo_revenue_7d: w7.revenue,
+      cbo_purchases_1d: w1.purchases, cbo_purchases_3d: w3.purchases, cbo_purchases_7d: w7.purchases,
       concentration_index_1d,
       concentration_index_3d,
       concentration_sustained_3d,

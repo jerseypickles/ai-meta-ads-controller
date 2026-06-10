@@ -42,6 +42,11 @@ const cboHealthSnapshotSchema = new mongoose.Schema({
   cbo_revenue_1d: { type: Number, default: 0 },
   cbo_revenue_3d: { type: Number, default: 0 },
   cbo_revenue_7d: { type: Number, default: 0 },
+  // 2026-06-10: compras agregadas del CBO — faltaban; el panel leía cbo_purchases_7d
+  // (siempre undefined → "COMPRAS 0" junto a revenue/ROAS reales)
+  cbo_purchases_1d: { type: Number, default: 0 },
+  cbo_purchases_3d: { type: Number, default: 0 },
+  cbo_purchases_7d: { type: Number, default: 0 },
 
   // Concentración: % del spend capturado por el top adset
   concentration_index_1d: { type: Number, default: 0 },  // 0-1
