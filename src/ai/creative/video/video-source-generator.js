@@ -36,7 +36,7 @@ const FIDELITY = 'The product container and its LABEL must remain a pixel-perfec
 // Física segura para image-to-video (2026-06-09): el motor de video pega/congela objetos
 // sueltos en posiciones ambiguas (caso: spear apoyado en la tapa quedó COLGADO de la tapa
 // al abrirla). Toda imagen-fuente debe nacer sin trampas de física.
-const PHYSICS_SAFE = 'PHYSICS-SAFE FOR VIDEO (this image will be animated): every solid item must be either firmly HELD by a hand, fully INSIDE the container, or resting FLAT on a stable surface. NEVER place a loose piece on top of / leaning against the lid, the rim, an edge, or anything that could move — and never floating in mid-air. Only liquid (a brine drip) may hang.';
+const PHYSICS_SAFE = 'PHYSICS-SAFE FOR VIDEO (this image will be animated): every solid item must be either firmly HELD by a hand, fully INSIDE the container, or resting FLAT on a stable surface. NEVER place a loose piece on top of / leaning against the lid, the rim, an edge, or anything that could move — and never floating in mid-air. THE JAR/TUB ITSELF obeys the same law: it must be resting on a visible surface (shelf, table, counter) or held by a hand — NEVER suspended in mid-air. ONE HAND DOES ONE THING: if a hand is holding the piece, it cannot also be holding the jar — so the jar must sit on a surface. Only liquid (a brine drip) may hang.';
 
 // MOODS de estilo de IMAGEN — se rota uno por imagen para que las fuentes (y por
 // ende los videos) no salgan todas con el mismo look. Core: UGC real, NO-IA, fieles.

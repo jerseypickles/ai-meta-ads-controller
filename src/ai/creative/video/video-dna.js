@@ -108,6 +108,10 @@ function productUnit(name = '') {
   if (isDip(n)) return 'a generous heaping spoonful of the chunky pickled salsa/relish on a spoon, the chunks clearly visible (this product is a chunky dip, NOT a pickle chip)';
   if (isShredded(n)) return 'a forkful of tangy shredded sauerkraut/cabbage strands lifted on a fork, the fine pale fermented strands clearly visible (this is shredded cabbage, NOT a pickle chip or a slice)';
   if (isVarietyBox(n)) return 'a single WHOLE pickled cucumber/spear that MATCHES the whole pickles inside the jar/box in the shot (the variety box holds whole pickles — NOT a flat chip or a slice; the held piece and the container contents must be the same)';
+  // SPEARS antes del catch genérico (2026-06-10, caso reportado: "Garlic Spears Spicy"
+  // caía al genérico vago y el video sacaba un WHOLE pickle del frasco de spears).
+  if (n.includes('spear')) return 'a single long pickle SPEAR — a quarter-cut wedge strip with one flat cut side (NOT a whole round pickle, NOT a flat chip)';
+  if (n.includes('whole')) return 'a single WHOLE pickled cucumber (NOT a spear, NOT a chip)';
   if (n.includes('onion')) return 'a single pickled red onion slice';
   if (n.includes('tomato')) return 'a single whole pickled tomato (plump, golf-ball size)';
   if (n.includes('bean')) return 'a single pickled green bean';

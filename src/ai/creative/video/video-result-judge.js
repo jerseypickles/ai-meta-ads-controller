@@ -19,6 +19,8 @@ HUNT for these (almost always present at some level):
 - hands/fingers warping, extra fingers, rubbery/melting deformation
 - unnatural drip/physics (drip that doesn't fall right, liquid that snaps, floats or teleports)
 - ⚠️ a product/jar/object FLOATING, LEVITATING or FLYING off a surface/shelf into the air instead of being held or resting on a surface — this is a SEVERE artifact → verdict MUST be "reject"
+- 🫙 the jar/tub/container HOVERING unsupported at ANY point in the clip — no hand holding it AND no surface under it (e.g. the only visible hand holds the piece while the jar floats in front of a fridge — real reported case). Physically impossible = AI giveaway → verdict MUST be "reject"
+- 🥒 WRONG PRODUCT FORM pulled from the jar: if the label says SPEARS the held piece must be a long wedge strip, CHIPS must be flat round slices, WHOLE must be entire cucumbers. A whole pickle out of a "spears" jar (real reported case) misleads the buyer → fidelity_ok=false, verdict "reject"
 - frozen / stuck objects instead of real gravity
 - ❄️ a falling/pouring/dropping piece that HANGS, FREEZES, STUTTERS or PAUSES in mid-air for even a brief instant instead of falling continuously and smoothly under gravity — watch the whole arc of any dropping object frame by frame; a piece that "sticks" mid-fall then continues is a SEVERE freeze artifact → set frozen=true and verdict "reject"
 - 🧲 a loose solid piece GLUED to / hanging from / riding on a MOVING part (e.g. a pickle spear stuck to the LID while the lid is lifted/twisted open, an item that travels with a hand that is not holding it, or sticks to a surface it should fall from) — real gravity would make it fall; this is a SEVERE physics artifact → set frozen=true and verdict "reject"
