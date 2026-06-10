@@ -161,6 +161,24 @@ router.post('/generate-sources', async (req, res) => {
   }
 });
 
+// POST /purge-sources — RESET del pool de imágenes-fuente (2026-06-10, pedido del
+// creador: el pool pre-physics-safe producía anomalías — segunda mano de la nada,
+// frascos flotando). Marca como 'rejected' (NO borra: el historial queda para el
+// DNA y los videos ya generados siguen referenciando su fuente). Después de purgar,
+// regenerar con /generate-sources (las nuevas nacen con todas las reglas).
+router.post('/purge-sources', async (req, res) => {
+  try {
+    const r = await CreativeProposal.updateMany(
+      { media_type: 'image', tags: 'video_source', status: { $nin: ['failed', 'rejected'] } },
+      { $set: { status: 'rejected', rejection_reason: 'pool reset 2026-06-10 — fuentes pre physics-safe (manos fantasma / frascos flotando)' } }
+    );
+    logger.info(`[VIDEO-SOURCE] 🧹 pool purgado por el creador: ${r.modifiedCount} fuentes marcadas rejected`);
+    res.json({ purged: r.modifiedCount });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /backfill-video-judge — juzga con Gemini los videos EXISTENTES (que tienen
 // video_url) para tener data ya (sin esperar generaciones nuevas). Async + recalcula
 // el reconciliador al terminar → llena la comparación Claude vs Gemini.
