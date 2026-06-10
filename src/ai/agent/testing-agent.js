@@ -29,11 +29,11 @@ const VIDEO_TEST_DAILY_BUDGET = parseInt(process.env.VIDEO_TEST_DAILY_BUDGET, 10
 // CPM $14, 76% de las ventas). Subimos los caps de VIDEO fuerte (la economía lo justifica).
 // Foto queda igual (1.96x, no merece más volumen).
 const MAX_CONCURRENT_VIDEO_TESTS = 24; // 2026-06-05: 12→24 (extremo video)
-// Cap diario TOTAL de video queda en $600 (ratificado 2026-06-10): a $50/test el máximo
-// implícito es 12 concurrentes — el ritmo de lanzamiento de Dionisio (~12/día). Como los
-// tests se resuelven más rápido a $50, los slots rotan más rápido; si hace cola, la cola
-// es priorización natural. El techo de gasto total NO sube. Mejor señal, mismo riesgo.
-const MAX_DAILY_VIDEO_TESTING_BUDGET = parseInt(process.env.MAX_DAILY_VIDEO_TESTING_BUDGET, 10) || 600;
+// Cap diario TOTAL de video: $600→$900 (2026-06-10, "metele más testeo"). A $50/test son
+// 18 slots concurrentes, alineado con Dionisio a 4x/día × 8/ciclo. El video es el lever
+// más fuerte (4.85x, 76% de las ventas) — el cap es techo, no compromiso: solo se llena
+// si hay videos aprobados que testear. Env-overridable.
+const MAX_DAILY_VIDEO_TESTING_BUDGET = parseInt(process.env.MAX_DAILY_VIDEO_TESTING_BUDGET, 10) || 900;
 const MAX_DAILY_TESTING_BUDGET = parseInt(process.env.MAX_DAILY_TESTING_BUDGET, 10) || 400; // Cap diario FOTO. Env-overridable. 2026-06-03: 1000→400 (foto flojo).
 const MAX_LAUNCHES_PER_CYCLE = 6; // 2026-06-05: 3→6 (más tests nuevos/ciclo; el video lo aprovecha)
 const TEST_MAX_DAYS = 7;

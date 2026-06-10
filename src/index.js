@@ -1488,16 +1488,17 @@ function initCronJobs() {
   }, { timezone: TIMEZONE, name: 'video-source-generator' });
   logger.info('  [*] Video-Source Generator — 5x/día (pool máx 30 para Dionisio)');
 
-  // Dionisio — anima videos 2x/día (9am, 5pm ET) desde el pool de imágenes-fuente.
-  // Los deja en 'pending_video_review' para APROBACIÓN MANUAL del creador (no es
-  // autónomo end-to-end — el creador elige qué videos van a testeo). Skip si ya
-  // hay muchos esperando review (no inflar la cola con videos sin aprobar = no quemar
-  // créditos de video, que es caro). Cap via DIONYSUS_PENDING_REVIEW_CAP.
-  cron.schedule('0 9,17 * * *', async () => {
+  // Dionisio — anima videos 4x/día (9am, 1pm, 5pm, 9pm ET) desde el pool de imágenes-
+  // fuente. 2026-06-10: 2x→4x (pedido del creador) — el pool de fuentes estaba lleno y
+  // los tests a $50/d resuelven en 1-2 días: Dionisio era el cuello de botella del
+  // pipeline de video. Los dudosos quedan en 'pending_video_review' para APROBACIÓN
+  // MANUAL; skip si la cola de review está llena (no quemar créditos de Seedance en
+  // videos que nadie aprueba). Cap via DIONYSUS_PENDING_REVIEW_CAP.
+  cron.schedule('0 9,13,17,21 * * *', async () => {
     try {
       const CreativeProposal = require('./db/models/CreativeProposal');
       const pendingReview = await CreativeProposal.countDocuments({ media_type: 'video', status: 'pending_video_review' });
-      const cap = parseInt(process.env.DIONYSUS_PENDING_REVIEW_CAP || '8', 10);
+      const cap = parseInt(process.env.DIONYSUS_PENDING_REVIEW_CAP || '10', 10);
       if (pendingReview >= cap) {
         logger.info(`[CRON] Dionisio SKIP — ${pendingReview} videos esperando review (cap ${cap}); aprobá/rechazá antes de generar más`);
         return;
@@ -1509,7 +1510,7 @@ function initCronJobs() {
       logger.error(`[CRON] Dionisio falló: ${err.message}`);
     }
   }, { timezone: TIMEZONE, name: 'dionysus' });
-  logger.info('  [*] Dionisio — 2x/día (9am, 5pm ET) genera videos → review MANUAL');
+  logger.info('  [*] Dionisio — 4x/día (9am, 1pm, 5pm, 9pm ET) genera videos → review MANUAL para dudosos');
 
   // Hermes Agent — 5x/día (9am, 12pm, 3pm, 6pm, 9pm ET) — foot traffic NJ store
   // Aumentado de 2x → 5x el 14-may-2026 para acelerar inyección de creativos
