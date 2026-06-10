@@ -22,6 +22,10 @@ const creativeProposalSchema = new mongoose.Schema({
   end_frame_base64: { type: String, default: '' },
   // En videos: si este render usó el par first+last (cohorte A/B para el reconciliador)
   used_last_frame: { type: Boolean, default: false, index: true },
+  // POST-PRO overlay (2026-06-10): hook de texto estilo UGC quemado en los primeros ~3s.
+  hook_text: { type: String, default: '' },                       // en sources: el gancho generado por Claude
+  used_text_overlay: { type: Boolean, default: false, index: true }, // en videos: cohorte A/B del overlay
+  video_url_raw: { type: String, default: '' },                   // render crudo de Seedance (pre-overlay, para debug)
   // URL de la imagen en Meta CDN — cached cuando recuperamos via Meta API.
   // Para proposals viejas sin image_base64, fetcheamos via meta_creative_id
   // y cacheamos aquí. Las URLs de Meta expiran eventualmente, pero se refrescan

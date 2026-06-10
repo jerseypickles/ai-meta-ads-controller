@@ -174,6 +174,21 @@ app.get('/vsrc/:id.png', async (req, res) => {
   }
 });
 
+// Video FINAL post-producido (hook overlay quemado). Público: Meta lo descarga al
+// lanzar el test y el result-judge (Gemini) lo mira desde acá. (2026-06-10)
+app.get('/vfinal/:id.mp4', (req, res) => {
+  try {
+    const { finalPathFor } = require('../ai/creative/video/video-postpro');
+    const p = finalPathFor(req.params.id);
+    if (!p || !require('fs').existsSync(p)) return res.status(404).send('not found');
+    res.set('Content-Type', 'video/mp4');
+    res.set('Cache-Control', 'public, max-age=86400');
+    return res.sendFile(p);
+  } catch (e) {
+    return res.status(400).send('bad request');
+  }
+});
+
 // Frame FINAL del par first+last (piloto 2026-06-09). Mismo patrón público que /vsrc.
 app.get('/vsrc/:id/end.png', async (req, res) => {
   try {

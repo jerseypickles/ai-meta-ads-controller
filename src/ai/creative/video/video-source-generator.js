@@ -86,17 +86,17 @@ async function generateCopy(productName) {
     const claude = new Anthropic({ apiKey });
     const resp = await claude.messages.create({
       model: config.claude.model,
-      max_tokens: 200,
+      max_tokens: 250,
       messages: [{
         role: 'user',
-        content: `Write punchy UGC ad copy in ENGLISH (US market) for a short video of Jersey Pickles "${productName}". The product shown is: ${unit}. ${typeNote} Return ONLY JSON: {"headline":"<max 6 words, hooky>","primary_text":"<1-2 short sentences, casual, appetizing, with 1-2 emojis>"}`
+        content: `Write punchy UGC ad copy in ENGLISH (US market) for a short video of Jersey Pickles "${productName}". The product shown is: ${unit}. ${typeNote} Return ONLY JSON: {"headline":"<max 6 words, hooky>","primary_text":"<1-2 short sentences, casual, appetizing, with 1-2 emojis>","hook_text":"<ON-SCREEN text hook burned into the first 2 seconds of the video: max 5 words, ALL ENERGY, scroll-stopping, native TikTok style (e.g. 'POV: PICKLE HEAVEN', 'WAIT FOR THE DRIP'), NO emojis, NO punctuation except : and ..., NO brand name>"}`
       }]
     });
     const txt = resp.content?.[0]?.text || '';
     const m = txt.match(/\{[\s\S]*\}/);
     if (m) {
       const j = JSON.parse(m[0]);
-      if (j.headline) return { headline: j.headline, primary_text: j.primary_text || '' };
+      if (j.headline) return { headline: j.headline, primary_text: j.primary_text || '', hook_text: (j.hook_text || '').slice(0, 40) };
     }
   } catch (e) {
     logger.warn(`[VIDEO-SOURCE] copy falló (uso fallback): ${e.message}`);
@@ -281,12 +281,15 @@ async function generateVideoSources() {
       }
 
       const copy = await generateCopy(product.product_name);
+      // Fallback de hook si el LLM no lo dio: primeras 5 palabras del headline
+      const hookText = copy.hook_text || (copy.headline || '').split(/\s+/).slice(0, 5).join(' ');
       await CreativeProposal.create({
         product_id: product._id,
         product_name: product.product_name,
         adset_id: 'video_source',
         headline: copy.headline,
         primary_text: copy.primary_text,
+        hook_text: hookText,
         link_url: product.link_url || 'https://jerseypickles.com',
         image_base64: result.base64,
         end_frame_base64: endFrameBase64,

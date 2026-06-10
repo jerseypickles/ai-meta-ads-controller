@@ -31,6 +31,9 @@ const HIGH_PHYSICS_MOTIONS = new Set(['pour_bowl']);
 // cuando la fuente lo trae. 0.5 = A/B 50/50 (cohorte comparable en el reconciliador).
 // Subir a 1.0 cuando el A/B confirme que mejora; bajar a 0 para apagar sin deploy.
 const LAST_FRAME_RATE = parseFloat(process.env.SEEDANCE_LAST_FRAME_RATE || '0.5');
+// POST-PRO hook overlay (2026-06-10): % de videos que llevan el texto-gancho quemado
+// (estilo UGC nativo, Anton bold). A/B 50/50 — el overlay debería mover el THUMBSTOP.
+const OVERLAY_RATE = parseFloat(process.env.VIDEO_OVERLAY_RATE || '0.5');
 
 /** Mapea la sugerencia del judge a un motion del DNA. Fallback raro: la imagen-fuente
  *  casi siempre trae su motion baked, así que esto solo aplica a fuentes legacy. NO
@@ -198,14 +201,27 @@ async function runDionysus() {
         // mid-render, reconcileStuckVideos puede recuperarlo desde PiAPI.
         onSubmit: (taskId) => CreativeProposal.findByIdAndUpdate(placeholder._id, { $set: { video_task_id: taskId, used_last_frame: useLastFrame } })
       });
+      // POST-PRO: hook text overlay (A/B 50%) — se quema ANTES del juez para que Gemini
+      // juzgue el video final tal como lo verá la gente. Fail-open: sin overlay, sale crudo.
+      let finalVideoUrl = vid.video_url;
+      let usedOverlay = false;
+      const hookText = (c.hook_text || '').trim();
+      if (hookText && Math.random() < OVERLAY_RATE) {
+        try {
+          const { applyHookOverlay } = require('../creative/video/video-postpro');
+          const overlaid = await applyHookOverlay({ videoUrl: vid.video_url, hookText, outId: String(placeholder._id) });
+          if (overlaid) { finalVideoUrl = overlaid; usedOverlay = true; }
+        } catch (e) { logger.warn(`[DIONISIO] overlay falló (sale crudo): ${e.message}`); }
+      }
+
       // JUEZ DE VIDEO REAL (Gemini mira el mp4) — ve movimiento/artefactos/freezing
       // que el juez de imagen no puede. Auto-rechaza videos rotos y gatea el auto-aprobado.
       let videoVerdict = null;
-      try { videoVerdict = await require('../creative/video/video-result-judge').judgeVideoResult(vid.video_url, c.product_name, variant); } catch (_) { /* fail-open */ }
+      try { videoVerdict = await require('../creative/video/video-result-judge').judgeVideoResult(finalVideoUrl, c.product_name, variant); } catch (_) { /* fail-open */ }
 
       if (videoVerdict && videoVerdict.verdict === 'reject') {
         await CreativeProposal.findByIdAndUpdate(placeholder._id, {
-          $set: { status: 'rejected', video_url: vid.video_url, video_task_id: vid.task_id, video_result_verdict: videoVerdict, rejection_reason: `juez de video: ${videoVerdict.notes || 'roto (artefactos/freezing)'}` }
+          $set: { status: 'rejected', video_url: finalVideoUrl, video_url_raw: vid.video_url, used_text_overlay: usedOverlay, hook_text: usedOverlay ? hookText : '', video_task_id: vid.task_id, video_result_verdict: videoVerdict, rejection_reason: `juez de video: ${videoVerdict.notes || 'roto (artefactos/freezing)'}` }
         });
         rejected++;
         logger.info(`[DIONISIO] 🚫 video roto auto-rechazado: "${(c.headline || '').slice(0, 30)}" — ${videoVerdict.notes}`);
@@ -221,11 +237,11 @@ async function runDionysus() {
         && (!videoVerdict || videoVerdict.verdict === 'good'); // el juez de video debe aprobarlo
       const newStatus = autoOk ? 'ready' : 'pending_video_review';
       await CreativeProposal.findByIdAndUpdate(placeholder._id, {
-        $set: { status: newStatus, video_url: vid.video_url, video_task_id: vid.task_id, video_result_verdict: videoVerdict, ...(autoOk ? { auto_approved_at: new Date() } : {}) }
+        $set: { status: newStatus, video_url: finalVideoUrl, video_url_raw: vid.video_url, used_text_overlay: usedOverlay, hook_text: usedOverlay ? hookText : '', video_task_id: vid.task_id, video_result_verdict: videoVerdict, ...(autoOk ? { auto_approved_at: new Date() } : {}) }
       });
       generated++;
-      results.push({ source: c._id, headline: c.headline, score: verdict.score, video_url: vid.video_url, variant, auto_approved: autoOk });
-      logger.info(`[DIONISIO] 🎬 ${autoOk ? '⚡ AUTO-APROBADO → ready (Prometheus)' : 'pendiente review'}: "${(c.headline || '').slice(0, 30)}" (score ${verdict.score}, ${variant}${useLastFrame ? ', 🎬 first+last' : ''}${videoVerdict ? `, video ${videoVerdict.verdict} ${videoVerdict.overall}` : ''})`);
+      results.push({ source: c._id, headline: c.headline, score: verdict.score, video_url: finalVideoUrl, variant, auto_approved: autoOk });
+      logger.info(`[DIONISIO] 🎬 ${autoOk ? '⚡ AUTO-APROBADO → ready (Prometheus)' : 'pendiente review'}: "${(c.headline || '').slice(0, 30)}" (score ${verdict.score}, ${variant}${useLastFrame ? ', 🎬 first+last' : ''}${usedOverlay ? `, 📝 "${hookText}"` : ''}${videoVerdict ? `, video ${videoVerdict.verdict} ${videoVerdict.overall}` : ''})`);
     } catch (e) {
       await CreativeProposal.findByIdAndUpdate(placeholder._id, {
         $set: { status: 'failed', rejection_reason: `video gen failed: ${e.message}` }

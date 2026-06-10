@@ -49,7 +49,7 @@ function outcomeScore(status, m = {}) {
 async function reconcile() {
   const vids = await CreativeProposal.find({
     media_type: 'video', status: { $in: ['testing', 'graduated', 'killed', 'expired'] }
-  }).select('motion_variant product_name video_judge_score video_judge_breakdown video_result_verdict creative_signals status used_last_frame').lean();
+  }).select('motion_variant product_name video_judge_score video_judge_breakdown video_result_verdict creative_signals status used_last_frame used_text_overlay').lean();
 
   if (!vids.length) { logger.info('[VIDEO-LEARNING] sin videos con outcome aún'); return null; }
 
@@ -179,6 +179,17 @@ async function reconcile() {
     return { n: set.length, avg_hold: +(hold * 100).toFixed(0), avg_outcome: +out.toFixed(1) };
   };
   const last_frame_ab = { with_last: abCohort(true), without: abCohort(false) };
+
+  // ── A/B hook overlay (post-pro 2026-06-10): el overlay es un GANCHO → su métrica
+  // de verdad es el THUMBSTOP (no el outcome mezclado) ──
+  const overlayCohort = (flag) => {
+    const set = settled.filter(v => !!v.used_text_overlay === flag);
+    if (!set.length) return { n: 0 };
+    const thumb = set.reduce((a, v) => a + ((byProp[String(v._id)] || {}).thumbstop_rate || 0), 0) / set.length;
+    const hold = set.reduce((a, v) => a + ((byProp[String(v._id)] || {}).hold_rate || 0), 0) / set.length;
+    return { n: set.length, avg_thumbstop: +(thumb * 100).toFixed(1), avg_hold: +(hold * 100).toFixed(0) };
+  };
+  const overlay_ab = { with_overlay: overlayCohort(true), without: overlayCohort(false) };
   try {
     const since14 = new Date(Date.now() - 14 * 86400000);
     const [rejW, totW, rejN, totN] = await Promise.all([
@@ -204,6 +215,7 @@ async function reconcile() {
     pattern_signals,
     watch_curve,
     last_frame_ab,
+    overlay_ab,
     judge: { score_corr, video_score_corr, video_hold_corr, claude_hold_corr, dim_corr: dimCorr }
   };
   await SystemConfig.set(LEARNINGS_KEY, learnings, 'video_learning');
@@ -213,7 +225,10 @@ async function reconcile() {
   // Señales top en el log (2026-06-10): sin esto el signal_rank solo vive en Mongo y
   // no se puede auditar "qué explica el outcome" desde los logs.
   const sigLog = (signal_rank || []).slice(0, 3).map(s => `${s.signal}:${s.corr}`).join(' ');
-  logger.info(`[VIDEO-LEARNING] reconciliado: ${settled.length} firmes · top motion ${motionRank[0]?.key || '—'} (n=${motionRank[0]?.n ?? 0}) · juez score_corr ${score_corr ?? 'n/a'}${sigLog ? ` · señales top: ${sigLog}` : ''}${abLog}`);
+  const ovLog = overlay_ab.with_overlay.n > 0
+    ? ` · A/B overlay thumbstop ${overlay_ab.with_overlay.avg_thumbstop}%(n=${overlay_ab.with_overlay.n}) vs ${overlay_ab.without.avg_thumbstop ?? '—'}%(n=${overlay_ab.without.n})`
+    : '';
+  logger.info(`[VIDEO-LEARNING] reconciliado: ${settled.length} firmes · top motion ${motionRank[0]?.key || '—'} (n=${motionRank[0]?.n ?? 0}) · juez score_corr ${score_corr ?? 'n/a'}${sigLog ? ` · señales top: ${sigLog}` : ''}${abLog}${ovLog}`);
   return learnings;
 }
 
