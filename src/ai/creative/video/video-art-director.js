@@ -44,12 +44,13 @@ async function inventCreativeConcept(productName, inspiration = '', signalGuidan
   try {
     const client = new Anthropic({ apiKey });
     const resp = await client.messages.create({
-      // creativeModel (Fable 5 en prueba 2026-06-09) — mismo tier que el director de Apollo
+      // creativeModel (Fable 5 en prueba 2026-06-09) — mismo tier que el director de Apollo.
+      // max_tokens 600→1200 (2026-06-10): Fable narra más que Sonnet; 600 truncaba el JSON.
       model: config.claude.creativeModel || config.claude.model,
-      max_tokens: 600,
+      max_tokens: 1200,
       messages: [{ role: 'user', content: CONCEPT_PROMPT(productName, inspiration, signalGuidance) }]
     });
-    const text = resp.content?.[0]?.text || '';
+    const text = (resp.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
     const json = text.match(/\{[\s\S]*\}/);
     if (!json) return null;
     const r = JSON.parse(json[0]);

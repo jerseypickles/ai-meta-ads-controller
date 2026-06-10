@@ -14,6 +14,8 @@ const { productUnit } = require('./video-dna');
 
 const PROMPT = (productName, expectedUnit) => `You are simulating a REAL person scrolling Instagram/TikTok who sees this image as the FIRST FRAME of a 5-second UGC food-ad for "${productName}". Judge honestly whether real people would STOP, crave it, trust it, and want to buy — not whether it is merely "technically fine". The video animates this static frame (image-to-video); it cannot add objects.
 
+CRITICAL OUTPUT RULE: respond with ONLY the JSON object — no preamble, no analysis text before it, no markdown fences, no explanation after. Your entire response must start with { and end with }.
+
 FIDELITY GATE (check FIRST): the hero item the hand holds/shows SHOULD be: ${expectedUnit}. If it shows the WRONG thing (e.g. a solid pickle chip when the product is a chunky salsa/dip, or the wrong food), real people are misled → fidelidad fails and the OVERALL score must be 15-25. A correct jar LABEL is NOT enough — the held/hero item must match.
 COHERENCE GATE (check too): the item in the hand must MATCH the contents visible inside the jar/box/container in the SAME image. If the hand holds a flat CHIP while the container clearly shows WHOLE pickles or spears (or any mismatch between held item and container contents, or impossible proportions), the scene is INCOHERENT → fidelidad fails, OVERALL score 15-25. A real person would notice it doesn't add up.
 PHYSICS GATE (this frame WILL be animated — check carefully): if any loose solid item is perched on / leaning against / stuck to a lid, rim, edge, or any element that the motion would move, or floats unsupported in mid-air, the video engine will GLUE it to the moving part or FREEZE it (known failure: a pickle spear resting on the lid ended up hanging from the lid when it opened). If you see this trap → add "physics_risk: <what and where>" to que_falla, cap the OVERALL score at 40 and set suitable=false. Items firmly held by a hand, fully inside the container, or lying flat on a stable surface are fine; a hanging liquid drip is fine.
@@ -67,14 +69,17 @@ async function judgeVideoSuitability(imageBase64, productName = 'the product') {
 
   try {
     const resp = await client.messages.create({
-      // judgeModel (Fable 5) — mismo tier que image-judge: vision fina que custodia el gasto de Seedance
+      // judgeModel (Fable 5) — mismo tier que image-judge: vision fina que custodia el gasto de Seedance.
+      // max_tokens 700→2000 (2026-06-10): Fable es más narrativo que Sonnet — con 700 el JSON
+      // salía truncado y los 18 candidatos del pool cayeron con "judge sin JSON" (fail-closed).
       model: config.claude.judgeModel || config.claude.model,
-      max_tokens: 700,
+      max_tokens: 2000,
       messages: [{ role: 'user', content }]
     });
-    const text = resp.content?.[0]?.text || '';
+    // Fable puede emitir más de un bloque — concatenar todos los de texto.
+    const text = (resp.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
     const json = text.match(/\{[\s\S]*\}/);
-    if (!json) throw new Error('judge sin JSON');
+    if (!json) throw new Error(`judge sin JSON (raw: "${text.slice(0, 150).replace(/\n/g, ' ')}…")`);
     const r = JSON.parse(json[0]);
     const score = Math.max(0, Math.min(100, r.score || 0));
     // suitable: respeta el del modelo pero gateado por MIN_SCORE
