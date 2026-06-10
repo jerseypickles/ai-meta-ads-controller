@@ -8,7 +8,9 @@ services:
     disk:
       name: uploads
       mountPath: /data/uploads
-      sizeGB: 1
+      # 1→10GB (2026-06-10): el GB quedó lleno (archivos históricos) y la post-pro de
+      # Dionisio (videos con overlay en vfinal/) fallaba con ENOSPC. ~$0.25/GB/mes.
+      sizeGB: 10
     envVars:
       - key: NODE_ENV
         value: production
@@ -32,8 +34,10 @@ services:
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
+      # 2026-06-10: estaba clavado en Sonnet 4.5 legacy — tapaba el default del config
+      # y tenía a copy/señales/brain corriendo en el modelo viejo sin que se notara.
       - key: CLAUDE_MODEL
-        value: claude-sonnet-4-5-20250929
+        value: claude-sonnet-4-6
       - key: MONGODB_URI
         sync: false
       - key: DASHBOARD_PORT
