@@ -57,7 +57,12 @@ const MIN_READY_POOL = 5;
 const DELIVERY_MIN_DAYS = 1.25;
 // Post-graduación: un graduate cuyo cash-adj 3d cayó >50% vs su ROAS al graduar Y está
 // bajo el bar (<2x) = winner falso desinflado → pausar antes de que lo escalen.
-const DEFLATE_DROP_RATIO = 0.5;
+// 2026-06-11: política escalonada (decisión del creador) — el drop-ratio fijo y el bar
+// de 2x apagaban graduates aún rentables (caso "Chips Forever" a 1.59x). Ahora: pausar
+// solo si pierde en AMBAS ventanas (3d dispara, 7d confirma). 1.2-2x = vivo sin escalar
+// (Athena/Ares ya exigen 3x para subir budget). Env-overridable.
+const DEFLATE_PAUSE_ROAS_3D = parseFloat(process.env.DEFLATE_PAUSE_ROAS_3D || '1.2');
+const DEFLATE_PAUSE_ROAS_7D = parseFloat(process.env.DEFLATE_PAUSE_ROAS_7D || '1.5');
 const DEFLATE_MIN_AGE_H = 48;
 
 // ── Señales propias de VIDEO (Dionisio) — engagement del creativo ──
@@ -1387,21 +1392,27 @@ async function updateGraduatedMetrics() {
         }
       }
 
-      // GUARD POST-GRADUACIÓN: un graduate que se DESINFLÓ (cayó >50% vs su ROAS al
-      // graduar Y ahora rinde bajo el bar) = winner falso → pausar antes de que Ares/
-      // Athena lo escalen (corta los reverts en el origen). Lag-safe: ≥48h post-grad +
-      // ventana 3d + spend real. Usa cash-adj (haircut corregido).
+      // GUARD POST-GRADUACIÓN — política ESCALONADA con doble ventana (2026-06-11,
+      // decisión del creador tras los apagados de graduates con historial de venta):
+      //   PAUSAR solo si  cash-adj 3d < 1.2x  (perdiendo AHORA — el 3d dispara)
+      //              Y    cash-adj 7d < 1.5x  (la semana completa tampoco da el mínimo
+      //                                        viable — confirma que no es bache/lag de
+      //                                        atribución 7-day-click)
+      //   Banda 1.2x-2x: el adset sigue VIVO pero sin escalar — eso sale gratis: Athena
+      //   y Ares exigen ROAS 3d ≥3x para subir budget, los mediocres nunca reciben más.
+      // Lag-safe: ≥48h post-grad + spend real en la ventana. Cash-adj (haircut Demeter).
       if (test.phase === 'graduated' && test.graduated_at && !test.deflated_at && test.metrics_at_graduation) {
         const gradAgeH = (Date.now() - new Date(test.graduated_at).getTime()) / 3600000;
         if (gradAgeH >= DEFLATE_MIN_AGE_H) {
           const snap = await MetricSnapshot.findOne({ entity_type: 'adset', entity_id: test.test_adset_id }).sort({ snapshot_at: -1 }).lean();
           const m3 = snap?.metrics?.last_3d || {};
+          const m7 = snap?.metrics?.last_7d || {};
           const cashAdj3 = (m3.roas || 0) * cashHaircut;
+          const cashAdj7 = (m7.roas || 0) * cashHaircut;
           const gradRoas = test.metrics_at_graduation.roas || 0;
-          const isDeflated = gradRoas > 0
-            && (m3.spend || 0) >= GRADUATED_BUDGET            // gastó ≥~1 día post-grad
-            && cashAdj3 < gradRoas * DEFLATE_DROP_RATIO       // cayó >50% vs su ROAS al graduar
-            && cashAdj3 < GRADUATE_MIN_ROAS;                  // y está bajo el bar (<2x)
+          const isDeflated = (m3.spend || 0) >= GRADUATED_BUDGET     // spend real en la ventana
+            && cashAdj3 < DEFLATE_PAUSE_ROAS_3D                      // perdiendo AHORA
+            && cashAdj7 < DEFLATE_PAUSE_ROAS_7D;                     // y el 7d lo confirma
           if (isDeflated) {
             try {
               const { getMetaClient } = require('../../meta/client');
@@ -1410,12 +1421,12 @@ async function updateGraduatedMetrics() {
               await ActionLog.create({
                 entity_type: 'adset', entity_id: test.test_adset_id, entity_name: test.test_adset_name,
                 action: 'pause_adset', before_value: +gradRoas.toFixed(2), after_value: +cashAdj3.toFixed(2),
-                reasoning: `[POST-GRAD DEFLATE] graduó a ${gradRoas.toFixed(2)}x, ahora cash-adj 3d ${cashAdj3.toFixed(2)}x (cayó >50%, <${GRADUATE_MIN_ROAS}x). Pausado antes de que se escale un winner falso.`,
+                reasoning: `[POST-GRAD DEFLATE] graduó a ${gradRoas.toFixed(2)}x; ahora cash-adj 3d ${cashAdj3.toFixed(2)}x (<${DEFLATE_PAUSE_ROAS_3D}) Y 7d ${cashAdj7.toFixed(2)}x (<${DEFLATE_PAUSE_ROAS_7D}) — perdiendo en ambas ventanas, no es bache. Pausado.`,
                 confidence: 'high', agent_type: 'testing_agent', success: true, executed_at: new Date(),
-                metadata: { post_grad_deflation: true }
+                metadata: { post_grad_deflation: true, cash_adj_3d: +cashAdj3.toFixed(2), cash_adj_7d: +cashAdj7.toFixed(2) }
               });
               deflated++;
-              logger.info(`[TESTING-AGENT] 📉 GRADUATE DEFLATÓ: "${test.test_adset_name}" ${gradRoas.toFixed(2)}x→${cashAdj3.toFixed(2)}x cash-adj 3d — pausado`);
+              logger.info(`[TESTING-AGENT] 📉 GRADUATE DEFLATÓ: "${test.test_adset_name}" ${gradRoas.toFixed(2)}x → 3d ${cashAdj3.toFixed(2)}x + 7d ${cashAdj7.toFixed(2)}x cash-adj — pausado (doble ventana)`);
               continue;
             } catch (e) {
               logger.warn(`[TESTING-AGENT] deflate pause falló ${test.test_adset_id}: ${e.message}`);
