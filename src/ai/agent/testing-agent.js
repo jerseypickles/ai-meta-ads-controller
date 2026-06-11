@@ -28,7 +28,10 @@ const VIDEO_TEST_DAILY_BUDGET = parseInt(process.env.VIDEO_TEST_DAILY_BUDGET, 10
 // 2026-06-05 "Dionisio extremo": el video probó ser el lever más fuerte (4.85x ROAS,
 // CPM $14, 76% de las ventas). Subimos los caps de VIDEO fuerte (la economía lo justifica).
 // Foto queda igual (1.96x, no merece más volumen).
-const MAX_CONCURRENT_VIDEO_TESTS = 24; // 2026-06-05: 12→24 (extremo video)
+// 2026-06-11: 24→30 + env-overridable — con la cola llena de tests viejos baratos
+// ($25-35) el cap de concurrencia bloqueaba los aprobados nuevos aunque el budget
+// tenía espacio ($725/$900). El cap de $900/día sigue siendo el guardián del gasto.
+const MAX_CONCURRENT_VIDEO_TESTS = parseInt(process.env.MAX_CONCURRENT_VIDEO_TESTS, 10) || 30;
 // Cap diario TOTAL de video: $600→$900 (2026-06-10, "metele más testeo"). A $50/test son
 // 18 slots concurrentes, alineado con Dionisio a 4x/día × 8/ciclo. El video es el lever
 // más fuerte (4.85x, 76% de las ventas) — el cap es techo, no compromiso: solo se llena
