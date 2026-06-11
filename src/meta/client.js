@@ -1411,7 +1411,8 @@ class MetaClient {
               );
               adsRelinked++;
             } catch (linkErr) {
-              logger.warn(`[duplicateAdSet] re-link ad ${ad.id} → ${newAdsetId} falló: ${linkErr.message}`);
+              const linkMeta = linkErr.response?.data?.error;
+              logger.warn(`[duplicateAdSet] re-link ad ${ad.id} → ${newAdsetId} falló: ${linkErr.message}${linkMeta ? ` · meta: ${JSON.stringify(linkMeta).slice(0, 300)}` : ''}`);
               adsFailed++;
             }
           }
@@ -1420,7 +1421,8 @@ class MetaClient {
           result = { copied_adset_id: newAdsetId, _ads_relinked: adsRelinked, _ads_failed: adsFailed };
           usedFallback = true;
         } catch (fallbackErr) {
-          logger.error(`[duplicateAdSet] fallback falló: ${fallbackErr.message}`);
+          const fbMeta = fallbackErr.response?.data?.error;
+          logger.error(`[duplicateAdSet] fallback falló: ${fallbackErr.message}${fbMeta ? ` · meta: ${JSON.stringify(fbMeta).slice(0, 400)}` : ''}`);
           // Si fallback falló, seguir al error handling original
           const detail = [
             metaErr.error_user_title || metaErr.message,
