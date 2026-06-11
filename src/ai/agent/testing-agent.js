@@ -1417,7 +1417,16 @@ async function updateGraduatedMetrics() {
               deflated++;
               logger.info(`[TESTING-AGENT] 📉 GRADUATE DEFLATÓ: "${test.test_adset_name}" ${gradRoas.toFixed(2)}x→${cashAdj3.toFixed(2)}x cash-adj 3d — pausado`);
               continue;
-            } catch (e) { logger.warn(`[TESTING-AGENT] deflate pause falló ${test.test_adset_id}: ${e.message}`); }
+            } catch (e) {
+              logger.warn(`[TESTING-AGENT] deflate pause falló ${test.test_adset_id}: ${e.message}`);
+              // 400 de Meta = el adset ya no existe / no es pausable — marcar deflated_at
+              // para cortar el retry infinito cada 30 min (caso 2026-06-11: un adset
+              // borrado se reintentaba desde hacía 24h+).
+              if (e.response?.status === 400 || /status code 400/.test(e.message || '')) {
+                await TestRun.findByIdAndUpdate(test._id, { $set: { deflated_at: new Date() } }).catch(() => {});
+                logger.info(`[TESTING-AGENT] deflate ${test.test_adset_id}: 400 de Meta → marcado deflated para no reintentar`);
+              }
+            }
           }
         }
       }
