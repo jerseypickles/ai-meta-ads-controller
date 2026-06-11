@@ -493,6 +493,180 @@ async function executeStarvedRescue(cboSnapshot, adsets, getRescueCbo) {
   return executed;
 }
 
+// ═══ CBO FILL (2026-06-11, pedido del creador) ═══════════════════════════════
+// Los CBOs de Ares nacían con 1-3 adsets — muy pocos para que Meta optimice el
+// reparto (un CBO sano necesita 4+ opciones). Este detector COMPLETA los CBOs
+// existentes de Ares con winners probados de la cuenta, en vez de crear más
+// campañas: "mejorar los CBOs que ya creó".
+const CBO_FILL_TARGET_ADSETS = parseInt(process.env.ARES_CBO_FILL_TARGET || '4', 10);
+const CBO_FILL_MAX_PER_CYCLE = 2;       // gradual: máx 2 clones por CBO por ciclo
+const CBO_FILL_MIN_CBO_AGE_DAYS = 1;    // dejar respirar al CBO recién creado
+const CBO_FILL_SRC_ROAS_MIN = 2.0;      // el candidato es winner probado…
+const CBO_FILL_SRC_PURCHASES_MIN = 2;   // …con ≥2 compras (1 = moneda al aire)
+const CBO_FILL_SRC_SPEND_MIN_7D = 30;   // …sobre spend real
+const CBO_FILL_SRC_AGE_MIN_DAYS = 5;    // …y fuera del learning fresco
+
+/** Winners de la cuenta candidatos a poblar un CBO de Ares (excluye Ares/clones/test/excluidos). */
+async function getFillCandidates(targetCampaignId, targetAdsetNames) {
+  const { isExcludedEntity } = require('../../config/excluded-entities');
+  const all = await MetricSnapshot.aggregate([
+    { $match: { entity_type: 'adset' } },
+    { $sort: { entity_id: 1, snapshot_at: -1 } },
+    { $group: { _id: '$entity_id', doc: { $first: '$$ROOT' } } },
+    { $replaceRoot: { newRoot: '$doc' } },
+    { $match: { status: 'ACTIVE' } }
+  ]);
+  // Edad real vía first-seen (created_time de Meta viene null — ver gates 2026-06-10)
+  const ids = all.map(a => a.entity_id);
+  let firstSeenAt = {};
+  if (ids.length) {
+    try {
+      const fs = await MetricSnapshot.aggregate([
+        { $match: { entity_type: 'adset', entity_id: { $in: ids } } },
+        { $group: { _id: '$entity_id', first_at: { $min: '$snapshot_at' } } }
+      ]);
+      for (const f of fs) firstSeenAt[f._id] = f.first_at;
+    } catch (_) { /* fail-closed via age==null */ }
+  }
+  const targetNorm = (targetAdsetNames || []).map(n => String(n || '').replace(/^\[Ares[^\]]*\]\s*/i, '').slice(0, 25).toLowerCase());
+  return all
+    .map(a => {
+      const m7 = a.metrics?.last_7d || {};
+      const firstAt = a.created_time || firstSeenAt[a.entity_id];
+      return {
+        id: a.entity_id, name: a.entity_name || '', campaign_id: a.campaign_id,
+        daily_budget: a.daily_budget || 0,
+        roas_7d: (m7.spend || 0) > 0 ? (m7.purchase_value || 0) / m7.spend : 0,
+        purchases_7d: m7.purchases || 0,
+        spend_7d: m7.spend || 0,
+        age_days: firstAt ? Math.floor((Date.now() - new Date(firstAt).getTime()) / 86400000) : null
+      };
+    })
+    .filter(c => {
+      const up = c.name.toUpperCase();
+      if (c.campaign_id === targetCampaignId) return false;            // ya vive ahí
+      if (up.includes('[ARES')) return false;                          // no reciclar clones de Ares
+      if (up.includes(' - COPY') || up.includes('[TEST]')) return false;
+      if (isExcludedEntity({ campaign_id: c.campaign_id, name: c.name })) return false;
+      if (c.roas_7d < CBO_FILL_SRC_ROAS_MIN) return false;
+      if (c.purchases_7d < CBO_FILL_SRC_PURCHASES_MIN) return false;
+      if (c.spend_7d < CBO_FILL_SRC_SPEND_MIN_7D) return false;
+      if (c.age_days == null || c.age_days < CBO_FILL_SRC_AGE_MIN_DAYS) return false; // fail-closed
+      // dedup contra lo que YA está en el CBO destino (por nombre base)
+      const base = c.name.slice(0, 25).toLowerCase();
+      if (targetNorm.some(t => t && (t.includes(base) || base.includes(t)))) return false;
+      return true;
+    })
+    .sort((x, y) => (y.purchases_7d - x.purchases_7d) || (y.roas_7d - x.roas_7d));
+}
+
+/**
+ * Detector → EJECUTOR: cbo_undercapacity_fill
+ * Puebla CBOs de Ares con <4 adsets usando winners probados (cobertura ADICIONAL:
+ * el original NO se pausa — a diferencia del rescate, esto no es un traslado).
+ */
+async function executeCboFill(cboSnapshot, adsets) {
+  const executed = [];
+  if (!/^\[ares/i.test(cboSnapshot.campaign_name || '')) return executed; // solo CBOs de Ares
+  // El CBO rescate NO se rellena con winners genéricos: su población viene de los
+  // rescates de famélicos (mezclar diluiría la medición de ese experimento).
+  if (await isRescueCbo(cboSnapshot.campaign_id)) return executed;
+  if (adsets.length >= CBO_FILL_TARGET_ADSETS) return executed;
+
+  // Si Meta ya concentra sano en un favorito, meter más adsets diluye — respetar el gate
+  const blocked = shouldBlockDuplicationToCBO(cboSnapshot);
+  if (blocked.block) {
+    logger.info(`[ARES-PORTFOLIO] SKIP fill "${cboSnapshot.campaign_name}": ${blocked.reason}`);
+    return executed;
+  }
+
+  // Edad mínima del CBO (first-seen) — recién creado hoy ya viene seedeado por el Brain
+  try {
+    const firstCboSnap = await MetricSnapshot.findOne({ entity_type: 'campaign', entity_id: cboSnapshot.campaign_id })
+      .sort({ snapshot_at: 1 }).select('snapshot_at').lean();
+    const cboAgeDays = firstCboSnap ? (Date.now() - new Date(firstCboSnap.snapshot_at).getTime()) / 86400000 : 0;
+    if (cboAgeDays < CBO_FILL_MIN_CBO_AGE_DAYS) return executed;
+  } catch (_) { return executed; }
+
+  // Una tanda de fill por CBO cada 18h — gradual, evalúa el efecto antes de seguir
+  const recentFill = await ActionLog.findOne({
+    action: 'duplicate_adset', 'metadata.detector': 'cbo_undercapacity_fill',
+    'metadata.target_cbo_id': cboSnapshot.campaign_id,
+    executed_at: { $gte: new Date(Date.now() - 18 * 3600000) }
+  }).select('_id').lean();
+  if (recentFill) return executed;
+
+  const need = Math.min(CBO_FILL_TARGET_ADSETS - adsets.length, CBO_FILL_MAX_PER_CYCLE);
+  const candidates = await getFillCandidates(cboSnapshot.campaign_id, adsets.map(x => x.name));
+  if (!candidates.length) {
+    logger.info(`[ARES-PORTFOLIO] fill "${cboSnapshot.campaign_name}": ${adsets.length}/${CBO_FILL_TARGET_ADSETS} adsets pero sin candidatos que pasen los gates`);
+    return executed;
+  }
+
+  for (const c of candidates) {
+    if (executed.length >= need) break;
+    if (await alreadyActedOn(c.id, 'duplicate_adset')) continue;
+    const gate = await validateSafetyGates({ entity_id: c.id, action_type: 'duplicate_adset' });
+    if (!gate.allowed) { logger.info(`[ARES-PORTFOLIO] SKIP fill candidato ${c.name}: ${gate.reason}`); continue; }
+
+    const cloneName = `[Ares-Fill] ${c.name}`;
+    const reasoning = `CBO fill: "${cboSnapshot.campaign_name}" tiene ${adsets.length}/${CBO_FILL_TARGET_ADSETS} adsets — muy pocos para que Meta optimice el reparto. Poblando con winner probado: ROAS ${c.roas_7d.toFixed(2)}x, ${c.purchases_7d} compras sobre $${c.spend_7d.toFixed(0)} en 7d, ${c.age_days}d de edad. Cobertura ADICIONAL (el original sigue activo en su campaña).`;
+
+    try {
+      const { getMetaClient } = require('../../meta/client');
+      const meta = getMetaClient();
+      const result = await meta.duplicateAdSet(c.id, {
+        campaign_id: cboSnapshot.campaign_id,
+        deep_copy: true,
+        name: cloneName,
+        status: 'ACTIVE'
+      });
+      if (result.success && result.new_adset_id) {
+        await cooldowns.setCooldown(c.id, 'adset', 'duplicate_adset', 'ares_portfolio');
+        await logAction({
+          entity_type: 'adset', entity_id: c.id, entity_name: c.name,
+          action: 'duplicate_adset',
+          before_value: adsets.length, after_value: adsets.length + executed.length + 1,
+          reasoning,
+          metadata: {
+            detector: 'cbo_undercapacity_fill',
+            target_cbo_id: cboSnapshot.campaign_id,
+            target_cbo_name: cboSnapshot.campaign_name,
+            new_adset_id: result.new_adset_id,
+            roas_7d: +c.roas_7d.toFixed(2),
+            purchases_7d: c.purchases_7d,
+            new_adset_status: 'ACTIVE'
+          },
+          success: true
+        });
+        try {
+          const ZeusChatMessage = require('../../db/models/ZeusChatMessage');
+          const lastMsg = await ZeusChatMessage.findOne({}).sort({ created_at: -1 }).lean();
+          if (lastMsg?.conversation_id) {
+            await ZeusChatMessage.create({
+              conversation_id: lastMsg.conversation_id,
+              role: 'assistant',
+              content: `🧱 **Ares Fill**: "${c.name}" → "${cboSnapshot.campaign_name}" (\`${result.new_adset_id}\`)\n\nEl CBO tenía ${adsets.length}/${CBO_FILL_TARGET_ADSETS} adsets. Candidato: ROAS ${c.roas_7d.toFixed(2)}x · ${c.purchases_7d} compras · $${c.spend_7d.toFixed(0)} 7d. Clon ACTIVE; el original sigue en su campaña.`,
+              proactive: true,
+              context_snapshot: { source: 'ares_fill', new_adset_id: result.new_adset_id }
+            });
+          }
+        } catch (_) { /* non-critical */ }
+        executed.push({ kind: 'cbo_undercapacity_fill', adset: c.name, new_id: result.new_adset_id, cbo: cboSnapshot.campaign_name });
+        logger.info(`[ARES-PORTFOLIO] 🧱 fill: "${c.name}" (ROAS ${c.roas_7d.toFixed(2)}x, ${c.purchases_7d}c) → "${cboSnapshot.campaign_name}" ahora ${adsets.length + executed.length}/${CBO_FILL_TARGET_ADSETS}`);
+      }
+    } catch (err) {
+      await logAction({
+        entity_type: 'adset', entity_id: c.id, entity_name: c.name,
+        action: 'duplicate_adset', reasoning, success: false, error: err.message,
+        metadata: { detector: 'cbo_undercapacity_fill', target_cbo_id: cboSnapshot.campaign_id }
+      });
+      logger.error(`[ARES-PORTFOLIO] fill falló para ${c.name}: ${err.message}`);
+    }
+  }
+  return executed;
+}
+
 /**
  * Detector 2 → EJECUTOR: underperformer_kill
  * Pausa adsets con spend significativo sin conversiones.
@@ -986,6 +1160,7 @@ async function executePortfolioActionsForCBO(cboSnapshot, getRescueCbo, remainin
   // tocamos las acciones de menor riesgo primero.
   const runners = [
     () => executeStarvedRescue(cboSnapshot, adsets, getRescueCbo),
+    () => executeCboFill(cboSnapshot, adsets),                 // 2026-06-11: completa CBOs de Ares sub-poblados con winners probados
     () => executeKill(cboSnapshot, adsets),
     () => executeMassZombieKill(cboSnapshot, adsets),         // Ola 1.3
     () => executeStaleAdsetKill(cboSnapshot, adsets),         // limpia adsets con 0 delivery
@@ -1203,6 +1378,7 @@ module.exports = {
   // exports para tests
   _executors: {
     executeStarvedRescue,
+    executeCboFill,
     executeKill,
     executeSaturatedWinner,
     executeCBOStarvation,
