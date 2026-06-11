@@ -573,11 +573,17 @@ async function executeCboFill(cboSnapshot, adsets) {
   if (await isRescueCbo(cboSnapshot.campaign_id)) return executed;
   if (adsets.length >= CBO_FILL_TARGET_ADSETS) return executed;
 
-  // Si Meta ya concentra sano en un favorito, meter más adsets diluye — respetar el gate
-  const blocked = shouldBlockDuplicationToCBO(cboSnapshot);
-  if (blocked.block) {
-    logger.info(`[ARES-PORTFOLIO] SKIP fill "${cboSnapshot.campaign_name}": ${blocked.reason}`);
-    return executed;
+  // Si Meta ya concentra sano en un favorito, meter más adsets diluye — respetar el
+  // gate de saturación, PERO solo con 3+ adsets: con 1-2, el "favorito" se lleva
+  // 60-70% del spend por matemática pura (2 opciones), no por saturación real — y el
+  // gate bloqueaba el fill justo en los CBOs chicos que queremos poblar (visto en el
+  // primer ciclo 2026-06-11: SKIP fill por cbo_saturated_winner en CBOs de 2 adsets).
+  if (adsets.length >= 3) {
+    const blocked = shouldBlockDuplicationToCBO(cboSnapshot);
+    if (blocked.block) {
+      logger.info(`[ARES-PORTFOLIO] SKIP fill "${cboSnapshot.campaign_name}": ${blocked.reason}`);
+      return executed;
+    }
   }
 
   // Edad mínima del CBO (first-seen) — recién creado hoy ya viene seedeado por el Brain
