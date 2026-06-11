@@ -240,17 +240,29 @@ async function launchTests() {
   // Contar tests activos por TRACK (foto vs video) — caps independientes.
   // El video tiene campaña/budget propios, así que no debe competir por los slots
   // de foto (si no, los 100 tests de foto bloquean cualquier video). (2026-05-30)
-  const activePhotoTests = await TestRun.countDocuments({ phase: { $in: ['learning', 'evaluating'] }, media_type: { $ne: 'video' } });
-  const activeVideoTests = await TestRun.countDocuments({ phase: { $in: ['learning', 'evaluating'] }, media_type: 'video' });
+  // 2026-06-10: el spend se suma de los daily_budget REALES de cada test, no
+  // activos × budget actual — tras subir budgets ($20→$50 foto, $25→$50 video)
+  // la cuenta vieja inflaba el spend ficticio (21 tests de $25-35 contados como
+  // $1050) y bloqueaba TODOS los lanzamientos ("Sin slots" eterno).
+  const _trackAgg = async (matchMedia) => {
+    const [agg] = await TestRun.aggregate([
+      { $match: { phase: { $in: ['learning', 'evaluating'] }, media_type: matchMedia } },
+      { $group: { _id: null, n: { $sum: 1 }, spend: { $sum: { $ifNull: ['$daily_budget', 0] } } } }
+    ]);
+    return { n: agg?.n || 0, spend: agg?.spend || 0 };
+  };
+  const photo = await _trackAgg({ $ne: 'video' });
+  const video = await _trackAgg('video');
+  const activePhotoTests = photo.n, activeVideoTests = video.n;
 
   // Slots FOTO
-  const photoSpend = activePhotoTests * TEST_DAILY_BUDGET;
+  const photoSpend = photo.spend;
   const photoSlots = Math.max(0, MAX_CONCURRENT_TESTS - activePhotoTests);
   const photoBudgetSlots = Math.max(0, Math.floor((MAX_DAILY_TESTING_BUDGET - photoSpend) / TEST_DAILY_BUDGET));
   const maxPhotoLaunches = Math.min(photoSlots, photoBudgetSlots, MAX_LAUNCHES_PER_CYCLE);
 
   // Slots VIDEO (independientes)
-  const videoSpend = activeVideoTests * VIDEO_TEST_DAILY_BUDGET;
+  const videoSpend = video.spend;
   const videoSlots = Math.max(0, MAX_CONCURRENT_VIDEO_TESTS - activeVideoTests);
   const videoBudgetSlots = Math.max(0, Math.floor((MAX_DAILY_VIDEO_TESTING_BUDGET - videoSpend) / VIDEO_TEST_DAILY_BUDGET));
   const maxVideoLaunches = Math.min(videoSlots, videoBudgetSlots, MAX_LAUNCHES_PER_CYCLE);
