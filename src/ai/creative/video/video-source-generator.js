@@ -68,6 +68,44 @@ function buildSourcePrompt(productName, motionKey, sceneKey, hookKey) {
     `${matchPiece} ${PHYSICS_SAFE} ${FIDELITY} ${pickImageStyle()} The hand and the dripping brine should be the hero of the shot, mouth-watering and in sharp focus.`;
 }
 
+/**
+ * "LEER ANTES DE GENERAR" (2026-06-10, idea del creador): detecta la FORMA física del
+ * producto mirando el frasco REAL (label + contenido visible) con visión — UNA vez por
+ * producto, se guarda en ProductBank. La forma manda sobre las heurísticas de nombre
+ * en video-dna (3 bugs de adivinanza: salsa→chip, spears→whole, horseradish→cuchara).
+ */
+async function ensureProductForm(product) {
+  try {
+    if (product.product_form) { dna.setProductForm(product.product_name, product.product_form); return product.product_form; }
+    const ref = (product.png_references || []).find(r => r.image_base64);
+    if (!ref) return null;
+    const apiKey = config.claude?.apiKey || process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return null;
+    const client = new Anthropic({ apiKey });
+    const mediaType = ref.mime_type || 'image/jpeg';
+    const resp = await client.messages.create({
+      model: config.claude.judgeModel || config.claude.model, // visión fina: el label chico importa
+      max_tokens: 300,
+      messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: mediaType, data: ref.image_base64 } },
+        { type: 'text', text: `Look at this product photo: READ THE LABEL (every word, including small print like "Pickle Chips") and look at the visible contents inside the jar. Classify the product's physical FORM as exactly ONE of: "chips" (round cross-cut pickle slices), "spears" (long wedge strips), "whole" (entire cucumbers/vegetables), "dip" (spoonable salsa/relish/sauce), "shredded" (sauerkraut-style strands), "onion_slices", "tomato_whole", "other". IMPORTANT: trust the label and the visible contents over what the product NAME sounds like (e.g. "Sweet Horseradish" whose label says "Pickle Chips" = chips, NOT a sauce). Respond with ONLY JSON: {"form":"<one of the options>"}` }
+      ]}]
+    });
+    const text = (resp.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
+    const m = text.match(/\{[\s\S]*\}/);
+    const form = m ? (JSON.parse(m[0]).form || '').toLowerCase() : '';
+    const VALID = ['chips', 'spears', 'whole', 'dip', 'shredded', 'onion_slices', 'tomato_whole', 'other'];
+    if (!VALID.includes(form)) return null;
+    await ProductBank.updateOne({ _id: product._id }, { $set: { product_form: form, product_form_detected_at: new Date() } });
+    dna.setProductForm(product.product_name, form);
+    logger.info(`[VIDEO-SOURCE] 🔎 forma detectada del frasco real: "${product.product_name}" = ${form}`);
+    return form;
+  } catch (e) {
+    logger.warn(`[VIDEO-SOURCE] detección de forma falló para ${product.product_name} (sigo con heurística): ${e.message}`);
+    return null;
+  }
+}
+
 /** Genera un headline + copy corto para el creativo (en inglés, mercado US). */
 async function generateCopy(productName) {
   try {
@@ -226,6 +264,9 @@ async function generateVideoSources() {
 
   for (let i = 0; i < need; i++) {
     const product = products[i % products.length];
+    // LEER ANTES DE GENERAR: forma física del frasco real → registro de video-dna.
+    // Una vez por producto (queda en ProductBank); manda sobre heurísticas de nombre.
+    await ensureProductForm(product);
     // Exploit/explore: sesga hacia el motion/scene ganador, sigue probando los otros.
     // allowedKeys excluye motions que no le quedan al producto (ej. on_food en spears →
     // un spear sobre un burger se ve raro; esos productos usan las otras posturas).

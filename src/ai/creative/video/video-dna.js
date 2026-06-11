@@ -98,8 +98,40 @@ const MOTIONS = [
 ];
 
 // Deriva la "pieza" real del producto a partir del nombre — para no poner un
+// ═══ REGISTRO DE FORMAS (2026-06-10, idea del creador: "leer antes de generar") ═══
+// La FORMA física del producto se detecta UNA vez mirando el frasco real (label +
+// contenido) con visión y se guarda en ProductBank.product_form. Este registro en
+// memoria la hace mandar SOBRE las heurísticas de nombre — que ya fallaron 3 veces:
+// salsa→chip, spears→whole, y "Sweet Horseradish" (label dice Pickle Chips) →
+// el motor de imagen lo dibujó como relish en cuchara por sus propios priors.
+const PRODUCT_FORMS = {}; // product_name(lower) → forma
+function setProductForm(name, form) { if (name && form) PRODUCT_FORMS[String(name).toLowerCase()] = form; }
+function getProductForm(name) { return PRODUCT_FORMS[String(name || '').toLowerCase()] || null; }
+
+const FORM_UNITS = {
+  chips: 'a single solid crunchy pickle chip (a round cross-cut slice) — this product is SOLID pickle chips in brine, NOT a sauce, NOT a relish, NOT a condiment: NEVER show a spoon or anything spoonable',
+  spears: 'a single long pickle SPEAR — a quarter-cut wedge strip with one flat cut side (NOT a whole round pickle, NOT a flat chip)',
+  whole: 'a single WHOLE pickled cucumber (NOT a spear, NOT a chip)',
+  dip: 'a generous heaping spoonful of the chunky pickled salsa/relish on a spoon, the chunks clearly visible (this product is a chunky dip, NOT a pickle chip)',
+  shredded: 'a forkful of tangy shredded sauerkraut/cabbage strands lifted on a fork, the fine pale fermented strands clearly visible (this is shredded cabbage, NOT a pickle chip or a slice)',
+  onion_slices: 'a single pickled red onion slice',
+  tomato_whole: 'a single whole pickled tomato (plump, golf-ball size)'
+};
+const FORM_UNITS_FOOD = {
+  chips: 'a pickle chip laid flat',
+  spears: 'a few round pickle coin slices (cut crosswise from the spear) laid flat',
+  whole: 'a few round pickle coin slices (cut crosswise) laid flat',
+  dip: 'a generous spoonful of the chunky pickled relish spooned on top',
+  shredded: 'a generous pile of shredded sauerkraut strands',
+  onion_slices: 'a pickled red onion slice',
+  tomato_whole: 'a thick slice of pickled tomato'
+};
+
 // "pickle chip" genérico cuando el producto es cebolla, tomate, etc.
 function productUnit(name = '') {
+  // La forma LEÍDA del frasco real manda sobre cualquier heurística de nombre.
+  const knownForm = getProductForm(name);
+  if (knownForm && FORM_UNITS[knownForm]) return FORM_UNITS[knownForm];
   const n = name.toLowerCase();
   // Dips/salsas/relishes: NO son una pieza sólida — van en CUCHARA, no como chip.
   // CRÍTICO: este branch va ANTES del catch de 'pickle', porque "pickled salsa"
@@ -125,6 +157,9 @@ function productUnit(name = '') {
 // no la pieza entera — un tomate entero sobre un burger se ve raro. Lo que ya es
 // plano (chips, rodajas) se deja igual.
 function productUnitFood(name = '') {
+  // La forma LEÍDA del frasco real manda sobre cualquier heurística de nombre.
+  const knownForm = getProductForm(name);
+  if (knownForm && FORM_UNITS_FOOD[knownForm]) return FORM_UNITS_FOOD[knownForm];
   const n = name.toLowerCase();
   if (isShredded(n)) return 'a generous pile of shredded sauerkraut strands';
   if (n.includes('onion')) return 'a pickled red onion slice';
@@ -417,5 +452,5 @@ module.exports = {
   MOTIONS, CAMERAS, SCENES, DIMS, BASE_STYLE, VIDEO_STYLE_MOODS, pickVideoStyle,
   productUnit, productUnitFood, fitsOnFood, isDip, isShredded, motionsForProduct,
   get, keys, pickWeighted, getDimensionStats, buildImageScene, buildVideoPrompt,
-  buildEndFrameScene, HOOKS
+  buildEndFrameScene, HOOKS, setProductForm, getProductForm
 };

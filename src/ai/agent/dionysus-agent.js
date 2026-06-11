@@ -129,6 +129,16 @@ async function runDionysus() {
   // Auto-sanar zombies antes de generar nuevos.
   await reconcileStuckVideos().catch(e => logger.warn(`[DIONISIO] reconcile error: ${e.message}`));
 
+  // Cargar el registro de FORMAS leídas del frasco real (ProductBank.product_form) →
+  // el juez (expectedUnit) y el prompt de video usan la forma verdadera, no la
+  // heurística de nombre. (2026-06-10)
+  try {
+    const ProductBank = require('../../db/models/ProductBank');
+    const forms = await ProductBank.find({ product_form: { $nin: [null, ''] } }).select('product_name product_form').lean();
+    for (const p of forms) dna.setProductForm(p.product_name, p.product_form);
+    if (forms.length) logger.info(`[DIONISIO] formas de producto cargadas: ${forms.map(p => `${p.product_name}=${p.product_form}`).join(' · ')}`);
+  } catch (e) { logger.warn(`[DIONISIO] carga de formas falló (heurística de nombre): ${e.message}`); }
+
   const t0 = Date.now();
   const candidates = await _getCandidates();
   logger.info(`[DIONISIO] ${candidates.length} candidatos a evaluar (cap ${MAX_VIDEOS_PER_CYCLE} videos/ciclo)`);

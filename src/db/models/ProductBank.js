@@ -13,6 +13,12 @@ const productBankSchema = new mongoose.Schema({
   // Descripcion detallada del producto para Gemini (apariencia fisica, colores, contenido)
   product_description: { type: String, default: '' },
 
+  // FORMA física del producto, LEÍDA del frasco real con visión (label + contenido) —
+  // manda sobre las heurísticas de nombre en video-dna (2026-06-10: "Sweet Horseradish"
+  // son Pickle Chips pero el nombre suena a salsa → salía en cuchara como relish).
+  product_form: { type: String, enum: ['', 'chips', 'spears', 'whole', 'dip', 'shredded', 'onion_slices', 'tomato_whole', 'other'], default: '' },
+  product_form_detected_at: { type: Date, default: null },
+
   // Prompt type: 'standard' usa escenas genericas, 'custom' usa custom_prompt_template
   prompt_type: { type: String, enum: ['standard', 'custom'], default: 'standard' },
 
