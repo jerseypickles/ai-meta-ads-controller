@@ -594,10 +594,12 @@ async function executeCboFill(cboSnapshot, adsets) {
     if (cboAgeDays < CBO_FILL_MIN_CBO_AGE_DAYS) return executed;
   } catch (_) { return executed; }
 
-  // Una tanda de fill por CBO cada 18h — gradual, evalúa el efecto antes de seguir
+  // Una tanda de fill EXITOSA por CBO cada 18h — gradual, evalúa el efecto antes de
+  // seguir. success:true (2026-06-11): los intentos FALLIDOS (Meta rechazando creativos
+  // deprecados) no deben consumir la ventana — bloqueaban el retry en Mature Winners.
   const recentFill = await ActionLog.findOne({
     action: 'duplicate_adset', 'metadata.detector': 'cbo_undercapacity_fill',
-    'metadata.target_cbo_id': cboSnapshot.campaign_id,
+    'metadata.target_cbo_id': cboSnapshot.campaign_id, success: true,
     executed_at: { $gte: new Date(Date.now() - 18 * 3600000) }
   }).select('_id').lean();
   if (recentFill) return executed;
