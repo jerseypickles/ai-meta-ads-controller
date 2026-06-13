@@ -7,6 +7,48 @@ const CreativeProposal = require('../../db/models/CreativeProposal');
 // Job tracking para run async
 const _testingJobs = {};
 
+// ═══ GET /format-breakdown — VIDEO vs FOTO, atribución correcta por media_type ═══
+// Responde "¿quién rinde mejor y quién se apaga más?" usando el media_type REAL del
+// TestRun (no el emoji del nombre, que se pierde al graduar). Cuenta TODO el histórico,
+// incluido lo apagado/borrado. ?since=YYYY-MM-DD (default 2026-05-28, cuenta nueva).
+router.get('/format-breakdown', async (req, res) => {
+  try {
+    const since = new Date(req.query.since || '2026-05-28T00:00:00Z');
+    const rows = await TestRun.find({ launched_at: { $gte: since } })
+      .select('media_type phase metrics deflated_at').lean();
+    const acc = (mt) => ({ media_type: mt, total: 0, graduated: 0, killed: 0, expired: 0, active: 0, deflated: 0, spend: 0, revenue: 0, purchases: 0 });
+    const out = { image: acc('image'), video: acc('video') };
+    for (const r of rows) {
+      const t = out[r.media_type === 'video' ? 'video' : 'image'];
+      const m = r.metrics || {};
+      t.total++;
+      t.spend += m.spend || 0;
+      t.revenue += (m.roas || 0) * (m.spend || 0);
+      t.purchases += m.purchases || 0;
+      if (r.deflated_at) t.deflated++;
+      if (r.phase === 'graduated') t.graduated++;
+      else if (r.phase === 'killed') t.killed++;
+      else if (r.phase === 'expired') t.expired++;
+      else if (r.phase === 'learning' || r.phase === 'evaluating') t.active++;
+    }
+    for (const k of ['image', 'video']) {
+      const t = out[k];
+      const finished = t.killed + t.expired + t.graduated;
+      t.roas = t.spend > 0 ? +(t.revenue / t.spend).toFixed(2) : 0;
+      t.cpa = t.purchases > 0 ? +(t.spend / t.purchases).toFixed(0) : 0;
+      t.graduation_rate = finished > 0 ? Math.round((t.graduated / finished) * 100) : 0;
+      // "tasa de apagado": killed + deflated sobre todo lo que tuvo chance (no active)
+      const settled = t.total - t.active;
+      t.shutdown_rate = settled > 0 ? Math.round(((t.killed + t.deflated) / settled) * 100) : 0;
+      t.spend = Math.round(t.spend); t.revenue = Math.round(t.revenue);
+    }
+    res.json({ since: since.toISOString().slice(0, 10), image: out.image, video: out.video });
+  } catch (err) {
+    logger.error(`[TESTING-AGENT] format-breakdown error: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ═══ POST /run — Trigger manual ═══
 router.post('/run', async (req, res) => {
   try {
