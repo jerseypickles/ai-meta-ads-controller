@@ -53,10 +53,12 @@ const AUTO_APPROVE_MAX_MOTION_REJECT = parseFloat(process.env.DIONYSUS_AUTO_APPR
 // en el aire (se nota artificial). NUNCA auto-aprobar estos: siempre review manual (el humano
 // es el mejor juez de física). 2026-06-05, por el reporte de pickles "stuck" al verter.
 const HIGH_PHYSICS_MOTIONS = new Set(['pour_bowl']);
-// PILOTO first+last frame (2026-06-09): % de videos que usan el par primer+último frame
-// cuando la fuente lo trae. 0.5 = A/B 50/50 (cohorte comparable en el reconciliador).
-// Subir a 1.0 cuando el A/B confirme que mejora; bajar a 0 para apagar sin deploy.
-const LAST_FRAME_RATE = parseFloat(process.env.SEEDANCE_LAST_FRAME_RATE || '0.5');
+// PILOTO first+last frame: APAGADO 2026-06-13 por la data del A/B. El par de frames
+// produjo el DOBLE de física rota (reject 36% con par, n=14 vs 19% solo, n=43) — el
+// frame final generado no calza perfecto con el inicial y Seedance al interpolar entre
+// dos frames inconsistentes mete más artefactos. La capacidad queda en el código;
+// reactivar con SEEDANCE_LAST_FRAME_RATE si mejoramos la consistencia del frame final.
+const LAST_FRAME_RATE = parseFloat(process.env.SEEDANCE_LAST_FRAME_RATE || '0');
 // POST-PRO hook overlay (2026-06-10): % de videos que llevan el texto-gancho quemado
 // (estilo UGC nativo, Anton bold). A/B 50/50 — el overlay debería mover el THUMBSTOP.
 const OVERLAY_RATE = parseFloat(process.env.VIDEO_OVERLAY_RATE || '0.5');
