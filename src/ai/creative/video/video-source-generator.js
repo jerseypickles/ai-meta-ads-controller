@@ -65,7 +65,10 @@ function buildSourcePrompt(productName, motionKey, sceneKey, hookKey) {
     : `CRITICAL: the pickled item shown must be ${unit} — the SAME pickled food that is inside this "${productName}" jar (same type, same color as the contents visible in the reference). Do NOT substitute a generic pickle chip or any different food.`;
   return `Create a vertical photograph of ${interaction}, for the product "${productName}". ` +
     `The jar/tub from the reference photo is clearly visible in the shot with its label readable. ` +
-    `${matchPiece} ${PHYSICS_SAFE} ${FIDELITY} ${pickImageStyle()} The hand and the dripping brine should be the hero of the shot, mouth-watering and in sharp focus.`;
+    `${matchPiece} ${PHYSICS_SAFE} ${FIDELITY} ${pickImageStyle()} The hand and the dripping brine should be the hero of the shot, mouth-watering and in sharp focus. ` +
+    // HOOK/energía visual (2026-06-13): el 43% se va en el primer segundo; visual_energy
+    // es la señal que más predice la venta. Empujamos un primer frame que para el scroll.
+    `HIGH VISUAL ENERGY — bold, vivid, high-contrast and dynamic so it stops the thumb instantly in a busy feed; NOT a calm/flat/static product shot.`;
 }
 
 /**

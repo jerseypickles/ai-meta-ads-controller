@@ -27,14 +27,16 @@ PHYSICS GATE (this frame WILL be animated — check carefully): if any loose sol
 
 Rate each dimension 0-100 as a real viewer would react, each with a SHORT concrete note:
 - fidelidad: does the hero item truly match the product? (the gate)
-- freno_scroll: would a real person actually STOP scrolling on this frame? (hook / visual pull / curiosity)
+- freno_scroll: would a real person actually STOP scrolling on this frame? (hook / visual pull / curiosity / VISUAL ENERGY)
 - apetito: does it look genuinely mouth-watering / craveable? (gloss, drip, freshness)
 - autenticidad: does it read as REAL handheld UGC, or staged/AI/stocky? (trust)
 - calidad: focus, framing, no warping/artifacts, label readable
 
 Also: que_funciona (1-3 concrete things that land) and que_falla (1-3 concrete weaknesses; [] if none).
 
-OVERALL score = honest blend, gated by fidelidad. SPREAD it — reserve 90-100 only for content real people would genuinely share/stop on; a merely-fine shot is ~70-80. Do NOT default to 95.
+★ HOOK IS KING. Real data: 43% of viewers leave in the first ~1 second, and VISUAL ENERGY is the lever that most predicts a sale. So freno_scroll is the MOST important dimension for video — weight it heaviest in the OVERALL. A frame that is appetizing but visually FLAT/calm/static (low freno_scroll) should NOT score above ~65 no matter how pretty, because most viewers will never see past the first second. Conversely a high-energy, scroll-stopping frame earns the top band. Reward bold color/contrast, dynamism, an instant curiosity gap; penalize calm/ordinary/low-energy compositions.
+
+OVERALL score = honest blend, gated by fidelidad, DRIVEN by freno_scroll. SPREAD it — reserve 90-100 only for content real people would genuinely share/stop on; a merely-fine shot is ~70-80. Do NOT default to 95.
 
 suggested_motion: "lift_drip" | "dip_drip" | "pull_up" | "drip" | "none".
 

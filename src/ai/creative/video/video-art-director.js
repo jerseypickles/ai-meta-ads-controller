@@ -20,6 +20,8 @@ const VALID_MOTIONS = ['lift_drip', 'dip_drip', 'pull_up', 'pinch_twirl', 'bite_
 
 const CONCEPT_PROMPT = (productName, inspiration, signalGuidance) => `You are a world-class UGC food-ad creative director for "${productName}" (Jersey Pickles, a US pickles & condiments brand). Invent ONE fresh, scroll-stopping FIRST-FRAME image concept for a 5-second vertical UGC video ad that we have NOT tried before.
 
+★ THE #1 JOB IS THE HOOK. Our data is unambiguous: 43% of viewers leave in the first ~1 second, and the single creative lever that most predicts a sale is VISUAL ENERGY. So this first frame must WIN THE FIRST SECOND — high visual energy, bold color/contrast that pops against a busy feed, an instant curiosity gap ("wait, what is THAT?"), and one clear craveable subject readable in under a second. A calm/pretty/static frame is a failure even if appetizing. Design for the thumb-stop, then for the craving.
+
 What already works (push BEYOND these — do NOT copy them, transcend them): ${inspiration || 'a hand lifting the product out of the jar with brine dripping'}.
 ${signalGuidance ? `\nWHAT THE DATA PROVES DRIVES PERFORMANCE (the calibration learned these creative levers from real outcomes — bake them INTO your concept): ${signalGuidance}\nYour concept must be GENUINELY NEW, but engineered to maximize those proven levers. Explore freely, but aim at what works.\n` : ''}
 
