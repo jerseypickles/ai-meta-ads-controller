@@ -414,6 +414,8 @@ async function launchTests() {
         fs.writeFileSync(tmpVid, Buffer.from(resp.data));
         const vup = await meta.uploadVideo(tmpVid);
         try { fs.unlinkSync(tmpVid); } catch (_) {}
+        // El video ya vive en Meta → liberar el base64 de Mongo (cumplió su función). (2026-06-13)
+        CreativeProposal.findByIdAndUpdate(proposal._id, { $set: { video_base64: '' } }).catch(() => {});
 
         // Thumbnail OBLIGATORIO para video ads (Meta video_data exige image_hash/url).
         // Usamos la imagen ORIGEN del video (su primer frame) → subir → image_hash.

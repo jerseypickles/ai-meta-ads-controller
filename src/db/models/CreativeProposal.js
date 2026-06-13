@@ -70,7 +70,12 @@ const creativeProposalSchema = new mongoose.Schema({
   // ── Dionisio (video) ──────────────────────────────────────────────────────
   // media_type distingue creativos estáticos (Apollo) de video (Dionisio).
   media_type: { type: String, enum: ['image', 'video'], default: 'image', index: true },
-  video_url: { type: String, default: '' },          // URL del .mp4 generado (PiAPI/Seedance)
+  video_url: { type: String, default: '' },          // URL del .mp4 (sirve /vid/:id desde Mongo si persistido; ephemeral de PiAPI si falló)
+  // mp4 PERSISTIDO en Mongo (2026-06-13): las URLs de PiAPI son /ephemeral/ y EXPIRAN
+  // a las horas → videos negros en la cola de review. Guardar el mp4 acá (≤~6MB para
+  // 5s 1080p, cabe en el doc de 16MB) hace el video permanente, igual que image_base64.
+  // Se limpia al lanzar a Meta o rechazar (ya cumplió). Servido por /vid/:id.mp4.
+  video_base64: { type: String, default: '' },
   video_task_id: { type: String, default: '' },       // task_id de PiAPI
   motion_variant: { type: String, default: '' },      // DNA: interacción (lift_drip/dip_drip/…)
   scene: { type: String, default: '' },                // DNA: entorno (poolside/kitchen/…)

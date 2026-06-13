@@ -174,6 +174,26 @@ app.get('/vsrc/:id.png', async (req, res) => {
   }
 });
 
+// Video PERSISTIDO en Mongo (2026-06-13). Las URLs de PiAPI son /ephemeral/ y expiran
+// → videos negros en la cola. Servimos el mp4 desde Mongo (base64), no expira. Público:
+// Meta lo descarga al lanzar, y el panel lo reproduce desde acá. id = ObjectId (anti-traversal).
+app.get('/vid/:id.mp4', async (req, res) => {
+  try {
+    if (!/^[a-f0-9]{24}$/i.test(req.params.id)) return res.status(400).send('bad id');
+    const CreativeProposal = require('../db/models/CreativeProposal');
+    const p = await CreativeProposal.findById(req.params.id).select('video_base64').lean();
+    if (!p || !p.video_base64) return res.status(404).send('not found');
+    const buf = Buffer.from(p.video_base64, 'base64');
+    res.set('Content-Type', 'video/mp4');
+    res.set('Content-Length', String(buf.length));
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.set('Accept-Ranges', 'bytes');
+    return res.send(buf);
+  } catch (e) {
+    return res.status(400).send('bad request');
+  }
+});
+
 // Video FINAL post-producido (hook overlay quemado). Público: Meta lo descarga al
 // lanzar el test y el result-judge (Gemini) lo mira desde acá. (2026-06-10)
 app.get('/vfinal/:id.mp4', (req, res) => {

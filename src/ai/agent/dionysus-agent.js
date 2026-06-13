@@ -6,11 +6,37 @@
 // Ver memoria apollo-video / docs.
 // ═══════════════════════════════════════════════════════════════════════════════
 
+const axios = require('axios');
 const logger = require('../../utils/logger');
 const CreativeProposal = require('../../db/models/CreativeProposal');
 const { judgeVideoSuitability } = require('../creative/video/video-judge');
 const dna = require('../creative/video/video-dna');
 const seedance = require('../creative/video/seedance');
+
+// Tope del mp4 a persistir en Mongo (doc limit 16MB; base64 infla +33%).
+const VIDEO_PERSIST_MAX_BYTES = parseInt(process.env.VIDEO_PERSIST_MAX_BYTES || String(10 * 1024 * 1024), 10);
+
+/**
+ * PERSISTIR el video en Mongo (2026-06-13): las URLs de Seedance/PiAPI son /ephemeral/
+ * y EXPIRAN a las horas → la cola de review mostraba videos negros. Descarga el mp4 y lo
+ * guarda en CreativeProposal.video_base64 (servido por /vid/:id.mp4, no expira).
+ * @returns {string} la URL pública persistente, o sourceUrl si no se pudo (fail-open).
+ */
+async function persistVideo(proposalId, sourceUrl) {
+  try {
+    const resp = await axios.get(sourceUrl, { responseType: 'arraybuffer', timeout: 90000, maxContentLength: VIDEO_PERSIST_MAX_BYTES });
+    const buf = Buffer.from(resp.data);
+    if (buf.length > VIDEO_PERSIST_MAX_BYTES) {
+      logger.warn(`[DIONISIO] video ${proposalId} pesa ${Math.round(buf.length / 1048576)}MB (>${Math.round(VIDEO_PERSIST_MAX_BYTES / 1048576)}MB) — no persisto, queda en ephemeral`);
+      return sourceUrl;
+    }
+    await CreativeProposal.findByIdAndUpdate(proposalId, { $set: { video_base64: buf.toString('base64') } });
+    return `${PUBLIC_BASE_URL}/vid/${proposalId}.mp4`;
+  } catch (e) {
+    logger.warn(`[DIONISIO] persistir video ${proposalId} falló (queda en ephemeral): ${e.message}`);
+    return sourceUrl;
+  }
+}
 
 const ENABLED = process.env.DIONYSUS_ENABLED !== 'false';
 const MAX_VIDEOS_PER_CYCLE = parseInt(process.env.DIONYSUS_MAX_PER_CYCLE || '8', 10); // 2026-06-05: 3→6 · 2026-06-10: 6→8 + cron 2x→4x/día (pool de fuentes lleno + tests a $50 rotan en 1-2d; Dionisio era el cuello)
@@ -227,10 +253,12 @@ async function runDionysus() {
 
       // JUEZ DE VIDEO REAL (Gemini mira el mp4) — ve movimiento/artefactos/freezing
       // que el juez de imagen no puede. Auto-rechaza videos rotos y gatea el auto-aprobado.
+      // Usa finalVideoUrl mientras el ephemeral aún está vivo (recién generado).
       let videoVerdict = null;
       try { videoVerdict = await require('../creative/video/video-result-judge').judgeVideoResult(finalVideoUrl, c.product_name, variant); } catch (_) { /* fail-open */ }
 
       if (videoVerdict && videoVerdict.verdict === 'reject') {
+        // No persistimos los rechazados (se descartan) — quedan con la URL que sea.
         await CreativeProposal.findByIdAndUpdate(placeholder._id, {
           $set: { status: 'rejected', video_url: finalVideoUrl, video_url_raw: vid.video_url, used_text_overlay: usedOverlay, hook_text: usedOverlay ? hookText : '', video_task_id: vid.task_id, video_result_verdict: videoVerdict, rejection_reason: `juez de video: ${videoVerdict.notes || 'roto (artefactos/freezing)'}` }
         });
@@ -238,6 +266,10 @@ async function runDionysus() {
         logger.info(`[DIONISIO] 🚫 video roto auto-rechazado: "${(c.headline || '').slice(0, 30)}" — ${videoVerdict.notes}`);
         continue;
       }
+
+      // PERSISTIR el mp4 en Mongo antes de que el ephemeral de PiAPI expire (los que
+      // SOBREVIVEN al juez van a cola/testing y deben seguir visibles días después).
+      finalVideoUrl = await persistVideo(placeholder._id, finalVideoUrl);
 
       // AUTO-APROBAR alta confianza → directo a 'ready' (Prometheus); dudosos → review manual.
       const ms = motionStats[variant] || {};

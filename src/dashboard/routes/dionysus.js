@@ -161,6 +161,27 @@ router.post('/generate-sources', async (req, res) => {
   }
 });
 
+// POST /purge-dead-videos — limpia de la cola los videos cuya URL de PiAPI ya EXPIRÓ
+// (ephemeral 404) y no quedaron persistidos en Mongo → se ven negros. Los marca failed
+// (no borra; el reconciliador/Dionisio generan frescos persistidos). Pre-fix 2026-06-13.
+router.post('/purge-dead-videos', async (req, res) => {
+  try {
+    const r = await CreativeProposal.updateMany(
+      {
+        media_type: 'video',
+        status: { $in: ['pending_video_review', 'ready'] },
+        video_url: /\/ephemeral\//,
+        $or: [{ video_base64: { $exists: false } }, { video_base64: '' }]
+      },
+      { $set: { status: 'failed', rejection_reason: 'video URL ephemeral expirada (pre-persistencia 2026-06-13) — se ve negro' } }
+    );
+    logger.info(`[DIONISIO] 🧹 ${r.modifiedCount} videos con URL muerta purgados de la cola`);
+    res.json({ purged: r.modifiedCount });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /purge-sources — RESET del pool de imágenes-fuente (2026-06-10, pedido del
 // creador: el pool pre-physics-safe producía anomalías — segunda mano de la nada,
 // frascos flotando). Marca como 'rejected' (NO borra: el historial queda para el
