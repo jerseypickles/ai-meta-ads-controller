@@ -9,8 +9,8 @@ const { TOOL_DEFINITIONS, executeTool } = require('./oracle-tools');
 const { buildOracleContext, formatContextForPrompt } = require('./oracle-context');
 
 const claude = new Anthropic({ apiKey: config.claude.apiKey });
-// Fable 5 en evaluación desde 2026-06-09 — revertir a 'claude-opus-4-7' vía env ZEUS_MODEL si latencia/costo no justifican
-const MODEL = process.env.ZEUS_MODEL || 'claude-fable-5';
+// Opus 4.8 (migrado de Fable 5 caído, 2026-06-13). Override vía env ZEUS_MODEL.
+const MODEL = process.env.ZEUS_MODEL || 'claude-opus-4-8';
 const MAX_TOOL_ROUNDS = 15;  // bumped 10→15 (2026-04-22): tareas con exploración legítima de código necesitan más rounds
 const MAX_TOKENS = 16000;  // suficiente para thinking + texto + tool_use blocks
 // Opus 4.7 usa adaptive thinking + output_config.effort (low|medium|high)

@@ -31,7 +31,7 @@ const logger = require('../../utils/logger');
 const { TOOL_DEFINITIONS, executeTool } = require('./ares-brain-tools');
 
 const claude = new Anthropic({ apiKey: config.claude.apiKey });
-const MODEL = 'claude-fable-5'; // Fable 5: decisiones de portfolio con dinero real, 2x/día — vale el tier máximo
+const MODEL = 'claude-opus-4-8'; // Opus 4.8 (migrado de Fable 5, caído 2026-06-13): decisiones de portfolio con dinero real, 2x/día — tier máximo
 const MAX_TOOL_ROUNDS = 15;
 const MAX_TOKENS = 12000;
 const THINKING_EFFORT = 'medium';

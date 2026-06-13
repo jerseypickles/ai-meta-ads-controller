@@ -1017,7 +1017,7 @@ ${(accountData.prometheus.close_to_kill || []).length > 0
 
   try {
     const response = await claude.messages.create({
-      model: 'claude-fable-5',
+      model: 'claude-opus-4-8', // migrado de Fable 5 (caído 2026-06-13)
       max_tokens: 2000,
       messages: [{
         role: 'user',

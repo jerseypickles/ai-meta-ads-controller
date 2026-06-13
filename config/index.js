@@ -54,12 +54,12 @@ module.exports = {
     apiKey: process.env.ANTHROPIC_API_KEY,
     // OJO: 'claude-sonnet-4-6' sin sufijo de fecha — el ID con fecha no existe y devuelve 404
     model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
-    // Tier alto solo para jueces de creativos (vision fina: fidelidad, CTR) — gate que custodia spend de testing
-    judgeModel: process.env.CLAUDE_JUDGE_MODEL || 'claude-fable-5',
-    // Director creativo de Apollo (prompt-generator): Fable 5 EN PRUEBA desde 2026-06-09.
-    // Medir vs cohorte Sonnet: scores del judge + % que entra a testing + CTR real.
-    // Revert sin deploy: CLAUDE_CREATIVE_MODEL=claude-sonnet-4-6 en Render.
-    creativeModel: process.env.CLAUDE_CREATIVE_MODEL || 'claude-fable-5',
+    // Tier alto solo para jueces de creativos (vision fina: fidelidad, CTR) — gate que custodia spend de testing.
+    // Opus 4.8 desde 2026-06-13 (migrado de Fable 5, que se cayó).
+    judgeModel: process.env.CLAUDE_JUDGE_MODEL || 'claude-opus-4-8',
+    // Director creativo de Apollo (prompt-generator) + art-director de Dionisio.
+    // Opus 4.8 desde 2026-06-13 (migrado de Fable 5). Revert sin deploy: CLAUDE_CREATIVE_MODEL=claude-sonnet-4-6.
+    creativeModel: process.env.CLAUDE_CREATIVE_MODEL || 'claude-opus-4-8',
     maxTokens: 4096
   },
 
