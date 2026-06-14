@@ -17,6 +17,17 @@ const testRunSchema = new mongoose.Schema({
   test_adset_name: { type: String, default: '' },
   test_ad_id: { type: String, default: null },
   test_creative_id: { type: String, default: null }, // se reusa al graduar
+  // MULTI-AD (2026-06-13): foto testea N creativos del MISMO producto en UN adset
+  // ($50 compartidos → Meta hace el A/B/C interno). Al graduar se resuelve el ad
+  // GANADOR por ad-level insights y se le atribuye el DNA. Video sigue 1-por-adset.
+  ad_variants: [{
+    proposal_id: { type: mongoose.Schema.Types.ObjectId, ref: 'CreativeProposal' },
+    ad_id: { type: String },
+    creative_id: { type: String },
+    headline: { type: String, default: '' },
+    won: { type: Boolean, default: false }   // resuelto al graduar/finalizar
+  }],
+  winner_resolved: { type: Boolean, default: false },
 
   // Campana de testing
   campaign_id: { type: String, required: true },

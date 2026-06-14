@@ -39,6 +39,10 @@ const MAX_CONCURRENT_VIDEO_TESTS = parseInt(process.env.MAX_CONCURRENT_VIDEO_TES
 const MAX_DAILY_VIDEO_TESTING_BUDGET = parseInt(process.env.MAX_DAILY_VIDEO_TESTING_BUDGET, 10) || 900;
 const MAX_DAILY_TESTING_BUDGET = parseInt(process.env.MAX_DAILY_TESTING_BUDGET, 10) || 400; // Cap diario FOTO. Env-overridable. 2026-06-03: 1000→400 (foto flojo).
 const MAX_LAUNCHES_PER_CYCLE = 6; // 2026-06-05: 3→6 (más tests nuevos/ciclo; el video lo aprovecha)
+// MULTI-AD foto (2026-06-13): N creativos del MISMO producto por adset → Meta hace el
+// A/B/C interno con los mismos $50. Aprovecha mejor el budget de un formato flojo. Video
+// queda 1-por-adset (caro + aprobación manual). Env: PHOTO_ADS_PER_ADSET.
+const PHOTO_ADS_PER_ADSET = Math.max(1, parseInt(process.env.PHOTO_ADS_PER_ADSET, 10) || 3);
 const TEST_MAX_DAYS = 7;
 const KILL_MIN_SPEND = 25;     // Kill si $25+ spend y 0 compras
 const GRADUATED_BUDGET = 20;   // Budget al promover test ad set graduado ($20/dia)
@@ -228,6 +232,43 @@ async function getTestMetrics(testAdsetId) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // FASE 1: LANZAR TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
+// Construye el ad creative de un proposal (video o foto). Extraído para reusar al
+// crear N ads en un mismo adset (multi-ad foto). (2026-06-13)
+async function _buildCreativeForProposal(meta, proposal, pageId, tmpDir) {
+  const creativeBase = {
+    page_id: pageId, headline: proposal.headline, body: proposal.primary_text,
+    description: '', cta: 'SHOP_NOW', link_url: proposal.link_url || 'https://jerseypickles.com'
+  };
+  if (proposal.media_type === 'video' && proposal.video_url) {
+    const axios = require('axios');
+    const tmpVid = path.join(tmpDir, `test_${proposal._id}.mp4`);
+    const resp = await axios.get(proposal.video_url, { responseType: 'arraybuffer', timeout: 60000 });
+    fs.writeFileSync(tmpVid, Buffer.from(resp.data));
+    const vup = await meta.uploadVideo(tmpVid);
+    try { fs.unlinkSync(tmpVid); } catch (_) {}
+    CreativeProposal.findByIdAndUpdate(proposal._id, { $set: { video_base64: '' } }).catch(() => {});
+    let thumbnail_hash = null;
+    try {
+      if (proposal.source_proposal_id) {
+        const src = await CreativeProposal.findById(proposal.source_proposal_id).select('image_base64').lean();
+        if (src?.image_base64) {
+          const tmpThumb = path.join(tmpDir, `thumb_${proposal._id}.png`);
+          fs.writeFileSync(tmpThumb, Buffer.from(src.image_base64, 'base64'));
+          const tup = await meta.uploadImage(tmpThumb);
+          try { fs.unlinkSync(tmpThumb); } catch (_) {}
+          thumbnail_hash = tup.image_hash;
+        }
+      }
+    } catch (thErr) {
+      logger.warn(`[TESTING-AGENT] No se pudo subir thumbnail del video ${proposal._id}: ${thErr.message}`);
+    }
+    return await meta.createAdCreative({ ...creativeBase, video_id: vup.video_id, thumbnail_hash });
+  }
+  const { createMultiFormatCreative } = require('../../meta/creative-formats');
+  const srcBuf = Buffer.from(proposal.image_base64, 'base64');
+  return await createMultiFormatCreative(meta, srcBuf, creativeBase, `test_${proposal._id}`);
+}
+
 async function launchTests() {
   const { getMetaClient } = require('../../meta/client');
   const meta = getMetaClient();
@@ -342,31 +383,47 @@ async function launchTests() {
   // Obtener campaign + pixel
   const campaignId = await getTestingCampaignId();
   const pixelInfo = await meta.getPixelId();
-  // Lazy: solo resolvemos/creamos la campana de video si aparece un proposal de video.
   let videoCampaignId = null;
 
-  let launched = 0;
-
-  for (const { proposal } of prioritized) {
-    // CLAIM ATÓMICO anti-doble-launch (fix 2026-06-05): tomar el proposal flippeando
-    // 'ready'→'testing' de forma ATÓMICA ANTES de crear nada en Meta. Si otra corrida
-    // concurrente (ej. el cron + "RUN TESTING" manual a la misma hora) ya lo tomó → null
-    // → skip. Antes el status flippeaba recién TRAS crear el adset (~segundos de Meta API)
-    // → ventana de race → el mismo creativo se lanzaba 2-3 veces (gastando plata duplicada).
-    const claimed = await CreativeProposal.findOneAndUpdate(
-      { _id: proposal._id, status: 'ready' },
-      { $set: { status: 'testing' } }
-    ).lean();
-    if (!claimed) {
-      logger.info(`[TESTING-AGENT] "${proposal.headline}" ya tomado por otra corrida — skip (anti-doble-launch)`);
-      continue;
+  // AGRUPAR (2026-06-13): video = grupos de 1 (1-por-adset). Foto = grupos de hasta
+  // PHOTO_ADS_PER_ADSET del MISMO producto → Meta compara CREATIVOS (no productos) y
+  // elige el ganador con los mismos $50.
+  const videoItems = prioritized.filter(x => x.proposal.media_type === 'video' && x.proposal.video_url);
+  const photoItems = prioritized.filter(x => !(x.proposal.media_type === 'video' && x.proposal.video_url));
+  const groups = videoItems.map(x => [x.proposal]);
+  const byProduct = {};
+  for (const x of photoItems) {
+    const k = x.proposal.product_name || 'unknown';
+    (byProduct[k] = byProduct[k] || []).push(x.proposal);
+  }
+  for (const arr of Object.values(byProduct)) {
+    for (let i = 0; i < arr.length; i += PHOTO_ADS_PER_ADSET) {
+      groups.push(arr.slice(i, i + PHOTO_ADS_PER_ADSET));
     }
-    // Tracking para limpiar el adset si la creación del ad falla (evita orphans).
+  }
+
+  const tmpDir = path.join(os.tmpdir(), 'testing-agent');
+  if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+  let launched = 0;
+  let loggedPixel = false;
+
+  for (const group of groups) {
+    const first = group[0];
+    const isVideo = first.media_type === 'video' && !!first.video_url;
+
+    // CLAIM ATÓMICO anti-doble-launch de TODOS los del grupo (flip ready→testing).
+    const claimed = [];
+    for (const p of group) {
+      const c = await CreativeProposal.findOneAndUpdate(
+        { _id: p._id, status: 'ready' }, { $set: { status: 'testing' } }
+      ).lean();
+      if (c) claimed.push(c);
+    }
+    if (!claimed.length) continue;
+
     let createdAdsetId = null;
-    let adCreated = false;
+    const adVariants = [];
     try {
-      const isVideo = proposal.media_type === 'video' && !!proposal.video_url;
-      // VIDEO → campana propia + $25 ABO. FOTO → campana de testing normal + $20.
       let targetCampaignId = campaignId;
       let dailyBudget = TEST_DAILY_BUDGET;
       if (isVideo) {
@@ -374,11 +431,10 @@ async function launchTests() {
         targetCampaignId = videoCampaignId;
         dailyBudget = VIDEO_TEST_DAILY_BUDGET;
       }
-      // Prefijo [TEST] siempre (Athena/Ares lo usan para excluir tests del scan).
-      const testName = `[TEST]${isVideo ? ' 🎬' : ''} ${proposal.headline}`;
+      // Nombre del adset: el del primer creativo + "(+N)" si hay variantes. [TEST] siempre.
+      const testName = `[TEST]${isVideo ? ' 🎬' : ''} ${first.headline}${claimed.length > 1 ? ` (+${claimed.length - 1})` : ''}`;
 
-      // 1. Crear test ad set
-      if (launched === 0) logger.info(`[TESTING-AGENT] pixelInfo: ${JSON.stringify(pixelInfo)}`);
+      if (!loggedPixel) { logger.info(`[TESTING-AGENT] pixelInfo: ${JSON.stringify(pixelInfo)}`); loggedPixel = true; }
       const adset = await meta.createAdSet({
         campaign_id: targetCampaignId,
         name: testName,
@@ -391,79 +447,35 @@ async function launchTests() {
         status: 'ACTIVE'
       });
       createdAdsetId = adset.adset_id;
-
-      // 2. Subir media (imagen o video según media_type) y armar el creative.
-      const tmpDir = path.join(os.tmpdir(), 'testing-agent');
-      if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
       const pageId = await meta.getPageId();
-      const creativeBase = {
-        page_id: pageId,
-        headline: proposal.headline,
-        body: proposal.primary_text,
-        description: '',
-        cta: 'SHOP_NOW',
-        link_url: proposal.link_url || 'https://jerseypickles.com'
-      };
 
-      let creative;
-      if (proposal.media_type === 'video' && proposal.video_url) {
-        // VIDEO (Dionisio): descargar el .mp4 → subir a Meta → video_id
-        const axios = require('axios');
-        const tmpVid = path.join(tmpDir, `test_${proposal._id}.mp4`);
-        const resp = await axios.get(proposal.video_url, { responseType: 'arraybuffer', timeout: 60000 });
-        fs.writeFileSync(tmpVid, Buffer.from(resp.data));
-        const vup = await meta.uploadVideo(tmpVid);
-        try { fs.unlinkSync(tmpVid); } catch (_) {}
-        // El video ya vive en Meta → liberar el base64 de Mongo (cumplió su función). (2026-06-13)
-        CreativeProposal.findByIdAndUpdate(proposal._id, { $set: { video_base64: '' } }).catch(() => {});
-
-        // Thumbnail OBLIGATORIO para video ads (Meta video_data exige image_hash/url).
-        // Usamos la imagen ORIGEN del video (su primer frame) → subir → image_hash.
-        let thumbnail_hash = null;
+      // Un ad por creativo del grupo (todos en el MISMO adset → Meta hace el A/B/C).
+      for (const p of claimed) {
         try {
-          if (proposal.source_proposal_id) {
-            const src = await CreativeProposal.findById(proposal.source_proposal_id).select('image_base64').lean();
-            if (src?.image_base64) {
-              const tmpThumb = path.join(tmpDir, `thumb_${proposal._id}.png`);
-              fs.writeFileSync(tmpThumb, Buffer.from(src.image_base64, 'base64'));
-              const tup = await meta.uploadImage(tmpThumb);
-              try { fs.unlinkSync(tmpThumb); } catch (_) {}
-              thumbnail_hash = tup.image_hash;
-            }
-          }
-        } catch (thErr) {
-          logger.warn(`[TESTING-AGENT] No se pudo subir thumbnail del video ${proposal._id}: ${thErr.message}`);
+          const creative = await _buildCreativeForProposal(meta, p, pageId, tmpDir);
+          const ad = await meta.createAd(adset.adset_id, creative.creative_id, `${p.headline} [TEST]`, 'ACTIVE');
+          adVariants.push({ proposal_id: p._id, ad_id: ad.ad_id, creative_id: creative.creative_id, headline: p.headline });
+        } catch (adErr) {
+          logger.warn(`[TESTING-AGENT] ad falló para "${p.headline}" en grupo: ${adErr.message}`);
+          await CreativeProposal.findByIdAndUpdate(p._id, { $set: { status: 'failed', rejection_reason: `ad create failed: ${adErr.message}` } }).catch(() => {});
         }
-        creative = await meta.createAdCreative({ ...creativeBase, video_id: vup.video_id, thumbnail_hash });
-      } else {
-        // IMAGEN (Apollo/gpt-image): la fuente es 2:3 (1024x1536), NO 9:16 real. En
-        // Reels/Stories Meta recortaría el 2:3 para llenar el 9:16 → corta la imagen.
-        // Helper compartido: padea a 9:16 real (fondo desenfocado) + recorte 4:5 feed
-        // → multi-formato por placement, sin cortar nada. Fallback single 9:16.
-        const { createMultiFormatCreative } = require('../../meta/creative-formats');
-        const srcBuf = Buffer.from(proposal.image_base64, 'base64');
-        creative = await createMultiFormatCreative(meta, srcBuf, creativeBase, `test_${proposal._id}`);
       }
 
-      // 4. Crear ad
-      const adName = `${proposal.headline} [TEST]`;
-      const ad = await meta.createAd(adset.adset_id, creative.creative_id, adName, 'ACTIVE');
-      adCreated = true;
+      if (!adVariants.length) {
+        // Ningún ad se creó → borrar el adset huérfano (los proposals ya quedaron failed).
+        try { await meta.deleteObject(createdAdsetId); } catch (_) {}
+        continue;
+      }
 
-      // 5. Actualizar proposal
-      await CreativeProposal.findByIdAndUpdate(proposal._id, {
-        $set: { status: 'testing' }
-      });
-
-      // 6. Crear TestRun
       await TestRun.create({
-        proposal_id: proposal._id,
-        source_adset_id: proposal.adset_id,
-        source_adset_name: proposal.adset_name,
+        proposal_id: adVariants[0].proposal_id,   // principal (se re-apunta al ganador al graduar)
+        source_adset_id: first.adset_id,
+        source_adset_name: first.adset_name,
         test_adset_id: adset.adset_id,
         test_adset_name: testName,
-        test_ad_id: ad.ad_id,
-        test_creative_id: creative.creative_id,
+        test_ad_id: adVariants[0].ad_id,
+        test_creative_id: adVariants[0].creative_id,
+        ad_variants: adVariants,
         campaign_id: targetCampaignId,
         daily_budget: dailyBudget,
         media_type: isVideo ? 'video' : 'image',
@@ -473,27 +485,21 @@ async function launchTests() {
       });
 
       launched++;
-      logger.info(`[TESTING-AGENT] Lanzado: "${proposal.headline}" para ${proposal.adset_name} → ${adset.adset_id}`);
+      logger.info(`[TESTING-AGENT] Lanzado: "${first.headline}"${adVariants.length > 1 ? ` + ${adVariants.length - 1} variantes (${first.product_name})` : ''} → ${adset.adset_id}`);
 
     } catch (err) {
       const metaError = err.response?.data?.error;
       const detail = metaError ? `${metaError.message} (code: ${metaError.code}, subcode: ${metaError.error_subcode})` : err.message;
-      logger.error(`[TESTING-AGENT] Error lanzando test para "${proposal.headline}": ${detail}`);
-      if (metaError) logger.error(`[TESTING-AGENT] Meta error detail: ${JSON.stringify(metaError)}`);
-      // CLEANUP: si se creó el adset pero el ad falló → borrar el adset huérfano
-      // (si no, queda un [TEST] vacío sin ad ocupando lugar y ensuciando).
-      if (createdAdsetId && !adCreated) {
-        try {
-          await meta.deleteObject(createdAdsetId);
-          logger.info(`[TESTING-AGENT] Adset huérfano ${createdAdsetId} borrado tras fallo de ad`);
-        } catch (delErr) {
-          logger.warn(`[TESTING-AGENT] No se pudo borrar adset huérfano ${createdAdsetId}: ${delErr.message}`);
+      logger.error(`[TESTING-AGENT] Error lanzando grupo "${first.headline}": ${detail}`);
+      if (createdAdsetId && !adVariants.length) {
+        try { await meta.deleteObject(createdAdsetId); logger.info(`[TESTING-AGENT] Adset huérfano ${createdAdsetId} borrado`); } catch (_) {}
+      }
+      // Marcar failed los del grupo que aún quedaron en 'testing' sin ad.
+      for (const p of claimed) {
+        if (!adVariants.some(v => String(v.proposal_id) === String(p._id))) {
+          await CreativeProposal.findByIdAndUpdate(p._id, { $set: { status: 'failed', rejection_reason: `test launch failed: ${detail}` } }).catch(() => {});
         }
       }
-      // Marcar como failed para no reintentar
-      await CreativeProposal.findByIdAndUpdate(proposal._id, {
-        $set: { status: 'failed', rejection_reason: `test launch failed: ${detail}` }
-      });
     }
   }
 
@@ -742,9 +748,76 @@ async function _resolveForceGraduateDirectives(test, outcome, metrics) {
   }
 }
 
+/**
+ * Resuelve el ad GANADOR de un test multi-ad (foto, 3-por-adset) por ad-level insights.
+ * Marca el ganador, PAUSA los perdedores, y atribuye al DNA de cada perdedor su propia
+ * señal negativa (spend real, 0/pocas compras). Devuelve el variant ganador o null.
+ * (2026-06-13) — así Apollo aprende QUÉ CREATIVO ganó, no solo "el adset graduó".
+ */
+async function _resolveMultiAdWinner(meta, test) {
+  const { extractPurchaseCount, extractPurchaseValue } = require('../../meta/helpers');
+  const variants = test.ad_variants || [];
+  const since = new Date(test.launched_at || Date.now() - 7 * 86400000).toISOString().split('T')[0];
+  const until = new Date().toISOString().split('T')[0];
+  const tr = JSON.stringify({ since, until });
+  const scored = [];
+  for (const v of variants) {
+    let purchases = 0, value = 0, spend = 0;
+    try {
+      const ins = await meta.getInsights(v.ad_id, { time_range: tr });
+      const row = (ins && ins[0]) || {};
+      purchases = extractPurchaseCount(row.actions);
+      value = extractPurchaseValue(row.action_values);
+      spend = parseFloat(row.spend || 0);
+    } catch (e) { logger.warn(`[TESTING-AGENT] insights ad ${v.ad_id} falló: ${e.message}`); }
+    scored.push({ proposal_id: v.proposal_id, ad_id: v.ad_id, creative_id: v.creative_id, headline: v.headline, purchases, value, spend, roas: spend > 0 ? value / spend : 0 });
+  }
+  if (!scored.length) return null;
+  // Ganador: más compras; desempate por revenue, luego ROAS.
+  scored.sort((a, b) => (b.purchases - a.purchases) || (b.value - a.value) || (b.roas - a.roas));
+  const winner = scored[0];
+
+  for (const v of scored) {
+    const won = String(v.proposal_id) === String(winner.proposal_id);
+    if (won) continue;
+    // Perdedor: pausar el ad + marcar proposal + señal negativa al DNA con SU spend real.
+    try { await meta.updateStatus(v.ad_id, 'PAUSED'); } catch (_) {}
+    await CreativeProposal.findByIdAndUpdate(v.proposal_id, { $set: { status: 'killed', decided_at: new Date() } }).catch(() => {});
+    try {
+      const lp = await CreativeProposal.findById(v.proposal_id).lean();
+      if (lp) {
+        const { updateDNAFitness } = require('../creative/dna-helper');
+        await updateDNAFitness(lp, 'killed', { spend: v.spend, revenue: v.value, purchases: v.purchases });
+      }
+    } catch (_) { /* non-fatal */ }
+  }
+  await TestRun.findByIdAndUpdate(test._id, {
+    $set: {
+      winner_resolved: true,
+      ad_variants: scored.map(s => ({ proposal_id: s.proposal_id, ad_id: s.ad_id, creative_id: s.creative_id, headline: s.headline, won: String(s.proposal_id) === String(winner.proposal_id) }))
+    }
+  });
+  logger.info(`[TESTING-AGENT] 🏆 multi-ad ganador: "${winner.headline}" (${winner.purchases}c, ROAS ${winner.roas.toFixed(2)}) — ${scored.length - 1} variante(s) pausada(s)`);
+  return winner;
+}
+
 async function graduateTest(test, metrics) {
   const { getMetaClient } = require('../../meta/client');
   const meta = getMetaClient();
+
+  // MULTI-AD: resolver el ganador por ad-level insights ANTES de promover/atribuir, para
+  // que la promoción y el DNA usen el creativo que de verdad ganó (no el primero del grupo).
+  if (Array.isArray(test.ad_variants) && test.ad_variants.length > 1 && !test.winner_resolved) {
+    try {
+      const winner = await _resolveMultiAdWinner(meta, test);
+      if (winner) {
+        test.proposal_id = winner.proposal_id;
+        test.test_creative_id = winner.creative_id;
+        test.test_ad_id = winner.ad_id;
+      }
+    } catch (e) { logger.warn(`[TESTING-AGENT] resolución multi-ad falló (uso el principal): ${e.message}`); }
+  }
+
   const proposal = await CreativeProposal.findById(test.proposal_id).lean();
   const adName = `${proposal?.headline || 'Graduated'} [AI Creative Agent]`;
   const daysActive = getDaysActive(test.launched_at);
