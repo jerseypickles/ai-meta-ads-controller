@@ -426,8 +426,20 @@ async function launchTests() {
         targetCampaignId = videoCampaignId;
         dailyBudget = VIDEO_TEST_DAILY_BUDGET;
       }
-      // Nombre del adset: el del primer creativo + "(+N)" si hay variantes. [TEST] siempre.
-      const testName = `[TEST]${isVideo ? ' 🎬' : ''} ${first.headline}${claimed.length > 1 ? ` (+${claimed.length - 1})` : ''}`;
+      // Nombre del adset (2026-06-14): los headlines colisionan mucho (todos los
+      // "Pickle Chamoy..." se ven iguales, sobre todo truncados en la UI) → imposible
+      // encontrar un adset puntual. Ahora arranca con un TAG ÚNICO + PRODUCTO para que
+      // sea distinguible y buscable: "[TEST] 🎬 MMDD-id4 · Producto · headline (+N)".
+      //   - MMDD-id4: fecha (recencia) + 4 hex del proposal _id → único aunque el
+      //     headline se repita. Visible temprano (no se pierde al truncar).
+      //   - Producto: permite filtrar por producto en Meta Ads Manager.
+      // [TEST] sigue al inicio (Athena/CBO-monitor excluyen por ese substring).
+      const _d = new Date();
+      const _stamp = `${String(_d.getMonth() + 1).padStart(2, '0')}${String(_d.getDate()).padStart(2, '0')}`;
+      const _uid = String(first._id).slice(-4);
+      const _prod = first.product_name ? `${first.product_name} · ` : '';
+      const _grp = claimed.length > 1 ? ` (+${claimed.length - 1})` : '';
+      const testName = `[TEST]${isVideo ? ' 🎬' : ''} ${_stamp}-${_uid} · ${_prod}${first.headline}${_grp}`;
 
       if (!loggedPixel) { logger.info(`[TESTING-AGENT] pixelInfo: ${JSON.stringify(pixelInfo)}`); loggedPixel = true; }
       const adset = await meta.createAdSet({
