@@ -33,10 +33,18 @@ const WINNER_BASELINE_MULT = 1.5;  // un winner debe rendir ≥1.5× el baseline
  * es explotar lo mejor que tenés sobre tu propio promedio, con un piso de rentabilidad.
  *   threshold = max(piso_rentable, baseline × mult)
  */
-function winnerThreshold(ctx, config = {}) {
+function winnerThreshold(ctx, config = {}, haircut = 1) {
   const floor = config.winner_profit_floor != null ? config.winner_profit_floor : WINNER_PROFIT_FLOOR;
   const mult = config.winner_baseline_mult != null ? config.winner_baseline_mult : WINNER_BASELINE_MULT;
-  return Math.max(floor, (ctx.baseline || 1) * mult);
+  // D (2026-06-14) — piso de rentabilidad CASH-aware. El floor (1.8x) es una afirmación
+  // de RENTABILIDAD REAL (cash), pero shrunkRoas viene en Meta-ROAS. El piso equivalente
+  // en Meta = floor / haircut (haircut = cash/meta, de Demeter). En esta cuenta el pixel
+  // sub-atribuye (haircut>1 → cash>meta) → el piso 1.8x Meta era demasiado estricto
+  // (exigía 1.8×haircut en cash) y starveaba el exploit. El baseline×mult es relativo
+  // (ambos en Meta) → invariante al haircut, no se toca.
+  const h = (haircut && haircut > 0) ? haircut : 1;
+  const floorMeta = floor / h;
+  return Math.max(floorMeta, (ctx.baseline || 1) * mult);
 }
 
 /**
@@ -111,7 +119,15 @@ function hierarchicalScore(dna, ctx, weights) {
     const ageDays = (Date.now() - new Date(f.last_test_at).getTime()) / 86400000;
     recencyNorm = Math.max(0, 1 - ageDays / 60);
   }
-  return (weights.roas * roasNorm) + (weights.confidence * confNorm) + (weights.recency * recencyNorm);
+  // C (2026-06-14) — señal HEAD-TO-HEAD del multi-ad: cuando 3 creativos del MISMO
+  // producto compiten en UN adset ($ y timing idénticos), el ganador venció a sus
+  // hermanos en un A/B/C CONTROLADO → evidencia más limpia que un win aislado (sin
+  // confound de producto/budget/momento). Premia a los DNA que ganan head-to-head,
+  // escalado por cuánta evidencia h2h tienen (no infla a un DNA con 1 sola pelea).
+  const h2hW = f.h2h_wins || 0, h2hL = f.h2h_losses || 0, h2hN = h2hW + h2hL;
+  const h2hNorm = h2hN > 0 ? (h2hW / h2hN) * Math.min(1, h2hN / 3) : 0;
+  const wH2h = weights.h2h != null ? weights.h2h : 0;
+  return (weights.roas * roasNorm) + (weights.confidence * confNorm) + (weights.recency * recencyNorm) + (wH2h * h2hNorm);
 }
 
 /** Valores de una dimensión rankeados por su marginal shrunk (mejor → peor). */

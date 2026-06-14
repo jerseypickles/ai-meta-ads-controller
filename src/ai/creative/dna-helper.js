@@ -257,6 +257,38 @@ async function updateDNAFitness(proposal, outcome, metrics, testId = null) {
   }
 }
 
+/**
+ * C (2026-06-14) — registra una pelea HEAD-TO-HEAD del multi-ad en el DNA del creativo.
+ * Cuando N creativos del MISMO producto compiten en UN adset ($ + timing idénticos), el
+ * ganador venció a sus hermanos en condiciones controladas → señal más limpia que un win
+ * aislado. Incrementa h2h_wins/h2h_losses en el balde DNA del proposal (separado de los
+ * contadores de outcome; se compone con updateDNAFitness, no lo reemplaza). Solo foto
+ * (video usa su propio DNA). Fail-open.
+ * @param {object} proposal — CreativeProposal (lean) del variante
+ * @param {boolean} won — true si fue el ganador del grupo
+ */
+async function recordHeadToHead(proposal, won) {
+  try {
+    if (!proposal || proposal.media_type === 'video') return null;
+    let dnaHash = proposal.dna_hash;
+    if (!dnaHash) {
+      dnaHash = buildDNA({
+        style: proposal.style,
+        copy_angle: proposal.copy_angle,
+        scene: proposal.scene_short,
+        product: proposal.product_name,
+        headline: proposal.headline
+      }).dna_hash;
+    }
+    const field = won ? 'fitness.h2h_wins' : 'fitness.h2h_losses';
+    await CreativeDNA.updateOne({ dna_hash: dnaHash }, { $inc: { [field]: 1 } }, { upsert: false });
+    return dnaHash;
+  } catch (err) {
+    logger.warn(`[DNA] recordHeadToHead falló (non-fatal): ${err.message}`);
+    return null;
+  }
+}
+
 module.exports = {
   STYLES,
   ANGLES,
@@ -268,5 +300,6 @@ module.exports = {
   extractFraming,
   computeDNAHash,
   buildDNA,
-  updateDNAFitness
+  updateDNAFitness,
+  recordHeadToHead
 };

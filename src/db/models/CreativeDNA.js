@@ -43,7 +43,13 @@ const creativeDNASchema = new mongoose.Schema({
     last_outcome: { type: String, enum: ['graduated', 'killed', 'expired', null], default: null },
 
     // Confidence signal — low samples = ruidoso
-    sample_confidence: { type: Number, default: 0 }  // 0-1, asintotico a 1 con mas samples
+    sample_confidence: { type: Number, default: 0 },  // 0-1, asintotico a 1 con mas samples
+
+    // HEAD-TO-HEAD (2026-06-14) — peleas controladas del multi-ad: cuando 3 creativos del
+    // MISMO producto compiten en UN adset ($ y timing idénticos), el ganador venció a sus
+    // hermanos en condiciones idénticas → evidencia más limpia que un win aislado.
+    h2h_wins: { type: Number, default: 0 },
+    h2h_losses: { type: Number, default: 0 }
   },
 
   // Linaje (para Fase 3 evolucion)

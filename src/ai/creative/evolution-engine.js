@@ -42,9 +42,10 @@ const DEFAULT_CONFIG = {
 
   // Scoring
   fitness_score_weights: {
-    roas: 0.5,              // peso del avg_roas
-    confidence: 0.3,        // peso del sample_confidence (evita DNAs ruidosos)
-    recency: 0.2            // peso de recencia (DNAs recientes valen mas)
+    roas: 0.45,             // peso del avg_roas
+    confidence: 0.25,       // peso del sample_confidence (evita DNAs ruidosos)
+    recency: 0.15,          // peso de recencia (DNAs recientes valen mas)
+    h2h: 0.15               // C (2026-06-14): peso del win-share head-to-head del multi-ad
   }
 };
 
@@ -122,7 +123,7 @@ function computeFitnessScore(dna, config) {
  * (min_samples_for_exploit) para que exploit signifique "explotar lo probado".
  */
 async function exploitSample(config, ctx) {
-  const threshold = winnerThreshold(ctx, config);
+  const threshold = winnerThreshold(ctx, config, ctx.haircut);
   const pool = await CreativeDNA.find({
     'fitness.tests_total': { $gte: config.min_samples_for_exploit }
   }).lean();
@@ -161,7 +162,7 @@ async function mutateFrom(parentOverride, config, ctx) {
     const pool = await CreativeDNA.find({
       'fitness.tests_total': { $gte: config.min_samples_for_parent }
     }).lean();
-    const threshold = winnerThreshold(ctx, config);
+    const threshold = winnerThreshold(ctx, config, ctx.haircut);
     const candidates = pool
       .filter(d => shrunkRoas(d, ctx) >= threshold)
       .sort((a, b) => shrunkRoas(b, ctx) - shrunkRoas(a, ctx))
@@ -209,7 +210,7 @@ async function crossoverFrom(config, ctx) {
   const pool = await CreativeDNA.find({
     'fitness.tests_total': { $gte: config.min_samples_for_parent }
   }).lean();
-  const threshold = winnerThreshold(ctx, config);
+  const threshold = winnerThreshold(ctx, config, ctx.haircut);
   const candidates = pool
     .filter(d => shrunkRoas(d, ctx) >= threshold)
     .sort((a, b) => shrunkRoas(b, ctx) - shrunkRoas(a, ctx))
@@ -297,6 +298,14 @@ async function evolveNextDNA(options = {}) {
 
     // Contexto de fitness jerárquico (marginales + baseline), 1 sola vez por ciclo. Pilar A.
     const ctx = await buildFitnessContext();
+
+    // D (2026-06-14) — haircut de cuenta (cash/meta) de Demeter, para que el piso absoluto
+    // de winner sea CASH-aware (ver winnerThreshold). Fail-open a 1 (sin ajuste).
+    try {
+      const { getAccountCashSignal } = require('../agent/demeter-cash-signal');
+      const cs = await getAccountCashSignal();
+      ctx.haircut = (cs && cs.available && cs.haircut_factor) ? cs.haircut_factor : 1;
+    } catch (_) { ctx.haircut = 1; }
 
     let result = null;
     if (strategy === 'exploit') result = await exploitSample(config, ctx);

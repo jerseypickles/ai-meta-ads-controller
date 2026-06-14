@@ -793,8 +793,20 @@ async function _resolveMultiAdWinner(meta, test) {
     try {
       const lp = await CreativeProposal.findById(v.proposal_id).lean();
       if (lp) {
-        const { updateDNAFitness } = require('../creative/dna-helper');
+        const { updateDNAFitness, recordHeadToHead } = require('../creative/dna-helper');
         await updateDNAFitness(lp, 'killed', { spend: v.spend, revenue: v.value, purchases: v.purchases });
+        await recordHeadToHead(lp, false); // C: perdió la pelea controlada del grupo
+      }
+    } catch (_) { /* non-fatal */ }
+  }
+
+  // C: el ganador venció a sus hermanos en condiciones idénticas → h2h_win en su DNA.
+  if (scored.length > 1) {
+    try {
+      const wp = await CreativeProposal.findById(winner.proposal_id).lean();
+      if (wp) {
+        const { recordHeadToHead } = require('../creative/dna-helper');
+        await recordHeadToHead(wp, true);
       }
     } catch (_) { /* non-fatal */ }
   }
