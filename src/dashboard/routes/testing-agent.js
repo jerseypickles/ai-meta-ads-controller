@@ -216,7 +216,16 @@ router.get('/tests/:id/image', async (req, res) => {
     const test = await TestRun.findById(req.params.id).lean();
     if (!test) return res.status(404).json({ error: 'Test not found' });
 
-    const proposal = await CreativeProposal.findById(test.proposal_id)
+    // MULTI-AD (2026-06-13): ?proposal=<id> sirve la imagen de una VARIANTE del grupo
+    // (debe ser uno de los ad_variants del test, si no se ignora y se usa el principal).
+    let targetProposalId = test.proposal_id;
+    const reqProp = req.query.proposal;
+    if (reqProp && Array.isArray(test.ad_variants)) {
+      const match = test.ad_variants.find(v => String(v.proposal_id) === String(reqProp));
+      if (match) targetProposalId = match.proposal_id;
+    }
+
+    const proposal = await CreativeProposal.findById(targetProposalId)
       .select('image_base64 image_url meta_creative_id')
       .lean();
     if (!proposal) return res.status(404).json({ error: 'No proposal' });
@@ -249,7 +258,7 @@ router.get('/tests/:id/image', async (req, res) => {
         // Cache en la DB para próximas visitas (no re-fetch Meta)
         if (imageUrl) {
           await CreativeProposal.updateOne(
-            { _id: test.proposal_id },
+            { _id: targetProposalId },
             { $set: { image_url: imageUrl } }
           ).catch(() => {});
         }
@@ -275,7 +284,7 @@ router.get('/tests/:id/image', async (req, res) => {
       // URL de Meta puede haber expirado — limpiamos cache para retry en próxima visita
       if (proposal.image_url === imageUrl) {
         await CreativeProposal.updateOne(
-          { _id: test.proposal_id },
+          { _id: targetProposalId },
           { $set: { image_url: '' } }
         ).catch(() => {});
       }

@@ -477,10 +477,11 @@ export const getAresIntelligence = async () => {
   return response.data;
 };
 
-export const getTestImageUrl = (testId) => {
+export const getTestImageUrl = (testId, proposalId) => {
   const BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:3500');
   const token = localStorage.getItem('auth_token');
-  return `${BASE}/api/testing-agent/tests/${testId}/image?token=${token}`;
+  const variant = proposalId ? `&proposal=${proposalId}` : '';
+  return `${BASE}/api/testing-agent/tests/${testId}/image?token=${token}${variant}`;
 };
 
 // ═══ BRAIN — Creative Refresh Link ═══

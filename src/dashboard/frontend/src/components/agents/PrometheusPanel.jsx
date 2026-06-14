@@ -420,6 +420,8 @@ function TestCard({ test, index, mode, onKill, setLightbox, setDetail }) {
   const p = test.proposal || {};
   const m = test.metrics || {};
   const daysActive = Math.floor((Date.now() - new Date(test.launched_at).getTime()) / 86400000);
+  const variants = Array.isArray(test.ad_variants) ? test.ad_variants : [];
+  const isGroup = variants.length > 1;
 
   const badgeConfig = {
     learning: { bg: '#3b82f6', text: `Learning · día ${daysActive}` },
@@ -514,6 +516,63 @@ function TestCard({ test, index, mode, onKill, setLightbox, setDetail }) {
         }}>
           {badgeConfig.text}
         </div>
+
+        {/* MULTI-AD (2026-06-13): grupo de N creativos del mismo producto en 1 adset.
+            Badge ×N + tira de variantes; al resolverse, el ganador queda con ✓ verde. */}
+        {isGroup && (
+          <>
+            <div style={{
+              position: 'absolute', top: 6, right: 6,
+              background: 'rgba(139, 92, 246, 0.92)', color: '#fff',
+              padding: '2px 8px', borderRadius: 4,
+              fontSize: '0.56rem', fontWeight: 700, letterSpacing: '0.06em', zIndex: 1
+            }}>
+              ✦ {variants.length} ADS
+            </div>
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                position: 'absolute', bottom: 0, left: 0, right: 0,
+                display: 'flex', gap: 3, padding: 4,
+                background: 'linear-gradient(to top, rgba(8,10,30,0.92), rgba(8,10,30,0))',
+                zIndex: 1
+              }}
+            >
+              {variants.map((v, vi) => {
+                const isWinner = test.winner_resolved && v.won;
+                const isDimmed = test.winner_resolved && !v.won;
+                return (
+                  <div
+                    key={vi}
+                    title={v.headline}
+                    onClick={() => setLightbox(getTestImageUrl(test._id, v.proposal_id))}
+                    style={{
+                      position: 'relative', width: 34, height: 34, flex: '0 0 auto',
+                      borderRadius: 5, overflow: 'hidden', cursor: 'pointer',
+                      border: isWinner ? '2px solid #10b981' : '1px solid rgba(255,255,255,0.25)',
+                      opacity: isDimmed ? 0.4 : 1
+                    }}
+                  >
+                    <img
+                      src={getTestImageUrl(test._id, v.proposal_id)}
+                      alt={v.headline}
+                      loading="lazy"
+                      onError={(e) => { e.target.style.opacity = 0; }}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    />
+                    {isWinner && (
+                      <div style={{
+                        position: 'absolute', inset: 0,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '0.72rem', color: '#fff', textShadow: '0 1px 4px #000'
+                      }}>✓</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
       </div>
       <div style={{ padding: 10 }}>
         <div style={{
@@ -923,6 +982,53 @@ function TestDetailModal({ test, onClose }) {
             )}
           </div>
         </div>
+
+        {/* MULTI-AD: galería de los N creativos que comparten el adset (Meta hace el A/B/C).
+            Al resolverse el ganador queda marcado ✓ y los perdedores se atenúan. */}
+        {Array.isArray(test.ad_variants) && test.ad_variants.length > 1 && (
+          <div style={{ marginBottom: 16 }}>
+            <SectionHeader
+              label={test.winner_resolved ? 'Creativos del grupo · ganador resuelto' : 'Creativos del grupo · Meta los compara'}
+              count={test.ad_variants.length}
+              color="#8b5cf6"
+            />
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {test.ad_variants.map((v, vi) => {
+                const isWinner = test.winner_resolved && v.won;
+                const isDimmed = test.winner_resolved && !v.won;
+                return (
+                  <div key={vi} style={{ width: 92, opacity: isDimmed ? 0.45 : 1 }}>
+                    <div style={{
+                      position: 'relative', width: 92, height: 92, borderRadius: 8, overflow: 'hidden',
+                      border: isWinner ? '2px solid #10b981' : '1px solid rgba(255,255,255,0.15)'
+                    }}>
+                      <img
+                        src={getTestImageUrl(test._id, v.proposal_id)}
+                        alt={v.headline}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        onError={(e) => { e.target.style.opacity = 0; }}
+                      />
+                      {isWinner && (
+                        <div style={{
+                          position: 'absolute', top: 4, right: 4,
+                          background: '#10b981', color: '#fff', borderRadius: 4,
+                          padding: '1px 5px', fontSize: '0.55rem', fontWeight: 700
+                        }}>✓ GANÓ</div>
+                      )}
+                    </div>
+                    <div style={{
+                      fontSize: '0.58rem', color: 'var(--bos-text-muted)', marginTop: 4,
+                      lineHeight: 1.25, display: '-webkit-box', WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical', overflow: 'hidden'
+                    }}>
+                      {v.headline}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {p.primary_text && (
           <div style={{ fontSize: '0.75rem', color: 'var(--bos-text-muted)', marginBottom: 14, fontStyle: 'italic', padding: '8px 12px', background: 'rgba(10, 14, 39, 0.5)', borderRadius: 6 }}>
