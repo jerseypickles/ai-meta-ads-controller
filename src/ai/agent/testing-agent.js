@@ -37,7 +37,7 @@ const MAX_CONCURRENT_VIDEO_TESTS = parseInt(process.env.MAX_CONCURRENT_VIDEO_TES
 // más fuerte (4.85x, 76% de las ventas) — el cap es techo, no compromiso: solo se llena
 // si hay videos aprobados que testear. Env-overridable.
 const MAX_DAILY_VIDEO_TESTING_BUDGET = parseInt(process.env.MAX_DAILY_VIDEO_TESTING_BUDGET, 10) || 900;
-const MAX_DAILY_TESTING_BUDGET = parseInt(process.env.MAX_DAILY_TESTING_BUDGET, 10) || 400; // Cap diario FOTO. Env-overridable. 2026-06-03: 1000→400 (foto flojo).
+const MAX_DAILY_TESTING_BUDGET = parseInt(process.env.MAX_DAILY_TESTING_BUDGET, 10) || 500; // Cap diario FOTO. 2026-06-03: 1000→400 (foto flojo) · 2026-06-14: 400→500 (margen para que entren grupos de 3 mientras resuelven los tests viejos de 1-foto; el mismo $ rinde 3x más creativos ahora). Env-overridable.
 const MAX_LAUNCHES_PER_CYCLE = 6; // 2026-06-05: 3→6 (más tests nuevos/ciclo; el video lo aprovecha)
 // MULTI-AD foto (2026-06-13): N creativos del MISMO producto por adset → Meta hace el
 // A/B/C interno con los mismos $50. Aprovecha mejor el budget de un formato flojo. Video
