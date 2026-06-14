@@ -349,58 +349,53 @@ async function launchTests() {
     logger.warn(`[TESTING-AGENT] priorización DNA falló (FIFO fallback): ${e.message}`);
   }
 
+  // VIDEO: 1-por-adset → capar directo al número de slots de video.
   const readyVideo = readyVideoAll.slice(0, maxVideoLaunches);
-  const readyPhoto = readyPhotoSorted.slice(0, maxPhotoLaunches);
-  const readyProposals = [...readyVideo, ...readyPhoto]; // video primero (suele haber pocos)
 
-  if (readyProposals.length === 0) {
-    logger.info('[TESTING-AGENT] No hay propuestas "ready" con slot disponible en su track');
-    return 0;
-  }
-
-  // Contar tests activos por ad set destino
+  // Contar tests activos por ad set destino (para el cap por-adset de foto).
   const testCountByAdset = {};
   const existingTests = await TestRun.find({ phase: { $in: ['learning', 'evaluating'] } }).select('source_adset_id').lean();
   for (const t of existingTests) testCountByAdset[t.source_adset_id] = (testCountByAdset[t.source_adset_id] || 0) + 1;
-
   const MAX_TESTS_PER_ADSET = 2; // max 2 tests por ad set destino
 
-  // Priorizar: ad sets con menos tests activos primero, skip si ya tiene 2+
-  const prioritized = [];
-  for (const proposal of readyProposals) {
-    const isVid = proposal.media_type === 'video' && proposal.video_url;
-    const currentTests = testCountByAdset[proposal.adset_id] || 0;
-    // El cap por-adset solo aplica a FOTO; el video va a su campaña propia.
-    if (!isVid && proposal.adset_id !== 'proactive' && currentTests >= MAX_TESTS_PER_ADSET) {
-      continue; // ya tiene suficientes tests
+  // FOTO — AGRUPAR PRIMERO, capar por número de GRUPOS (fix 2026-06-13).
+  // Bug viejo: se tomaban solo `maxPhotoLaunches` PROPOSALS y recién después se agrupaban
+  // de a 3 → con margen para 2 adsets entraban 2 proposals → a lo más 1 grupo de 2 (o, si
+  // eran de productos distintos, 2 grupos de 1). Cada grupo de 3 consume 3 proposals, no 1.
+  // Ahora: agrupar TODO el pool de foto por producto (preservando el orden DNA global) en
+  // grupos de hasta PHOTO_ADS_PER_ADSET, y recién ahí capar a `maxPhotoLaunches` GRUPOS
+  // (= adsets = slots de budget). Así cada slot se llena con un grupo completo de 3.
+  const photoGroups = [];
+  const openByProduct = {};
+  for (const p of readyPhotoSorted) {
+    const k = p.product_name || 'unknown';
+    if (!openByProduct[k] || openByProduct[k].length >= PHOTO_ADS_PER_ADSET) {
+      openByProduct[k] = [];
+      photoGroups.push(openByProduct[k]);
     }
-    const ads = await getAdsForAdSet(proposal.adset_id);
-    const activeAds = ads.filter(a => a.status === 'ACTIVE').length;
-    prioritized.push({ proposal, activeAds, currentTests });
+    openByProduct[k].push(p);
   }
-  prioritized.sort((a, b) => a.activeAds - b.activeAds);
+  // Filtro MAX_TESTS_PER_ADSET (por el source adset del grupo) + cap a maxPhotoLaunches.
+  const cappedPhotoGroups = photoGroups
+    .filter(g => {
+      const src = g[0].adset_id;
+      return !(src && src !== 'proactive' && (testCountByAdset[src] || 0) >= MAX_TESTS_PER_ADSET);
+    })
+    .slice(0, maxPhotoLaunches);
+
+  // Grupos finales: video (1s) primero, luego foto (grupos de N del mismo producto →
+  // Meta compara CREATIVOS, no productos, y elige el ganador con los mismos $50).
+  const groups = [...readyVideo.map(p => [p]), ...cappedPhotoGroups];
+
+  if (groups.length === 0) {
+    logger.info('[TESTING-AGENT] No hay propuestas "ready" con slot disponible en su track');
+    return 0;
+  }
 
   // Obtener campaign + pixel
   const campaignId = await getTestingCampaignId();
   const pixelInfo = await meta.getPixelId();
   let videoCampaignId = null;
-
-  // AGRUPAR (2026-06-13): video = grupos de 1 (1-por-adset). Foto = grupos de hasta
-  // PHOTO_ADS_PER_ADSET del MISMO producto → Meta compara CREATIVOS (no productos) y
-  // elige el ganador con los mismos $50.
-  const videoItems = prioritized.filter(x => x.proposal.media_type === 'video' && x.proposal.video_url);
-  const photoItems = prioritized.filter(x => !(x.proposal.media_type === 'video' && x.proposal.video_url));
-  const groups = videoItems.map(x => [x.proposal]);
-  const byProduct = {};
-  for (const x of photoItems) {
-    const k = x.proposal.product_name || 'unknown';
-    (byProduct[k] = byProduct[k] || []).push(x.proposal);
-  }
-  for (const arr of Object.values(byProduct)) {
-    for (let i = 0; i < arr.length; i += PHOTO_ADS_PER_ADSET) {
-      groups.push(arr.slice(i, i + PHOTO_ADS_PER_ADSET));
-    }
-  }
 
   const tmpDir = path.join(os.tmpdir(), 'testing-agent');
   if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
