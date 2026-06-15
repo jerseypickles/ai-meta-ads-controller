@@ -92,8 +92,29 @@ async function _getCandidates() {
     image_base64: { $type: 'string', $ne: '' }
   }).sort({ created_at: -1 }).limit(40).lean();
 
+  // FRENO POR PRODUCTO RETIRADO (2026-06-15): no animar video_sources de productos
+  // eliminados del ProductBank (ej. "Pickle Chamoy" retirado por el creador). Marca
+  // rejected y los saca del pool. Fail-open si ProductBank no se puede leer / viene vacío.
+  let pool = candidates;
+  try {
+    const ProductBank = require('../../db/models/ProductBank');
+    const activeProducts = await ProductBank.find({ active: true }).select('product_name').lean();
+    const activeNames = new Set(activeProducts.map(p => p.product_name).filter(Boolean));
+    if (activeNames.size > 0) {
+      const retired = candidates.filter(c => c.product_name && !activeNames.has(c.product_name));
+      if (retired.length) {
+        await CreativeProposal.updateMany(
+          { _id: { $in: retired.map(c => c._id) } },
+          { $set: { status: 'rejected', rejection_reason: 'producto retirado del ProductBank' } }
+        );
+        logger.info(`[DIONISIO] ${retired.length} video_source(s) de producto(s) retirado(s) → rejected: ${[...new Set(retired.map(c => c.product_name))].join(', ')}`);
+        pool = candidates.filter(c => !c.product_name || activeNames.has(c.product_name));
+      }
+    }
+  } catch (e) { logger.warn(`[DIONISIO] freno por producto retirado falló (fail-open): ${e.message}`); }
+
   // Filtrar los que YA tienen un video hijo (dedup).
-  const ids = candidates.map(c => c._id);
+  const ids = pool.map(c => c._id);
   // Excluir cualquier source que ya tenga un video hijo EXCEPTO si falló por error
   // técnico (status 'failed' → reintento válido). Un 'rejected' cuenta como "ya lo
   // probamos y dijiste que no" → NO se vuelve a elegir esa imagen; así cada ciclo
@@ -103,7 +124,7 @@ async function _getCandidates() {
     status: { $ne: 'failed' }
   }).select('source_proposal_id').lean();
   const done = new Set(existingVideos.map(v => String(v.source_proposal_id)));
-  return candidates.filter(c => !done.has(String(c._id)));
+  return pool.filter(c => !done.has(String(c._id)));
 }
 
 const STUCK_MIN = parseInt(process.env.DIONYSUS_STUCK_MIN || '30', 10);
