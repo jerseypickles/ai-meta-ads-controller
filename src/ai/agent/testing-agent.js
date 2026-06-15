@@ -322,9 +322,34 @@ async function launchTests() {
   }
 
   // Leer proposals "ready" y partir por tipo; cada track se capa por separado.
-  const allReady = await CreativeProposal.find({ status: 'ready' })
+  let allReady = await CreativeProposal.find({ status: 'ready' })
     .sort({ created_at: 1 }) // las mas antiguas primero (base / fallback)
     .lean();
+
+  // FRENO POR PRODUCTO RETIRADO (2026-06-15): si un producto se elimina del ProductBank
+  // (ej. el creador retira "Pickle Chamoy"), sus proposals 'ready' NO deben lanzarse como
+  // tests. Marca killed y las saca del pool. Fail-open: si ProductBank no se puede leer o
+  // viene vacío, no filtra nada (no romper el flujo de testeo).
+  try {
+    const ProductBank = require('../../db/models/ProductBank');
+    const activeProducts = await ProductBank.find({ active: true }).select('product_name').lean();
+    const activeNames = new Set(activeProducts.map(p => p.product_name).filter(Boolean));
+    if (activeNames.size > 0) {
+      const retired = allReady.filter(p => p.product_name && !activeNames.has(p.product_name));
+      if (retired.length) {
+        await CreativeProposal.updateMany(
+          { _id: { $in: retired.map(p => p._id) } },
+          { $set: { status: 'killed', rejection_reason: 'producto retirado del ProductBank', decided_at: new Date() } }
+        );
+        const names = [...new Set(retired.map(p => p.product_name))].join(', ');
+        logger.info(`[TESTING-AGENT] ${retired.length} proposals 'ready' de producto(s) retirado(s) → killed: ${names}`);
+        allReady = allReady.filter(p => !p.product_name || activeNames.has(p.product_name));
+      }
+    }
+  } catch (e) {
+    logger.warn(`[TESTING-AGENT] freno por producto retirado falló (fail-open): ${e.message}`);
+  }
+
   const readyVideoAll = allReady.filter(p => p.media_type === 'video' && p.video_url);
   const readyPhotoAll = allReady.filter(p => !(p.media_type === 'video' && p.video_url));
 
