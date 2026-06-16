@@ -22,7 +22,7 @@ const DECISIVE_KILL_SPEND = parseInt(process.env.DECISIVE_KILL_SPEND, 10) || 50;
 // con CPA $25 espera ~2 compras/día → la graduación (≥2 compras) puede resolverse en
 // 24-48h con señal real. El video lo justifica de sobra (4.85x ROAS, 76% de las ventas).
 // Los perdedores NO cuestan más: las kill rules son por spend acumulado. Env-overridable.
-const VIDEO_TEST_DAILY_BUDGET = parseInt(process.env.VIDEO_TEST_DAILY_BUDGET, 10) || 50;
+const VIDEO_TEST_DAILY_BUDGET = parseInt(process.env.VIDEO_TEST_DAILY_BUDGET, 10) || 70; // 2026-06-16: $50→$70 — con 2-por-adset cada video recibe $35 (no se ahoga el formato fuerte).
 // Track de VIDEO con caps PROPIOS — no compite por los slots/budget de las fotos
 // (campaña separada). Si no, los tests de foto bloquean los videos. (2026-05-30)
 // 2026-06-05 "Dionisio extremo": el video probó ser el lever más fuerte (4.85x ROAS,
@@ -40,9 +40,14 @@ const MAX_DAILY_VIDEO_TESTING_BUDGET = parseInt(process.env.MAX_DAILY_VIDEO_TEST
 const MAX_DAILY_TESTING_BUDGET = parseInt(process.env.MAX_DAILY_TESTING_BUDGET, 10) || 1200; // Cap diario FOTO. 2026-06-03: 1000→400 · 2026-06-14: 400→500→750 · 2026-06-15: 750→1200 (DRENAJE FUERTE: 235 imgs ready, lanzar 10-12 adsets nuevos; cuadra con concurrencia 24 × $50). El cap no se gasta entero: solo entran grupos completos de 3 mientras hay slot. REVERTIR a ~400 post-drenaje. Env-overridable.
 const MAX_LAUNCHES_PER_CYCLE = parseInt(process.env.MAX_LAUNCHES_PER_CYCLE, 10) || 12; // 2026-06-05: 3→6. 2026-06-15: 6→12 (DRENAJE FUERTE: lanzar 10-12 adsets de foto en un ciclo para vaciar las 235 imgs ready). REVERTIR a 6 post-drenaje.
 // MULTI-AD foto (2026-06-13): N creativos del MISMO producto por adset → Meta hace el
-// A/B/C interno con los mismos $50. Aprovecha mejor el budget de un formato flojo. Video
-// queda 1-por-adset (caro + aprobación manual). Env: PHOTO_ADS_PER_ADSET.
+// A/B/C interno con los mismos $50. Aprovecha mejor el budget de un formato flojo.
+// Env: PHOTO_ADS_PER_ADSET.
 const PHOTO_ADS_PER_ADSET = Math.max(1, parseInt(process.env.PHOTO_ADS_PER_ADSET, 10) || 3);
+// VIDEO: 2-por-adset (2026-06-16, decisión del creador). Video es el formato fuerte
+// (2.96x) pero escaso y caro → NO se aprieta a 3 (ahogaría cada video). Con 2 se obtiene
+// la señal HEAD-TO-HEAD limpia (A/B controlado, más valiosa para video porque su señal
+// es ruidosa) sin starvear: el budget por-adset se sube a $70 → $35/video. Env-overridable.
+const VIDEO_ADS_PER_ADSET = Math.max(1, parseInt(process.env.VIDEO_ADS_PER_ADSET, 10) || 2);
 const TEST_MAX_DAYS = 7;
 const KILL_MIN_SPEND = 25;     // Kill si $25+ spend y 0 compras
 const GRADUATED_BUDGET = 20;   // Budget al promover test ad set graduado ($20/dia)
@@ -374,43 +379,42 @@ async function launchTests() {
     logger.warn(`[TESTING-AGENT] priorización DNA falló (FIFO fallback): ${e.message}`);
   }
 
-  // VIDEO: 1-por-adset → capar directo al número de slots de video.
-  const readyVideo = readyVideoAll.slice(0, maxVideoLaunches);
-
   // Contar tests activos por ad set destino (para el cap por-adset de foto).
   const testCountByAdset = {};
   const existingTests = await TestRun.find({ phase: { $in: ['learning', 'evaluating'] } }).select('source_adset_id').lean();
   for (const t of existingTests) testCountByAdset[t.source_adset_id] = (testCountByAdset[t.source_adset_id] || 0) + 1;
   const MAX_TESTS_PER_ADSET = 2; // max 2 tests por ad set destino
 
-  // FOTO — AGRUPAR PRIMERO, capar por número de GRUPOS (fix 2026-06-13).
-  // Bug viejo: se tomaban solo `maxPhotoLaunches` PROPOSALS y recién después se agrupaban
-  // de a 3 → con margen para 2 adsets entraban 2 proposals → a lo más 1 grupo de 2 (o, si
-  // eran de productos distintos, 2 grupos de 1). Cada grupo de 3 consume 3 proposals, no 1.
-  // Ahora: agrupar TODO el pool de foto por producto (preservando el orden DNA global) en
-  // grupos de hasta PHOTO_ADS_PER_ADSET, y recién ahí capar a `maxPhotoLaunches` GRUPOS
-  // (= adsets = slots de budget). Así cada slot se llena con un grupo completo de 3.
-  const photoGroups = [];
-  const openByProduct = {};
-  for (const p of readyPhotoSorted) {
-    const k = p.product_name || 'unknown';
-    if (!openByProduct[k] || openByProduct[k].length >= PHOTO_ADS_PER_ADSET) {
-      openByProduct[k] = [];
-      photoGroups.push(openByProduct[k]);
+  // AGRUPAR PRIMERO, capar por número de GRUPOS (fix 2026-06-13, extendido a video 2026-06-16).
+  // Bug viejo: se tomaban solo N PROPOSALS y recién después se agrupaban → con margen para 2
+  // adsets entraban 2 proposals → a lo más 1 grupo incompleto. Cada grupo consume `perAdset`
+  // proposals, no 1. Ahora: agrupar TODO el pool por producto (orden preservado) en grupos de
+  // hasta `perAdset`, y recién ahí capar a `maxLaunches` GRUPOS (= adsets = slots de budget).
+  // Foto = PHOTO_ADS_PER_ADSET (3), video = VIDEO_ADS_PER_ADSET (2). Mismo producto → Meta
+  // compara CREATIVOS y elige el ganador con el budget del adset.
+  const groupByProduct = (list, perAdset) => {
+    const out = [], open = {};
+    for (const p of list) {
+      const k = p.product_name || 'unknown';
+      if (!open[k] || open[k].length >= perAdset) { open[k] = []; out.push(open[k]); }
+      open[k].push(p);
     }
-    openByProduct[k].push(p);
-  }
-  // Filtro MAX_TESTS_PER_ADSET (por el source adset del grupo) + cap a maxPhotoLaunches.
-  const cappedPhotoGroups = photoGroups
+    return out;
+  };
+
+  // VIDEO — pares por producto, cap a maxVideoLaunches grupos (campaña/budget propios).
+  const videoGroups = groupByProduct(readyVideoAll, VIDEO_ADS_PER_ADSET).slice(0, maxVideoLaunches);
+
+  // FOTO — grupos de hasta PHOTO_ADS_PER_ADSET, filtro MAX_TESTS_PER_ADSET + cap.
+  const cappedPhotoGroups = groupByProduct(readyPhotoSorted, PHOTO_ADS_PER_ADSET)
     .filter(g => {
       const src = g[0].adset_id;
       return !(src && src !== 'proactive' && (testCountByAdset[src] || 0) >= MAX_TESTS_PER_ADSET);
     })
     .slice(0, maxPhotoLaunches);
 
-  // Grupos finales: video (1s) primero, luego foto (grupos de N del mismo producto →
-  // Meta compara CREATIVOS, no productos, y elige el ganador con los mismos $50).
-  const groups = [...readyVideo.map(p => [p]), ...cappedPhotoGroups];
+  // Grupos finales: video primero (suele haber pocos), luego foto.
+  const groups = [...videoGroups, ...cappedPhotoGroups];
 
   if (groups.length === 0) {
     logger.info('[TESTING-AGENT] No hay propuestas "ready" con slot disponible en su track');
