@@ -207,7 +207,10 @@ function ColaSection({ loading, pending, genVideos, busy, decide, downloadVideo 
       ))}
       {pending.map(v => (
         <div key={v._id} style={{ ...card, overflow: 'hidden', padding: 0 }}>
-          <video src={v.video_url} controls loop muted playsInline style={{ width: '100%', display: 'block', aspectRatio: '9/16', objectFit: 'cover', background: '#000' }} />
+          {/* #t=0.1 fuerza al browser a mostrar el frame de 0.1s como miniatura estática
+              (sin esto el <video> sin poster sale NEGRO hasta que le das play). preload
+              metadata carga ese frame sin bajar todo el mp4. (2026-06-16) */}
+          <video src={v.video_url ? `${v.video_url}#t=0.1` : ''} controls loop muted playsInline preload="metadata" style={{ width: '100%', display: 'block', aspectRatio: '9/16', objectFit: 'cover', background: '#000' }} />
           {/* Piloto first+last: thumbnails del par de frames para juzgar consistencia a ojo */}
           {v.used_last_frame && v.source_proposal_id && (
             <div style={{ display: 'flex', gap: 4, padding: '6px 10px 0', alignItems: 'center' }}>
