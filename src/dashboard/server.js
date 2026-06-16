@@ -184,10 +184,31 @@ app.get('/vid/:id.mp4', async (req, res) => {
     const p = await CreativeProposal.findById(req.params.id).select('video_base64').lean();
     if (!p || !p.video_base64) return res.status(404).send('not found');
     const buf = Buffer.from(p.video_base64, 'base64');
+    const total = buf.length;
     res.set('Content-Type', 'video/mp4');
-    res.set('Content-Length', String(buf.length));
     res.set('Cache-Control', 'public, max-age=86400');
     res.set('Accept-Ranges', 'bytes');
+    // RANGE de verdad (2026-06-16): antes anunciábamos Accept-Ranges pero res.send()
+    // ignoraba el header Range → respondía 200 con el archivo entero. El browser no podía
+    // SEEK → el poster #t=0.1 no renderizaba (video negro) y el scrub no funcionaba.
+    // Ahora respondemos 206 con el rango pedido.
+    const range = req.headers.range;
+    if (range) {
+      const m = /bytes=(\d+)-(\d*)/.exec(range);
+      if (m) {
+        const start = parseInt(m[1], 10);
+        const end = m[2] ? parseInt(m[2], 10) : total - 1;
+        if (Number.isNaN(start) || start >= total || end >= total || start > end) {
+          res.status(416).set('Content-Range', `bytes */${total}`);
+          return res.end();
+        }
+        res.status(206);
+        res.set('Content-Range', `bytes ${start}-${end}/${total}`);
+        res.set('Content-Length', String(end - start + 1));
+        return res.end(buf.subarray(start, end + 1));
+      }
+    }
+    res.set('Content-Length', String(total));
     return res.send(buf);
   } catch (e) {
     return res.status(400).send('bad request');
