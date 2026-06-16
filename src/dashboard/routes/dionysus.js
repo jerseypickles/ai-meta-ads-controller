@@ -200,6 +200,27 @@ router.post('/purge-sources', async (req, res) => {
   }
 });
 
+// POST /purge-retired-sources — marca rejected los video_source de productos RETIRADOS
+// del ProductBank (ej. chamoy). Pool-wide (no limitado a los 40 que trae _getCandidates),
+// así limpia también las fuentes viejas que el freno del ciclo no alcanza. Reusable para
+// cualquier producto que se retire. Fail-safe: si no hay productos activos, no toca nada.
+router.post('/purge-retired-sources', async (req, res) => {
+  try {
+    const ProductBank = require('../../db/models/ProductBank');
+    const active = await ProductBank.find({ active: true }).select('product_name').lean();
+    const activeNames = active.map(p => p.product_name).filter(Boolean);
+    if (activeNames.length === 0) return res.json({ purged: 0, note: 'sin productos activos — no se tocó nada' });
+    const r = await CreativeProposal.updateMany(
+      { media_type: { $ne: 'video' }, tags: 'video_source', status: { $nin: ['failed', 'rejected'] }, product_name: { $nin: activeNames } },
+      { $set: { status: 'rejected', rejection_reason: 'producto retirado del ProductBank' } }
+    );
+    logger.info(`[VIDEO-SOURCE] 🧹 purga de productos retirados: ${r.modifiedCount} fuentes rejected`);
+    res.json({ purged: r.modifiedCount });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /backfill-video-judge — juzga con Gemini los videos EXISTENTES (que tienen
 // video_url) para tener data ya (sin esperar generaciones nuevas). Async + recalcula
 // el reconciliador al terminar → llena la comparación Claude vs Gemini.

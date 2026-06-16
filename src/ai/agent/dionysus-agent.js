@@ -92,24 +92,24 @@ async function _getCandidates() {
     image_base64: { $type: 'string', $ne: '' }
   }).sort({ created_at: -1 }).limit(40).lean();
 
-  // FRENO POR PRODUCTO RETIRADO (2026-06-15): no animar video_sources de productos
-  // eliminados del ProductBank (ej. "Pickle Chamoy" retirado por el creador). Marca
-  // rejected y los saca del pool. Fail-open si ProductBank no se puede leer / viene vacío.
+  // FRENO POR PRODUCTO RETIRADO (2026-06-15, pool-wide 2026-06-16): no animar
+  // video_sources de productos eliminados del ProductBank (ej. "Pickle Chamoy" retirado).
+  // POOL-WIDE: marca rejected TODAS las fuentes de productos retirados, no solo las 40 que
+  // trae esta query (las viejas quedan debajo del límite y se acumulaban sin limpiarse).
+  // Fail-open si ProductBank no se puede leer / viene vacío.
   let pool = candidates;
   try {
     const ProductBank = require('../../db/models/ProductBank');
     const activeProducts = await ProductBank.find({ active: true }).select('product_name').lean();
-    const activeNames = new Set(activeProducts.map(p => p.product_name).filter(Boolean));
-    if (activeNames.size > 0) {
-      const retired = candidates.filter(c => c.product_name && !activeNames.has(c.product_name));
-      if (retired.length) {
-        await CreativeProposal.updateMany(
-          { _id: { $in: retired.map(c => c._id) } },
-          { $set: { status: 'rejected', rejection_reason: 'producto retirado del ProductBank' } }
-        );
-        logger.info(`[DIONISIO] ${retired.length} video_source(s) de producto(s) retirado(s) → rejected: ${[...new Set(retired.map(c => c.product_name))].join(', ')}`);
-        pool = candidates.filter(c => !c.product_name || activeNames.has(c.product_name));
-      }
+    const activeNames = activeProducts.map(p => p.product_name).filter(Boolean);
+    if (activeNames.length > 0) {
+      const r = await CreativeProposal.updateMany(
+        { media_type: { $ne: 'video' }, tags: 'video_source', status: { $nin: ['failed', 'rejected'] }, product_name: { $nin: activeNames } },
+        { $set: { status: 'rejected', rejection_reason: 'producto retirado del ProductBank' } }
+      );
+      if (r.modifiedCount) logger.info(`[DIONISIO] ${r.modifiedCount} video_source(s) de producto(s) retirado(s) → rejected (pool-wide)`);
+      const activeSet = new Set(activeNames);
+      pool = candidates.filter(c => !c.product_name || activeSet.has(c.product_name));
     }
   } catch (e) { logger.warn(`[DIONISIO] freno por producto retirado falló (fail-open): ${e.message}`); }
 
