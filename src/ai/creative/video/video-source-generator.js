@@ -20,7 +20,7 @@ const CreativeProposal = require('../../../db/models/CreativeProposal');
 const { generateCreativeImage } = require('../image-engine');
 const dna = require('./video-dna');
 
-const POOL_TARGET = parseInt(process.env.VIDEO_SOURCE_POOL_TARGET || '40', 10); // 2026-06-05: 16→40 (Dionisio extremo — el video manda)
+const POOL_TARGET = parseInt(process.env.VIDEO_SOURCE_POOL_TARGET || '60', 10); // 2026-06-05: 16→40. 2026-06-16: 40→60 — abrir lugar para generar la tanda con los arquetipos NUEVOS (A/B); el pool estaba lleno de sources viejos clásicos. Env-overridable.
 const PER_CYCLE_CAP = parseInt(process.env.VIDEO_SOURCE_PER_CYCLE || '8', 10);  // 2026-06-05: 4→8
 const ENABLED = process.env.VIDEO_SOURCE_ENABLED !== 'false';
 // 🎨 Director creativo: % de generaciones que inventan un concepto NUEVO (el LLM, no el
