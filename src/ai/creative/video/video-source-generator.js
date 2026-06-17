@@ -49,26 +49,58 @@ function pickImageStyle() {
   return STYLE_MOODS[Math.floor(Math.random() * STYLE_MOODS.length)];
 }
 
-/** Construye el prompt de imagen para un producto + (motion, scene) del DNA. */
-function buildSourcePrompt(productName, motionKey, sceneKey, hookKey) {
-  const interaction = dna.buildImageScene(motionKey, sceneKey, productName, hookKey); // pieza real + hook
-  // En escenas EN COMIDA la pieza va en slice (un tomate entero sobre un burger se ve raro);
-  // en el resto, la pieza entera que se sostiene/moja.
-  const FOOD_MOTIONS = ['on_food'];
-  const isFood = FOOD_MOTIONS.includes(motionKey);
+// ARQUETIPOS de video-source (2026-06-16, decisión del creador): exploramos 2 tipos de UGC
+// NUEVOS junto al clásico, "de a poco" — el clásico sigue siendo MAYORÍA (es el probado).
+// La data (conversión por arquetipo, vía el testeo + DNA) decide cuál escalar. Ratio
+// env-overridable. classic 50% / pov_hand 30% (A) / person 20% (B).
+const ARCHETYPE_RATIO = {
+  classic: parseFloat(process.env.VIDEO_ARCH_CLASSIC || '0.5'),
+  pov_hand: parseFloat(process.env.VIDEO_ARCH_POV || '0.3'),
+  person: parseFloat(process.env.VIDEO_ARCH_PERSON || '0.2')
+};
+function pickArchetype() {
+  const entries = Object.entries(ARCHETYPE_RATIO).filter(([, w]) => w > 0);
+  const total = entries.reduce((s, [, w]) => s + w, 0) || 1;
+  let r = Math.random() * total;
+  for (const [k, w] of entries) { r -= w; if (r <= 0) return k; }
+  return 'classic';
+}
+
+/** La pieza real del producto (food-aware) + guardrail anti-substitución. Compartido. */
+function buildMatchPiece(productName, motionKey) {
+  const isFood = ['on_food'].includes(motionKey);
   const unit = isFood ? dna.productUnitFood(productName) : dna.productUnit(productName);
-  // CRÍTICO: la pieza debe ser EL MISMO alimento del frasco (mismo tipo/color). PERO en
-  // COMIDA va SLICED y PLANO — un spear entero parado sobre un burger se ve antinatural/IA
-  // (caso reportado 2026-06-05). El matchPiece es food-aware para no forzar la pieza entera.
   const matchPiece = isFood
     ? `CRITICAL: on the burger show ${unit} — round coin slices cut from the SAME pickled food as inside this "${productName}" jar (same type and color as the reference contents), lying FLAT as a topping. Do NOT stand a whole pickle spear upright on the burger, and do NOT substitute a different food.`
     : `CRITICAL: the pickled item shown must be ${unit} — the SAME pickled food that is inside this "${productName}" jar (same type, same color as the contents visible in the reference). Do NOT substitute a generic pickle chip or any different food.`;
+  return { unit, matchPiece };
+}
+
+// HOOK/energía visual (2026-06-13): el 43% se va en el primer segundo; visual_energy es la
+// señal que más predice la venta. Empujamos un primer frame que para el scroll.
+const ENERGY = 'HIGH VISUAL ENERGY — bold, vivid, high-contrast and dynamic so it stops the thumb instantly in a busy feed; NOT a calm/flat/static product shot.';
+
+/** Construye el prompt de imagen para un producto + (motion, scene) del DNA + ARQUETIPO. */
+function buildSourcePrompt(productName, motionKey, sceneKey, hookKey, archetype = 'classic') {
+  const { unit, matchPiece } = buildMatchPiece(productName, motionKey);
+
+  // A — POV 1ra persona, producto/pieza en mano a cámara, SIN cara. Riesgo AI bajo.
+  if (archetype === 'pov_hand') {
+    return `Create a vertical 9:16 FIRST-PERSON POV photograph: the viewer's OWN hand (arm extended selfie-style toward the phone) holding up the "${productName}" jar/tub close to the camera with its LABEL clearly readable and facing the lens — or holding ${unit} pulled out toward the camera with brine dripping. Authentic real-person UGC iPhone selfie angle, casual and in-the-moment, NOT staged, NOT AI. NO face in frame — only the hand/arm and the product. ${matchPiece} ${FIDELITY} ${pickImageStyle()} The PRODUCT (its label/brand) and the hand are the hero, mouth-watering and in sharp focus. The jar is HELD by the hand — never floating; only a liquid brine drip may hang. ${ENERGY}`;
+  }
+
+  // B — Persona real en cuadro sosteniendo/comiendo el producto, cara candid (no primer
+  // plano extremo). Riesgo AI alto (caras) → realismo estricto + el juez filtra.
+  if (archetype === 'person') {
+    return `Create a vertical 9:16 authentic UGC selfie-style photograph of a real, casual everyday young person (candid, natural, NOT a posed model, NOT a stock photo) holding the "${productName}" jar/tub or about to bite/eat ${unit}, reacting with genuine enjoyment. Real iPhone front-camera UGC look — handheld, in-the-moment, natural daylight, real skin texture. Medium framing (head-and-shoulders or waist-up); the face is visible but NATURAL and candid, NOT an extreme close-up of the face. The "${productName}" jar with its LABEL readable is clearly in frame as the hero alongside the person. ${matchPiece} ${FIDELITY} ${pickImageStyle()} CRITICAL REALISM: natural human proportions, real hands with exactly five fingers, no warped, distorted or uncanny features — it MUST look like a real photo of a real person, NOT AI-generated. The jar is held by the person — never floating. ${ENERGY}`;
+  }
+
+  // classic — food-porn close-up (mano + pieza + chorrito). El probado.
+  const interaction = dna.buildImageScene(motionKey, sceneKey, productName, hookKey);
   return `Create a vertical photograph of ${interaction}, for the product "${productName}". ` +
     `The jar/tub from the reference photo is clearly visible in the shot with its label readable. ` +
     `${matchPiece} ${PHYSICS_SAFE} ${FIDELITY} ${pickImageStyle()} The hand and the dripping brine should be the hero of the shot, mouth-watering and in sharp focus. ` +
-    // HOOK/energía visual (2026-06-13): el 43% se va en el primer segundo; visual_energy
-    // es la señal que más predice la venta. Empujamos un primer frame que para el scroll.
-    `HIGH VISUAL ENERGY — bold, vivid, high-contrast and dynamic so it stops the thumb instantly in a busy feed; NOT a calm/flat/static product shot.`;
+    ENERGY;
 }
 
 /**
@@ -277,10 +309,14 @@ async function generateVideoSources() {
     let sceneKey = dna.pickWeighted('scene', sceneStats);
     let hookKey = dna.pickWeighted('hook', hookStats); // el gancho de los primeros 1-2s
     let prompt = null, creativeConcept = null;
+    // Arquetipo de UGC (classic/pov_hand/person) — exploración A/B vs el clásico.
+    const archetype = pickArchetype();
 
     // 🎨 DIRECTOR CREATIVO: una parte de las generaciones INVENTA un concepto nuevo (el LLM)
     // en vez del template fijo → explora territorio que no está en el menú del DNA.
-    if (Math.random() < CREATIVE_RATE) {
+    // Solo para el CLÁSICO: A/B usan su template controlado (si no, el concepto libre del
+    // director rompe el framing POV/persona que estamos explorando).
+    if (archetype === 'classic' && Math.random() < CREATIVE_RATE) {
       try {
         const { inventCreativeConcept, buildCreativePrompt } = require('./video-art-director');
         const topMotions = Object.entries(motionStats).filter(([, s]) => (s.graduated || 0) > 0)
@@ -297,7 +333,7 @@ async function generateVideoSources() {
         }
       } catch (e) { logger.warn(`[VIDEO-SOURCE] art-director falló (uso template): ${e.message}`); }
     }
-    if (!prompt) prompt = buildSourcePrompt(product.product_name, motionKey, sceneKey, hookKey);
+    if (!prompt) prompt = buildSourcePrompt(product.product_name, motionKey, sceneKey, hookKey, archetype);
 
     try {
       const refImages = product.png_references.map(ref => ({
@@ -344,10 +380,11 @@ async function generateVideoSources() {
         scene: sceneKey,            // escena (dimensión DNA)
         hook_variant: hookKey,      // gancho (dimensión DNA nueva)
         creative_concept: creativeConcept, // concepto del art-director (null si template)
+        source_archetype: archetype,        // classic/pov_hand/person — dimensión de exploración A/B
         style: 'video_source'
       });
       generated++;
-      logger.info(`[VIDEO-SOURCE] ✓ "${copy.headline}" (${product.product_name}, ${creativeConcept ? '🎨 ' + creativeConcept : motionKey + '/' + sceneKey + '/' + hookKey})${endFrameBase64 ? ' · 🎬 par first+last' : ''}`);
+      logger.info(`[VIDEO-SOURCE] ✓ "${copy.headline}" (${product.product_name}, [${archetype}] ${creativeConcept ? '🎨 ' + creativeConcept : motionKey + '/' + sceneKey + '/' + hookKey})${endFrameBase64 ? ' · 🎬 par first+last' : ''}`);
     } catch (e) {
       logger.error(`[VIDEO-SOURCE] error generando para ${product.product_name}: ${e.message}`);
     }

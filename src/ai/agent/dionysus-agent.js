@@ -205,7 +205,7 @@ async function runDionysus() {
     judged++;
     // 1. Judge de video-suitability
     let verdict;
-    try { verdict = await judgeVideoSuitability(c.image_base64, c.product_name || 'the product'); }
+    try { verdict = await judgeVideoSuitability(c.image_base64, c.product_name || 'the product', c.source_archetype || 'classic'); }
     catch (e) { logger.warn(`[DIONISIO] judge falló para ${c._id}: ${e.message}`); continue; }
 
     if (!verdict.suitable) {
@@ -229,6 +229,7 @@ async function runDionysus() {
       headline: c.headline, primary_text: c.primary_text, link_url: c.link_url,
       media_type: 'video', status: 'generating_video',
       motion_variant: variant, camera, scene: c.scene || '', hook_variant: c.hook_variant || '', creative_concept: c.creative_concept || null,
+      source_archetype: c.source_archetype || 'classic', // hereda del source → medir conversión por arquetipo
       video_judge_score: verdict.score,
       video_judge_breakdown: {
         reason: verdict.reason,

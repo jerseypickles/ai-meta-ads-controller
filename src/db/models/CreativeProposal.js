@@ -82,6 +82,12 @@ const creativeProposalSchema = new mongoose.Schema({
   camera: { type: String, default: '' },               // DNA: movimiento de cámara (static/push_in/…)
   hook_variant: { type: String, default: '', index: true }, // DNA: gancho 1-2s (macro/pov/reaction/…)
   creative_concept: { type: String, default: null, index: true }, // tag del concepto inventado por el art-director (null = template del DNA)
+  // ARQUETIPO de video-source (2026-06-16): qué TIPO de UGC es el primer frame. Permite
+  // explorar A/B vs el clásico y medir conversión por arquetipo (dimensión de aprendizaje).
+  //   classic  = food-porn close-up (mano + pieza + chorrito) — el probado
+  //   pov_hand = POV 1ra persona, frasco/pieza en mano a cámara, SIN cara (A)
+  //   person   = persona en cuadro sosteniendo/comiendo el producto, cara visible (B)
+  source_archetype: { type: String, enum: ['classic', 'pov_hand', 'person'], default: 'classic', index: true },
   video_judge_score: { type: Number, default: null },  // score 0-100 del video-judge
   video_judge_breakdown: { type: mongoose.Schema.Types.Mixed, default: null }, // desglose: {reason, breakdown:{dim:{score,note}}, que_funciona[], que_falla[]}
   video_result_verdict: { type: mongoose.Schema.Types.Mixed, default: null },   // juez de VIDEO real (Gemini): {overall, motion_ok, artifacts, frozen, fidelity_ok, appetizing, verdict, notes}

@@ -15,8 +15,17 @@ const logger = require('../../../utils/logger');
 const MIN_SCORE = parseInt(process.env.DIONYSUS_VIDEO_MIN_SCORE || '70', 10);
 const { productUnit } = require('./video-dna');
 
-const PROMPT = (productName, expectedUnit) => `You are simulating a REAL person scrolling Instagram/TikTok who sees this image as the FIRST FRAME of a 5-second UGC food-ad for "${productName}". Judge honestly whether real people would STOP, crave it, trust it, and want to buy — not whether it is merely "technically fine". The video animates this static frame (image-to-video); it cannot add objects.
+// Nota por ARQUETIPO (2026-06-16): A/B son tipos de UGC NUEVOS que estamos explorando.
+// El juez no debe penalizarlos como "staged/incompleto" — pero a `person` (cara) le sumamos
+// un gate anti-uncanny duro porque el AI-video rompe caras/manos al animar.
+const ARCHETYPE_NOTE = {
+  pov_hand: `\nARQUETIPO = POV (primera persona): este frame es INTENCIONALMENTE un plano mano-a-cámara — la mano del espectador sosteniendo el producto/pieza hacia el lente, SIN cara. NO penalices la cara ausente ni la mano cercana como "staged/incompleto": ese ES el formato. El frasco sostenido por una mano es correcto (pasa el floating gate). Juzgá el hook/antojo como reaccionaría una persona real al scrollear.`,
+  person: `\nARQUETIPO = PERSONA UGC: este frame muestra INTENCIONALMENTE a una persona real sosteniendo/comiendo el producto, selfie-style. NO penalices la presencia de una persona como "staged/stocky" — UGC candid con persona es el objetivo. PERO revisá DURO: este frame SE VA A ANIMAR y el AI-video rompe caras/manos humanas. Si la CARA o las MANOS están deformadas, distorsionadas, asimétricas, con dedos de más/menos, piel plástica/uncanny, o se ven AI-generadas → poné autenticidad BAJA y capeá el OVERALL en 35 (un humano uncanny mata la confianza y solo empeora al animarse). Una persona real, natural y creíble puntúa alto.`,
+  classic: ''
+};
 
+const PROMPT = (productName, expectedUnit, archetype = 'classic') => `You are simulating a REAL person scrolling Instagram/TikTok who sees this image as the FIRST FRAME of a 5-second UGC food-ad for "${productName}". Judge honestly whether real people would STOP, crave it, trust it, and want to buy — not whether it is merely "technically fine". The video animates this static frame (image-to-video); it cannot add objects.
+${ARCHETYPE_NOTE[archetype] || ''}
 CRITICAL OUTPUT RULE: respond with ONLY the JSON object — no preamble, no analysis text before it, no markdown fences, no explanation after. Your entire response must start with { and end with }.
 
 FIDELITY GATE (check FIRST): the hero item the hand holds/shows SHOULD be: ${expectedUnit}. If it shows the WRONG thing (e.g. a solid pickle chip when the product is a chunky salsa/dip, or the wrong food), real people are misled → fidelidad fails and the OVERALL score must be 15-25. A correct jar LABEL is NOT enough — the held/hero item must match.
@@ -46,9 +55,10 @@ Return ONLY JSON:
 /**
  * @param {string} imageBase64 - imagen generada (base64, sin prefijo data:)
  * @param {string} productName
+ * @param {string} archetype - classic | pov_hand | person (modula el juez)
  * @returns {Promise<{score, suitable, reason, suggested_motion}>}
  */
-async function judgeVideoSuitability(imageBase64, productName = 'the product') {
+async function judgeVideoSuitability(imageBase64, productName = 'the product', archetype = 'classic') {
   const apiKey = config.claude?.apiKey || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY no configurada — video-judge no disponible');
   // Sin imagen → no apto (no llamar a la API con data vacía).
@@ -71,7 +81,7 @@ async function judgeVideoSuitability(imageBase64, productName = 'the product') {
   try { calibration = await require('./video-learning').getJudgeCalibration(); } catch (_) { /* fail-open */ }
   const content = [
     { type: 'image', source: { type: 'base64', media_type: mediaType, data: imageBase64 } },
-    { type: 'text', text: PROMPT(productName, expectedUnit) + calibration }
+    { type: 'text', text: PROMPT(productName, expectedUnit, archetype) + calibration }
   ];
 
   try {
