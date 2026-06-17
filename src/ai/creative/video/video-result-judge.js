@@ -57,6 +57,18 @@ async function judgeVideoResult(videoUrl, productName = 'the product', motion = 
   const apiKey = process.env.GOOGLE_AI_API_KEY;
   if (!apiKey || !videoUrl) return null;
   try {
+    // HEAD-check del tamaño ANTES de bajar (2026-06-17): los videos de 10s/1080p pesan
+    // ~23MB; bajarlos enteros a memoria solo para skipearlos reventaba RAM → 502 al aprobar.
+    // Gemini inline topa en ~20MB, así que arriba de MAX_MB ni los bajamos (el humano los
+    // revisa en la cola igual). Fail-open: si no hay HEAD/Content-Length, seguimos con el GET.
+    try {
+      const h = await fetch(videoUrl, { method: 'HEAD' });
+      const len = parseInt(h.headers.get('content-length') || '0', 10);
+      if (len && len > MAX_MB * 1024 * 1024) {
+        logger.warn(`[VIDEO-RESULT-JUDGE] video ${(len / 1048576).toFixed(1)}MB > ${MAX_MB}MB (HEAD) — skip sin bajar (revisión manual)`);
+        return null;
+      }
+    } catch (_) { /* sin HEAD → seguimos con el GET guardado abajo */ }
     // Descargar el mp4 → base64 inline (con timeout: URLs ephemeral muertas pueden colgar)
     const ctrl = new AbortController();
     const to = setTimeout(() => ctrl.abort(), 15000);

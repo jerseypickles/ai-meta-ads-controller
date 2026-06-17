@@ -49,7 +49,7 @@ async function _submit({ imageUrl, lastFrameUrl, prompt, durationSeconds, aspect
     prompt,
     duration: durationSeconds,
     aspect_ratio: aspectRatio,
-    resolution: RESOLUTION,        // 1080p (solo lo respeta el tier VIP)
+    resolution: RESOLUTION,        // 1080p (solo lo respeta el tier VIP) — pedido del creador: máxima calidad
     // Piloto 2026-06-09: con lastFrameUrl el modo usa AMBOS anclas (primer + último frame)
     // → Seedance interpola entre dos estados conocidos en vez de adivinar la física.
     image_urls: lastFrameUrl ? [imageUrl, lastFrameUrl] : [imageUrl]

@@ -230,6 +230,23 @@ app.get('/vfinal/:id.mp4', (req, res) => {
   }
 });
 
+// Video persistido en DISCO (2026-06-17): los mp4 de Dionisio se guardan en
+// /data/uploads/vid-store (disco 5GB) porque los de 10s/1080p pesan ~23MB y no entran en
+// Mongo (doc limit 16MB). sendFile maneja Range/seek nativo → el poster #t=0.1 y el scrub
+// funcionan, y Meta lo descarga de acá al lanzar el test. Anti-traversal por regex de id.
+app.get('/vidf/:id.mp4', (req, res) => {
+  try {
+    if (!/^[a-f0-9]{24}$/i.test(req.params.id)) return res.status(400).send('bad id');
+    const p = require('path').join(process.env.UPLOADS_DIR || '/data/uploads', 'vid-store', `${req.params.id}.mp4`);
+    if (!require('fs').existsSync(p)) return res.status(404).send('not found');
+    res.set('Content-Type', 'video/mp4');
+    res.set('Cache-Control', 'public, max-age=86400');
+    return res.sendFile(p);
+  } catch (e) {
+    return res.status(400).send('bad request');
+  }
+});
+
 // Frame FINAL del par first+last (piloto 2026-06-09). Mismo patrón público que /vsrc.
 app.get('/vsrc/:id/end.png', async (req, res) => {
   try {

@@ -7,33 +7,39 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+const { pipeline } = require('stream/promises');
 const logger = require('../../utils/logger');
 const CreativeProposal = require('../../db/models/CreativeProposal');
 const { judgeVideoSuitability } = require('../creative/video/video-judge');
 const dna = require('../creative/video/video-dna');
 const seedance = require('../creative/video/seedance');
 
-// Tope del mp4 a persistir en Mongo (doc limit 16MB; base64 infla +33%).
-const VIDEO_PERSIST_MAX_BYTES = parseInt(process.env.VIDEO_PERSIST_MAX_BYTES || String(10 * 1024 * 1024), 10);
+const UPLOADS_DIR = process.env.UPLOADS_DIR || '/data/uploads';
+const VIDEO_STORE_DIR = path.join(UPLOADS_DIR, 'vid-store');
 
 /**
- * PERSISTIR el video en Mongo (2026-06-13): las URLs de Seedance/PiAPI son /ephemeral/
- * y EXPIRAN a las horas → la cola de review mostraba videos negros. Descarga el mp4 y lo
- * guarda en CreativeProposal.video_base64 (servido por /vid/:id.mp4, no expira).
- * @returns {string} la URL pública persistente, o sourceUrl si no se pudo (fail-open).
+ * PERSISTIR el video en DISCO (reescrito 2026-06-17). Las URLs de Seedance/PiAPI son
+ * /ephemeral/ y EXPIRAN → videos negros. Antes guardábamos base64 en Mongo, PERO el doc
+ * limit de Mongo es 16MB y los videos de 10s a 1080p pesan ~23MB (base64 ~31MB) → NO
+ * entraban; y descargar 23MB a un Buffer reventaba memoria (causaba 502 al aprobar). Ahora
+ * STREAM a disco (5GB) → cualquier tamaño SIN pico de memoria. Servido por /vidf/:id.mp4
+ * (range-aware). Fail-open: si falla, queda en ephemeral (sourceUrl).
+ * @returns {string} URL pública persistente, o sourceUrl si no se pudo.
  */
 async function persistVideo(proposalId, sourceUrl) {
   try {
-    const resp = await axios.get(sourceUrl, { responseType: 'arraybuffer', timeout: 90000, maxContentLength: VIDEO_PERSIST_MAX_BYTES });
-    const buf = Buffer.from(resp.data);
-    if (buf.length > VIDEO_PERSIST_MAX_BYTES) {
-      logger.warn(`[DIONISIO] video ${proposalId} pesa ${Math.round(buf.length / 1048576)}MB (>${Math.round(VIDEO_PERSIST_MAX_BYTES / 1048576)}MB) — no persisto, queda en ephemeral`);
-      return sourceUrl;
-    }
-    await CreativeProposal.findByIdAndUpdate(proposalId, { $set: { video_base64: buf.toString('base64') } });
-    return `${PUBLIC_BASE_URL}/vid/${proposalId}.mp4`;
+    fs.mkdirSync(VIDEO_STORE_DIR, { recursive: true });
+    const filePath = path.join(VIDEO_STORE_DIR, `${proposalId}.mp4`);
+    const resp = await axios.get(sourceUrl, {
+      responseType: 'stream', timeout: 120000,
+      maxContentLength: 200 * 1024 * 1024, maxBodyLength: 200 * 1024 * 1024
+    });
+    await pipeline(resp.data, fs.createWriteStream(filePath));
+    return `${PUBLIC_BASE_URL}/vidf/${proposalId}.mp4`;
   } catch (e) {
-    logger.warn(`[DIONISIO] persistir video ${proposalId} falló (queda en ephemeral): ${e.message}`);
+    logger.warn(`[DIONISIO] persistir video ${proposalId} a disco falló (queda en ephemeral): ${e.message}`);
     return sourceUrl;
   }
 }
