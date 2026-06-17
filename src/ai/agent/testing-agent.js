@@ -180,6 +180,32 @@ async function getVideoTestingCampaignId() {
 }
 
 /**
+ * Campaña SEPARADA para video de PERSONA FRONTAL (arquetipo `person`, UGC con cara) —
+ * 2026-06-16, pedido del creador: aislar ese formato para medir si el POV frontal de
+ * persona convierte mejor que el resto. Mismo patrón lazy: env → SystemConfig → auto-crear.
+ */
+async function getVideoPersonTestingCampaignId() {
+  const config = require('../../../config');
+  if (config.meta.videoPersonTestingCampaignId) return config.meta.videoPersonTestingCampaignId;
+
+  const stored = await SystemConfig.get('video_person_testing_campaign_id', null);
+  if (stored) return stored;
+
+  const { getMetaClient } = require('../../meta/client');
+  const meta = getMetaClient();
+  const result = await meta.createCampaign({
+    name: '[TESTING-VIDEO-PERSON] Front-Facing Person UGC Testing',
+    objective: 'OUTCOME_SALES',
+    status: 'ACTIVE',
+    special_ad_categories: []
+  });
+
+  await SystemConfig.set('video_person_testing_campaign_id', result.campaign_id);
+  logger.info(`[TESTING-AGENT] Campana de testing de VIDEO-PERSONA creada: ${result.campaign_id}`);
+  return result.campaign_id;
+}
+
+/**
  * Calcular dias activos de un test.
  */
 function getDaysActive(launchedAt) {
@@ -403,7 +429,15 @@ async function launchTests() {
   };
 
   // VIDEO — pares por producto, cap a maxVideoLaunches grupos (campaña/budget propios).
-  const videoGroups = groupByProduct(readyVideoAll, VIDEO_ADS_PER_ADSET).slice(0, maxVideoLaunches);
+  // PERSONA FRONTAL (arquetipo `person`) va a una campaña SEPARADA (2026-06-16) → se agrupa
+  // aparte para que ningún adset mezcle person con el resto (cada grupo es homogéneo en
+  // arquetipo → se rutea entero a su campaña). El resto (classic + pov_hand) va a la regular.
+  const personVid = readyVideoAll.filter(p => p.source_archetype === 'person');
+  const otherVid = readyVideoAll.filter(p => p.source_archetype !== 'person');
+  const videoGroups = [
+    ...groupByProduct(otherVid, VIDEO_ADS_PER_ADSET),
+    ...groupByProduct(personVid, VIDEO_ADS_PER_ADSET)
+  ].slice(0, maxVideoLaunches);
 
   // FOTO — grupos de hasta PHOTO_ADS_PER_ADSET, filtro MAX_TESTS_PER_ADSET + cap.
   const cappedPhotoGroups = groupByProduct(readyPhotoSorted, PHOTO_ADS_PER_ADSET)
@@ -425,6 +459,7 @@ async function launchTests() {
   const campaignId = await getTestingCampaignId();
   const pixelInfo = await meta.getPixelId();
   let videoCampaignId = null;
+  let videoPersonCampaignId = null; // campaña separada para arquetipo `person`
 
   const tmpDir = path.join(os.tmpdir(), 'testing-agent');
   if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
@@ -450,9 +485,16 @@ async function launchTests() {
     try {
       let targetCampaignId = campaignId;
       let dailyBudget = TEST_DAILY_BUDGET;
+      const isPersonVideo = isVideo && first.source_archetype === 'person';
       if (isVideo) {
-        if (!videoCampaignId) videoCampaignId = await getVideoTestingCampaignId();
-        targetCampaignId = videoCampaignId;
+        // PERSONA FRONTAL → campaña separada (medir su performance aislada). Resto → regular.
+        if (isPersonVideo) {
+          if (!videoPersonCampaignId) videoPersonCampaignId = await getVideoPersonTestingCampaignId();
+          targetCampaignId = videoPersonCampaignId;
+        } else {
+          if (!videoCampaignId) videoCampaignId = await getVideoTestingCampaignId();
+          targetCampaignId = videoCampaignId;
+        }
         dailyBudget = VIDEO_TEST_DAILY_BUDGET;
       }
       // Nombre del adset (2026-06-14): los headlines colisionan mucho (todos los
@@ -468,7 +510,7 @@ async function launchTests() {
       const _uid = String(first._id).slice(-4);
       const _prod = first.product_name ? `${first.product_name} · ` : '';
       const _grp = claimed.length > 1 ? ` (+${claimed.length - 1})` : '';
-      const testName = `[TEST]${isVideo ? ' 🎬' : ''} ${_stamp}-${_uid} · ${_prod}${first.headline}${_grp}`;
+      const testName = `[TEST]${isVideo ? ' 🎬' : ''}${isPersonVideo ? ' 🧑' : ''} ${_stamp}-${_uid} · ${_prod}${first.headline}${_grp}`;
 
       if (!loggedPixel) { logger.info(`[TESTING-AGENT] pixelInfo: ${JSON.stringify(pixelInfo)}`); loggedPixel = true; }
       const adset = await meta.createAdSet({

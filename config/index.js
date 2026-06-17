@@ -26,6 +26,8 @@ module.exports = {
     // se testean aparte de las fotos (campaña propia, ABO $25/adset). Si está
     // vacío → SystemConfig 'video_testing_campaign_id' → auto-crea. (2026-05-30)
     videoTestingCampaignId: process.env.VIDEO_TESTING_CAMPAIGN_ID || '',
+    // Campaña separada para video de PERSONA FRONTAL (arquetipo `person`). (2026-06-16)
+    videoPersonTestingCampaignId: process.env.VIDEO_PERSON_TESTING_CAMPAIGN_ID || '',
     rateLimit: {
       maxCalls: 200,
       perHour: 1,
