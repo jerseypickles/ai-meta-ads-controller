@@ -75,6 +75,9 @@ const LAST_FRAME_RATE = parseFloat(process.env.SEEDANCE_LAST_FRAME_RATE || '0');
 // POST-PRO hook overlay (2026-06-10): % de videos que llevan el texto-gancho quemado
 // (estilo UGC nativo, Anton bold). A/B 50/50 — el overlay debería mover el THUMBSTOP.
 const OVERLAY_RATE = parseFloat(process.env.VIDEO_OVERLAY_RATE || '0.5');
+// Sacar el watermark "AI生成" de Seedance (ByteDance lo quema en todo video — ley china).
+// ON por default; ~$0.008/seg vía el servicio de PiAPI. Apagar con DIONYSUS_REMOVE_WATERMARK=false.
+const REMOVE_WATERMARK = process.env.DIONYSUS_REMOVE_WATERMARK !== 'false';
 
 /** Mapea la sugerencia del judge a un motion del DNA. Fallback raro: la imagen-fuente
  *  casi siempre trae su motion baked, así que esto solo aplica a fuentes legacy. NO
@@ -274,6 +277,16 @@ async function runDionysus() {
         // mid-render, reconcileStuckVideos puede recuperarlo desde PiAPI.
         onSubmit: (taskId) => CreativeProposal.findByIdAndUpdate(placeholder._id, { $set: { video_task_id: taskId, used_last_frame: useLastFrame } })
       });
+      // SACAR WATERMARK "AI生成" (2026-06-17): ByteDance lo quema en TODO video de Seedance
+      // (ley china de etiquetar IA — no se puede desactivar al generar). Lo removemos con el
+      // servicio de PiAPI sobre el mp4 crudo (URL pública) ANTES de overlay/juez/persist →
+      // todo downstream usa el video LIMPIO. Fail-open: si falla, queda el video con marca.
+      if (REMOVE_WATERMARK) {
+        try {
+          const clean = await seedance.removeWatermark(vid.video_url, durationFor(c.source_archetype));
+          if (clean) vid.video_url = clean;
+        } catch (e) { logger.warn(`[DIONISIO] remove-watermark falló (queda con marca): ${e.message}`); }
+      }
       // POST-PRO: hook text overlay (A/B 50%) — se quema ANTES del juez para que Gemini
       // juzgue el video final tal como lo verá la gente. Fail-open: sin overlay, sale crudo.
       let finalVideoUrl = vid.video_url;

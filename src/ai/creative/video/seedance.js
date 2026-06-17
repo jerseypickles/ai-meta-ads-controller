@@ -135,6 +135,45 @@ async function generateVideoFromImage(opts) {
   return { video_url: videoUrl, task_id: taskId, model: MODEL, task_type: TASK_TYPE, elapsed_s: elapsed };
 }
 
+/**
+ * Saca el watermark "AI生成" que ByteDance quema en TODO video de Seedance (obligación
+ * legal china de etiquetar IA — no se puede desactivar al generar). Servicio APARTE de PiAPI
+ * (task_type remove-watermark, ~$0.008/seg). Async: submit → poll → URL limpia. Recibe una
+ * URL PÚBLICA del mp4 con marca, devuelve la URL sin marca. Fail-open en el caller (si falla,
+ * queda el video con marca). Activable/desactivable por env (DIONYSUS_REMOVE_WATERMARK).
+ * @param {string} videoUrl - URL pública del mp4 con watermark
+ * @param {number} [durationSeconds] - PiAPI auto-detecta si no se pasa
+ * @returns {Promise<string>} URL del video sin watermark
+ */
+async function removeWatermark(videoUrl, durationSeconds) {
+  if (!videoUrl) throw new Error('removeWatermark: falta videoUrl');
+  const input = { video_url: videoUrl };
+  if (Number.isFinite(durationSeconds)) input.duration = durationSeconds;
+  const body = { model: MODEL, task_type: 'remove-watermark', input };
+  const DELAYS = [4000, 12000, 30000];
+  let lastErr, taskId;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      const res = await axios.post(`${BASE_URL}/task`, body, { headers: _headers(), timeout: 30000 });
+      if (res.data?.code !== 200) throw new Error(`PiAPI remove-watermark: ${res.data?.message || JSON.stringify(res.data).slice(0, 200)}`);
+      taskId = res.data?.data?.task_id;
+      if (!taskId) throw new Error('PiAPI remove-watermark sin task_id');
+      break;
+    } catch (err) {
+      lastErr = err;
+      const code = err.response?.status;
+      const transient = !code || code >= 500 || code === 429;
+      if (!transient || attempt === 4) throw err;
+      await new Promise(r => setTimeout(r, DELAYS[attempt - 1] || 30000));
+    }
+  }
+  if (!taskId) throw lastErr;
+  logger.info(`[SEEDANCE] 🧽 remove-watermark task ${taskId} en cola...`);
+  const url = await _poll(taskId);
+  logger.info(`[SEEDANCE] ✅ watermark "AI生成" removido · ${url}`);
+  return url;
+}
+
 function isAvailable() {
   return !!process.env.PIAPI_KEY;
 }
@@ -146,4 +185,4 @@ async function getTaskResult(taskId) {
   return { status: (d.status || '').toLowerCase(), video_url: d.output?.video || d.output?.video_url || null };
 }
 
-module.exports = { generateVideoFromImage, isAvailable, getTaskResult, MODEL, TASK_TYPE };
+module.exports = { generateVideoFromImage, removeWatermark, isAvailable, getTaskResult, MODEL, TASK_TYPE };
