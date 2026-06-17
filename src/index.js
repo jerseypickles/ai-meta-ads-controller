@@ -1494,11 +1494,11 @@ function initCronJobs() {
   // pipeline de video. Los dudosos quedan en 'pending_video_review' para APROBACIÓN
   // MANUAL; skip si la cola de review está llena (no quemar créditos de Seedance en
   // videos que nadie aprueba). Cap via DIONYSUS_PENDING_REVIEW_CAP.
-  cron.schedule('0 9,13,17,21 * * *', async () => {
+  cron.schedule('0 9,11,13,15,17,19,21 * * *', async () => {
     try {
       const CreativeProposal = require('./db/models/CreativeProposal');
       const pendingReview = await CreativeProposal.countDocuments({ media_type: 'video', status: 'pending_video_review' });
-      const cap = parseInt(process.env.DIONYSUS_PENDING_REVIEW_CAP || '10', 10);
+      const cap = parseInt(process.env.DIONYSUS_PENDING_REVIEW_CAP || '16', 10);
       if (pendingReview >= cap) {
         logger.info(`[CRON] Dionisio SKIP — ${pendingReview} videos esperando review (cap ${cap}); aprobá/rechazá antes de generar más`);
         return;
@@ -1510,7 +1510,7 @@ function initCronJobs() {
       logger.error(`[CRON] Dionisio falló: ${err.message}`);
     }
   }, { timezone: TIMEZONE, name: 'dionysus' });
-  logger.info('  [*] Dionisio — 4x/día (9am, 1pm, 5pm, 9pm ET) genera videos → review MANUAL para dudosos');
+  logger.info('  [*] Dionisio — 7x/día (9,11,13,15,17,19,21 ET) genera videos → review MANUAL para dudosos');
 
   // Hermes Agent — 5x/día (9am, 12pm, 3pm, 6pm, 9pm ET) — foot traffic NJ store
   // Aumentado de 2x → 5x el 14-may-2026 para acelerar inyección de creativos

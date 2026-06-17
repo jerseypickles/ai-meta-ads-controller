@@ -39,7 +39,7 @@ async function persistVideo(proposalId, sourceUrl) {
 }
 
 const ENABLED = process.env.DIONYSUS_ENABLED !== 'false';
-const MAX_VIDEOS_PER_CYCLE = parseInt(process.env.DIONYSUS_MAX_PER_CYCLE || '8', 10); // 2026-06-05: 3→6 · 2026-06-10: 6→8 + cron 2x→4x/día (pool de fuentes lleno + tests a $50 rotan en 1-2d; Dionisio era el cuello)
+const MAX_VIDEOS_PER_CYCLE = parseInt(process.env.DIONYSUS_MAX_PER_CYCLE || '12', 10); // 2026-06-05: 3→6 · 2026-06-10: 6→8 + cron 2x→4x · 2026-06-16: 8→12 + cron 4x→7x (cola alta de sources esperando: 47; Dionisio es el cuello)
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://ai-meta-ads-controller.onrender.com';
 // AUTO-APROBAR (2026-06-05, "extremo"): desclava el cuello de la aprobación manual.
 // Los videos de ALTA confianza (source judge alto + motion sin historial de rechazo)
