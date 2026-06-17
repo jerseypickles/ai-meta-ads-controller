@@ -36,7 +36,7 @@ const MAX_CONCURRENT_VIDEO_TESTS = parseInt(process.env.MAX_CONCURRENT_VIDEO_TES
 // 18 slots concurrentes, alineado con Dionisio a 4x/día × 8/ciclo. El video es el lever
 // más fuerte (4.85x, 76% de las ventas) — el cap es techo, no compromiso: solo se llena
 // si hay videos aprobados que testear. Env-overridable.
-const MAX_DAILY_VIDEO_TESTING_BUDGET = parseInt(process.env.MAX_DAILY_VIDEO_TESTING_BUDGET, 10) || 900;
+const MAX_DAILY_VIDEO_TESTING_BUDGET = parseInt(process.env.MAX_DAILY_VIDEO_TESTING_BUDGET, 10) || 1300; // 2026-06-17: 900→1300 — el creador aprueba video activamente (experimento persona) y el cap de $900 tapaba los recién aprobados ($790/$900 = 1 slot). Video es el formato fuerte (2.96x). Env-overridable.
 const MAX_DAILY_TESTING_BUDGET = parseInt(process.env.MAX_DAILY_TESTING_BUDGET, 10) || 1200; // Cap diario FOTO. 2026-06-03: 1000→400 · 2026-06-14: 400→500→750 · 2026-06-15: 750→1200 (DRENAJE FUERTE: 235 imgs ready, lanzar 10-12 adsets nuevos; cuadra con concurrencia 24 × $50). El cap no se gasta entero: solo entran grupos completos de 3 mientras hay slot. REVERTIR a ~400 post-drenaje. Env-overridable.
 const MAX_LAUNCHES_PER_CYCLE = parseInt(process.env.MAX_LAUNCHES_PER_CYCLE, 10) || 12; // 2026-06-05: 3→6. 2026-06-15: 6→12 (DRENAJE FUERTE: lanzar 10-12 adsets de foto en un ciclo para vaciar las 235 imgs ready). REVERTIR a 6 post-drenaje.
 // MULTI-AD foto (2026-06-13): N creativos del MISMO producto por adset → Meta hace el
