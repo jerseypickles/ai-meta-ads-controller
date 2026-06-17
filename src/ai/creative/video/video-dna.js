@@ -238,6 +238,28 @@ function motionsForProduct(productName = '') {
   return keys;
 }
 
+// ═══ DNA del ARQUETIPO B (PERSONA FRONTAL) — 2026-06-17 ═══
+// Las ACCIONES que hace la persona al animar (Seedance). El problema del UGC de persona es
+// que "se nota la IA": Seedance mete SLOW-MOTION, acciones raras y movimiento poco natural.
+// Estas acciones están escritas para combatirlo: velocidad REAL (anti slow-mo), gesto humano
+// creíble y cotidiano, y CARA ESTABLE (el AI rompe caras al moverlas → nada de hablar/morder).
+// Es la semilla del DNA de B: se elige una por video y se guarda en motion_variant → después
+// se aprende cuál convierte/se ve mejor (getDimensionStats filtrando por arquetipo).
+const PERSON_ACTIONS = [
+  { key: 'p_present', vid: 'The person naturally raises the product a little closer toward the camera with relaxed, genuine "you have to try this" energy and a small real smile. Only the arm and a tiny head movement — the face stays calm, natural and perfectly stable.' },
+  { key: 'p_turn_label', vid: 'The person casually turns the product so its label faces the camera, a small natural wrist rotation and a slight approving nod. The face stays stable and believable, minimal mouth movement.' },
+  { key: 'p_nod', vid: 'The person gives a small, genuine nod of approval while holding the product, a relaxed real smile of enjoyment. Subtle and human; the face must stay stable and must not warp or shift identity.' },
+  { key: 'p_point', vid: 'The person points at the product with their free hand in a natural, excited everyday gesture and a quick real smile. Keep the face calm and stable across every frame.' },
+  { key: 'p_lean_in', vid: 'The person leans slightly toward the camera with the product, a conspiratorial "check this out" vibe and a small natural smile. The face stays believable and stable, no warping.' },
+  { key: 'p_casual', vid: 'The person does a relaxed casual present — a tiny shrug while holding the product up, an effortless "honestly obsessed" everyday energy. Subtle human movement, face calm and stable.' }
+];
+const PERSON_ACTION_KEYS = PERSON_ACTIONS.map(a => a.key);
+function pickPersonAction() { return PERSON_ACTIONS[Math.floor(Math.random() * PERSON_ACTIONS.length)].key; }
+function getPersonAction(key) { return PERSON_ACTIONS.find(a => a.key === key) || PERSON_ACTIONS[0]; }
+// Directiva anti-IA común a todo video de persona (la #1: matar el slow-motion).
+const PERSON_REALTIME = 'CRITICAL: everything moves at NATURAL REAL-TIME everyday speed — absolutely NO slow motion, NO cinematic slow-mo, NO ramping, NO dreamy floaty movement. It must look like a normal phone video of a real person, recorded in real time.';
+const PERSON_CAMERA = 'Authentic handheld iPhone selfie framing held by the person, natural micro-shake, NO camera zoom and NO push-in.';
+
 // CAMERA — movimiento de cámara (Seedance).
 const CAMERAS = [
   { key: 'static',         vid: 'Locked-off static shot, no camera movement at all.' },
@@ -436,13 +458,14 @@ function buildVideoPrompt(productName, motionKey, cameraKey, styleOverride, lear
   const style = styleOverride || pickVideoStyle();
   const readable = `Keep the ${productName || 'product'} label readable and undistorted at all times.`;
   const learned = learnDirective ? ` ${learnDirective}` : '';
-  // PERSONA FRONTAL (arquetipo B, 2026-06-16): motion PROPIO con la cara ESTABLE. El AI-video
-  // rompe caras cuando se mueven mucho (boca al hablar/morder = deformación). Movimiento
-  // mínimo y creíble: sostener/mostrar el producto a cámara + leve reacción genuina. NADA de
-  // hablar o morder en cámara. Reemplaza el motion de comida (que no le queda a una persona).
+  // PERSONA FRONTAL (arquetipo B) — DNA de ACCIONES (2026-06-17). El motion sale de
+  // PERSON_ACTIONS (variado, se aprende por arquetipo). Mata el slow-motion (PERSON_REALTIME),
+  // cara estable (el AI rompe caras), cámara handheld natural sin zoom (PERSON_CAMERA). Se
+  // saltea el camera dim de comida y NATURAL_PHYSICS (es de física de comida, no de persona).
   if (archetype === 'person') {
-    const personMotion = `Animate as authentic in-the-moment UGC: the person makes ONE subtle, natural movement — gently raising and showing the "${productName || 'product'}" toward the camera, with a small genuine smile or slight head tilt of enjoyment and light natural hand motion. KEEP THE FACE STABLE, calm and natural across every frame — minimal mouth movement, NO talking, NO biting on camera; the face and hands must NOT warp, melt, stretch or distort. Subtle, believable, human — like a real person casually showing a product they love.`;
-    return `${personMotion} ${c.vid} ${style} ${NATURAL_PHYSICS} ${readable}${learned}`;
+    const action = getPersonAction(motionKey); // motionKey trae la person-action elegida en el source
+    const wrap = `Animate as authentic in-the-moment UGC of a real person showing the "${productName || 'product'}". ${action.vid} The face and hands must NOT warp, melt, stretch or change identity across frames. ${PERSON_REALTIME} ${PERSON_CAMERA}`;
+    return `${wrap} ${style} ${readable}${learned}`;
   }
   const m = get('motion', motionKey);
   return `${_fill(m.vid, productName)} ${c.vid} ${style} ${NATURAL_PHYSICS} ${readable}${learned}`;
@@ -460,5 +483,6 @@ module.exports = {
   MOTIONS, CAMERAS, SCENES, DIMS, BASE_STYLE, VIDEO_STYLE_MOODS, pickVideoStyle,
   productUnit, productUnitFood, fitsOnFood, isDip, isShredded, motionsForProduct,
   get, keys, pickWeighted, getDimensionStats, buildImageScene, buildVideoPrompt,
-  buildEndFrameScene, HOOKS, setProductForm, getProductForm
+  buildEndFrameScene, HOOKS, setProductForm, getProductForm,
+  PERSON_ACTIONS, PERSON_ACTION_KEYS, pickPersonAction, getPersonAction
 };

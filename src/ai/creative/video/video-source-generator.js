@@ -313,6 +313,10 @@ async function generateVideoSources() {
     let prompt = null, creativeConcept = null;
     // Arquetipo de UGC (classic/pov_hand/person) — exploración A/B vs el clásico.
     const archetype = pickArchetype();
+    // DNA de ACCIONES de persona (2026-06-17): para `person` el motion NO es de comida —
+    // es una ACCIÓN humana (PERSON_ACTIONS). Se guarda en motion_variant y fluye al video
+    // (buildVideoPrompt la usa). Anti slow-mo + cara estable van en el prompt de video.
+    if (archetype === 'person') motionKey = dna.pickPersonAction();
 
     // 🎨 DIRECTOR CREATIVO: una parte de las generaciones INVENTA un concepto nuevo (el LLM)
     // en vez del template fijo → explora territorio que no está en el menú del DNA.
