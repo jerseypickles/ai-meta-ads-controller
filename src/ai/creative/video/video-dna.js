@@ -431,12 +431,20 @@ const NATURAL_PHYSICS =
 
 /** Prompt del VIDEO (Seedance): motion (con pieza real) + cámara + estilo ROTADO + física.
  *  styleOverride opcional (para tests deterministas); si no, rota un mood. */
-function buildVideoPrompt(productName, motionKey, cameraKey, styleOverride, learnDirective = '') {
-  const m = get('motion', motionKey);
+function buildVideoPrompt(productName, motionKey, cameraKey, styleOverride, learnDirective = '', archetype = 'classic') {
   const c = get('camera', cameraKey);
   const style = styleOverride || pickVideoStyle();
   const readable = `Keep the ${productName || 'product'} label readable and undistorted at all times.`;
   const learned = learnDirective ? ` ${learnDirective}` : '';
+  // PERSONA FRONTAL (arquetipo B, 2026-06-16): motion PROPIO con la cara ESTABLE. El AI-video
+  // rompe caras cuando se mueven mucho (boca al hablar/morder = deformación). Movimiento
+  // mínimo y creíble: sostener/mostrar el producto a cámara + leve reacción genuina. NADA de
+  // hablar o morder en cámara. Reemplaza el motion de comida (que no le queda a una persona).
+  if (archetype === 'person') {
+    const personMotion = `Animate as authentic in-the-moment UGC: the person makes ONE subtle, natural movement — gently raising and showing the "${productName || 'product'}" toward the camera, with a small genuine smile or slight head tilt of enjoyment and light natural hand motion. KEEP THE FACE STABLE, calm and natural across every frame — minimal mouth movement, NO talking, NO biting on camera; the face and hands must NOT warp, melt, stretch or distort. Subtle, believable, human — like a real person casually showing a product they love.`;
+    return `${personMotion} ${c.vid} ${style} ${NATURAL_PHYSICS} ${readable}${learned}`;
+  }
+  const m = get('motion', motionKey);
   return `${_fill(m.vid, productName)} ${c.vid} ${style} ${NATURAL_PHYSICS} ${readable}${learned}`;
 }
 

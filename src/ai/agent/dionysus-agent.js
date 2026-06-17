@@ -49,6 +49,13 @@ const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://ai-meta-ads-cont
 const AUTO_APPROVE = process.env.DIONYSUS_AUTO_APPROVE !== 'false';
 const AUTO_APPROVE_MIN_SCORE = parseInt(process.env.DIONYSUS_AUTO_APPROVE_MIN_SCORE || '80', 10);
 const AUTO_APPROVE_MAX_MOTION_REJECT = parseFloat(process.env.DIONYSUS_AUTO_APPROVE_MAX_REJECT || '0.4');
+// Duración por arquetipo (2026-06-16): persona frontal (B) necesita aire para una narrativa
+// (5s no alcanza para que una persona muestre/reaccione) → 10s. El resto sigue en 5s.
+// OJO: 10s NO está verificado contra la API live de Seedance/PiAPI — si la rechaza, los
+// videos de persona fallarán al generar; bajar con VIDEO_PERSON_DURATION=5.
+const DURATION_DEFAULT = parseInt(process.env.VIDEO_DURATION_DEFAULT || '5', 10);
+const DURATION_PERSON = parseInt(process.env.VIDEO_PERSON_DURATION || '10', 10);
+const durationFor = (archetype) => archetype === 'person' ? DURATION_PERSON : DURATION_DEFAULT;
 // Motions con FÍSICA difícil (caída/vertido de objetos) — la IA tiende a pegarlos/congelar
 // en el aire (se nota artificial). NUNCA auto-aprobar estos: siempre review manual (el humano
 // es el mejor juez de física). 2026-06-05, por el reporte de pickles "stuck" al verter.
@@ -223,7 +230,7 @@ async function runDionysus() {
     // Directiva APRENDIDA del loop (reconciliador) — '' si aún no hay data
     let learnDirective = '';
     try { learnDirective = await require('../creative/video/video-learning').getPromptLearning(variant); } catch (_) { /* fail-open */ }
-    const prompt = dna.buildVideoPrompt(c.product_name || 'the product', variant, camera, undefined, learnDirective);
+    const prompt = dna.buildVideoPrompt(c.product_name || 'the product', variant, camera, undefined, learnDirective, c.source_archetype || 'classic');
     const placeholder = await CreativeProposal.create({
       adset_id: c.adset_id, product_id: c.product_id, product_name: c.product_name,
       headline: c.headline, primary_text: c.primary_text, link_url: c.link_url,
@@ -256,7 +263,7 @@ async function runDionysus() {
     const lastFrameUrl = useLastFrame ? `${PUBLIC_BASE_URL}/vsrc/${c._id}/end.png` : null;
     try {
       const vid = await seedance.generateVideoFromImage({
-        imageUrl, lastFrameUrl, prompt, durationSeconds: 5, aspectRatio: '9:16',
+        imageUrl, lastFrameUrl, prompt, durationSeconds: durationFor(c.source_archetype), aspectRatio: '9:16',
         // Persistir el task_id YA (apenas se emite) → si el proceso muere
         // mid-render, reconcileStuckVideos puede recuperarlo desde PiAPI.
         onSubmit: (taskId) => CreativeProposal.findByIdAndUpdate(placeholder._id, { $set: { video_task_id: taskId, used_last_frame: useLastFrame } })
@@ -340,11 +347,12 @@ async function retryFailedVideos({ hoursBack = 6, limit = 20 } = {}) {
       if (!source || !source.image_base64) { skipped++; logger.warn(`[DIONISIO-RETRY] ${f._id}: fuente no disponible — skip`); continue; }
       const variant = f.motion_variant || 'lift_drip';
       const camera = f.camera || 'static';
-      const prompt = dna.buildVideoPrompt(source.product_name || f.product_name || 'the product', variant, camera);
+      const arche = f.source_archetype || source.source_archetype || 'classic';
+      const prompt = dna.buildVideoPrompt(source.product_name || f.product_name || 'the product', variant, camera, undefined, '', arche);
       const imageUrl = `${PUBLIC_BASE_URL}/vsrc/${source._id}.png`;
       await CreativeProposal.findByIdAndUpdate(f._id, { $set: { status: 'generating_video', rejection_reason: '' } });
       const vid = await seedance.generateVideoFromImage({
-        imageUrl, prompt, durationSeconds: 5, aspectRatio: '9:16',
+        imageUrl, prompt, durationSeconds: durationFor(arche), aspectRatio: '9:16',
         onSubmit: (taskId) => CreativeProposal.findByIdAndUpdate(f._id, { $set: { video_task_id: taskId } })
       });
       await CreativeProposal.findByIdAndUpdate(f._id, { $set: { status: 'pending_video_review', video_url: vid.video_url, video_task_id: vid.task_id } });
