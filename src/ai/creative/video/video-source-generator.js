@@ -25,7 +25,7 @@ const PER_CYCLE_CAP = parseInt(process.env.VIDEO_SOURCE_PER_CYCLE || '8', 10);  
 const ENABLED = process.env.VIDEO_SOURCE_ENABLED !== 'false';
 // 🎨 Director creativo: % de generaciones que inventan un concepto NUEVO (el LLM, no el
 // template fijo) → el DNA crece su espacio en vez de cerrarse. 2026-06-08, Dionisio fabuloso.
-const CREATIVE_RATE = parseFloat(process.env.VIDEO_SOURCE_CREATIVE_RATE || '0.3');
+const CREATIVE_RATE = parseFloat(process.env.VIDEO_SOURCE_CREATIVE_RATE || '0.15'); // 2026-06-16: 0.3→0.15 — los conceptos libres del art-director (vapor/escarcha/efectos artificiales) eran los que más rebotaba el juez (100% reject). Más peso a templates limpios + arquetipos. Env-overridable.
 // PILOTO first+last frame (2026-06-09): genera el frame FINAL como EDICIÓN del inicial
 // (misma escena, solo cambia el estado del motion) para motions con `end` definido en el
 // DNA. Seedance interpola entre ambos → la física deja de ser adivinanza. Apagar con env.
