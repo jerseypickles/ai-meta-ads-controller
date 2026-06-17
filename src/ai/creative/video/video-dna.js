@@ -254,8 +254,58 @@ const PERSON_ACTIONS = [
   { key: 'p_casual', vid: 'The person does a relaxed casual present — a tiny shrug while holding the product up, an effortless "honestly obsessed" everyday energy. Subtle human movement, face calm and stable.' }
 ];
 const PERSON_ACTION_KEYS = PERSON_ACTIONS.map(a => a.key);
-function pickPersonAction() { return PERSON_ACTIONS[Math.floor(Math.random() * PERSON_ACTIONS.length)].key; }
 function getPersonAction(key) { return PERSON_ACTIONS.find(a => a.key === key) || PERSON_ACTIONS[0]; }
+
+// LIGHTING DNA del arquetipo B (fase 2, 2026-06-17): la LUZ del primer frame también delata
+// la IA. Set de luces naturales/creíbles que varía por video; se aprende cuál se ve mejor /
+// convierte (getDimensionStats('scene', {archetype:'person'}) — para persona el campo `scene`
+// guarda la luz, no una escena de comida). `img` = cláusula de luz para el prompt de imagen.
+const PERSON_LIGHTING = [
+  { key: 'l_golden', img: 'warm late-afternoon golden-hour sunlight, soft natural shadows, true-to-life colors (no heavy grading)' },
+  { key: 'l_daylight', img: 'bright clean midday natural daylight, crisp and fresh, neutral true colors, soft natural shadows' },
+  { key: 'l_window', img: 'soft warm indoor window light, cozy and natural, gentle falloff, realistic skin tones' },
+  { key: 'l_overcast', img: 'soft diffused overcast daylight, even and flattering, no harsh shadows, true natural colors' },
+  { key: 'l_shade', img: 'open-shade outdoor light (in the shade on a sunny day), soft even illumination, natural cool-warm balance' }
+];
+const PERSON_LIGHTING_KEYS = PERSON_LIGHTING.map(l => l.key);
+function getPersonLighting(key) { return PERSON_LIGHTING.find(l => l.key === key) || PERSON_LIGHTING[0]; }
+
+// Pick ponderado genérico (fase 2): 40% EXPLORE (lo menos usado) + 60% EXPLOIT (ROAS+hold,
+// penalizado por rechazos/desfiguración). Mismo criterio que pickWeighted, sobre un set
+// arbitrario de {key}. Lo usan las dimensiones nuevas de persona (acción + luz).
+function _weightedPickKeys(values, statsByKey = {}, opts = {}) {
+  const { minSamples = 2, floor = 1, k = 1.2, kHold = 3, exploreRate = 0.4 } = opts;
+  if (!values.length) return null;
+  if (Math.random() < exploreRate) {
+    const ranked = values
+      .map(v => { const s = statsByKey[v.key] || {}; return { key: v.key, used: (s.n || 0) + (s.reject_n || 0) }; })
+      .sort((a, b) => a.used - b.used);
+    const pool = ranked.slice(0, Math.max(1, Math.ceil(ranked.length / 3)));
+    return pool[Math.floor(Math.random() * pool.length)].key;
+  }
+  const weights = values.map(v => {
+    const s = statsByKey[v.key];
+    let w = floor;
+    if (s && s.n >= minSamples) {
+      if (s.avg_roas > 0) w += s.avg_roas * k;
+      if (s.avg_hold > 0) w += s.avg_hold * kHold;
+    }
+    if (s && (s.reject_n || 0) > 0) {
+      const tot = (s.n || 0) + s.reject_n;
+      w *= Math.max(0.15, 1 - (s.reject_n / tot));
+    }
+    return w;
+  });
+  const total = weights.reduce((a, b) => a + b, 0);
+  let r = Math.random() * total;
+  for (let i = 0; i < values.length; i++) { r -= weights[i]; if (r <= 0) return values[i].key; }
+  return values[values.length - 1].key;
+}
+// Aprenden cuál ACCIÓN y cuál LUZ rinde mejor en persona (fase 2). statsByKey de
+// getDimensionStats(..., {archetype:'person'}). Sin stats → explore puro (variación).
+function pickPersonAction(statsByKey = {}) { return _weightedPickKeys(PERSON_ACTIONS, statsByKey, {}); }
+function pickPersonLighting(statsByKey = {}) { return _weightedPickKeys(PERSON_LIGHTING, statsByKey, {}); }
+
 // Directiva anti-IA común a todo video de persona (la #1: matar el slow-motion).
 const PERSON_REALTIME = 'CRITICAL: everything moves at NATURAL REAL-TIME everyday speed — absolutely NO slow motion, NO cinematic slow-mo, NO ramping, NO dreamy floaty movement. It must look like a normal phone video of a real person, recorded in real time.';
 const PERSON_CAMERA = 'Authentic handheld iPhone selfie framing held by the person, natural micro-shake, NO camera zoom and NO push-in.';
@@ -356,16 +406,19 @@ function pickWeighted(dim, statsByKey = {}, opts = {}) {
  * Stats agregados de una dimensión desde los videos testeados (proposal_id→TestRun).
  * @returns {Object} { <valueKey>: { n, avg_roas, avg_ctr, graduated, killed } }
  */
-async function getDimensionStats(dim) {
+async function getDimensionStats(dim, opts = {}) {
   const field = dim === 'motion' ? 'motion_variant' : dim === 'hook' ? 'hook_variant' : dim;
+  // Filtro por ARQUETIPO (fase 2, 2026-06-17): las acciones/luz de PERSONA aprenden SOLO de
+  // videos de persona (no se mezclan con los motions de comida del classic/pov). Sin opt = todos.
+  const archFilter = opts.archetype ? { source_archetype: opts.archetype } : {};
   // Videos que CORRIERON → señal de rendimiento (ROAS/hold).
   const vids = await CreativeProposal.find({
-    media_type: 'video', status: { $in: ['testing', 'graduated', 'killed', 'expired'] }
+    media_type: 'video', ...archFilter, status: { $in: ['testing', 'graduated', 'killed', 'expired'] }
   }).select(`${field} status`).lean();
   // Videos RECHAZADOS en review manual → señal NEGATIVA (desfiguración / "se nota IA" /
   // no apto). El "no" del creador enseña al DNA a evitar ese combo (loop de animabilidad).
   const rejected = await CreativeProposal.find({
-    media_type: 'video', status: 'rejected'
+    media_type: 'video', ...archFilter, status: 'rejected'
   }).select(`${field}`).lean();
 
   const agg = {};
@@ -484,5 +537,6 @@ module.exports = {
   productUnit, productUnitFood, fitsOnFood, isDip, isShredded, motionsForProduct,
   get, keys, pickWeighted, getDimensionStats, buildImageScene, buildVideoPrompt,
   buildEndFrameScene, HOOKS, setProductForm, getProductForm,
-  PERSON_ACTIONS, PERSON_ACTION_KEYS, pickPersonAction, getPersonAction
+  PERSON_ACTIONS, PERSON_ACTION_KEYS, pickPersonAction, getPersonAction,
+  PERSON_LIGHTING, PERSON_LIGHTING_KEYS, pickPersonLighting, getPersonLighting
 };

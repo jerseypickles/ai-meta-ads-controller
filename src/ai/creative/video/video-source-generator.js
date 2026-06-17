@@ -92,7 +92,9 @@ function buildSourcePrompt(productName, motionKey, sceneKey, hookKey, archetype 
   // B — Persona real en cuadro sosteniendo/comiendo el producto, cara candid (no primer
   // plano extremo). Riesgo AI alto (caras) → FOTORREALISMO DURO de cara + el juez filtra.
   if (archetype === 'person') {
-    return `Create a vertical 9:16 authentic UGC selfie-style photograph of a real, casual everyday young person (candid, natural, NOT a posed model, NOT a stock photo) holding the "${productName}" jar/tub or about to bite/eat ${unit}, reacting with genuine enjoyment. Real iPhone front-camera UGC look — handheld, in-the-moment, natural daylight. Medium framing (head-and-shoulders or waist-up); the face is visible but NATURAL and candid, NOT an extreme close-up of the face. The "${productName}" jar with its LABEL readable is clearly in frame as the hero alongside the person. ${matchPiece} ${FIDELITY} ${pickImageStyle()} ` +
+    // LIGHTING DNA (fase 2): sceneKey trae la luz elegida (PERSON_LIGHTING, ponderada).
+    const lightClause = dna.getPersonLighting(sceneKey).img;
+    return `Create a vertical 9:16 authentic UGC selfie-style photograph of a real, casual everyday young person (candid, natural, NOT a posed model, NOT a stock photo) holding the "${productName}" jar/tub or about to bite/eat ${unit}, reacting with genuine enjoyment. Real iPhone front-camera UGC look — handheld, in-the-moment. Lighting: ${lightClause}. Medium framing (head-and-shoulders or waist-up); the face is visible but NATURAL and candid, NOT an extreme close-up of the face. The "${productName}" jar with its LABEL readable is clearly in frame as the hero alongside the person. ${matchPiece} ${FIDELITY} ` +
       // FOTORREALISMO DE CARA (la parte más difícil, 2026-06-17): el rostro tiene que ser CREÍBLE.
       `PHOTOREALISM — THE FACE MUST BE BELIEVABLE (this is the hardest part): real human skin with visible pores, fine texture and minor natural imperfections; a slightly asymmetric, natural face — NOT a flawless airbrushed model; an authentic candid expression caught mid-moment; shot on a real iPhone front camera with natural available light and a touch of real-photo grain. ABSOLUTELY AVOID THE AI LOOK: no plastic or waxy skin, no airbrushed perfection, no glassy doll eyes, no over-symmetric face, no CGI render sheen, no beauty-filter, no stock-photo posing. Real hands with exactly five fingers, natural human proportions, nothing warped or uncanny. It MUST be indistinguishable from a real photo of a real person. The jar is held by the person — never floating. ${ENERGY}`;
   }
@@ -265,10 +267,14 @@ async function generateVideoSources() {
   }
 
   // DNA stats para exploit/explore (qué motion / scene / hook rinde mejor hasta ahora).
-  const [motionStats, sceneStats, hookStats] = await Promise.all([
+  // + DNA de PERSONA (fase 2): acción (en motion_variant) y luz (en scene) aprenden SOLO de
+  // videos de persona — filtrados por arquetipo para no mezclar con los motions de comida.
+  const [motionStats, sceneStats, hookStats, personActionStats, personLightStats] = await Promise.all([
     dna.getDimensionStats('motion').catch(() => ({})),
     dna.getDimensionStats('scene').catch(() => ({})),
-    dna.getDimensionStats('hook').catch(() => ({}))
+    dna.getDimensionStats('hook').catch(() => ({})),
+    dna.getDimensionStats('motion', { archetype: 'person' }).catch(() => ({})),
+    dna.getDimensionStats('scene', { archetype: 'person' }).catch(() => ({}))
   ]);
 
   // Conceptos del art-director que YA GRADUARON → inspiración para inventar MÁS en esas
@@ -313,10 +319,13 @@ async function generateVideoSources() {
     let prompt = null, creativeConcept = null;
     // Arquetipo de UGC (classic/pov_hand/person) — exploración A/B vs el clásico.
     const archetype = pickArchetype();
-    // DNA de ACCIONES de persona (2026-06-17): para `person` el motion NO es de comida —
-    // es una ACCIÓN humana (PERSON_ACTIONS). Se guarda en motion_variant y fluye al video
-    // (buildVideoPrompt la usa). Anti slow-mo + cara estable van en el prompt de video.
-    if (archetype === 'person') motionKey = dna.pickPersonAction();
+    // DNA de PERSONA (fase 2, 2026-06-17): para `person` el motion es una ACCIÓN humana
+    // (PERSON_ACTIONS → motion_variant) y la "scene" es la LUZ (PERSON_LIGHTING → scene),
+    // ambas PONDERADAS por su rendimiento en persona (no random). Fluyen al video/imagen.
+    if (archetype === 'person') {
+      motionKey = dna.pickPersonAction(personActionStats);
+      sceneKey = dna.pickPersonLighting(personLightStats);
+    }
 
     // 🎨 DIRECTOR CREATIVO: una parte de las generaciones INVENTA un concepto nuevo (el LLM)
     // en vez del template fijo → explora territorio que no está en el menú del DNA.
