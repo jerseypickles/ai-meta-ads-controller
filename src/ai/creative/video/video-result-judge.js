@@ -12,7 +12,12 @@ const logger = require('../../../utils/logger');
 const MODEL = process.env.GEMINI_VIDEO_MODEL || 'gemini-2.5-flash';
 const MAX_MB = 18; // límite inline de Gemini (~20MB request); 5s suele ser < 10MB
 
-const PROMPT = (productName, motion) => `You are a BRUTALLY CRITICAL senior video editor reviewing this 5-second AI-generated UGC food ad for "${productName}" (intended interaction: "${motion}"). Your job is to find what's WRONG. Every AI video (Seedance) has flaws — if you think it's flawless, you are NOT looking hard enough. Watch the MOTION across the whole clip, frame by frame.
+// Gate ANTI-CARA-DEFORMADA para arquetipo `person` (2026-06-17): el AI-video rompe caras al
+// animar (la cara se derrite/morfa/cambia de identidad entre frames). Es el flaw #1 del UGC de
+// persona y el que más mata la confianza. Para `person` el juez lo caza con prioridad absoluta.
+const FACE_GATE = `\n\n🧑 ESTE VIDEO MUESTRA UNA PERSONA — LA CARA ES LO MÁS IMPORTANTE. Watch the FACE frame by frame across the WHOLE clip. AI video almost always breaks human faces. REJECT (verdict "reject", overall ≤40) if AT ANY point the face: melts, morphs, warps or smears; changes identity/features between frames; has distorted/asymmetric eyes, a twisted mouth, extra/missing teeth, or rubbery skin; flickers or "swims"; looks plastic/waxy/CGI/uncanny rather than a real human; or the hands holding the product warp/grow extra fingers. A believable, stable, real-looking human across every frame is required — anything less is the classic AI-person giveaway that destroys trust. Be MERCILESS here.`;
+
+const PROMPT = (productName, motion, archetype = 'classic') => `You are a BRUTALLY CRITICAL senior video editor reviewing this AI-generated UGC food ad for "${productName}" (intended interaction: "${motion}"). Your job is to find what's WRONG. Every AI video (Seedance) has flaws — if you think it's flawless, you are NOT looking hard enough. Watch the MOTION across the whole clip, frame by frame.${archetype === 'person' ? FACE_GATE : ''}
 
 HUNT for these (almost always present at some level):
 - product/label MORPHING or shifting between frames (text warps, jar changes shape mid-clip)
@@ -48,7 +53,7 @@ Return ONLY JSON:
  * @param {string} motion - motion_variant
  * @returns {Promise<object|null>} veredicto o null si falla (fail-open: no bloquea el pipeline)
  */
-async function judgeVideoResult(videoUrl, productName = 'the product', motion = '') {
+async function judgeVideoResult(videoUrl, productName = 'the product', motion = '', archetype = 'classic') {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
   if (!apiKey || !videoUrl) return null;
   try {
@@ -67,7 +72,7 @@ async function judgeVideoResult(videoUrl, productName = 'the product', motion = 
       model: MODEL,
       contents: [{ role: 'user', parts: [
         { inlineData: { mimeType: 'video/mp4', data: b64 } },
-        { text: PROMPT(productName, motion) }
+        { text: PROMPT(productName, motion, archetype) }
       ]}]
     });
 

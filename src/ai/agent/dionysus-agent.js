@@ -286,7 +286,7 @@ async function runDionysus() {
       // que el juez de imagen no puede. Auto-rechaza videos rotos y gatea el auto-aprobado.
       // Usa finalVideoUrl mientras el ephemeral aún está vivo (recién generado).
       let videoVerdict = null;
-      try { videoVerdict = await require('../creative/video/video-result-judge').judgeVideoResult(finalVideoUrl, c.product_name, variant); } catch (_) { /* fail-open */ }
+      try { videoVerdict = await require('../creative/video/video-result-judge').judgeVideoResult(finalVideoUrl, c.product_name, variant, c.source_archetype || 'classic'); } catch (_) { /* fail-open */ }
 
       if (videoVerdict && videoVerdict.verdict === 'reject') {
         // No persistimos los rechazados (se descartan) — quedan con la URL que sea.
