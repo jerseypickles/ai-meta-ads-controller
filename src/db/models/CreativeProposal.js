@@ -130,4 +130,12 @@ creativeProposalSchema.index({ status: 1, created_at: -1 });
 // que antes tardaba 7.1s real. Con compound, Mongo puede usar index-only scan.
 creativeProposalSchema.index({ created_at: -1, evolution_strategy: 1 });
 
+// PERF 2026-06-18: el tab de Apollo (/creative-agent/intelligence) tardaba ~28s. Las
+// aggregations de "status counts" y "feedback" hacían COLLSCAN sobre esta colección, y
+// como cada doc trae image_base64/video_base64 (blobs de MB), Mongo cargaba el doc ENTERO
+// solo para contar. Estos índices COVERING las dejan index-only (no tocan base64):
+creativeProposalSchema.index({ media_type: 1, status: 1 });                       // status counts por media
+creativeProposalSchema.index({ 'human_feedback.rating': 1 }, { sparse: true });   // feedback (casi siempre null)
+creativeProposalSchema.index({ 'human_feedback.reason': 1 }, { sparse: true });
+
 module.exports = mongoose.model('CreativeProposal', creativeProposalSchema);
