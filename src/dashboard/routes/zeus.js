@@ -127,7 +127,17 @@ router.get('/intelligence', async (req, res) => {
             { phase: 'killed', 'metrics.spend': { $gte: 10 } }
           ]
         }},
-        { $lookup: { from: 'creativeproposals', localField: 'proposal_id', foreignField: '_id', as: 'proposal' } },
+        // FIX PERF 2026-06-18: sub-pipeline que PROYECTA solo scene_short → el $lookup no
+        // trae image_base64/video_base64 (blobs de MB) que hacían lento el endpoint.
+        { $lookup: {
+          from: 'creativeproposals',
+          let: { pid: '$proposal_id' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$_id', '$$pid'] } } },
+            { $project: { scene_short: 1 } }
+          ],
+          as: 'proposal'
+        } },
         { $unwind: { path: '$proposal', preserveNullAndEmptyArrays: true } },
         { $group: {
           _id: '$proposal.scene_short',

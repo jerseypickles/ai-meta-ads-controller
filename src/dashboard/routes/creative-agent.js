@@ -302,10 +302,22 @@ router.get('/intelligence', async (req, res) => {
         { $group: { _id: '$human_feedback.reason', count: { $sum: 1 } } },
         { $sort: { count: -1 } }
       ]),
-      // Scene performance from tests (lookup)
+      // Scene performance from tests (lookup).
+      // FIX PERF 2026-06-18: el $lookup traía el DOC COMPLETO de cada proposal — incluido
+      // image_base64/video_base64 (blobs de MB) → cargaba cientos de MB en el pipeline y el
+      // endpoint tardaba ~28s (el tab de Apollo timeouteaba vacío). Ahora el sub-pipeline
+      // PROYECTA solo scene_short → no se toca ningún base64. Baja a ms.
       TestRun.aggregate([
         { $match: { phase: { $in: ['graduated', 'killed', 'expired'] } } },
-        { $lookup: { from: 'creativeproposals', localField: 'proposal_id', foreignField: '_id', as: 'proposal' } },
+        { $lookup: {
+          from: 'creativeproposals',
+          let: { pid: '$proposal_id' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$_id', '$$pid'] } } },
+            { $project: { scene_short: 1 } }
+          ],
+          as: 'proposal'
+        } },
         { $unwind: { path: '$proposal', preserveNullAndEmptyArrays: true } },
         { $group: {
           _id: '$proposal.scene_short',
