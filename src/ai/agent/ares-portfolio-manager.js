@@ -113,6 +113,20 @@ const HOG_SPEND_MIN_3D = parseFloat(process.env.ARES_HOG_SPEND_MIN_3D || '50'); 
 const HOG_META_ROAS_FLOOR = parseFloat(process.env.ARES_HOG_META_FLOOR || '1.5'); // Meta crudo debajo = obvio malo (robusto al haircut)
 const HOG_CASH_ROAS_FLOOR = parseFloat(process.env.ARES_HOG_CASH_FLOOR || '2.0'); // cash-ajustado debajo = no rinde lo que gasta
 
+// FASE 1 del rebuild de Ares (2026-06-19): DIENTES DECISIVOS. Un CBO loser persistente
+// (caso real: Rescate a 1.48x por 18 DÍAS) no se baja 15% por vez — se MATA entero y el
+// budget se consolida en los winners. El piso es cash-aware (Demeter) y exige badness
+// SOSTENIDA (7d Y 3d), con gasto significativo (no matar un CBO chico/nuevo). El cerebro
+// de portfolio (Fase 2) va a hacer esto con razonamiento; esto es la teeth procedural ya.
+const KILL_CASH_FLOOR = parseFloat(process.env.ARES_KILL_CASH_FLOOR || '1.8');    // cash-ROAS debajo = loser
+const KILL_MIN_SPEND_7D = parseFloat(process.env.ARES_KILL_MIN_SPEND_7D || '150'); // gastó ≥esto en 7d → es loser real, no chico/nuevo
+const KILL_RECOVERY_MULT = parseFloat(process.env.ARES_KILL_RECOVERY_MULT || '1.2'); // si 3d ya >floor×esto, se está recuperando → no matar
+// CONSOLIDACIÓN de capital: el budget liberado por kills va al MEJOR winner (no se reparte
+// parejo ni se pierde). Solo a un winner real (cash ≥ esto), con bump capeado para no shockear
+// el learning de Meta.
+const CONSOLIDATE_MIN_CASH_ROAS = parseFloat(process.env.ARES_CONSOLIDATE_MIN_CASH || '2.5');
+const CONSOLIDATE_MAX_PCT = parseFloat(process.env.ARES_CONSOLIDATE_MAX_PCT || '0.5'); // máx +50% al winner por ciclo
+
 // Stale adsets — Meta nunca les dio delivery real. No los toca el
 // underperformer_kill (exige $50) ni el mass_zombie_kill (exige $30 + CBO
 // saturado). Quedan ACTIVE en silencio ocupando slot del cap 200.
@@ -817,6 +831,61 @@ async function executeBudgetHogDrag(cboSnapshot, adsets) {
 }
 
 /**
+ * Detector → EJECUTOR: decisive_cbo_kill (FASE 1 del rebuild, 2026-06-19)
+ * Mata el CBO ENTERO si es un loser persistente — cash-ROAS sostenido bajo el piso (7d Y
+ * 3d) con gasto significativo. No más muerte lenta de scale-down 15%: el caso "1.48x por 18
+ * días" se corta de raíz. Devuelve el budget liberado para que el portfolio lo consolide en
+ * los winners (post-pass en runPortfolioAnalysis). Si dispara, el CBO está muerto → el caller
+ * NO corre el resto de detectores sobre él.
+ * @returns {Array} acciones (cada una con freed_budget para consolidar)
+ */
+async function executeDecisiveCboKill(cboSnapshot) {
+  let haircut = 1;
+  try {
+    const { getAccountCashSignal } = require('./demeter-cash-signal');
+    const cs = await getAccountCashSignal();
+    if (cs && cs.available && cs.haircut_factor) haircut = cs.haircut_factor;
+  } catch (_) { /* fail-open */ }
+
+  const spend7 = cboSnapshot.cbo_spend_7d || 0;
+  const cash7 = (cboSnapshot.cbo_roas_7d || 0) * haircut;
+  const cash3 = (cboSnapshot.cbo_roas_3d || 0) * haircut;
+
+  if (spend7 < KILL_MIN_SPEND_7D) return [];                       // chico/nuevo → no es loser persistente
+  if (cash7 >= KILL_CASH_FLOOR) return [];                         // rinde en 7d → no tocar
+  if (cash3 >= KILL_CASH_FLOOR * KILL_RECOVERY_MULT) return [];    // 3d recuperándose → darle chance
+  if (await alreadyActedOn(cboSnapshot.campaign_id, 'pause')) return [];
+
+  const gate = await validateSafetyGates({ entity_id: cboSnapshot.campaign_id, action_type: 'pause' });
+  if (!gate.allowed) { logger.info(`[ARES-PORTFOLIO] SKIP decisive-kill ${cboSnapshot.campaign_name}: ${gate.reason}`); return []; }
+
+  const freed = cboSnapshot.daily_budget || 0;
+  const reasoning = `CBO loser persistente — KILL decisivo: cash-ROAS 7d ${cash7.toFixed(2)}x y 3d ${cash3.toFixed(2)}x (Meta 7d ${(cboSnapshot.cbo_roas_7d || 0).toFixed(2)}x × haircut ${haircut.toFixed(2)}), AMBOS debajo del piso ${KILL_CASH_FLOOR}x, sobre $${Math.round(spend7)} gastados en 7d. No se baja gradual — se mata el CBO entero ($${freed}/d liberados → consolidar en winners). "${cboSnapshot.campaign_name}".`;
+
+  try {
+    const { getMetaClient } = require('../../meta/client');
+    const meta = getMetaClient();
+    await meta.updateStatus(cboSnapshot.campaign_id, 'PAUSED');
+    await cooldowns.setCooldown(cboSnapshot.campaign_id, 'campaign', 'pause', 'ares_portfolio');
+    await logAction({
+      entity_type: 'campaign', entity_id: cboSnapshot.campaign_id, entity_name: cboSnapshot.campaign_name,
+      action: 'pause', before_value: 'ACTIVE', after_value: 'PAUSED', reasoning,
+      metadata: { detector: 'decisive_cbo_kill', cash_roas_7d: +cash7.toFixed(2), cash_roas_3d: +cash3.toFixed(2), meta_roas_7d: +(cboSnapshot.cbo_roas_7d || 0).toFixed(2), spend_7d: Math.round(spend7), freed_budget: freed, haircut: +haircut.toFixed(2) },
+      success: true
+    });
+    logger.info(`[ARES-PORTFOLIO] ☠️ KILL decisivo del CBO "${cboSnapshot.campaign_name}" (cash 7d ${cash7.toFixed(2)}x/3d ${cash3.toFixed(2)}x · $${Math.round(spend7)} 7d) → $${freed}/d liberados`);
+    return [{ kind: 'decisive_cbo_kill', cbo: cboSnapshot.campaign_name, cbo_id: cboSnapshot.campaign_id, freed_budget: freed }];
+  } catch (err) {
+    await logAction({
+      entity_type: 'campaign', entity_id: cboSnapshot.campaign_id, entity_name: cboSnapshot.campaign_name,
+      action: 'pause', reasoning, success: false, error: err.message, metadata: { detector: 'decisive_cbo_kill' }
+    });
+    logger.error(`[ARES-PORTFOLIO] decisive-kill falló para ${cboSnapshot.campaign_name}: ${err.message}`);
+    return [];
+  }
+}
+
+/**
  * Detector 3 → EJECUTOR: cbo_saturated_winner
  * Sube budget CBO +15% cuando Meta ya eligió winner sano.
  */
@@ -1243,6 +1312,11 @@ async function executePortfolioActionsForCBO(cboSnapshot, getRescueCbo, remainin
   const adsets = await getAdsetsWithMetrics(cboSnapshot.campaign_id);
   if (adsets.length === 0) return { executed: [], skipped: 'no_adsets' };
 
+  // FASE 1: KILL decisivo del CBO PRIMERO. Si es un loser persistente, se mata entero y
+  // NO se corre el resto de detectores sobre un CBO muerto (sería trabajo + riesgo al pedo).
+  const killed = await executeDecisiveCboKill(cboSnapshot);
+  if (killed.length) return { executed: killed, killed: true };
+
   const executed = [];
   // Orden importa: primero las acciones bounded más específicas/seguras
   // (rescue individual, kill individual), después las batch (zombie kill),
@@ -1449,6 +1523,52 @@ async function runPortfolioAnalysis() {
     }
   }
 
+  // ── CONSOLIDACIÓN DE CAPITAL (Fase 1, 2026-06-19) ──────────────────────────────────
+  // El budget liberado por kills decisivos va al MEJOR winner del portfolio (no se pierde
+  // ni se reparte parejo). Capital sigue a la performance: concentrá en lo que rinde.
+  const freedTotal = allExecuted.filter(e => e.kind === 'decisive_cbo_kill').reduce((s, e) => s + (e.freed_budget || 0), 0);
+  if (freedTotal > 0) {
+    try {
+      const killedIds = new Set(allExecuted.filter(e => e.kind === 'decisive_cbo_kill').map(e => e.cbo_id));
+      let haircut = 1;
+      try { const { getAccountCashSignal } = require('./demeter-cash-signal'); const cs = await getAccountCashSignal(); if (cs && cs.available && cs.haircut_factor) haircut = cs.haircut_factor; } catch (_) {}
+      const winners = latestSnaps
+        .filter(s => !killedIds.has(s.campaign_id) && !s.is_zombie && (s.cbo_spend_7d || 0) > 50)
+        .map(s => ({ s, cash7: (s.cbo_roas_7d || 0) * haircut }))
+        .filter(w => w.cash7 >= CONSOLIDATE_MIN_CASH_ROAS)
+        .sort((a, b) => b.cash7 - a.cash7);
+      if (winners.length) {
+        const best = winners[0].s;
+        const cur = best.daily_budget || 0;
+        const bump = Math.min(freedTotal, Math.round(cur * CONSOLIDATE_MAX_PCT));
+        const newBudget = cur + bump;
+        const gate = await validateSafetyGates({ entity_id: best.campaign_id, action_type: 'scale_up' });
+        if (bump > 0 && gate.allowed && !(await alreadyActedOn(best.campaign_id, 'scale_up'))) {
+          const { getMetaClient } = require('../../meta/client');
+          const meta = getMetaClient();
+          await meta.updateBudget(best.campaign_id, newBudget);
+          await cooldowns.setCooldown(best.campaign_id, 'campaign', 'scale_up', 'ares_portfolio');
+          await logAction({
+            entity_type: 'campaign', entity_id: best.campaign_id, entity_name: best.campaign_name,
+            action: 'scale_up', before_value: cur, after_value: newBudget,
+            reasoning: `Consolidación de capital: $${freedTotal}/d liberados de CBO(s) matados → al mejor winner "${best.campaign_name}" (cash-ROAS 7d ${winners[0].cash7.toFixed(2)}x). Budget $${cur}→$${newBudget}/d (bump capeado +${Math.round(CONSOLIDATE_MAX_PCT * 100)}% para no resetear learning).`,
+            metadata: { detector: 'capital_consolidation', freed_total: freedTotal, bump, cash_roas_7d: +winners[0].cash7.toFixed(2) },
+            success: true
+          });
+          allExecuted.push({ kind: 'capital_consolidation', cbo: best.campaign_name, from: cur, to: newBudget });
+          byDetector['capital_consolidation'] = (byDetector['capital_consolidation'] || 0) + 1;
+          logger.info(`[ARES-PORTFOLIO] 💰 consolidación: $${freedTotal}/d → "${best.campaign_name}" $${cur}→$${newBudget} (cash ${winners[0].cash7.toFixed(2)}x)`);
+        } else {
+          logger.info(`[ARES-PORTFOLIO] consolidación: $${freedTotal}/d liberados pero scale del winner bloqueado (${!gate.allowed ? gate.reason : 'cooldown/bump 0'})`);
+        }
+      } else {
+        logger.info(`[ARES-PORTFOLIO] consolidación: $${freedTotal}/d liberados pero ningún winner ≥${CONSOLIDATE_MIN_CASH_ROAS}x cash para recibir`);
+      }
+    } catch (e) {
+      logger.error(`[ARES-PORTFOLIO] consolidación falló: ${e.message}`);
+    }
+  }
+
   const elapsed = Date.now() - start;
   logger.info(`[ARES-PORTFOLIO] ${latestSnaps.length} CBOs analizadas, ${allExecuted.length} acciones EJECUTADAS en ${elapsed}ms · ${JSON.stringify(byDetector)}`);
 
@@ -1472,6 +1592,7 @@ module.exports = {
     executeCboFill,
     executeKill,
     executeBudgetHogDrag,         // 2026-06-19: pausa el hog que no rinde
+    executeDecisiveCboKill,       // 2026-06-19 Fase 1: mata el CBO loser persistente entero
     executeSaturatedWinner,
     executeCBOStarvation,
     executeClusterSaturation,     // Ola 1.2
