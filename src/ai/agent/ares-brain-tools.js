@@ -35,7 +35,7 @@ const cooldowns = new CooldownManager();
 // Cap absoluto por cambio de budget — si el LLM pide más, se rechaza.
 // Bajado de 0.50 → 0.20 el 17-may-2026: un scale +42% empujaba CBOs a
 // learning phase. Máx ±20% por ciclo protege el aprendizaje de Meta.
-const BRAIN_BUDGET_CHANGE_MAX_PCT = 0.20;
+const BRAIN_BUDGET_CHANGE_MAX_PCT = parseFloat(process.env.ARES_BRAIN_BUDGET_CHANGE_MAX_PCT || '0.35'); // 2026-06-19 Fase 2: 0.20→0.35 — el CEO necesita poder consolidar capital decisivo (mover el budget liberado a un winner), no solo +20% tímido. Sigue protegiendo el learning de Meta de un shock 2x.
 const BRAIN_BUDGET_FLOOR = 30;  // no bajar CBO debajo de $30/d (coherente con portfolio floor $50, pero damos margen a tests)
 
 // Ola 3 — creación autónoma de CBOs
@@ -287,6 +287,29 @@ const TOOL_DEFINITIONS = [
         }
       },
       required: ['source_adset_id', 'target_campaign_id', 'reasoning']
+    }
+  },
+  {
+    name: 'kill_cbo',
+    description: 'MATA un CBO ENTERO (pausa la campaña completa). Esta es tu herramienta DECISIVA contra losers persistentes. Úsala cuando un CBO viene perdiendo SOSTENIDO por DÍAS (cash-ROAS 7d Y 3d bajo el piso, gastando sin generar) — NO un bache de 1 día. Caso real: un CBO a 1.48x por 18 días. No más scale_down 15% gradual (muerte lenta que deja la fuga abierta semanas): si la tesis del CBO está MUERTA, matalo de una y consolidá su budget en un winner (escalá el mejor con scale_cbo_budget en el mismo ciclo). Pasa por cooldown + gates. El reasoning DEBE citar: cash-ROAS 7d Y 3d, cuántos DÍAS lleva perdiendo, y el spend. Acción de alto blast radius — usala con convicción sobre un loser real, NUNCA por un mal día aislado.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        campaign_id: { type: 'string', description: 'ID del CBO (campaña) a matar' },
+        reasoning: { type: 'string', description: '3-4 oraciones con evidencia DURA: cash-ROAS 7d + 3d, días perdiendo, spend total. Ej: "Loser persistente: cash 7d 1.2x y 3d 0.9x, 18 días bajo el piso 1.8x, $213 quemados en 7d para $278. Tesis muerta — mato y consolido los $61/d en Mature Winners (5.4x)."' },
+        shadow_cash_consideration: {
+          type: 'object',
+          description: 'OPCIONAL. Tu consideración del cash ROAS de cuenta sobre esta decisión.',
+          properties: {
+            cash_roas_at_decision: { type: 'number' },
+            zone_at_decision: { type: 'string', enum: ['green', 'yellow', 'orange', 'red'] },
+            trend_at_decision: { type: 'string', enum: ['mejorando', 'estable', 'empeorando'] },
+            alt_decision: { type: 'string', enum: ['same', 'hold', 'less_aggressive', 'more_aggressive'] },
+            reasoning_diff: { type: 'string' }
+          }
+        }
+      },
+      required: ['campaign_id', 'reasoning']
     }
   }
 ];
@@ -1085,6 +1108,52 @@ async function handlePauseAdset({ adset_id, reasoning, shadow_cash_consideration
   }
 }
 
+/** KILL decisivo de un CBO entero (Fase 2, 2026-06-19) — pausa la campaña completa. */
+async function handleKillCbo({ campaign_id, reasoning, shadow_cash_consideration }) {
+  if (!campaign_id) return { error: 'campaign_id requerido' };
+  if (!reasoning || reasoning.length < 20) return { error: 'reasoning obligatorio (min 20 chars)' };
+
+  // Estado/budget actual desde el último health snapshot del CBO.
+  const snap = await CBOHealthSnapshot.findOne({ campaign_id }).sort({ snapshot_at: -1 }).lean();
+  const name = snap?.campaign_name || campaign_id;
+  const freed = snap?.daily_budget || 0;
+
+  const gate = await portfolioHelpers.validateSafetyGates({ entity_id: campaign_id, action_type: 'pause' });
+  if (!gate.allowed) {
+    await logBrainAction({
+      entity_type: 'campaign', entity_id: campaign_id, entity_name: name,
+      action: 'pause', before_value: 'ACTIVE', after_value: 'PAUSED',
+      reasoning, metadata: { blocked_by: gate.reason, source: 'ares_brain_decision', detector: 'kill_cbo' },
+      success: false, error: `gate_blocked: ${gate.reason}`
+    });
+    return { blocked: true, reason: gate.reason };
+  }
+
+  try {
+    const { getMetaClient } = require('../../meta/client');
+    const meta = getMetaClient();
+    await meta.updateStatus(campaign_id, 'PAUSED');
+    await cooldowns.setCooldown(campaign_id, 'campaign', 'pause', 'ares_brain');
+    await logBrainAction({
+      entity_type: 'campaign', entity_id: campaign_id, entity_name: name,
+      action: 'pause', before_value: 'ACTIVE', after_value: 'PAUSED', reasoning,
+      metadata: withShadow({ source: 'ares_brain_decision', detector: 'kill_cbo', freed_budget: freed, cbo_roas_7d: snap?.cbo_roas_7d, cbo_roas_3d: snap?.cbo_roas_3d }, shadow_cash_consideration),
+      success: true
+    });
+    logger.info(`[ARES-BRAIN] ☠️ KILL CBO "${name}" (brain decision) → $${freed}/d liberados para consolidar`);
+    return { executed: true, cbo_name: name, freed_budget: freed, note: 'Budget liberado — consolidalo en un winner con scale_cbo_budget en este mismo ciclo.' };
+  } catch (err) {
+    await logBrainAction({
+      entity_type: 'campaign', entity_id: campaign_id, entity_name: name,
+      action: 'pause', before_value: 'ACTIVE', after_value: 'PAUSED',
+      reasoning, metadata: { source: 'ares_brain_decision', detector: 'kill_cbo' },
+      success: false, error: err.message
+    });
+    logger.error(`[ARES-BRAIN] kill_cbo falló ${campaign_id}: ${err.message}`);
+    return { error: `meta API falló: ${err.message}` };
+  }
+}
+
 async function handleDuplicateAdsetToCBO({ source_adset_id, target_campaign_id, new_daily_budget, pause_original, reasoning, shadow_cash_consideration }) {
   if (!source_adset_id) return { error: 'source_adset_id requerido' };
   if (!target_campaign_id) return { error: 'target_campaign_id requerido' };
@@ -1643,6 +1712,7 @@ async function executeTool(name, input) {
       // Action tools (commit 2)
       case 'scale_cbo_budget': return await handleScaleCBOBudget(input || {});
       case 'pause_adset': return await handlePauseAdset(input || {});
+      case 'kill_cbo': return await handleKillCbo(input || {}); // Fase 2: kill decisivo de CBO entero
       case 'duplicate_adset_to_cbo': return await handleDuplicateAdsetToCBO(input || {});
       // Ola 3 (commit 3) — autonomous CBO creation
       case 'create_new_cbo': return await handleCreateNewCBO(input || {});
