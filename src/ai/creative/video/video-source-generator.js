@@ -241,6 +241,15 @@ async function countAvailableSources() {
  */
 async function generateVideoSources() {
   if (!ENABLED) { logger.info('[VIDEO-SOURCE] deshabilitado'); return { skipped: 'disabled' }; }
+  // Si Dionisio está pausado desde el tab, NO rellenamos el pool (no tiene sentido generar
+  // fuentes para animar si la animación está frenada). Mismo flag que el switch del panel.
+  try {
+    const SystemConfig = require('../../../db/models/SystemConfig');
+    if (await SystemConfig.get('dionysus_paused', false)) {
+      logger.info('[VIDEO-SOURCE] Dionisio pausado (dionysus_paused) — no genero fuentes');
+      return { skipped: 'dionysus_paused' };
+    }
+  } catch (e) { logger.warn(`[VIDEO-SOURCE] no pude leer dionysus_paused (sigo): ${e.message}`); }
 
   // BACKFILL first+last (2026-06-09): el pool existente es pre-piloto — fabricarle el
   // frame final a las fuentes que ya están esperando, no solo a las nuevas. Corre ANTES
