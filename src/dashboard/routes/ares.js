@@ -27,47 +27,6 @@ router.post('/run', async (req, res) => {
   }
 });
 
-// ═══ GET /diag-anthropic — Diagnóstico crudo de conectividad a Anthropic ═══
-// Temporal: distingue billing vs egress vs key como causa del "Premature close".
-router.get('/diag-anthropic', async (req, res) => {
-  const out = { ts: new Date().toISOString(), node: process.version };
-  const key = process.env.ANTHROPIC_API_KEY || '';
-  out.key_present = !!key;
-  out.key_prefix = key ? key.slice(0, 10) + '…' + key.slice(-4) : null;
-  out.key_len = key.length;
-
-  async function rawCall(label, body) {
-    const t0 = Date.now();
-    try {
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', 'x-api-key': key },
-        body: JSON.stringify(body)
-      });
-      const text = await r.text();
-      return { label, ok: r.ok, status: r.status, ms: Date.now() - t0, body_len: text.length, body_head: text.slice(0, 120) };
-    } catch (err) {
-      return { label, ms: Date.now() - t0, error_name: err?.name, error_message: err?.message, cause_message: err?.cause?.message, cause_code: err?.cause?.code };
-    }
-  }
-
-  // (A) control: chico y rápido (~1-2s) — debería pasar
-  out.control = await rawCall('control_tiny', { model: 'claude-opus-4-8', max_tokens: 8, messages: [{ role: 'user', content: 'hi' }] });
-  // (B) largo: fuerza una respuesta >3s para testear el techo de duración de conexión
-  out.long = await rawCall('long_output', { model: 'claude-opus-4-8', max_tokens: 2000, messages: [{ role: 'user', content: 'Write about 700 words on the history and varieties of pickles. Be detailed and thorough.' }] });
-  // (C) SDK real: replica EXACTAMENTE cómo llama el cerebro (thinking adaptive + effort) — non-stream
-  const t2 = Date.now();
-  try {
-    const Anthropic = require('@anthropic-ai/sdk');
-    const c = new Anthropic({ apiKey: key });
-    const m = await c.messages.create({ model: 'claude-opus-4-8', max_tokens: 1500, thinking: { type: 'adaptive' }, messages: [{ role: 'user', content: 'Think then write ~400 words about pickles.' }] });
-    out.sdk = { ok: true, ms: Date.now() - t2, stop_reason: m.stop_reason, out_tokens: m.usage?.output_tokens };
-  } catch (err) {
-    out.sdk = { ms: Date.now() - t2, error_name: err?.name, error_message: err?.message, cause_code: err?.cause?.code, status: err?.status };
-  }
-  res.json(out);
-});
-
 // ═══ POST /brain/run — Trigger manual del CEREBRO LLM (ares-brain) ═══
 // Mismo patrón async que /run pero dispara runAresBrain (el portfolio CEO Fase 2),
 // no el Ares legacy de duplicación. Útil para correr un ciclo a demanda.
