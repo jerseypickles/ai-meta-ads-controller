@@ -355,7 +355,11 @@ async function runAresBrain(opts = {}) {
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     let response;
     try {
-      response = await claude.messages.create({
+      // STREAMING (2026-06-19): el request no-stream con max_tokens 12k + adaptive
+      // thinking tardaba 60-120s y la conexión idle se cortaba → "Premature close"
+      // (tokens_used=0, el ciclo moría sin razonar). .stream().finalMessage() mantiene
+      // la conexión viva con datos incrementales y devuelve el mismo objeto Message.
+      response = await claude.messages.stream({
         model: MODEL,
         max_tokens: MAX_TOKENS,
         thinking: { type: 'adaptive' },
@@ -363,7 +367,7 @@ async function runAresBrain(opts = {}) {
         system: systemBlocks,
         tools: toolsCached,
         messages
-      });
+      }).finalMessage();
     } catch (err) {
       logger.error(`[ARES-BRAIN] Claude API error round ${round}: ${err.message}`);
       return { error: err.message, tokens_used: tokensUsed };
