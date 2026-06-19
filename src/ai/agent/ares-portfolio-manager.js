@@ -102,6 +102,17 @@ const ZOMBIE_SHARE_MAX = 0.01;            // <1% del spend 3d
 const ZOMBIE_SPEND_CUMUL_MIN = 30;        // ≥$30 gastados en 7d (subido de $20 porque removimos age gate)
 const ZOMBIE_MAX_PAUSES_PER_CBO = 10;     // cap pauses por CBO por ciclo
 
+// BUDGET HOG que NO rinde (2026-06-19, pedido del creador): el hueco que ningún gate
+// cubría — un adset que se COME la mayoría del budget del CBO (alto share) pero gasta sin
+// generar (ROAS pobre), mientras hermanos mejores se mueren de hambre. underperformer_kill
+// lo salta (es LEARNING + tiene alguna compra); zombie_kill lo salta (exige <1% share, este
+// tiene ~100%). Caso real: Rescate con "That First Crack" 1.25x comiéndose 97.5% del budget.
+// Ares ahora lo pausa → Meta redistribuye a los demás. "Si gasta tanto y no genera, ¿qué esperamos?"
+const HOG_SHARE_MIN = parseFloat(process.env.ARES_HOG_SHARE_MIN || '0.5');        // se come ≥50% del budget
+const HOG_SPEND_MIN_3D = parseFloat(process.env.ARES_HOG_SPEND_MIN_3D || '50');   // gastó suficiente para juzgar (no prematuro)
+const HOG_META_ROAS_FLOOR = parseFloat(process.env.ARES_HOG_META_FLOOR || '1.5'); // Meta crudo debajo = obvio malo (robusto al haircut)
+const HOG_CASH_ROAS_FLOOR = parseFloat(process.env.ARES_HOG_CASH_FLOOR || '2.0'); // cash-ajustado debajo = no rinde lo que gasta
+
 // Stale adsets — Meta nunca les dio delivery real. No los toca el
 // underperformer_kill (exige $50) ni el mass_zombie_kill (exige $30 + CBO
 // saturado). Quedan ACTIVE en silencio ocupando slot del cap 200.
@@ -735,6 +746,77 @@ async function executeKill(cboSnapshot, adsets) {
 }
 
 /**
+ * Detector → EJECUTOR: budget_hog_drag (2026-06-19)
+ * Pausa el adset que se COME el budget del CBO pero NO rinde (gasta sin generar),
+ * mientras hermanos quedan sin budget. Meta a veces fija el favorito en el adset
+ * EQUIVOCADO (peor ROAS) y lo mantiene por inercia → arrastra todo el CBO. Ares lo
+ * destraba pausándolo → el budget se reparte a los demás. Cubre el hueco que
+ * underperformer_kill (salta LEARNING + exige 0 compras) y zombie_kill (exige <1%
+ * share) NO atrapaban. Cash-aware (no pausa por Meta-ROAS sub-atribuido), con doble
+ * piso: Meta crudo <1.5x (obvio malo) O cash-ajustado <2x (no rinde lo que gasta).
+ */
+async function executeBudgetHogDrag(cboSnapshot, adsets) {
+  const executed = [];
+  if (adsets.length < 2) return executed; // necesita ≥2 adsets para que Meta redistribuya
+  // Haircut de cash (Demeter) — el pixel sub/sobre-atribuye; no decidir por Meta solo.
+  let haircut = 1;
+  try {
+    const { getAccountCashSignal } = require('./demeter-cash-signal');
+    const cs = await getAccountCashSignal();
+    if (cs && cs.available && cs.haircut_factor) haircut = cs.haircut_factor;
+  } catch (_) { /* fail-open: haircut 1 */ }
+
+  for (const a of adsets) {
+    if (a.spend_share_3d < HOG_SHARE_MIN) continue;   // no se come el budget → no es el hog
+    if (a.spend_3d < HOG_SPEND_MIN_3D) continue;       // poco gasto aún → prematuro
+    const metaRoas = a.roas_7d || 0;
+    const cashRoas = metaRoas * haircut;
+    // Rinde si: cash por encima del piso Y Meta crudo no es obviamente malo. Si NINGUNO
+    // de los dos pisos se viola, lo dejamos. Pausa solo si claramente no rinde.
+    const poor = (metaRoas < HOG_META_ROAS_FLOOR) || (cashRoas < HOG_CASH_ROAS_FLOOR);
+    if (!poor) continue;
+    if (await alreadyActedOn(a.id, 'pause')) continue;
+
+    const gate = await validateSafetyGates({ entity_id: a.id, action_type: 'pause' });
+    if (!gate.allowed) { logger.info(`[ARES-PORTFOLIO] SKIP budget-hog ${a.name}: ${gate.reason}`); continue; }
+
+    const betterSibling = adsets.find(b => b.id !== a.id && b.roas_7d >= metaRoas * 1.5);
+    const reasoning = `Budget hog que no rinde: se come ${(a.spend_share_3d * 100).toFixed(0)}% del budget del CBO ($${Math.round(a.spend_3d)} en 3d) pero ROAS Meta ${metaRoas.toFixed(2)}x / cash ${cashRoas.toFixed(2)}x (haircut ${haircut.toFixed(2)}) — debajo del piso (Meta ${HOG_META_ROAS_FLOOR} / cash ${HOG_CASH_ROAS_FLOOR}). ${betterSibling ? `Hermano mejor starved: "${betterSibling.name}" ${betterSibling.roas_7d.toFixed(2)}x. ` : ''}Pausando → Meta redistribuye el budget a los demás adsets del CBO "${cboSnapshot.campaign_name}".`;
+
+    try {
+      const { getMetaClient } = require('../../meta/client');
+      const meta = getMetaClient();
+      await meta.updateStatus(a.id, 'PAUSED');
+      await cooldowns.setCooldown(a.id, 'adset', 'pause', 'ares_portfolio');
+      await logAction({
+        entity_type: 'adset', entity_id: a.id, entity_name: a.name,
+        action: 'pause', before_value: 'ACTIVE', after_value: 'PAUSED', reasoning,
+        metadata: {
+          detector: 'budget_hog_drag',
+          spend_share_3d: +(a.spend_share_3d * 100).toFixed(1),
+          spend_3d: Math.round(a.spend_3d),
+          meta_roas_7d: +metaRoas.toFixed(2),
+          cash_roas: +cashRoas.toFixed(2),
+          haircut: +haircut.toFixed(2),
+          parent_cbo: cboSnapshot.campaign_name
+        },
+        success: true
+      });
+      executed.push({ kind: 'budget_hog_drag', adset: a.name, share: +(a.spend_share_3d * 100).toFixed(0), cash_roas: +cashRoas.toFixed(2) });
+      logger.info(`[ARES-PORTFOLIO] ✓ budget-hog pausado "${a.name}" (${(a.spend_share_3d * 100).toFixed(0)}% share · Meta ${metaRoas.toFixed(2)}x · cash ${cashRoas.toFixed(2)}x) → redistribuye en "${cboSnapshot.campaign_name}"`);
+    } catch (err) {
+      await logAction({
+        entity_type: 'adset', entity_id: a.id, entity_name: a.name,
+        action: 'pause', reasoning, success: false, error: err.message,
+        metadata: { detector: 'budget_hog_drag' }
+      });
+      logger.error(`[ARES-PORTFOLIO] budget-hog pause falló para ${a.name}: ${err.message}`);
+    }
+  }
+  return executed;
+}
+
+/**
  * Detector 3 → EJECUTOR: cbo_saturated_winner
  * Sube budget CBO +15% cuando Meta ya eligió winner sano.
  */
@@ -1170,6 +1252,7 @@ async function executePortfolioActionsForCBO(cboSnapshot, getRescueCbo, remainin
     () => executeStarvedRescue(cboSnapshot, adsets, getRescueCbo),
     () => executeCboFill(cboSnapshot, adsets),                 // 2026-06-11: completa CBOs de Ares sub-poblados con winners probados
     () => executeKill(cboSnapshot, adsets),
+    () => executeBudgetHogDrag(cboSnapshot, adsets),          // 2026-06-19: pausa el adset que se come el budget sin rendir → Meta redistribuye
     () => executeMassZombieKill(cboSnapshot, adsets),         // Ola 1.3
     () => executeStaleAdsetKill(cboSnapshot, adsets),         // limpia adsets con 0 delivery
     () => executeClusterSaturation(cboSnapshot, adsets),      // Ola 1.2 — más específico que saturated_winner, va primero
@@ -1388,6 +1471,7 @@ module.exports = {
     executeStarvedRescue,
     executeCboFill,
     executeKill,
+    executeBudgetHogDrag,         // 2026-06-19: pausa el hog que no rinde
     executeSaturatedWinner,
     executeCBOStarvation,
     executeClusterSaturation,     // Ola 1.2
