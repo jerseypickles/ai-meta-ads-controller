@@ -27,6 +27,28 @@ router.post('/run', async (req, res) => {
   }
 });
 
+// ═══ POST /brain/run — Trigger manual del CEREBRO LLM (ares-brain) ═══
+// Mismo patrón async que /run pero dispara runAresBrain (el portfolio CEO Fase 2),
+// no el Ares legacy de duplicación. Útil para correr un ciclo a demanda.
+router.post('/brain/run', async (req, res) => {
+  try {
+    const jobId = `ares_brain_${Date.now()}`;
+    _aresJobs[jobId] = { status: 'running', started_at: new Date() };
+    res.json({ async: true, job_id: jobId, message: 'Ares Brain (Portfolio CEO) iniciado' });
+
+    const { runAresBrain } = require('../../ai/agent/ares-brain');
+    runAresBrain().then(result => {
+      _aresJobs[jobId] = { status: 'completed', ...result };
+      logger.info(`[ARES-API] Brain job ${jobId} ✓ ${result.tool_calls_executed || 0} tools`);
+    }).catch(err => {
+      _aresJobs[jobId] = { status: 'failed', error: err.message };
+      logger.error(`[ARES-API] Brain job ${jobId} falló: ${err.message}`);
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ═══ GET /run-status/:jobId — Polling ═══
 router.get('/run-status/:jobId', (req, res) => {
   const job = _aresJobs[req.params.jobId];
