@@ -40,11 +40,13 @@ export default function GalaxyOS() {
   const [entered, setEntered] = useState(false);
   const [view, setView] = useState('galaxia');
   const [schedule, setSchedule] = useState(null);
+  const [cash, setCash] = useState(null); // Demeter /today: cash REAL de Shopify
 
   useEffect(() => {
     const load = () => {
       api.get('/api/overview').then(r => setOverview(r.data)).catch(() => {});
       api.get('/api/overview/schedule').then(r => setSchedule(r.data)).catch(() => {});
+      api.get('/api/demeter/today').then(r => setCash(r.data?.snapshot || null)).catch(() => {});
     };
     load();
     const t = setInterval(load, 60000);
@@ -70,8 +72,24 @@ export default function GalaxyOS() {
           </div>
         </div>
         <div style={{ flex: 1 }} />
-        <Kpi label="ROAS hoy" value={`${g.roas_today ?? '—'}x`} color="#34d399" />
-        <Kpi label="Revenue hoy" value={`$${(g.revenue_today ?? 0).toLocaleString()}`} color="#60a5fa" />
+        {(() => {
+          const cashRev = cash?.total_sales;
+          const hasCash = typeof cashRev === 'number' && cashRev > 0;
+          const metaRev = `$${(g.revenue_today ?? 0).toLocaleString()}`;
+          if (hasCash) {
+            return (<>
+              <Kpi label="ROAS hoy" value={`${cash?.cash_roas ? Number(cash.cash_roas).toFixed(2) : '—'}x`} color="#34d399"
+                sub="cash real" title="cash-ROAS real (Demeter/Shopify)" />
+              <Kpi label="Revenue hoy" value={`$${Math.round(cashRev).toLocaleString()}`} color="#60a5fa"
+                sub={`Meta atrib. ${metaRev}`} title="Cash real de Shopify hoy (total sales). 'Meta atrib.' es la atribución de Meta, que suele correr +30-40%." />
+            </>);
+          }
+          return (<>
+            <Kpi label="ROAS hoy" value={`${g.roas_today ?? '—'}x`} color="#60a5fa" sub="Meta atrib." />
+            <Kpi label="Revenue hoy" value={metaRev} color="#60a5fa" sub="Meta atrib."
+              title="Atribución de Meta (no cash real — Demeter sin dato hoy)" />
+          </>);
+        })()}
         <Kpi label="Presupuesto activo" value={`$${(g.active_budget ?? 0).toLocaleString()}`} color="#a78bfa" />
         <div style={{ textAlign: 'right', minWidth: 92 }}>
           <div style={{ fontSize: '0.62rem', color: 'var(--text-tertiary)' }}>{now.toLocaleDateString('es', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
@@ -161,11 +179,12 @@ export default function GalaxyOS() {
   );
 }
 
-function Kpi({ label, value, color }) {
+function Kpi({ label, value, color, sub, title }) {
   return (
-    <div style={{ textAlign: 'center', minWidth: 90 }}>
+    <div style={{ textAlign: 'center', minWidth: 90 }} title={title}>
       <div style={{ fontSize: '0.6rem', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{label}</div>
       <div style={{ fontSize: '1.05rem', fontWeight: 800, color, fontFamily: 'JetBrains Mono, monospace' }}>{value}</div>
+      {sub && <div style={{ fontSize: '0.56rem', color: 'var(--text-tertiary)', fontFamily: 'JetBrains Mono, monospace', marginTop: 1 }}>{sub}</div>}
     </div>
   );
 }
