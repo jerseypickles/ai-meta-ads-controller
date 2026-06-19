@@ -29,24 +29,36 @@ router.get('/snapshots', async (req, res) => {
   }
 });
 
-// GET /today — el día EN CURSO está incompleto, así que SIEMPRE recalculamos en vivo
-// desde Shopify (no servimos un snapshot persistido de hoy: a las 00:0X queda con ~0
-// órdenes y se quedaba pegado mostrando $0 todo el día — bug). Cache 3min para no
-// martillar la API de Shopify (el header pollea cada 30s).
-let _todayCache = { ts: 0, snapshot: null };
-const TODAY_TTL_MS = 3 * 60 * 1000;
+// GET /today — cash REAL de Shopify del día en curso. STALE-WHILE-REVALIDATE:
+// el recálculo en vivo (runDailySnapshot) es PESADO (órdenes + refunds con lookback
+// 60d → 30-90s) y NO puede ir en el camino de un header que pollea cada 60s (el browser
+// timeouteaba a los 30s → 499 → caía al fallback de Meta). Por eso esta ruta NUNCA espera
+// a Shopify: responde al instante con el último snapshot cacheado y refresca en background.
+let _todayCache = { ts: 0, snapshot: null, computing: false };
+const TODAY_TTL_MS = 10 * 60 * 1000; // 10 min — el cash intraday no necesita más precisión
+
+function refreshTodayCache() {
+  if (_todayCache.computing) return;
+  _todayCache.computing = true;
+  const { _helpers, runDailySnapshot } = require('../../ai/agent/demeter-agent');
+  // runDailySnapshot upsertea por date_et → sobreescribe la fila vacía de hoy con data real.
+  runDailySnapshot(_helpers.todayInET())
+    .then(snap => { _todayCache = { ts: Date.now(), snapshot: snap, computing: false }; })
+    .catch(e => { _todayCache.computing = false; logger.warn(`[demeter /today] refresh background falló: ${e.message}`); });
+}
+
 router.get('/today', async (req, res) => {
   try {
-    const { runDailySnapshot } = require('../../ai/agent/demeter-agent');
-    const now = Date.now();
-    if (_todayCache.snapshot && (now - _todayCache.ts) < TODAY_TTL_MS) {
-      return res.json({ live: true, cached: true, snapshot: _todayCache.snapshot });
-    }
-    // runDailySnapshot upsertea por date_et → sobreescribe la fila vacía de hoy con data real.
     const { _helpers } = require('../../ai/agent/demeter-agent');
-    const snap = await runDailySnapshot(_helpers.todayInET());
-    _todayCache = { ts: now, snapshot: snap };
-    res.json({ live: true, cached: false, snapshot: snap });
+    const fresh = _todayCache.snapshot && (Date.now() - _todayCache.ts) < TODAY_TTL_MS;
+    // Si no hay nada en memoria (proceso recién arrancado), seed con el snapshot persistido
+    // para responder YA (aunque sea viejo). El refresh en background lo actualiza enseguida.
+    if (!_todayCache.snapshot) {
+      const existing = await DemeterSnapshot.findOne({ date_et: _helpers.todayInET() }).lean();
+      if (existing) _todayCache.snapshot = existing; // ts=0 → se considera stale → dispara refresh
+    }
+    if (!fresh) refreshTodayCache(); // fire-and-forget, NO await — el request no se bloquea nunca
+    res.json({ live: true, fresh, snapshot: _todayCache.snapshot });
   } catch (err) {
     logger.error(`[demeter route] today: ${err.message}`);
     res.status(500).json({ error: err.message });
