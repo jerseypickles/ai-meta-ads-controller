@@ -27,6 +27,41 @@ router.post('/run', async (req, res) => {
   }
 });
 
+// ═══ GET /diag-anthropic — Diagnóstico crudo de conectividad a Anthropic ═══
+// Temporal: distingue billing vs egress vs key como causa del "Premature close".
+router.get('/diag-anthropic', async (req, res) => {
+  const out = { ts: new Date().toISOString(), node: process.version };
+  const key = process.env.ANTHROPIC_API_KEY || '';
+  out.key_present = !!key;
+  out.key_prefix = key ? key.slice(0, 10) + '…' + key.slice(-4) : null;
+  out.key_len = key.length;
+
+  // (1) FETCH CRUDO a Anthropic con la key real (bypassa el SDK) — captura status + body
+  const t0 = Date.now();
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'anthropic-version': '2023-06-01',
+        'x-api-key': key
+      },
+      body: JSON.stringify({ model: 'claude-opus-4-8', max_tokens: 8, messages: [{ role: 'user', content: 'hi' }] })
+    });
+    const text = await r.text();
+    out.raw_fetch = { ok: r.ok, status: r.status, statusText: r.statusText, ms: Date.now() - t0, body: text.slice(0, 600) };
+  } catch (err) {
+    out.raw_fetch = {
+      ms: Date.now() - t0,
+      error_name: err?.name,
+      error_message: err?.message,
+      cause_message: err?.cause?.message,
+      cause_code: err?.cause?.code
+    };
+  }
+  res.json(out);
+});
+
 // ═══ POST /brain/run — Trigger manual del CEREBRO LLM (ares-brain) ═══
 // Mismo patrón async que /run pero dispara runAresBrain (el portfolio CEO Fase 2),
 // no el Ares legacy de duplicación. Útil para correr un ciclo a demanda.
