@@ -36,28 +36,34 @@ router.get('/diag-anthropic', async (req, res) => {
   out.key_prefix = key ? key.slice(0, 10) + '…' + key.slice(-4) : null;
   out.key_len = key.length;
 
-  // (1) FETCH CRUDO a Anthropic con la key real (bypassa el SDK) — captura status + body
-  const t0 = Date.now();
+  async function rawCall(label, body) {
+    const t0 = Date.now();
+    try {
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', 'x-api-key': key },
+        body: JSON.stringify(body)
+      });
+      const text = await r.text();
+      return { label, ok: r.ok, status: r.status, ms: Date.now() - t0, body_len: text.length, body_head: text.slice(0, 120) };
+    } catch (err) {
+      return { label, ms: Date.now() - t0, error_name: err?.name, error_message: err?.message, cause_message: err?.cause?.message, cause_code: err?.cause?.code };
+    }
+  }
+
+  // (A) control: chico y rápido (~1-2s) — debería pasar
+  out.control = await rawCall('control_tiny', { model: 'claude-opus-4-8', max_tokens: 8, messages: [{ role: 'user', content: 'hi' }] });
+  // (B) largo: fuerza una respuesta >3s para testear el techo de duración de conexión
+  out.long = await rawCall('long_output', { model: 'claude-opus-4-8', max_tokens: 2000, messages: [{ role: 'user', content: 'Write about 700 words on the history and varieties of pickles. Be detailed and thorough.' }] });
+  // (C) SDK real: replica EXACTAMENTE cómo llama el cerebro (thinking adaptive + effort) — non-stream
+  const t2 = Date.now();
   try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'anthropic-version': '2023-06-01',
-        'x-api-key': key
-      },
-      body: JSON.stringify({ model: 'claude-opus-4-8', max_tokens: 8, messages: [{ role: 'user', content: 'hi' }] })
-    });
-    const text = await r.text();
-    out.raw_fetch = { ok: r.ok, status: r.status, statusText: r.statusText, ms: Date.now() - t0, body: text.slice(0, 600) };
+    const Anthropic = require('@anthropic-ai/sdk');
+    const c = new Anthropic({ apiKey: key });
+    const m = await c.messages.create({ model: 'claude-opus-4-8', max_tokens: 1500, thinking: { type: 'adaptive' }, messages: [{ role: 'user', content: 'Think then write ~400 words about pickles.' }] });
+    out.sdk = { ok: true, ms: Date.now() - t2, stop_reason: m.stop_reason, out_tokens: m.usage?.output_tokens };
   } catch (err) {
-    out.raw_fetch = {
-      ms: Date.now() - t0,
-      error_name: err?.name,
-      error_message: err?.message,
-      cause_message: err?.cause?.message,
-      cause_code: err?.cause?.code
-    };
+    out.sdk = { ms: Date.now() - t2, error_name: err?.name, error_message: err?.message, cause_code: err?.cause?.code, status: err?.status };
   }
   res.json(out);
 });
