@@ -48,6 +48,7 @@ class GraphErrorBoundary extends Component {
 
 export default function NeuralCommandCenter({ onAgentClick, hideHeader = false }) {
   const [account, setAccount] = useState(null);
+  const [cash, setCash] = useState(null); // Demeter /today: cash REAL de Shopify
 
   useEffect(() => {
     loadAccount();
@@ -57,12 +58,21 @@ export default function NeuralCommandCenter({ onAgentClick, hideHeader = false }
 
   async function loadAccount() {
     try {
-      const res = await api.get('/api/brain/briefing');
-      setAccount(res.data.context?.account || null);
+      const [b, d] = await Promise.all([
+        api.get('/api/brain/briefing'),
+        api.get('/api/demeter/today').catch(() => null) // cash real; si falla, mostramos solo Meta
+      ]);
+      setAccount(b.data.context?.account || null);
+      setCash(d?.data?.snapshot || null);
     } catch (err) {
       console.error('NeuralCommandCenter header error:', err);
     }
   }
+
+  // Cash real de Shopify (verdad de caja). Meta = atribución (suele correr +30-40%).
+  const cashRev = cash?.total_sales;
+  const hasCash = typeof cashRev === 'number' && cashRev > 0;
+  const cashRoas = cash?.cash_roas;
 
   return (
     <div className="neural-command">
@@ -72,9 +82,21 @@ export default function NeuralCommandCenter({ onAgentClick, hideHeader = false }
             🧠 Neural Command Center
           </div>
           <div style={{ fontSize: '0.72rem', color: 'var(--bos-text-muted)', fontFamily: 'JetBrains Mono, monospace' }}>
-            ROAS hoy <span style={{ color: 'var(--bos-bio)' }}>{account?.roas_today || '—'}x</span>
-            {' · '}
-            Revenue <span style={{ color: 'var(--bos-synapse)' }}>${account?.revenue_today?.toLocaleString() || 0}</span>
+            {hasCash ? (
+              <>
+                ROAS hoy <span style={{ color: 'var(--bos-bio)' }} title="cash-ROAS real (Demeter/Shopify)">{cashRoas ? Number(cashRoas).toFixed(2) : '—'}x</span>
+                {' · '}
+                Revenue <span style={{ color: 'var(--bos-synapse)' }} title="Cash real de Shopify hoy (total sales)">${Math.round(cashRev).toLocaleString()}</span>
+                <span style={{ opacity: 0.55 }}> · Meta atrib. ${account?.revenue_today?.toLocaleString() || 0}</span>
+              </>
+            ) : (
+              <>
+                {/* Sin cash real disponible → mostramos Meta claramente etiquetado */}
+                ROAS hoy <span style={{ color: 'var(--bos-bio)' }}>{account?.roas_today || '—'}x</span>
+                {' · '}
+                Revenue <span style={{ opacity: 0.7 }} title="Atribución de Meta (no cash real — Demeter sin dato hoy)">${account?.revenue_today?.toLocaleString() || 0} <span style={{ fontSize: '0.62rem' }}>(Meta atrib.)</span></span>
+              </>
+            )}
           </div>
         </div>
       )}

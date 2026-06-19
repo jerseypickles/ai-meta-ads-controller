@@ -29,20 +29,24 @@ router.get('/snapshots', async (req, res) => {
   }
 });
 
-// GET /today — live computation, no graba DB
+// GET /today — el día EN CURSO está incompleto, así que SIEMPRE recalculamos en vivo
+// desde Shopify (no servimos un snapshot persistido de hoy: a las 00:0X queda con ~0
+// órdenes y se quedaba pegado mostrando $0 todo el día — bug). Cache 3min para no
+// martillar la API de Shopify (el header pollea cada 30s).
+let _todayCache = { ts: 0, snapshot: null };
+const TODAY_TTL_MS = 3 * 60 * 1000;
 router.get('/today', async (req, res) => {
   try {
-    const { _helpers, runDailySnapshot } = require('../../ai/agent/demeter-agent');
-    const todayEt = _helpers.todayInET();
-
-    // Si ya hay snapshot del día (no debería hasta 00:05 mañana),
-    // usar ese. Sino, computar live.
-    const existing = await DemeterSnapshot.findOne({ date_et: todayEt }).lean();
-    if (existing) return res.json({ live: false, snapshot: existing });
-
-    // Live compute — graba en DB de paso (idempotente, replazará en cron 00:05)
-    const snap = await runDailySnapshot(todayEt);
-    res.json({ live: true, snapshot: snap });
+    const { runDailySnapshot } = require('../../ai/agent/demeter-agent');
+    const now = Date.now();
+    if (_todayCache.snapshot && (now - _todayCache.ts) < TODAY_TTL_MS) {
+      return res.json({ live: true, cached: true, snapshot: _todayCache.snapshot });
+    }
+    // runDailySnapshot upsertea por date_et → sobreescribe la fila vacía de hoy con data real.
+    const { _helpers } = require('../../ai/agent/demeter-agent');
+    const snap = await runDailySnapshot(_helpers.todayInET());
+    _todayCache = { ts: now, snapshot: snap };
+    res.json({ live: true, cached: false, snapshot: snap });
   } catch (err) {
     logger.error(`[demeter route] today: ${err.message}`);
     res.status(500).json({ error: err.message });
