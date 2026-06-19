@@ -15,7 +15,7 @@
     "seed": "node scripts/seed-config.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
+    "@anthropic-ai/sdk": "^0.105.0",
     "@fal-ai/client": "^1.9.3",
     "@fontsource/abril-fatface": "^5.2.7",
     "@fontsource/anton": "^5.2.7",
