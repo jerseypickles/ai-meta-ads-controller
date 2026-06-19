@@ -189,6 +189,15 @@ async function reconcileStuckVideos() {
  */
 async function runDionysus() {
   if (!ENABLED) { logger.info('[DIONISIO] deshabilitado'); return { skipped: 'disabled' }; }
+  // Switch de runtime desde el tab (SystemConfig 'dionysus_paused') — pausa la generación
+  // de videos (cron + botón manual) sin tocar env. Lo controla el toggle del DionysusPanel.
+  try {
+    const SystemConfig = require('../../db/models/SystemConfig');
+    if (await SystemConfig.get('dionysus_paused', false)) {
+      logger.info('[DIONISIO] pausado desde el tab (dionysus_paused=true) — no genera videos');
+      return { skipped: 'paused' };
+    }
+  } catch (e) { logger.warn(`[DIONISIO] no pude leer dionysus_paused (sigo): ${e.message}`); }
   if (!seedance.isAvailable()) { logger.warn('[DIONISIO] PIAPI_KEY no configurada — skip'); return { skipped: 'no_piapi_key' }; }
 
   // Auto-sanar zombies antes de generar nuevos.

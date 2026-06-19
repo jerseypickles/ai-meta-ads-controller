@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import {
-  getDionysusPending, getDionysusStats, runDionysusApi,
+  getDionysusPending, getDionysusStats, runDionysusApi, setDionysusPause,
   approveDionysusVideo, rejectDionysusVideo, generateDionysusSources, backfillDionysusVideoJudge, backfillDionysusSignals
 } from '../api';
 
@@ -46,6 +46,19 @@ function DionysusPanel() {
       if (Date.now() - t0 > POLL_WINDOW_MS) { clearInterval(pollRef.current); setRunning(false); }
     }, 8000);
     setTimeout(() => { if (pollRef.current) clearInterval(pollRef.current); setRunning(false); }, POLL_WINDOW_MS + 1000);
+  };
+
+  // Switch de generación (persistido en SystemConfig vía /api/dionysus/pause).
+  // El estado real viene de stats.paused; mantenemos un optimista local para el toggle.
+  const [pausedLocal, setPausedLocal] = useState(null);
+  const paused = pausedLocal ?? stats?.paused ?? false;
+  const [togglingPause, setTogglingPause] = useState(false);
+  const onTogglePause = async () => {
+    const next = !paused;
+    setTogglingPause(true);
+    setPausedLocal(next); // optimista
+    try { await setDionysusPause(next); } catch (e) { console.error(e); setPausedLocal(!next); }
+    finally { setTogglingPause(false); load(); }
   };
 
   const [genSources, setGenSources] = useState(false);
@@ -100,13 +113,23 @@ function DionysusPanel() {
             background: `linear-gradient(135deg, ${FUCHSIA}, #f9a8d4)`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>DIONISIO</div>
           <div style={{ fontSize: '0.68rem', color: 'var(--bos-text-muted, #94a3b8)', textTransform: 'uppercase', letterSpacing: '0.1em', marginTop: 4 }}>Video Creator · Seedance 2.0 · human-in-the-loop</div>
         </div>
+        {/* Switch de generación — pausa/reanuda Dionisio (cron + manual) */}
+        <button onClick={onTogglePause} disabled={togglingPause}
+          title={paused ? 'Generación PAUSADA — Dionisio no crea videos (ni cron ni manual). Click para reanudar.' : 'Generación activa. Click para pausar.'}
+          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 12px', borderRadius: 999, cursor: togglingPause ? 'default' : 'pointer', fontWeight: 700, fontSize: '0.74rem',
+            border: `1px solid ${paused ? 'rgba(248,113,113,0.5)' : 'rgba(52,211,153,0.5)'}`,
+            background: paused ? 'rgba(248,113,113,0.12)' : 'rgba(52,211,153,0.12)', color: paused ? '#f87171' : '#34d399' }}>
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: paused ? '#f87171' : '#34d399', boxShadow: `0 0 8px ${paused ? '#f87171' : '#34d399'}` }} />
+          {paused ? 'Pausado' : 'Generación ON'}
+        </button>
         <button onClick={onGenSources} disabled={genSources} title="Generar imágenes de interacción (mano+chip+salsa) que Dionisio anima"
           style={{ padding: '8px 13px', borderRadius: 8, border: `1px solid color-mix(in srgb, ${FUCHSIA} 40%, transparent)`, fontWeight: 600, cursor: genSources ? 'default' : 'pointer', background: 'transparent', color: FUCHSIA, fontSize: '0.78rem' }}>
           {genSources ? '🎨 Generando…' : '🎨 Fuentes'}
         </button>
-        <button onClick={onRun} disabled={running}
-          style={{ padding: '8px 16px', borderRadius: 8, border: 'none', fontWeight: 700, cursor: running ? 'default' : 'pointer', fontSize: '0.8rem',
-            background: running ? `color-mix(in srgb, ${FUCHSIA} 30%, transparent)` : `linear-gradient(135deg, ${FUCHSIA}, color-mix(in srgb, ${FUCHSIA} 65%, #000))`, color: '#fff' }}>
+        <button onClick={onRun} disabled={running || paused}
+          title={paused ? 'Generación pausada — reanudá con el switch para generar' : 'Generar un ciclo de videos ahora'}
+          style={{ padding: '8px 16px', borderRadius: 8, border: 'none', fontWeight: 700, cursor: (running || paused) ? 'default' : 'pointer', fontSize: '0.8rem', opacity: paused ? 0.45 : 1,
+            background: (running || paused) ? `color-mix(in srgb, ${FUCHSIA} 30%, transparent)` : `linear-gradient(135deg, ${FUCHSIA}, color-mix(in srgb, ${FUCHSIA} 65%, #000))`, color: '#fff' }}>
           {running ? '🎬 Generando…' : '✨ Generar videos'}
         </button>
         <button onClick={load} title="Refrescar" style={{ padding: '8px 11px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)', background: 'transparent', color: '#fff', cursor: 'pointer' }}>↻</button>

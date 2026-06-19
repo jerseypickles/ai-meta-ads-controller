@@ -86,14 +86,16 @@ router.get('/stats', async (req, res) => {
 
     // Learnings del reconciliador (ranking de motions por outcome real + calibración del juez)
     let learnings = null, weekly = [];
+    let paused = false;
     try {
       const SystemConfig = require('../../db/models/SystemConfig');
       const VL = require('../../ai/creative/video/video-learning');
       learnings = await SystemConfig.get(VL.LEARNINGS_KEY, null);
       weekly = await VL.weeklyTrend(12);
+      paused = await SystemConfig.get('dionysus_paused', false);
     } catch (_) { /* noop */ }
 
-    res.json({ pending, total_videos: totalVideos, tested_count: tested.length, source_pool: sourcePool, source_pool_target: sourcePoolTarget, dna, dna_by_dimension: dnaByDimension, tested, learnings, weekly });
+    res.json({ pending, total_videos: totalVideos, tested_count: tested.length, source_pool: sourcePool, source_pool_target: sourcePoolTarget, dna, dna_by_dimension: dnaByDimension, tested, learnings, weekly, paused });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -289,6 +291,20 @@ router.post('/retry-failed', async (req, res) => {
       logger.info(`[DIONISIO-RETRY] resultado: ${JSON.stringify(r)}`);
     } catch (e) { logger.error(`[DIONISIO-RETRY] ${e.message}`); }
   })();
+});
+
+// POST /pause — switch de generación desde el tab. Body { paused: bool }.
+// Pausa/reanuda la creación de videos (cron + manual) vía SystemConfig 'dionysus_paused'.
+router.post('/pause', async (req, res) => {
+  try {
+    const SystemConfig = require('../../db/models/SystemConfig');
+    const paused = !!req.body?.paused;
+    await SystemConfig.set('dionysus_paused', paused, req.user?.user || 'dashboard');
+    logger.info(`[DIONISIO] generación ${paused ? 'PAUSADA' : 'REANUDADA'} desde el tab`);
+    res.json({ paused });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // POST /run — gatillar un ciclo de Dionisio (async)
