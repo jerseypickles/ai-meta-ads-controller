@@ -131,7 +131,7 @@ router.get('/preview-campaign', async (req, res) => {
       const comments = (r.comments || []).map(c => {
         const hit = matchComment(c.message, cfg);
         if (hit) totalWouldHide++;
-        return { id: c.id, author: c.author_name, message: c.message, created: c.created_time, verdict: hit ? `OCULTAR (${hit.rule}:${hit.term})` : 'mantener' };
+        return { id: c.id, author: c.author_name, message: c.message, created: c.created_time, can_hide: c.can_hide, is_hidden: c.is_hidden, verdict: hit ? `OCULTAR (${hit.rule}:${hit.term})` : 'mantener' };
       });
       totalComments += comments.length;
       if (comments.length) out.push({ ad_id: ad._id, ad_name: ad.name, status: ad.status, comments });

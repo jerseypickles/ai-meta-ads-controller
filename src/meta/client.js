@@ -618,7 +618,7 @@ class MetaClient {
 
     const pageToken = await this.getPageAccessToken();
     const params = {
-      fields: 'id,from{name,id},message,created_time,like_count,comment_count',
+      fields: 'id,from{name,id},message,created_time,like_count,comment_count,can_hide,is_hidden',
       order: 'reverse_chronological',
       limit: opts.limit || 100,
       filter: 'toplevel'
@@ -633,7 +633,9 @@ class MetaClient {
       message: c.message || '',
       created_time: c.created_time ? new Date(c.created_time) : null,
       like_count: c.like_count || 0,
-      reply_count: c.comment_count || 0
+      reply_count: c.comment_count || 0,
+      can_hide: c.can_hide,
+      is_hidden: c.is_hidden
     }));
 
     return { story_id: storyId, comments };
