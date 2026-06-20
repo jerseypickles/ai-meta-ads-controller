@@ -656,6 +656,21 @@ class MetaClient {
   }
 
   /**
+   * Oculta (o muestra) un comentario. is_hidden=true lo saca de la vista pública
+   * pero el autor lo sigue viendo (no se entera) y es REVERSIBLE. Requiere page
+   * token con pages_manage_engagement (el mismo que usa postComment).
+   * @param {string} commentId
+   * @param {boolean} hide - true para ocultar, false para volver a mostrar
+   */
+  async hideComment(commentId, hide = true) {
+    if (!commentId) throw new Error('hideComment: commentId vacío');
+    const pageToken = await this.getPageAccessToken();
+    const result = await this._graphWithToken('post', `/${commentId}`, { is_hidden: hide }, pageToken);
+    logger.info(`[META] Comentario ${commentId} ${hide ? 'OCULTADO' : 'mostrado'} — success=${result?.success}`);
+    return result;
+  }
+
+  /**
    * Obtener insights (métricas) de un objeto
    */
   async getInsights(objectId, params = {}) {

@@ -1427,6 +1427,18 @@ function initCronJobs() {
   });
   logger.info('  [*] Recolección de datos — cada 10 min (24/7)');
 
+  // Cada 30 min: Moderación de comentarios (oculta callouts de IA + blocklist). SHADOW default.
+  cron.schedule('15,45 * * * *', async () => {
+    try {
+      const { runCommentModeration } = require('./ai/agent/comment-moderator');
+      const r = await runCommentModeration();
+      if (!r.skipped) logger.info(`[CRON] Comment Moderation: ${JSON.stringify(r)}`);
+    } catch (err) {
+      logger.error('[CRON] Error en Comment Moderation:', err);
+    }
+  }, { timezone: TIMEZONE, name: 'comment-moderation' });
+  logger.info('  [*] Moderación de comentarios — cada 30 min (shadow por default)');
+
   // 4 veces al día: Ciclo del Cerebro IA unificado (7am, 1pm, 7pm, 11pm ET)
   cron.schedule('0 7,13,19,23 * * *', jobAgentsCycle, {
     timezone: TIMEZONE,
