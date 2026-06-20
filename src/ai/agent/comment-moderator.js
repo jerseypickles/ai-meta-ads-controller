@@ -176,21 +176,15 @@ async function runCommentModeration() {
           hidden++; if (!existing) newComments++;
           logger.info(`[COMMENT-MOD] OCULTADO: "${(c.message || '').slice(0, 60)}" — ${hit.rule}:${hit.term} · ad ${ad.ad_id}`);
         } catch (e) {
-          // Meta quirk: is_hidden=true a veces devuelve error 1446036 PERO igual oculta
-          // el comentario. Lo tratamos como éxito (verificado: comments con 1446036 quedan
-          // is_hidden=true). Cualquier otro error sí es fallo real.
+          // Meta quirk: is_hidden=true a veces devuelve 1446036. INCONSISTENTE: a veces igual
+          // oculta, a veces es rate-limit real y NO oculta. NO lo marcamos 'hidden' (si no ocultó,
+          // el cron nunca reintentaría). Lo dejamos 'skipped_error' (retriable): el próximo ciclo
+          // re-lee is_hidden → si ya quedó oculto lo saltea, si no, reintenta. Así converge solo.
+          errors++;
+          await CommentModerationLog.findOneAndUpdate(
+            { comment_id: c.id }, { ...base, action: 'skipped_error', error: e.message }, { upsert: true });
           const sub = e.response?.data?.error?.error_subcode;
-          if (sub === 1446036) {
-            await CommentModerationLog.findOneAndUpdate(
-              { comment_id: c.id }, { ...base, action: 'hidden' }, { upsert: true });
-            hidden++; if (!existing) newComments++;
-            logger.info(`[COMMENT-MOD] OCULTADO (1446036, ok): "${(c.message || '').slice(0, 50)}"`);
-          } else {
-            errors++;
-            await CommentModerationLog.findOneAndUpdate(
-              { comment_id: c.id }, { ...base, action: 'skipped_error', error: e.message }, { upsert: true });
-            logger.warn(`[COMMENT-MOD] no pude ocultar ${c.id}: ${e.message}`);
-          }
+          logger.warn(`[COMMENT-MOD] hide ${c.id} → ${sub === 1446036 ? '1446036 (rate-limit, reintenta próximo ciclo)' : e.message}`);
         }
       }
     }
