@@ -138,6 +138,19 @@ async function runCommentModeration() {
       const existing = await CommentModerationLog.findOne({ comment_id: c.id }).lean();
       if (existing && (existing.action === 'hidden' || existing.action === 'unhidden')) continue;
 
+      // Si Meta ya lo reporta oculto (is_hidden=true), no re-hidear — re-ocultar devuelve
+      // un 400/1446036 inútil. Lo registramos como hidden y seguimos.
+      if (c.is_hidden) {
+        if (!existing || existing.action !== 'hidden') {
+          await CommentModerationLog.findOneAndUpdate({ comment_id: c.id },
+            { comment_id: c.id, ad_id: ad.ad_id, story_id: res.story_id, author_name: c.author_name,
+              author_id: c.author_id, message: c.message, matched_rule: hit.rule, matched_term: hit.term,
+              shadow: cfg.shadow, comment_created_time: c.created_time, action: 'hidden' }, { upsert: true });
+        }
+        matched--; // ya estaba oculto, no cuenta como "nuevo a ocultar"
+        continue;
+      }
+
       const base = {
         comment_id: c.id, ad_id: ad.ad_id, story_id: res.story_id,
         author_name: c.author_name, author_id: c.author_id, message: c.message,
@@ -163,11 +176,21 @@ async function runCommentModeration() {
           hidden++; if (!existing) newComments++;
           logger.info(`[COMMENT-MOD] OCULTADO: "${(c.message || '').slice(0, 60)}" — ${hit.rule}:${hit.term} · ad ${ad.ad_id}`);
         } catch (e) {
-          errors++;
-          await CommentModerationLog.findOneAndUpdate(
-            { comment_id: c.id }, { ...base, action: 'skipped_error', error: e.message }, { upsert: true }
-          );
-          logger.warn(`[COMMENT-MOD] no pude ocultar ${c.id}: ${e.message}`);
+          // Meta quirk: is_hidden=true a veces devuelve error 1446036 PERO igual oculta
+          // el comentario. Lo tratamos como éxito (verificado: comments con 1446036 quedan
+          // is_hidden=true). Cualquier otro error sí es fallo real.
+          const sub = e.response?.data?.error?.error_subcode;
+          if (sub === 1446036) {
+            await CommentModerationLog.findOneAndUpdate(
+              { comment_id: c.id }, { ...base, action: 'hidden' }, { upsert: true });
+            hidden++; if (!existing) newComments++;
+            logger.info(`[COMMENT-MOD] OCULTADO (1446036, ok): "${(c.message || '').slice(0, 50)}"`);
+          } else {
+            errors++;
+            await CommentModerationLog.findOneAndUpdate(
+              { comment_id: c.id }, { ...base, action: 'skipped_error', error: e.message }, { upsert: true });
+            logger.warn(`[COMMENT-MOD] no pude ocultar ${c.id}: ${e.message}`);
+          }
         }
       }
     }
