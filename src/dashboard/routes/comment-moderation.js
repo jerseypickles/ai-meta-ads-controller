@@ -120,7 +120,11 @@ router.get('/preview-campaign', async (req, res) => {
     for (const ad of ads) {
       let r;
       try { r = await meta.getAdComments(ad._id, { limit: 100 }); }
-      catch (e) { out.push({ ad_id: ad._id, ad_name: ad.name, error: e.message }); continue; }
+      catch (e) {
+        const metaErr = e.response?.data?.error;
+        out.push({ ad_id: ad._id, ad_name: ad.name, error: metaErr ? `${metaErr.message} (code ${metaErr.code}/${metaErr.error_subcode || '-'})` : e.message });
+        continue;
+      }
       const comments = (r.comments || []).map(c => {
         const hit = matchComment(c.message, cfg);
         if (hit) totalWouldHide++;
