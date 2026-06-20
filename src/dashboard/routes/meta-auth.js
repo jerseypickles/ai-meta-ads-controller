@@ -45,7 +45,8 @@ const REQUIRED_SCOPES = [
   // (#100) requires pages_read_engagement. Reconectar Meta para concederlos.
   'pages_show_list',
   'pages_read_engagement',
-  'pages_manage_engagement'
+  'pages_read_user_content',   // leer comentarios (= contenido de OTROS usuarios) — sin esto: (#10)
+  'pages_manage_engagement'    // ocultar/borrar comentarios
 ];
 
 // GET /api/auth/meta/status — Estado actual de la conexión
