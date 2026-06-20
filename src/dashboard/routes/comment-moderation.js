@@ -83,7 +83,10 @@ router.post('/hide/:commentId', async (req, res) => {
     await getMetaClient().hideComment(req.params.commentId, true);
     await CommentModerationLog.findOneAndUpdate({ comment_id: req.params.commentId }, { $set: { action: 'hidden', shadow: false } });
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    const m = e.response?.data?.error;
+    res.status(500).json({ error: m ? `${m.message} (code ${m.code}/${m.error_subcode || '-'})` : e.message });
+  }
 });
 
 // GET /preview-campaign?name=... | ?campaign_id=... — lee TODOS los comentarios de los ads
