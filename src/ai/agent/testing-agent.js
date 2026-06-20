@@ -60,6 +60,14 @@ const GRADUATE_EARLY_PURCHASES = 2;
 const GRADUATE_EARLY_MIN_SPEND = 30;
 const GRADUATE_MIN_PURCHASES = 2;  // 2026-05-26: 1→2. Graduar con 1 compra era ruido (fluke) → graduates débiles que Ares escalaba y revertían. Ahora exigido en AMBOS paths (antes meetsRoas no pedía mínimo).
 const GRADUATE_MAX_CPA = 35;
+// 2026-06-20: gates anti "kill a media jornada mientras produce" (caso Sweet Horseradish:
+// expirado 20:30 ET con cumulative 1.54x cuando HOY venía a 5.69x / 4 ventas).
+//  · Momentum: si HOY produce sobre la vara, NO expirar/matar — darle runway (atribución de
+//    video llega tarde). · Day-boundary: la expiración (decisión final) solo en runs temprano
+//    de mañana (día anterior cerrado), nunca a media tarde truncando un día que produce.
+const MOMENTUM_MIN_SPEND = parseFloat(process.env.TEST_MOMENTUM_MIN_SPEND || '10'); // $ mínimo de gasto HOY para que cuente como "produce hoy" (anti-fluke)
+const EXPIRE_BOUNDARY_HOUR = parseInt(process.env.TEST_EXPIRE_BOUNDARY_HOUR || '9', 10); // expirar solo si la hora ET < esto (corte de día); fuera de eso, difiere
+const RUNWAY_HARD_CAP_DAYS = parseInt(process.env.TEST_RUNWAY_HARD_CAP_DAYS || '10', 10); // tope: más allá de este día se expira igual (evita zombie eterno por momentum)
 const MIN_READY_POOL = 5;
 // Post-launch: un test con ≥30h y 0 impresiones/0 gasto NO está entregando (Ad error /
 // link roto / sin delivery). Matarlo libera el slot sin esperar al día 3. (2026-06-05)
@@ -215,6 +223,13 @@ function getDaysActive(launchedAt) {
 /**
  * Obtener metricas de un test ad set desde MetricSnapshot.
  */
+// Ventana de HOY del adset (último snapshot) — para el gate de momentum: ¿produce hoy?
+async function getTodayWindow(testAdsetId) {
+  const snap = await MetricSnapshot.findOne({ entity_type: 'adset', entity_id: testAdsetId })
+    .sort({ snapshot_at: -1 }).select('metrics.today').lean();
+  return snap?.metrics?.today || null;
+}
+
 async function getTestMetrics(testAdsetId) {
   // Buscar los ultimos 5 snapshots y elegir el mejor (mas reciente con data real)
   // Meta API ocasionalmente devuelve ceros transitorios — no debemos confiar en 1 solo snapshot
@@ -702,6 +717,21 @@ async function monitorTests() {
       // Cash-adjusted ROAS: ajusta el Meta-ROAS por el haircut de cuenta (cash real).
       const cashAdjRoas = metrics.roas * cashHaircut;
 
+      // ── GATES anti kill-prematuro (2026-06-20) ──
+      // (1) MOMENTUM: ¿produce HOY sobre la vara? Si sí, no lo cortamos por el promedio
+      //     acumulado — la atribución (sobre todo video) madura tarde, cortar a media tarde
+      //     un día que viene a 5x es justo el error. (2) DAY-BOUNDARY: la expiración final
+      //     solo en runs de la mañana (día anterior cerrado), nunca truncando un día en curso.
+      const todayW = await getTodayWindow(test.test_adset_id).catch(() => null);
+      const todayRoasCash = (todayW?.roas || 0) * cashHaircut;
+      const hasMomentumToday = (todayW?.purchases || 0) >= 1
+        && todayRoasCash >= GRADUATE_MIN_ROAS
+        && (todayW?.spend || 0) >= MOMENTUM_MIN_SPEND
+        && daysActive < RUNWAY_HARD_CAP_DAYS; // pasado el tope, ni el momentum lo salva
+      let etHour = 12;
+      try { etHour = require('moment-timezone')().tz('America/New_York').hour(); } catch (_) { /* fallback mediodía → difiere */ }
+      const isDayBoundaryRun = etHour < EXPIRE_BOUNDARY_HOUR;
+
       // GRADUATE EARLY: rendimiento excepcional (cash-adjusted) — con piso de spend para
       // que sea señal real sostenida, no un fluke frontloaded de 2 ventas en $9.
       if (cashAdjRoas >= GRADUATE_EARLY_ROAS && metrics.purchases >= GRADUATE_EARLY_PURCHASES
@@ -734,24 +764,37 @@ async function monitorTests() {
         if (meetsRoas || meetsCpa) {
           await graduateTest(test, metrics);
           graduated++;
+          continue;
+        }
+        // No graduó por el promedio. Antes de expirar (decisión final, irreversible):
+        //  · si HOY produce sobre la vara → runway, NO expirar (cae al assessment).
+        //  · si no es corte de día → diferir al run de la mañana (no cortar a media jornada).
+        if (hasMomentumToday) {
+          logger.info(`[TESTING-AGENT] ${test.test_adset_name}: NO expiro (día ${daysActive}) — HOY ${todayW.purchases} compras a ${todayRoasCash.toFixed(1)}x cash sobre $${(todayW.spend || 0).toFixed(0)} → momentum, runway +1 día (atribución/video madura tarde)`);
+        } else if (!isDayBoundaryRun) {
+          logger.info(`[TESTING-AGENT] ${test.test_adset_name}: expiración diferida al corte de día (run de mañana, <${EXPIRE_BOUNDARY_HOUR}h ET) — no corto a media jornada (día ${daysActive}, cumulative ${metrics.roas.toFixed(2)}x)`);
         } else {
           await killOrExpireTest(test, `Dia ${daysActive}: ROAS ${metrics.roas.toFixed(2)}x, ${metrics.purchases} compras, CPA $${metrics.cpa.toFixed(2)}`, 'expired');
           expired++;
+          continue;
         }
-        continue;
+        // diferido → no continue: cae al assessment de abajo y se reevalúa el próximo ciclo
       }
 
       // Dia 3-5: Kill agresivo — 1 compra + $40+ spend + ROAS < 2x = no va a mejorar.
       // EXCEPCIÓN video: si engancha fuerte (hold alto), le damos el runway completo
       // hasta día 6-7 — el creativo gusta, dale tiempo a que las compras maduren.
       // (videoEngages ya definido arriba, en el bloque de kill de 0 compras.)
-      if (daysActive >= 3 && metrics.purchases <= 1 && metrics.spend >= 40 && metrics.roas < 2.0 && !videoEngages) {
+      if (daysActive >= 3 && metrics.purchases <= 1 && metrics.spend >= 40 && metrics.roas < 2.0 && !videoEngages && !hasMomentumToday) {
         await killOrExpireTest(test, `${metrics.purchases} compras con $${metrics.spend.toFixed(0)} spend, ROAS ${metrics.roas.toFixed(2)}x — CPA demasiado alto, no mejorara`, 'killed');
         killed++;
         continue;
       }
-      if (videoEngages && daysActive >= 3 && metrics.purchases <= 1 && metrics.spend >= 40 && metrics.roas < 2.0) {
-        logger.info(`[TESTING-AGENT] ${test.test_adset_name}: video engancha (hold ${(videoEng.hold_rate * 100).toFixed(0)}%) — protegido del kill agresivo, runway completo`);
+      if (daysActive >= 3 && metrics.purchases <= 1 && metrics.spend >= 40 && metrics.roas < 2.0 && (videoEngages || hasMomentumToday)) {
+        const why = hasMomentumToday
+          ? `HOY ${todayW.purchases} compras a ${todayRoasCash.toFixed(1)}x cash — momentum`
+          : `video engancha (hold ${(videoEng.hold_rate * 100).toFixed(0)}%)`;
+        logger.info(`[TESTING-AGENT] ${test.test_adset_name}: protegido del kill agresivo (${why}) — runway`);
       }
 
       // Dia 3-5: Esperar — guardar assessment

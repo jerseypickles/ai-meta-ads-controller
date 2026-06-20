@@ -181,6 +181,40 @@ router.post('/tests/:id/kill', async (req, res) => {
   }
 });
 
+// ═══ POST /tests/reactivate-by-adset/:adsetId — revivir un test expirado/killed por error ═══
+// Reactiva en Meta (PAUSED→ACTIVE) y devuelve el TestRun a 'evaluating' para que Prometheus
+// lo vuelva a gestionar (con los gates de momentum/corte-de-día ya no lo re-corta si produce).
+router.post('/tests/reactivate-by-adset/:adsetId', async (req, res) => {
+  try {
+    const adsetId = req.params.adsetId;
+    const test = await TestRun.findOne({ test_adset_id: adsetId }).sort({ launched_at: -1 });
+    if (!test) return res.status(404).json({ error: 'No hay TestRun para ese adset' });
+
+    const { getMetaClient } = require('../../meta/client');
+    const meta = getMetaClient();
+    await meta.updateStatus(adsetId, 'ACTIVE'); // si falla, lanza → 500 (no dejamos estado a medias)
+
+    test.phase = 'evaluating';
+    test.expired_at = null;
+    test.killed_at = null;
+    test.kill_reason = null;
+    test.assessments.push({
+      day_number: Math.floor((Date.now() - new Date(test.launched_at).getTime()) / 86400000),
+      phase: 'evaluating',
+      assessment: `REACTIVADO manualmente: ${req.body?.reason || 'cortado prematuro, se le da runway'}`
+    });
+    await test.save();
+
+    if (test.proposal_id) {
+      await CreativeProposal.findByIdAndUpdate(test.proposal_id, { $set: { status: 'testing', rejection_reason: '', decided_at: new Date() } });
+    }
+    logger.info(`[TESTING-API] Test reactivado: ${test.test_adset_name} (${adsetId}) → ACTIVE + evaluating`);
+    res.json({ success: true, test_adset_name: test.test_adset_name, phase: test.phase });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ═══ GET /stats — Stats agregadas ═══
 router.get('/stats', async (req, res) => {
   try {
