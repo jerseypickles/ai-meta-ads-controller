@@ -86,4 +86,51 @@ router.post('/hide/:commentId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /preview-campaign?name=... | ?campaign_id=... — lee TODOS los comentarios de los ads
+// de una campaña y marca cuáles ocultaría (verificación read-only, no toca nada).
+router.get('/preview-campaign', async (req, res) => {
+  try {
+    const MetricSnapshot = require('../../db/models/MetricSnapshot');
+    const { matchComment } = require('../../ai/agent/comment-moderator');
+    const { getMetaClient } = require('../../meta/client');
+    const cfg = await getConfig();
+
+    let campaignId = req.query.campaign_id;
+    if (!campaignId && req.query.name) {
+      // resolver nombre → campaign_id desde el snapshot de campaña más reciente
+      const camp = await MetricSnapshot.findOne({
+        entity_type: 'campaign',
+        entity_name: { $regex: req.query.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' }
+      }).sort({ snapshot_at: -1 }).select('entity_id entity_name').lean();
+      if (!camp) return res.status(404).json({ error: `No encontré campaña que matchee "${req.query.name}"` });
+      campaignId = camp.entity_id;
+    }
+    if (!campaignId) return res.status(400).json({ error: 'pasá ?name= o ?campaign_id=' });
+
+    // ads de esa campaña (último snapshot por ad)
+    const ads = await MetricSnapshot.aggregate([
+      { $match: { entity_type: 'ad', campaign_id: campaignId } },
+      { $sort: { entity_id: 1, snapshot_at: -1 } },
+      { $group: { _id: '$entity_id', status: { $first: '$status' }, name: { $first: '$entity_name' } } }
+    ]);
+
+    const meta = getMetaClient();
+    const out = [];
+    let totalComments = 0, totalWouldHide = 0;
+    for (const ad of ads) {
+      let r;
+      try { r = await meta.getAdComments(ad._id, { limit: 100 }); }
+      catch (e) { out.push({ ad_id: ad._id, ad_name: ad.name, error: e.message }); continue; }
+      const comments = (r.comments || []).map(c => {
+        const hit = matchComment(c.message, cfg);
+        if (hit) totalWouldHide++;
+        return { id: c.id, author: c.author_name, message: c.message, created: c.created_time, verdict: hit ? `OCULTAR (${hit.rule}:${hit.term})` : 'mantener' };
+      });
+      totalComments += comments.length;
+      if (comments.length) out.push({ ad_id: ad._id, ad_name: ad.name, status: ad.status, comments });
+    }
+    res.json({ campaign_id: campaignId, ads_with_comments: out.length, total_comments: totalComments, would_hide: totalWouldHide, shadow: cfg.shadow, ads: out });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;
