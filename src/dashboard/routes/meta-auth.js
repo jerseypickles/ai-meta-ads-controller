@@ -39,7 +39,13 @@ const REQUIRED_SCOPES = [
   'ads_management',
   'ads_read',
   'business_management',
-  'read_insights'
+  'read_insights',
+  // 2026-06-20: permisos de PÁGINA para moderación de comentarios (ocultar callouts de IA)
+  // + Hermes (leer/responder). El token post-hack no los tenía → comentarios fallaban con
+  // (#100) requires pages_read_engagement. Reconectar Meta para concederlos.
+  'pages_show_list',
+  'pages_read_engagement',
+  'pages_manage_engagement'
 ];
 
 // GET /api/auth/meta/status — Estado actual de la conexión
