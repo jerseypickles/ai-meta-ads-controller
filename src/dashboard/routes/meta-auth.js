@@ -401,6 +401,16 @@ router.get('/business-info', async (req, res) => {
     try {
       const biz = await meta.get('/me/businesses', { fields: 'id,name,created_time,verification_status,primary_page', limit: 50 });
       out.businesses = (biz?.data || []).map(b => ({ id: b.id, name: b.name, created: b.created_time, verification: b.verification_status }));
+      // Cuentas publicitarias de cada portafolio (owned + client) — para ver dónde está/estaba la cuenta hackeada
+      for (const b of out.businesses) {
+        b.ad_accounts = [];
+        for (const edge of ['owned_ad_accounts', 'client_ad_accounts']) {
+          try {
+            const accs = await meta.get(`/${b.id}/${edge}`, { fields: 'account_id,name,account_status', limit: 100 });
+            for (const a of (accs?.data || [])) b.ad_accounts.push({ rel: edge.split('_')[0], account_id: a.account_id, name: a.name, status: a.account_status });
+          } catch (e) { /* algunos edges requieren permisos extra */ }
+        }
+      }
     } catch (e) { out.businesses_error = e.response?.data?.error?.message || e.message; }
     // Business dueño de cada ad account (la actual + la vieja hackeada)
     out.accounts = {};
