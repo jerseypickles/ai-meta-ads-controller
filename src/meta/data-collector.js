@@ -511,11 +511,22 @@ class DataCollector {
         const { getLatestSnapshots: getSnaps } = require('../db/queries');
         const dbAdsets = await getSnaps('adset');
         const metaIds = new Set(Object.keys(adSetMap));
-        const staleIds = dbAdsets
-          .filter(s => s.status === 'ACTIVE' && !metaIds.has(s.entity_id))
+        const activeInDb = dbAdsets.filter(s => s.status === 'ACTIVE');
+        const staleIds = activeInDb
+          .filter(s => !metaIds.has(s.entity_id))
           .map(s => s.entity_id);
 
-        if (staleIds.length > 0) {
+        // GUARD anti falso-positivo (2026-06-21): la Meta API a veces devuelve la lista
+        // INCOMPLETA (paginación/rate-limit) → parecería que decenas de adsets "desaparecieron".
+        // Nadie archiva 30+ adsets de una; es un glitch de la API. Si la cantidad de "stale" es
+        // sospechosamente alta (>20 o >40% de los activos), NO archivamos — es respuesta incompleta.
+        // Esto causaba flapping ACTIVE↔ARCHIVED en winners sanos (caso "This Sauce Changed Everything"
+        // 4.27x marcado dead 110x). Real archiving ocurre de a pocos.
+        const STALE_ABS_CAP = parseInt(process.env.COLLECTOR_STALE_ABS_CAP || '20', 10);
+        const stalePct = activeInDb.length > 0 ? staleIds.length / activeInDb.length : 0;
+        if (staleIds.length > STALE_ABS_CAP || stalePct > 0.40) {
+          logger.warn(`  [STALE-GUARD] Meta devolvió ${metaIds.size} adsets pero ${staleIds.length}/${activeInDb.length} ACTIVE no vinieron (${(stalePct*100).toFixed(0)}%) — respuesta INCOMPLETA, NO archivo (glitch de API, no archiving real)`);
+        } else if (staleIds.length > 0) {
           // Insert a new snapshot marking them as ARCHIVED
           const archiveOps = staleIds.map(id => {
             const old = dbAdsets.find(s => s.entity_id === id);
