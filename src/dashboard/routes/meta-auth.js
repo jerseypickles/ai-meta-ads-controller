@@ -391,6 +391,29 @@ router.put('/select-account', async (req, res) => {
   }
 });
 
+// GET /api/auth/meta/business-info — Business Manager (portafolio) + datos para reclamo a Meta
+router.get('/business-info', async (req, res) => {
+  try {
+    const { getMetaClient } = require('../../meta/client');
+    const meta = getMetaClient();
+    const out = {};
+    // Portafolios (Business Managers) que ve el usuario
+    try {
+      const biz = await meta.get('/me/businesses', { fields: 'id,name,created_time,verification_status,primary_page', limit: 50 });
+      out.businesses = (biz?.data || []).map(b => ({ id: b.id, name: b.name, created: b.created_time, verification: b.verification_status }));
+    } catch (e) { out.businesses_error = e.response?.data?.error?.message || e.message; }
+    // Business dueño de cada ad account (la actual + la vieja hackeada)
+    out.accounts = {};
+    for (const acc of ['act_746668911594750', 'act_845676307161899', 'act_132102467277272', 'act_1689472092360245']) {
+      try {
+        const a = await meta.get(`/${acc}`, { fields: 'name,account_id,business,account_status,created_time,amount_spent,currency,disable_reason' });
+        out.accounts[acc] = { name: a.name, account_id: a.account_id, business: a.business, status: a.account_status, created: a.created_time, spent: a.amount_spent, currency: a.currency, disable_reason: a.disable_reason };
+      } catch (e) { out.accounts[acc] = { error: e.response?.data?.error?.message || e.message }; }
+    }
+    res.json(out);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // POST /api/auth/meta/refresh — Renovar token manualmente
 router.post('/refresh', async (req, res) => {
   try {
