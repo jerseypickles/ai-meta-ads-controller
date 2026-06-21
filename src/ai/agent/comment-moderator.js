@@ -18,7 +18,7 @@ const MetricSnapshot = require('../../db/models/MetricSnapshot');
 const CommentModerationLog = require('../../db/models/CommentModerationLog');
 
 const CONFIG_KEY = 'comment_moderation';
-const MAX_ADS_PER_CYCLE = parseInt(process.env.COMMENT_MOD_MAX_ADS || '60', 10);
+const MAX_ADS_PER_CYCLE = parseInt(process.env.COMMENT_MOD_MAX_ADS || '150', 10);
 const COMMENTS_PER_AD = parseInt(process.env.COMMENT_MOD_COMMENTS_PER_AD || '50', 10);
 
 // Seed por default — editable desde el panel/SystemConfig.
@@ -84,10 +84,17 @@ function matchComment(message, cfg) {
   return null;
 }
 
-/** Ads ACTIVE con gasto reciente (los que tienen ojos encima = más comentarios). */
+/**
+ * Ads a moderar: los que tienen un snapshot RECIENTE (≤2d) — sin importar si están
+ * ACTIVE o PAUSED (el post de un ad pausado SIGUE mostrando sus comentarios públicos →
+ * los callouts de IA igual hay que ocultarlos). El filtro de snapshot reciente descarta
+ * solo los ads muertos de la cuenta vieja (ya no se recolectan → sin snapshot fresco → 400).
+ * Ya NO exige spend>0: un ad sin gasto reciente puede seguir teniendo comentarios visibles.
+ */
 async function getActiveAdIds(limit) {
+  const since = new Date(Date.now() - 2 * 24 * 3600 * 1000);
   const rows = await MetricSnapshot.aggregate([
-    { $match: { entity_type: 'ad' } },
+    { $match: { entity_type: 'ad', snapshot_at: { $gte: since } } },
     { $sort: { entity_id: 1, snapshot_at: -1 } },
     { $group: {
       _id: '$entity_id',
@@ -95,8 +102,7 @@ async function getActiveAdIds(limit) {
       spend7d: { $first: '$metrics.last_7d.spend' },
       name: { $first: '$entity_name' }
     }},
-    { $match: { status: 'ACTIVE', spend7d: { $gt: 0 } } },
-    { $sort: { spend7d: -1 } },
+    { $sort: { spend7d: -1 } },   // prioriza los de más gasto (más ojos), pero incluye todos
     { $limit: limit }
   ]);
   return rows.map(r => ({ ad_id: r._id, name: r.name }));
