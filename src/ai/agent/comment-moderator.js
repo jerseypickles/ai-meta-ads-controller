@@ -18,8 +18,12 @@ const MetricSnapshot = require('../../db/models/MetricSnapshot');
 const CommentModerationLog = require('../../db/models/CommentModerationLog');
 
 const CONFIG_KEY = 'comment_moderation';
-const MAX_ADS_PER_CYCLE = parseInt(process.env.COMMENT_MOD_MAX_ADS || '150', 10);
-const COMMENTS_PER_AD = parseInt(process.env.COMMENT_MOD_COMMENTS_PER_AD || '50', 10);
+// 2026-06-21: bajado de 150→70 ads + 50→30 comments/ad. El 150 hacía ~300 llamadas a Meta
+// cada 30min compartiendo el rate-limiter con la recolección de datos (cada 10min) → la
+// recolección se pasaba de 10min y abortaba (COLLECT_TIMEOUT), desestabilizando el proceso
+// (crash 134). 70 ads cubre los de más tráfico; rota por spend → cubre el resto en 2-3 ciclos.
+const MAX_ADS_PER_CYCLE = parseInt(process.env.COMMENT_MOD_MAX_ADS || '70', 10);
+const COMMENTS_PER_AD = parseInt(process.env.COMMENT_MOD_COMMENTS_PER_AD || '30', 10);
 
 // Seed por default — editable desde el panel/SystemConfig.
 const DEFAULT_CONFIG = {

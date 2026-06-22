@@ -1427,8 +1427,10 @@ function initCronJobs() {
   });
   logger.info('  [*] Recolección de datos — cada 10 min (24/7)');
 
-  // Cada 30 min: Moderación de comentarios (oculta callouts de IA + blocklist). SHADOW default.
-  cron.schedule('15,45 * * * *', async () => {
+  // Cada hora: Moderación de comentarios (oculta callouts de IA + blocklist). SHADOW default.
+  // 2026-06-21: bajado de cada 30min a cada hora — el escaneo pesado contendía con la
+  // recolección de datos (cada 10min) por el rate-limiter de Meta → COLLECT_TIMEOUT + crash.
+  cron.schedule('25 * * * *', async () => {
     try {
       const { runCommentModeration } = require('./ai/agent/comment-moderator');
       const r = await runCommentModeration();
