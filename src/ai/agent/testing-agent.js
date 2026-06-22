@@ -22,7 +22,7 @@ const DECISIVE_KILL_SPEND = parseInt(process.env.DECISIVE_KILL_SPEND, 10) || 50;
 // con CPA $25 espera ~2 compras/día → la graduación (≥2 compras) puede resolverse en
 // 24-48h con señal real. El video lo justifica de sobra (4.85x ROAS, 76% de las ventas).
 // Los perdedores NO cuestan más: las kill rules son por spend acumulado. Env-overridable.
-const VIDEO_TEST_DAILY_BUDGET = parseInt(process.env.VIDEO_TEST_DAILY_BUDGET, 10) || 70; // 2026-06-16: $50→$70 — con 2-por-adset cada video recibe $35 (no se ahoga el formato fuerte).
+const VIDEO_TEST_DAILY_BUDGET = parseInt(process.env.VIDEO_TEST_DAILY_BUDGET, 10) || 50; // 2026-06-21: $70→$50 (pedido del creador: máximo $50). Con 2-por-adset = $25/video.
 // Track de VIDEO con caps PROPIOS — no compite por los slots/budget de las fotos
 // (campaña separada). Si no, los tests de foto bloquean los videos. (2026-05-30)
 // 2026-06-05 "Dionisio extremo": el video probó ser el lever más fuerte (4.85x ROAS,
