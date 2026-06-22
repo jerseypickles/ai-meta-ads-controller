@@ -46,7 +46,11 @@ const REQUIRED_SCOPES = [
   'pages_show_list',
   'pages_read_engagement',
   'pages_read_user_content',   // leer comentarios (= contenido de OTROS usuarios) — sin esto: (#10)
-  'pages_manage_engagement'    // ocultar/borrar comentarios
+  'pages_manage_engagement',   // ocultar/borrar comentarios (Facebook)
+  // 2026-06-22: Instagram — borrar comentarios de IA en IG (otro grafo). El dueño de la
+  // media puede DELETE comentarios de otros. Sin esto, la moderación de IG no funciona.
+  'instagram_basic',           // leer media + comentarios de IG
+  'instagram_manage_comments'  // borrar/esconder comentarios de IG
 ];
 
 // GET /api/auth/meta/status — Estado actual de la conexión
