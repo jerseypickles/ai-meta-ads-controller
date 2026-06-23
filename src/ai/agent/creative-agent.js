@@ -266,6 +266,16 @@ async function runCreativeAgent() {
   const cycleId = `creative_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   logger.info(`═══ Iniciando Creative Agent [${cycleId}] ═══`);
 
+  // Pausa manual (SystemConfig 'apollo_image_paused') — el creador frena la generación de
+  // imágenes temporalmente. Toggle via /api/controls/agent-pause. (2026-06-22)
+  try {
+    const SystemConfig = require('../../db/models/SystemConfig');
+    if (await SystemConfig.get('apollo_image_paused', false)) {
+      logger.info('[CREATIVE-AGENT] PAUSADO (apollo_image_paused) — no genera imágenes');
+      return { skipped: 'paused' };
+    }
+  } catch (e) { logger.warn(`[CREATIVE-AGENT] no pude leer apollo_image_paused (sigo): ${e.message}`); }
+
   // Fase 0: Housekeeping. Corre como safety net dentro del job aunque también
   // exista cron 3am ET independiente — así un Apollo activo no espera a mañana.
   await runCreativeHousekeeping();

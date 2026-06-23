@@ -354,7 +354,16 @@ async function launchTests() {
   const photoSpend = photo.spend;
   const photoSlots = Math.max(0, MAX_CONCURRENT_TESTS - activePhotoTests);
   const photoBudgetSlots = Math.max(0, Math.floor((MAX_DAILY_TESTING_BUDGET - photoSpend) / TEST_DAILY_BUDGET));
-  const maxPhotoLaunches = Math.min(photoSlots, photoBudgetSlots, MAX_LAUNCHES_PER_CYCLE);
+  let maxPhotoLaunches = Math.min(photoSlots, photoBudgetSlots, MAX_LAUNCHES_PER_CYCLE);
+  // Pausa manual de FOTO (SystemConfig 'prometheus_photo_paused') — el creador frena solo el
+  // lanzamiento de tests de foto (el video sigue). Toggle via /api/controls/agent-pause. (2026-06-22)
+  try {
+    const SystemConfig = require('../../db/models/SystemConfig');
+    if (await SystemConfig.get('prometheus_photo_paused', false)) {
+      if (maxPhotoLaunches > 0) logger.info('[TESTING-AGENT] foto PAUSADA (prometheus_photo_paused) — no lanzo tests de foto');
+      maxPhotoLaunches = 0;
+    }
+  } catch (e) { logger.warn(`[TESTING-AGENT] no pude leer prometheus_photo_paused (sigo): ${e.message}`); }
 
   // Slots VIDEO (independientes)
   const videoSpend = video.spend;

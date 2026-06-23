@@ -122,6 +122,32 @@ router.put('/engine-mode', async (req, res) => {
   }
 });
 
+// POST /api/controls/agent-pause — pausar/reanudar agentes (flags en SystemConfig).
+// Body: { key, paused }. key ∈ whitelist. Pausa momentánea controlable.
+const PAUSE_KEYS = ['apollo_image_paused', 'prometheus_photo_paused', 'dionysus_paused', 'comment_moderation_paused'];
+router.post('/agent-pause', async (req, res) => {
+  try {
+    const { key, paused } = req.body;
+    if (!PAUSE_KEYS.includes(key)) return res.status(400).json({ error: `key inválida. Usa: ${PAUSE_KEYS.join(', ')}` });
+    await SystemConfig.set(key, !!paused, req.user?.user || 'dashboard');
+    logger.warn(`[AGENT-PAUSE] ${key} = ${!!paused}`);
+    res.json({ success: true, key, paused: !!paused });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/controls/agent-pause — estado de los flags de pausa
+router.get('/agent-pause', async (req, res) => {
+  try {
+    const out = {};
+    for (const k of PAUSE_KEYS) out[k] = await SystemConfig.get(k, false);
+    res.json(out);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // POST /api/controls/run-cycle — Ejecutar un ciclo IA inmediato (background + polling)
 router.post('/run-cycle', async (req, res) => {
   try {
