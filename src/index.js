@@ -833,6 +833,9 @@ async function jobDemeterDaily() {
 
 async function jobAresBrain() {
   try {
+    // Respeta el switch global de IA — sin esto, el cerebro Opus gastaba tokens aunque
+    // la IA estuviera apagada (era el único job Claude que no chequeaba). (2026-06-26)
+    if (!(await isAIEnabled())) { logger.info('[CRON] Ares Brain: IA desactivada — skip'); return; }
     const { runAresBrain } = require('./ai/agent/ares-brain');
     const result = await runAresBrain();
     if (result.skipped) {
