@@ -117,6 +117,15 @@ async function getActiveAdIds(limit) {
  * @returns {Object} resumen
  */
 async function runCommentModeration() {
+  // Pausa manual (SystemConfig 'comment_moderation_paused') — el flag del endpoint /agent-pause.
+  // Antes no estaba cableado acá → el cron seguía corriendo en live pese al flag. (2026-06-27)
+  try {
+    if (await SystemConfig.get('comment_moderation_paused', false)) {
+      logger.info('[COMMENT-MOD] PAUSADO (comment_moderation_paused) — skip');
+      return { skipped: 'paused' };
+    }
+  } catch (e) { /* fail-open */ }
+
   const cfg = await getConfig();
   if (!cfg.enabled) { logger.info('[COMMENT-MOD] deshabilitado'); return { skipped: 'disabled' }; }
 
