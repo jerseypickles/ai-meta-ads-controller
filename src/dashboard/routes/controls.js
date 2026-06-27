@@ -124,7 +124,7 @@ router.put('/engine-mode', async (req, res) => {
 
 // POST /api/controls/agent-pause — pausar/reanudar agentes (flags en SystemConfig).
 // Body: { key, paused }. key ∈ whitelist. Pausa momentánea controlable.
-const PAUSE_KEYS = ['apollo_image_paused', 'prometheus_photo_paused', 'dionysus_paused', 'comment_moderation_paused'];
+const PAUSE_KEYS = ['apollo_image_paused', 'prometheus_photo_paused', 'dionysus_paused', 'comment_moderation_paused', 'system_paused'];
 router.post('/agent-pause', async (req, res) => {
   try {
     const { key, paused } = req.body;

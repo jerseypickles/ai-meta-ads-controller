@@ -1157,6 +1157,21 @@ async function jobBrainKnowledgeSnapshot() {
 function initCronJobs() {
   logger.info('Configurando cron jobs...');
 
+  // GUARD GLOBAL (2026-06-27): flag SystemConfig 'system_paused' → TODOS los crones no-op.
+  // Envuelve cron.schedule una sola vez: cada callback chequea el flag al disparar y, si está
+  // pausado, retorna sin hacer nada (queda 100% inerte, sin tocar Meta ni gastar nada).
+  // Reversible en caliente (sin restart). Set via /api/controls/agent-pause {key:'system_paused'}.
+  const _nodeCron = require('node-cron');
+  const cron = {
+    schedule: (pattern, fn, opts) => _nodeCron.schedule(pattern, async (...a) => {
+      try {
+        const SystemConfig = require('./db/models/SystemConfig');
+        if (await SystemConfig.get('system_paused', false)) return;
+      } catch (_) { /* fail-open: si no puede leer el flag, corre normal */ }
+      return typeof fn === 'function' ? fn(...a) : undefined;
+    }, opts)
+  };
+
   // Cada 15 minutos: Kill switch monitor
   cron.schedule('*/15 * * * *', jobKillSwitchMonitor, {
     timezone: TIMEZONE,
